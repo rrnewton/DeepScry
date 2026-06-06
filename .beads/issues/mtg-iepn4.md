@@ -1,0 +1,114 @@
+---
+title: 'TRACK: 2025 World Championship decks — full deck compatibility'
+status: open
+priority: 1
+issue_type: task
+created_at: 2026-06-06T04:21:44.697502290+00:00
+updated_at: 2026-06-06T04:22:39.890734282+00:00
+---
+
+# Description
+
+TRACK: 2025 Magic World Championship 31 (Bellevue WA, Dec 2025) — full deck compatibility for all 4 Top-4 decks.
+
+Depends on: mtg-684 (championship collections parent)
+
+## Scope
+
+Decks in decks/championship/2025/:
+- 01_manfield_izzet_lessons.dck (Seth Manfield, 1st Place — World Champion, Izzet Lessons)
+- 02_shibata_izzet_lessons.dck (Akira Shibata, 2nd Place, Izzet Lessons)
+- 03_davis_izzet_lessons.dck (Derrick Davis, 3rd-4th Place, Izzet Lessons)
+- 04_henry_temur_otters.dck (Shaun Henry, 3rd-4th Place, Temur Otters)
+
+## Deck Load Status (2026-06-05_#3008(50175e06))
+
+All 4 decks load 60 cards each with no parse errors. Games complete without crashes.
+- 01_manfield_izzet_lessons: LOADS OK (60 cards)
+- 02_shibata_izzet_lessons: LOADS OK (60 cards)
+- 03_davis_izzet_lessons: LOADS OK (60 cards)
+- 04_henry_temur_otters: LOADS OK (60 cards)
+
+## Known Issues from Initial Runs (2026-06-05_#3008(50175e06))
+
+### WARN: PumpCreature fizzled: unresolved target 0
+Source: Valley Floodcaller's PumpAll trigger (TrigPumpAll: DB$ PumpAll | ValidCards$ Bird.YouCtrl,Frog.YouCtrl,Otter.YouCtrl,Rat.YouCtrl). Fires when you cast a noncreature spell, pumps all Birds/Frogs/Otters/Rats +1/+1. The 'fizzled' message suggests the PumpAll target resolution is failing when there are no valid targets. Likely a benign warning when no valid creature types are in play, but needs verification that it fires correctly WHEN creatures are present.
+
+### WARN: DealDamageXPaid reached execute_effect without resolution, treating as 0 damage
+Source: Combustion Technique — X = 2 + number of Lesson cards in graveyard. The X variable uses Count$ValidGraveyard Lesson.YouOwn/Plus.2 which resolves as DealDamageXPaid rather than the normal scalar path. This means Combustion Technique deals 0 damage instead of (2 + lesson count) damage. BROKEN.
+
+## Unique Cards (union of main+sideboard, all 4 decks)
+
+Non-basic cards only:
+
+| Card | Type | Deck(s) | Status | Notes |
+|------|------|---------|--------|-------|
+| Abandon Attachments | Instant Lesson | 01,02,03 | UNTESTED | discard-draw, loads |
+| Abrade | Instant | 01,03 sideboard | UNTESTED | loads |
+| Accumulate Wisdom | Instant Lesson | 01,02,03,04 | UNTESTED | conditional draw based on graveyard Lesson count |
+| Agna Qel'a | Land | 01,02 | UNTESTED | conditional enter tapped, loot ability |
+| Analyze the Pollen | Sorcery | 04 | UNTESTED | optional collect evidence 8, search |
+| Annul | Instant | 01,03,04 sideboard | UNTESTED | loads (classic counterspell) |
+| Artist's Talent | Enchantment Class | 01,02 | UNTESTED | Class enchantment |
+| Badgermole Cub | Creature | 04 | UNTESTED | Earthbend ability (custom keyword) |
+| Boomerang Basics | Sorcery Lesson | 01,02,03,04 | UNTESTED | bounce + conditional draw |
+| Botanical Sanctum | Land | 04 | UNTESTED | fastland |
+| Breeding Pool | Land | 04 | UNTESTED | shockland |
+| Broadside Barrage | (sideboard 01) | 01 sideboard | UNTESTED | loads |
+| Bushwhack | Sorcery | 04 | UNTESTED | modal: fetch or fight |
+| Combustion Technique | Instant Lesson | 01,02,03 | BROKEN | DealDamageXPaid=0 (graveyard-count X not resolving) |
+| Disdainful Stroke | Instant | 02,04 sideboard | UNTESTED | classic counterspell variant |
+| Eddymurk Crab | Creature | 03 | UNTESTED | flash, cost reduction from graveyard, tap ETB |
+| Enduring Vitality | Enchant Creature Elk | 04 | UNTESTED | creature + enchantment type, vigilance, mana to all creatures, dies return as enchantment |
+| Essence Scatter | Instant | 03 sideboard | UNTESTED | classic counterspell variant |
+| Firebending Lesson | Instant Lesson | 01,02,03 | UNTESTED | kicker, damage |
+| Fire Magic | Instant | 02,04 sideboard | UNTESTED | Tiered keyword (new FF mechanic), modal damage |
+| Frostcliff Siege | Enchantment | 04 sideboard | UNTESTED | Siege enter choice (Jeskai/Temur) |
+| Ghost Vacuum | Artifact | 02,03 sideboard | UNTESTED | exile graveyard, reanimate as Spirit |
+| Gran-Gran | Legendary Creature | 01,02,03 | UNTESTED | tap trigger draw+discard, lesson cost reduction |
+| Iroh's Demonstration | Sorcery Lesson | 01,02,03,04 | UNTESTED | modal: damage each or 4 to one |
+| It'll Quench Ya! | Instant Lesson | 01,02,03 | UNTESTED | soft counter unless pay 2 |
+| Monument to Endurance | Artifact | 01,02 | UNTESTED | discard trigger, modal (draw/treasure/life loss) |
+| Multiversal Passage | Land | 01,02,03 | UNTESTED | choose basic type on ETB, pay 2 life or enter tapped |
+| Negate | Instant | 01,03 sideboard | UNTESTED | classic counterspell variant |
+| Opt | Instant | 02 | UNTESTED | scry+draw |
+| Pawpatch Formation | Instant | 04 sideboard | UNTESTED | modal charm |
+| Pyroclasm | Sorcery | 01,04 sideboard | UNTESTED | sweeper |
+| Quantum Riddler | Creature | 01 sideboard | UNTESTED | sphinx, draw, hand-size replacement, Warp |
+| Ral, Crackling Wit | Planeswalker | 02,04 | UNTESTED | planeswalker, Otter tokens, draw/discard, storm emblem |
+| Riverpyre Verge | Land | 01,02,03,04 | UNTESTED | conditional dual |
+| Roaring Furnace | Enchantment Room | 02,04 | UNTESTED | DFC room, X damage based on hand size |
+| Roiling Dragonstorm | Enchantment | 03 | UNTESTED | ETB draw+discard, return self on dragon ETB |
+| Song of Totentanz | Sorcery | 04 | UNTESTED | X rats + haste to all |
+| Soul-Guide Lantern | Artifact | 01,02 sideboard | UNTESTED | graveyard exile |
+| Spell Pierce | Instant | 01,02 sideboard | UNTESTED | classic counterspell variant |
+| Spider-Sense | Instant | 03 sideboard | UNTESTED | Web-slinging (new keyword), counter spell/ability |
+| Spirebluff Canal | Land | 01,02 | UNTESTED | fastland |
+| Starting Town | Land | 03 | UNTESTED | Town type, conditional tapped, pay-life mana |
+| Stock Up | Sorcery | 03,04 | UNTESTED | impulse-style draw |
+| Stomping Ground | Land | 04 | UNTESTED | shockland |
+| Stormchaser's Talent | Enchantment Class | 01,02,03,04 | BROKEN | PumpCreature fizzled (Class L3 Otter pump) |
+| The Legend of Kuruk | Enchantment Saga | 02 sideboard | UNTESTED | Saga with DFC transform |
+| Thundertrap Trainer | Creature Otter | 04 | UNTESTED | Offspring keyword |
+| Torch the Tower | Instant | 02,04 | UNTESTED | loads |
+| Torpor Orb | Artifact | 02,03 sideboard | UNTESTED | classic hate piece |
+| Valley Floodcaller | Creature Otter | 04 | BROKEN (partial) | PumpAll fizzle when no creatures, otherwise may work; CastWithFlash static may have issues |
+| Willowrush Verge | Land | 04 | UNTESTED | conditional dual |
+
+## Definition of Done
+
+Each deck plays end-to-end with no crashes, no illegal-action errors, and no game-result-affecting sentinel values. Every card is classified as:
+- WORKING: every printed ability resolves correctly with correct log output
+- PARTIAL: primary function works, secondary ability broken (with linked Bug: issue)
+- BROKEN: cannot be cast or primary ability fails (with linked Bug: issue)
+- WAIVED: known gap accepted with linked tracking issue
+
+## Sub-issues
+
+(to be filed as per-card or bug issues as work proceeds)
+
+## Priority
+
+- P1 (blockers for end-to-end play): Combustion Technique X=0 bug, Valley Floodcaller PumpAll fizzle
+- P2 (new/complex mechanics): Badgermole Cub earthbend, Artist's Talent Level 3 damage bonus, Ral planeswalker, DFC cards (Roaring Furnace, The Legend of Kuruk), Quantum Riddler Warp, Enduring Vitality die-and-return-as-enchantment
+- P3 (verify working): All UNTESTED cards with standard abilities
