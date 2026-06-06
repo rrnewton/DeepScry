@@ -1447,6 +1447,16 @@ impl<'a> GameLoop<'a> {
                 Effect::ExilePermanent { target } if target.is_placeholder() => true,
                 // CopyPermanent with placeholder target
                 Effect::CopyPermanent { target, .. } if target.is_placeholder() => true,
+                // DealDamage / DealDamageDynamic: creature-only spells require a creature target.
+                // "Any target" spells (Lightning Bolt) can target players, so they don't require
+                // a creature to be present. Creature-only spells (Firebending Lesson) do.
+                Effect::DealDamage { target: crate::core::TargetRef::None, .. }
+                | Effect::DealDamageDynamic { target: crate::core::TargetRef::None, .. }
+                    if card.definition.cache.spell_targets_creature
+                        && !card.definition.cache.spell_targets_any =>
+                {
+                    true
+                }
                 _ => false,
             }
         })
