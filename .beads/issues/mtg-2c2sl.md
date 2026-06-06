@@ -1,0 +1,45 @@
+---
+title: 'Card Compatibility: Analyze the Pollen'
+status: open
+priority: 3
+issue_type: task
+created_at: 2026-06-06T04:31:08.236597417+00:00
+updated_at: 2026-06-06T04:31:08.236597417+00:00
+---
+
+# Description
+
+Test all behavioral aspects of Analyze the Pollen in MTG Forge-rs.
+
+Card: cardsfolder/a/analyze_the_pollen.txt
+Set: TDM/Tarkir: Dragonstorm
+Deck: 04 Henry Temur Otters (mtg-684)
+
+Card text:
+  {G} Sorcery
+  As an additional cost to cast this spell, you may collect evidence 8.
+  Search your library for a basic land card. If evidence was collected, instead search your library for a creature or land card. Reveal that card, put it into your hand, then shuffle.
+
+Findings (2026-06-06_#3008(50175e06), agent slot04):
+
+1. [x] Parses as {G} Sorcery with OptionalCost S: line: WORKING
+2. [x] CollectEvidence{8} as optional additional cost: PARTIAL — the cost line parses (S:Mode$ OptionalCost | Cost$ CollectEvidence<8>), not tested in graveyard scenarios
+3. [BROKEN] Double-search bug — when evidence NOT collected, BOTH the basic land search AND the creature/land search execute:
+   Observed log: 'Analyze the Pollen (27) searches Zero1's library for a Land.Basic card and puts it into Hand' FOLLOWED IMMEDIATELY BY 'Analyze the Pollen (27) searches Zero1's library for a Land,Creature card and puts it into Hand' in same resolution.
+   Root cause: SubAbility$ DBChangeZone chains unconditionally even though DBChangeZone has ConditionDefined$ Collected check. The SubAbility condition is not being evaluated to gate the chained search.
+   Filed as: Bug below.
+4. [unverified] With evidence collected: correct creature/land search (only single search) — not tested.
+
+Reproducer:
+```sh
+./target/release/mtg tui --p1 zero --p2 zero --p1-draw 'Analyze the Pollen;Breeding Pool;Stomping Ground;Stomping Ground;Mountain' --p2-draw 'Island;Island;Island;Island;Island;Island;Island' --seed 42 --verbosity 3 decks/championship/2025/04_henry_temur_otters.dck decks/championship/2025/01_manfield_izzet_lessons.dck
+```
+
+Expected log evidence (BUG — double search when no evidence):
+```
+Analyze the Pollen (27) searches Zero1's library for a Land.Basic card and puts it into Hand
+Analyze the Pollen (27) searches Zero1's library for a Land,Creature card and puts it into Hand
+```
+(Second line should NOT appear when evidence was not collected.)
+
+CARD STATUS: BROKEN — double-search bug fires without evidence collected

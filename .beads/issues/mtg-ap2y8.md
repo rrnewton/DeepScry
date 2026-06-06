@@ -1,0 +1,43 @@
+---
+title: 'Card Compatibility: Badgermole Cub'
+status: open
+priority: 3
+issue_type: task
+created_at: 2026-06-06T04:31:44.156915225+00:00
+updated_at: 2026-06-06T04:31:44.156915225+00:00
+---
+
+# Description
+
+Test all behavioral aspects of Badgermole Cub in MTG Forge-rs.
+
+Card: cardsfolder/b/badgermole_cub.txt
+Set: Avatar: The Last Airbender crossover
+Deck: 04 Henry Temur Otters (mtg-684)
+
+Card text:
+  {1}{G} Creature — Badger Mole (2/2)
+  When this creature enters, earthbend 1. (Target land you control becomes a 0/0 creature with haste that's still a land. Put a +1/+1 counter on it. When it dies or is exiled, return it to the battlefield tapped.)
+  Whenever you tap a creature for mana, add an additional {G}.
+
+Findings (2026-06-06_#3008(50175e06), agent slot04):
+
+1. [x] Parses as {1}{G} 2/2 Creature: WORKING
+2. [x] ETB earthbend trigger: WORKING — observed: 'Breeding Pool is earthbent! (0/0 creature with haste, 1 +1/+1 counters, returns when dies/exiled)' followed by 'Delayed trigger 1 registered: return Breeding Pool to battlefield tapped when it leaves' (seed 42, heuristic game)
+3. [x] Earthbend target: WORKING — land becomes animated creature with haste and counter; delayed return-trigger registers
+4. [unverified] 'Whenever you tap a creature for mana, add {G}' static trigger: not observed firing in game logs; requires a creature mana source (e.g. after earthbend animates a land to creature). Will fire when tapping the earthbent land for mana.
+5. [N/A] Combat: attacks and blocks normally as 2/2
+
+Reproducer:
+```sh
+./target/release/mtg tui --p1 heuristic --p2 heuristic --seed 42 --verbosity 3 decks/championship/2025/04_henry_temur_otters.dck decks/championship/2025/01_manfield_izzet_lessons.dck
+```
+
+Expected log evidence:
+```
+Breeding Pool is earthbent! (0/0 creature with haste, 1 +1/+1 counters, returns when dies/exiled)
+-> Delayed trigger 1 registered: return Breeding Pool to battlefield tapped when it leaves
+Badgermole Cub (58) enters the battlefield as a 2/2 creature
+```
+
+CARD STATUS: PARTIAL — ETB earthbend WORKING; creature-mana-tap bonus not verified
