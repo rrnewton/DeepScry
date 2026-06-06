@@ -8881,6 +8881,30 @@ impl GameState {
         }
     }
 
+    /// Get the noncombat damage modifier for a target controller (e.g. Artist's Talent Level 3)
+    pub fn get_noncombat_damage_modifier(&self, target_controller: PlayerId) -> i32 {
+        let mut modifier = 0;
+        if let Some(source_id) = self.current_damage_source {
+            if let Ok(source_card) = self.cards.get(source_id) {
+                let source_controller = source_card.controller;
+                if target_controller != source_controller {
+                    // Check for Artist's Talent level 3
+                    for &card_id in &self.battlefield.cards {
+                        if let Ok(card) = self.cards.get(card_id) {
+                            if card.name.as_str() == "Artist's Talent"
+                                && card.controller == source_controller
+                                && card.get_counter(crate::core::CounterType::Level) >= 3
+                            {
+                                modifier += 2;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        modifier
+    }
+
     /// Deal damage to a player target
     ///
     /// # Errors
@@ -8899,24 +8923,7 @@ impl GameState {
 
             // Apply replacement effects (e.g. Artist's Talent Level 3)
             let mut final_amount = amount;
-            if let Some(source_id) = source {
-                if let Ok(source_card) = self.cards.get(source_id) {
-                    let source_controller = source_card.controller;
-                    if target_id != source_controller {
-                        // Check for Artist's Talent level 3
-                        for &card_id in &self.battlefield.cards {
-                            if let Ok(card) = self.cards.get(card_id) {
-                                if card.name.as_str() == "Artist's Talent"
-                                    && card.controller == source_controller
-                                    && card.get_counter(crate::core::CounterType::Level) >= 3
-                                {
-                                    final_amount += 2;
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+            final_amount += self.get_noncombat_damage_modifier(target_id);
 
             // Apply damage prevention shield (CR 615.1)
             let (actual_amount, prevented) = {
@@ -9009,25 +9016,8 @@ impl GameState {
 
             // Apply replacement effects (e.g. Artist's Talent Level 3)
             let mut final_amount = actual_amount;
-            if let Some(source_id) = self.current_damage_source {
-                if let Ok(source_card) = self.cards.get(source_id) {
-                    let source_controller = source_card.controller;
-                    if let Ok(target_card) = self.cards.get(target_id) {
-                        if target_card.controller != source_controller {
-                            // Check for Artist's Talent level 3
-                            for &card_id in &self.battlefield.cards {
-                                if let Ok(card) = self.cards.get(card_id) {
-                                    if card.name.as_str() == "Artist's Talent"
-                                        && card.controller == source_controller
-                                        && card.get_counter(crate::core::CounterType::Level) >= 3
-                                    {
-                                        final_amount += 2;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
+            if let Ok(target_card) = self.cards.get(target_id) {
+                final_amount += self.get_noncombat_damage_modifier(target_card.controller);
             }
 
             // Mark damage on the creature (MTG CR 120.3)
@@ -9054,25 +9044,8 @@ impl GameState {
         } else if is_planeswalker {
             // Apply replacement effects (e.g. Artist's Talent Level 3)
             let mut final_amount = amount;
-            if let Some(source_id) = self.current_damage_source {
-                if let Ok(source_card) = self.cards.get(source_id) {
-                    let source_controller = source_card.controller;
-                    if let Ok(target_card) = self.cards.get(target_id) {
-                        if target_card.controller != source_controller {
-                            // Check for Artist's Talent level 3
-                            for &card_id in &self.battlefield.cards {
-                                if let Ok(card) = self.cards.get(card_id) {
-                                    if card.name.as_str() == "Artist's Talent"
-                                        && card.controller == source_controller
-                                        && card.get_counter(crate::core::CounterType::Level) >= 3
-                                    {
-                                        final_amount += 2;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
+            if let Ok(target_card) = self.cards.get(target_id) {
+                final_amount += self.get_noncombat_damage_modifier(target_card.controller);
             }
 
             if final_amount <= 0 {
