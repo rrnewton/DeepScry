@@ -4,26 +4,47 @@ status: open
 priority: 3
 issue_type: task
 created_at: 2026-06-06T04:30:10.615685149+00:00
-updated_at: 2026-06-06T04:30:10.615685149+00:00
+updated_at: 2026-06-06T05:27:55.424651380+00:00
 ---
 
 # Description
 
 Room enchantments (double-faced enchantments with two "Door" halves) use Mode$ UnlockDoor for their triggered abilities. This trigger mode is not implemented in parse_triggers() and falls through silently.
 
-Affected card example: Roaring Furnace (ATLA)
-Script line: T:Mode$ UnlockDoor | ValidPlayer$ You | ValidCard$ Card.Self | ThisDoor$ True | Execute$ TrigDamage | TriggerDescription$ When you unlock this door, this Room deals damage equal to the number of cards in your hand to target creature an opponent controls.
+This is a LARGE FEATURE requiring a fundamentally new card type and game mechanic, not a small extension.
 
-Room mechanics also require:
-- AlternateMode:Split (MDFC with Room subtype)
-- Two halves with separate abilities
-- "Unlock" as a sorcery action costs the second half's mana
+## Root-cause analysis (2026-06-05_#3009(b148c42d))
 
-Findings (2026-06-05_#3008(50175e06)):
-- Roaring Furnace enters the battlefield correctly as an enchantment
-- But UnlockDoor trigger never fires
-- The "unlock door" action (paying mana as a sorcery) may also not be available
-- StaticAbilityMode has no "UnlockDoor" variant
-- TriggerEvent has no DoorUnlocked variant
+### What loads / does NOT crash
+- Roaring Furnace (cardsfolder/r/roaring_furnace_steaming_sauna.txt) enters the battlefield as a plain Enchantment without crashing.
+- The card parser stops at ALTERNATE (loader/card.rs:145) so only the first door (Roaring Furnace, ManaCost:1 R) is parsed.
+- The T:Mode$ UnlockDoor line is parsed by parse_triggers() but falls through all the mode== branches silently — no warning, no crash, no trigger registered.
+- tourney mode with Izzet championship decks (containing Roaring Furnace) runs 5 games to completion without panics.
 
-CARD STATUS: PARTIAL (enters battlefield, but unlock trigger missing)
+### What is BROKEN / unimplemented
+
+1. **T:Mode$ UnlockDoor trigger**: parse_triggers() (loader/card.rs:2156) has no branch for mode==UnlockDoor. The trigger is silently dropped. Fix requires:
+   - Add TriggerEvent::DoorUnlocked to core/effects.rs:2280
+   - Add parse branch in parse_triggers() (analogous to Phase/Attacks/etc.)
+   - Add firing site in the game loop (when door unlocks)
+
+2. **Second door never parsed**: The ALTERNATE section is skipped entirely (loader/card.rs:143-147). The second door (Steaming Sauna: no max hand size + end-step draw) has ZERO representation in the loaded CardDef. Parsing both doors requires new room-state tracking on permanents.
+
+3. **Room permanent state**: No field in the game state tracks which doors are locked/unlocked. A Room permanent needs: door_1_unlocked: bool, door_2_unlocked: bool. First door is born unlocked (fires UnlockDoor trigger on ETB); second door can be unlocked by paying its mana cost at sorcery speed.
+
+4. **Unlock door action**: No ActivatedAbility or sorcery action for paying the second door's mana cost to unlock it. This is a new castable-from-battlefield action type.
+
+5. **DamageDoneOnce trigger mode**: Used by Locker Room's second door (T:Mode$ DamageDoneOnce). Also completely unimplemented — same category as UnlockDoor.
+
+6. **AlternateMode:Split is silently ignored**: The loader reads this key but takes no action (there is no AlternateMode handling in the card loader).
+
+## Affected cards
+30+ Room cards in cardsfolder/ (grep -l 'Types:.*Room' cardsfolder/**/*.txt | wc -l = 30)
+
+## Scope verdict: LARGE FEATURE
+Room cards need ~4 new engine concepts: room state on permanents, DoorUnlocked trigger event, unlock-door sorcery action, second-door parsing. Estimated effort: 2-3 days minimum. Do NOT attempt in a single compatibility task.
+
+## Next steps
+- Mark all Room cards BROKEN in compatibility tracking
+- File this as a feature-request blocker for Room card support
+- Link from mtg-flaql (Roaring Furnace compatibility issue)

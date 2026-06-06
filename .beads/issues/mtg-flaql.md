@@ -4,7 +4,7 @@ status: open
 priority: 3
 issue_type: task
 created_at: 2026-06-06T04:31:30.035698773+00:00
-updated_at: 2026-06-06T04:31:30.035698773+00:00
+updated_at: 2026-06-06T05:28:09.063796922+00:00
 ---
 
 # Description
@@ -13,7 +13,7 @@ Test all behavioral aspects of Roaring Furnace (Room enchantment MDFC) in MTG Fo
 
 Card: cardsfolder/r/roaring_furnace_steaming_sauna.txt
 Set: ATLA / 2025 Standard
-Deck: 02 Shibata Izzet Lessons (sideboard)
+Deck: 02 Shibata Izzet Lessons (sideboard), 04 Henry Temur Otters
 
 Card text:
   Roaring Furnace — 1R Enchantment Room
@@ -23,17 +23,22 @@ Card text:
     At the beginning of your end step, draw a card.
   (Room MDFC: AlternateMode:Split)
 
-Findings (2026-06-05_#3008(50175e06)):
+## Findings (2026-06-05_#3009(b148c42d))
 
-1. [x] Roaring Furnace half enters as Enchantment
-2. [BROKEN] T:Mode$ UnlockDoor trigger not supported (mtg-06mae) — no trigger fires when door unlocked
-3. [unverified] Steaming Sauna half (costs 3UU, no maximum hand size + end step draw)
-4. [unverified] Unlock door action (paying the mana cost as a sorcery to add the other door's ability)
-5. [unverified] AlternateMode:Split parsing / MDFC Room mechanics
+1. [x] Card LOADS without crash (enters battlefield as plain Enchantment)
+2. [x] No panic in tourney mode with championship decks containing this card (5 games verified)
+3. [BROKEN] T:Mode$ UnlockDoor trigger not supported — no trigger fires when door unlocked (mtg-06mae)
+4. [BROKEN] Steaming Sauna (second door: no max hand size + end-step draw) — second door NEVER PARSED; ALTERNATE section silently skipped
+5. [BROKEN] Unlock door action (paying 3UU at sorcery speed to unlock Steaming Sauna) — not implemented
+6. [BROKEN] First door does NOT fire its UnlockDoor trigger on ETB (entering the battlefield unlocked)
 
-Reproducer:
+## Reproducer
 ```sh
-./target/release/mtg tui --p1 zero --p2 zero --p1-draw "Roaring Furnace;Island;Island;Mountain;Island;Island;Island" --p2-draw "Island;Island;Island;Island;Island;Island;Island" --seed 42 --verbosity 3 debug/izzet_sideboard_test.dck debug/izzet_sideboard_test.dck 2>&1 | grep -E "Roaring|Furnace|Room|door|unlock|Trigger"
+cd worktrees/slot03
+./target/release/mtg tourney --seed 42 --games 5 \
+  decks/championship/2025/02_shibata_izzet_lessons.dck \
+  decks/championship/2025/01_manfield_izzet_lessons.dck
+## Runs to completion without crash — but Room abilities are completely non-functional
 ```
 
-CARD STATUS: BROKEN — UnlockDoor trigger not supported (mtg-06mae); Room unlock mechanics unimplemented
+CARD STATUS: BROKEN — Room mechanic entirely unimplemented (see mtg-06mae for full scope analysis)
