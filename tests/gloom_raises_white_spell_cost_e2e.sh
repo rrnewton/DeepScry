@@ -60,7 +60,7 @@ fi
 # Required: the RaiseCost from Gloom must fire (and credit Gloom).
 if ! grep -qE "RaiseCost from Gloom.*increasing generic by 3" "$LOG"; then
     echo -e "${RED}✗ Gloom RaiseCost debug log not seen — engine fix regressed${NC}"
-    grep -E "RaiseCost|Gloom" "$LOG" | head -10
+    grep -E "RaiseCost|Gloom" "$LOG" | head -10 || true
     exit 1
 fi
 echo -e "${GREEN}✓ Gloom RaiseCost debug log present (+3 generic)${NC}"
@@ -69,13 +69,15 @@ echo -e "${GREEN}✓ Gloom RaiseCost debug log present (+3 generic)${NC}"
 # Pre-fix, P2 cast Savannah Lions on turn 4 with just 3 Plains (cost was {W}).
 # Post-fix, P2 must accumulate at least four Plains before the heuristic can
 # cast Savannah Lions ({3}{W}).
-LAST_CAST_LINE=$(grep -nE "casts Savannah Lions" "$LOG" | head -1 | cut -d: -f1 || true)
+LAST_CAST_LINE=$(grep -nE "casts Savannah Lions" "$LOG" || true)
+LAST_CAST_LINE=$(echo "$LAST_CAST_LINE" | head -n 1 | cut -d: -f1)
 if [[ -z "$LAST_CAST_LINE" ]]; then
     echo -e "${GREEN}✓ Savannah Lions was NOT cast within the snapshot window${NC}"
 else
     # Count the number of "Tap Plains for {W}" lines IMMEDIATELY after the
     # cast line — these are the lands tapped to pay for it.
-    POST_CAST=$(tail -n +"$LAST_CAST_LINE" "$LOG" | head -10)
+    POST_CAST=$(tail -n +"$LAST_CAST_LINE" "$LOG" || true)
+    POST_CAST=$(echo "$POST_CAST" | head -n 10)
     TAP_COUNT=$(echo "$POST_CAST" | grep -cE "Tap Plains for \{W\}" || true)
     if [[ "$TAP_COUNT" -lt 4 ]]; then
         echo -e "${RED}✗ Savannah Lions cast with only $TAP_COUNT Plains tapped (expected >=4 with Gloom)${NC}"

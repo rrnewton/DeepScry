@@ -300,12 +300,17 @@ import { IMAGE_SOURCE_IDS, forwardStickyParams, forwardStickyParamsOnAnchor } fr
             name: 'Commander',
             filter: (deckName) => deckName.includes('chandra_tokens'),
         },
+        championship_2025: {
+            name: '2025 World Championship',
+            filter: (deckName) => deckName.includes('manfield') || deckName.includes('shibata') ||
+                                  deckName.includes('davis_izzet') || deckName.includes('henry_temur'),
+        },
         custom: {
             name: 'Custom Decks (Local)',
             filter: () => false, // handled separately from localStorage
         },
     };
-    const COLLECTION_ORDER = ['old_school', 'booster_draft', 'commander', 'custom'];
+    const COLLECTION_ORDER = ['old_school', 'booster_draft', 'commander', 'championship_2025', 'custom'];
     const CUSTOM_DECKS_KEY = 'mtg-forge-custom-decks';
 
     let allDeckNames = [];

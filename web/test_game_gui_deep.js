@@ -17,6 +17,7 @@ const { listBuiltinDecks, firstBuiltinDeck, pickBuiltinDeck, localGameUrl } = re
 const COLLECTION_DECK_RE = {
     old_school:    /^\d\d_|classic|erhnam|ponza|stasis|zoo|monolith/,
     booster_draft: /avatar|spiderman/,
+    championship_2025: /manfield|shibata|davis|henry/,
 };
 
 function log(msg) { console.log(`[${new Date().toISOString()}] ${msg}`); }
@@ -51,6 +52,7 @@ async function runTest() {
         const deckTests = [
             { name: 'old_school', collection: 'old_school' },
             { name: 'booster_draft', collection: 'booster_draft' },
+            { name: 'championship_2025', collection: 'championship_2025' },
         ];
 
         for (const dt of deckTests) {

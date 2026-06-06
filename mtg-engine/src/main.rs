@@ -591,6 +591,7 @@ enum Commands {
             "decks/old_school2/**/*.dck".to_string(),
             "decks/booster_draft/**/*.dck".to_string(),
             "decks/commander/**/*.dck".to_string(),
+            "decks/championship/2025/**/*.dck".to_string(),
         ])]
         deck_globs: Vec<String>,
     },
