@@ -44,7 +44,7 @@
 #   --skip-wasm            Don't rebuild WASM artefacts locally
 #   --rebuild              Force rebuild of all artefacts
 
-set -euo pipefail
+set -eu
 
 # ---------------------------------------------------------------------------
 # Resolve script location & repo root
@@ -759,15 +759,23 @@ run_post_deploy_probe() {
     # Only `index.html` keeps a stable URL — every other reachable asset is
     # discovered by chasing references from there, exactly like a browser.
     # We:
-    #   - fetch / (index.html), discover the hashed tui_game.<h>.html name,
+    #   - fetch / (index.html), discover the hashed solo_launcher.<h>.html name,
+    #   - fetch that, and from its content discover the hashed tui_game.<h>.html,
     #   - fetch that, and from its content discover the hashed pkg pair JS +
     #     wasm, plus the hashed data/sets/index.<h>.json,
     #   - probe each hashed URL.
-    local landing_html game_html hashed_tui hashed_js hashed_wasm hashed_data_idx
+    local landing_html game_html hashed_solo hashed_tui hashed_js hashed_wasm hashed_data_idx
     landing_html="$(curl "${curl_opts[@]}" "$base/")" || landing_html=""
-    hashed_tui="$(printf '%s' "$landing_html" | grep -oE "tui_game\.[0-9a-f]+\.html" | head -1)"
-    if [[ -z "$hashed_tui" ]]; then
-        probe_failed=1; fail_reasons+=("index.html: no hashed tui_game.<h>.html reference (mtg hash-web-assets did not run?)")
+    hashed_solo="$(printf '%s' "$landing_html" | grep -oE "solo_launcher\.[0-9a-f]+\.html" | head -1)"
+    if [[ -z "$hashed_solo" ]]; then
+        probe_failed=1; fail_reasons+=("index.html: no hashed solo_launcher.<h>.html reference (mtg hash-web-assets did not run?)")
+    else
+        local solo_html
+        solo_html="$(curl "${curl_opts[@]}" "$base/$hashed_solo")" || solo_html=""
+        hashed_tui="$(printf '%s' "$solo_html" | grep -oE "tui_game\.[0-9a-f]+\.html" | head -1)"
+        if [[ -z "$hashed_tui" ]]; then
+            probe_failed=1; fail_reasons+=("$hashed_solo: no hashed tui_game.<h>.html reference")
+        fi
     fi
 
     # 2b. CAS pure-DAG NAV hardening (mtg-704, supersedes the mtg-682 runtime
@@ -780,7 +788,7 @@ run_post_deploy_probe() {
     #     asset-manifest.<token>.json, which maps the game pages to hashed 200s;
     #   - the ?goto= back-edge dispatcher resolves (launcher) to a 200.
     local hashed_launcher nav_code
-    hashed_launcher="$(printf '%s' "$landing_html" | grep -oE "launcher\.[0-9a-f]+\.html" | head -1)"
+    hashed_launcher="$(printf '%s' "$landing_html" | grep -oE "\blauncher\.[0-9a-f]+\.html" | head -1)"
     if [[ -z "$hashed_launcher" ]]; then
         probe_failed=1; fail_reasons+=("index.html: no HASHED launcher.<h>.html reference (auto-discovery / CAS break)")
     else
