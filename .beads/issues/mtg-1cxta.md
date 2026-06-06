@@ -4,7 +4,7 @@ status: open
 priority: 3
 issue_type: task
 created_at: 2026-06-06T04:36:19.240193711+00:00
-updated_at: 2026-06-06T04:36:19.240193711+00:00
+updated_at: 2026-06-06T08:41:19.497135946+00:00
 ---
 
 # Description
@@ -33,3 +33,8 @@ Findings (2026-06-05_#3008(50175e06)):
 Note: Too expensive to cast in basic test (5UU minus graveyard discount), never casts in zero-vs-zero game without graveyard setup.
 
 CARD STATUS: PARTIAL — parses correctly; cost reduction depends on Count$ValidGraveyard (broken, mtg-cedrg); ETB abilities unverified
+
+## Update (2026-06-06):
+mtg-cedrg (Count$ValidGraveyard) is now FIXED. Eddymurk Crab's cost reduction (depends on graveyard count) should now work correctly. Needs re-testing.
+
+CARD STATUS: PARTIAL — cost reduction mechanism should now work; ETB abilities still unverified

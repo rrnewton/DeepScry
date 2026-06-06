@@ -1,10 +1,10 @@
 ---
 title: 'Card Compatibility: Agna Qel''a'
-status: open
+status: closed
 priority: 3
 issue_type: task
 created_at: 2026-06-06T04:35:30.237739399+00:00
-updated_at: 2026-06-06T04:35:30.237739399+00:00
+updated_at: 2026-06-06T08:41:30.988328943+00:00
 ---
 
 # Description

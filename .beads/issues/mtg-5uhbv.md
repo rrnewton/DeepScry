@@ -1,10 +1,10 @@
 ---
 title: 'Card Compatibility: Stock Up'
-status: open
+status: closed
 priority: 3
 issue_type: task
 created_at: 2026-06-06T04:35:18.986239891+00:00
-updated_at: 2026-06-06T04:35:18.986239891+00:00
+updated_at: 2026-06-06T08:41:30.990450774+00:00
 ---
 
 # Description

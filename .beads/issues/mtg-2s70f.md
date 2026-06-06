@@ -1,10 +1,10 @@
 ---
 title: 'Card Compatibility: Riverpyre Verge'
-status: open
+status: closed
 priority: 3
 issue_type: task
 created_at: 2026-06-06T04:34:59.877337459+00:00
-updated_at: 2026-06-06T04:34:59.877337459+00:00
+updated_at: 2026-06-06T08:41:30.986099639+00:00
 ---
 
 # Description

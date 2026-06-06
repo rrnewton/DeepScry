@@ -1,10 +1,10 @@
 ---
 title: 'Card Compatibility: Roiling Dragonstorm'
-status: open
+status: closed
 priority: 3
 issue_type: task
 created_at: 2026-06-06T04:35:07.641981009+00:00
-updated_at: 2026-06-06T04:35:07.641981009+00:00
+updated_at: 2026-06-06T08:41:30.983924386+00:00
 ---
 
 # Description

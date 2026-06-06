@@ -1,10 +1,10 @@
 ---
 title: 'Card Compatibility: Song of Totentanz'
-status: open
+status: closed
 priority: 3
 issue_type: task
 created_at: 2026-06-06T04:31:30.787900370+00:00
-updated_at: 2026-06-06T04:31:30.787900370+00:00
+updated_at: 2026-06-06T08:41:25.929530431+00:00
 ---
 
 # Description

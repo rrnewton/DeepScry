@@ -1,10 +1,10 @@
 ---
 title: 'Card Compatibility: Pyroclasm'
-status: open
+status: closed
 priority: 3
 issue_type: task
 created_at: 2026-06-06T04:33:14.760636568+00:00
-updated_at: 2026-06-06T04:33:14.760636568+00:00
+updated_at: 2026-06-06T08:41:30.992515247+00:00
 ---
 
 # Description
