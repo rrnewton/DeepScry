@@ -242,7 +242,9 @@ impl<'a> GameLoop<'a> {
                             Effect::UntapPermanent { target: prev_target }
                         } else {
                             // No previous target available, use as-is (will show Unknown in log)
-                            effect.clone()
+                            Effect::UntapPermanent {
+                                target: CardId::placeholder(),
+                            }
                         }
                     }
                     Effect::ExilePermanent { target } if target.is_placeholder() && target_index < targets.len() => {
@@ -1419,76 +1421,15 @@ impl<'a> GameLoop<'a> {
 
                                                 // Tap lands to add mana to pool
                                                 for &source_id in &self.sources_to_tap_buffer {
-                                                    if let Err(e) = self.game.tap_for_mana_for_cost(
+                                                    if let Err(e) = self.game.tap_for_mana_and_update_hint(
                                                         current_priority,
                                                         source_id,
-                                                        &remaining_hint,
+                                                        &mut remaining_hint,
                                                     ) {
                                                         if self.verbosity >= VerbosityLevel::Normal && !self.replaying {
                                                             eprintln!("    Failed to tap land for mana: {e}");
                                                         }
                                                         // Continue to next source - partial payment might still work
-                                                    }
-
-                                                    // Update remaining hint based on what color this source produced
-                                                    if let Some(card) = self.game.cards.try_get(source_id) {
-                                                        use crate::core::{ManaColor, ManaProductionKind};
-                                                        match &card.definition.cache.mana_production.kind {
-                                                            ManaProductionKind::Fixed(color) => match color {
-                                                                ManaColor::White => {
-                                                                    remaining_hint.white =
-                                                                        remaining_hint.white.saturating_sub(1)
-                                                                }
-                                                                ManaColor::Blue => {
-                                                                    remaining_hint.blue =
-                                                                        remaining_hint.blue.saturating_sub(1)
-                                                                }
-                                                                ManaColor::Black => {
-                                                                    remaining_hint.black =
-                                                                        remaining_hint.black.saturating_sub(1)
-                                                                }
-                                                                ManaColor::Red => {
-                                                                    remaining_hint.red =
-                                                                        remaining_hint.red.saturating_sub(1)
-                                                                }
-                                                                ManaColor::Green => {
-                                                                    remaining_hint.green =
-                                                                        remaining_hint.green.saturating_sub(1)
-                                                                }
-                                                            },
-                                                            ManaProductionKind::Colorless => {
-                                                                if remaining_hint.colorless > 0 {
-                                                                    remaining_hint.colorless =
-                                                                        remaining_hint.colorless.saturating_sub(1);
-                                                                } else {
-                                                                    remaining_hint.generic =
-                                                                        remaining_hint.generic.saturating_sub(1);
-                                                                }
-                                                            }
-                                                            ManaProductionKind::Choice(_)
-                                                            | ManaProductionKind::AnyColor => {
-                                                                // Deduct in same priority order as tap_for_mana_for_cost
-                                                                if remaining_hint.white > 0 {
-                                                                    remaining_hint.white =
-                                                                        remaining_hint.white.saturating_sub(1);
-                                                                } else if remaining_hint.blue > 0 {
-                                                                    remaining_hint.blue =
-                                                                        remaining_hint.blue.saturating_sub(1);
-                                                                } else if remaining_hint.black > 0 {
-                                                                    remaining_hint.black =
-                                                                        remaining_hint.black.saturating_sub(1);
-                                                                } else if remaining_hint.red > 0 {
-                                                                    remaining_hint.red =
-                                                                        remaining_hint.red.saturating_sub(1);
-                                                                } else if remaining_hint.green > 0 {
-                                                                    remaining_hint.green =
-                                                                        remaining_hint.green.saturating_sub(1);
-                                                                } else {
-                                                                    remaining_hint.generic =
-                                                                        remaining_hint.generic.saturating_sub(1);
-                                                                }
-                                                            }
-                                                        }
                                                     }
                                                 }
                                             }
@@ -2735,16 +2676,16 @@ impl<'a> GameLoop<'a> {
                                 let mut remaining_hint = cost;
                                 let mut tap_ok = true;
                                 for &source_id in &self.sources_to_tap_buffer {
-                                    if let Err(e) =
-                                        self.game
-                                            .tap_for_mana_for_cost(current_priority, source_id, &remaining_hint)
-                                    {
+                                    if let Err(e) = self.game.tap_for_mana_and_update_hint(
+                                        current_priority,
+                                        source_id,
+                                        &mut remaining_hint,
+                                    ) {
                                         tap_ok = false;
                                         if self.verbosity >= VerbosityLevel::Normal && !self.replaying {
                                             self.game.logger.normal(&format!("Failed to tap for cycling: {e}"));
                                         }
                                     }
-                                    remaining_hint.generic = remaining_hint.generic.saturating_sub(1);
                                 }
 
                                 // Now deduct the actual mana cost from the pool. This is the
@@ -2976,15 +2917,15 @@ impl<'a> GameLoop<'a> {
 
                                 let mut remaining_hint = mana_cost;
                                 for &source_id in &self.sources_to_tap_buffer {
-                                    if let Err(e) =
-                                        self.game
-                                            .tap_for_mana_for_cost(current_priority, source_id, &remaining_hint)
-                                    {
+                                    if let Err(e) = self.game.tap_for_mana_and_update_hint(
+                                        current_priority,
+                                        source_id,
+                                        &mut remaining_hint,
+                                    ) {
                                         if self.verbosity >= VerbosityLevel::Normal && !self.replaying {
                                             self.game.logger.normal(&format!("Failed to tap: {e}"));
                                         }
                                     }
-                                    remaining_hint.generic = remaining_hint.generic.saturating_sub(1);
                                 }
 
                                 // If add_finality_counter, mark the card so it gets a finality counter on ETB

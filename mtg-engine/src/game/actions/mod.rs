@@ -2083,7 +2083,7 @@ impl GameState {
         let mut remaining_hint = remaining_cost;
 
         for &source_id in &sources_to_tap {
-            if let Err(e) = self.tap_for_mana_for_cost(player_id, source_id, &remaining_hint) {
+            if let Err(e) = self.tap_for_mana_and_update_hint(player_id, source_id, &mut remaining_hint) {
                 // Tapping failed - unwind the spell cast
                 // Move card back to source zone
                 self.move_card(card_id, Zone::Stack, source_zone, owner)?;
@@ -2101,82 +2101,6 @@ impl GameState {
                 return Err(MtgError::InvalidAction(format!("Failed to tap mana source: {e}")));
             }
             tapped_sources.push(source_id);
-
-            // Update remaining hint based on what color this source produced.
-            // Check mana production kind to know what color was produced. Multi-mana
-            // sources (Sol Ring → 2, Black Lotus → 3) deduct their full per-tap
-            // amount so subsequent taps in the same payment see the correct hint.
-            if let Some(card) = self.cards.try_get(source_id) {
-                let production = &card.definition.cache.mana_production;
-                let mut remaining_amount = production.amount.max(1);
-                match &production.kind {
-                    crate::core::ManaProductionKind::Fixed(color) => {
-                        // Deduct the fixed color from remaining hint
-                        match color {
-                            crate::core::ManaColor::White => {
-                                let take = remaining_hint.white.min(remaining_amount);
-                                remaining_hint.white -= take;
-                                remaining_amount -= take;
-                            }
-                            crate::core::ManaColor::Blue => {
-                                let take = remaining_hint.blue.min(remaining_amount);
-                                remaining_hint.blue -= take;
-                                remaining_amount -= take;
-                            }
-                            crate::core::ManaColor::Black => {
-                                let take = remaining_hint.black.min(remaining_amount);
-                                remaining_hint.black -= take;
-                                remaining_amount -= take;
-                            }
-                            crate::core::ManaColor::Red => {
-                                let take = remaining_hint.red.min(remaining_amount);
-                                remaining_hint.red -= take;
-                                remaining_amount -= take;
-                            }
-                            crate::core::ManaColor::Green => {
-                                let take = remaining_hint.green.min(remaining_amount);
-                                remaining_hint.green -= take;
-                                remaining_amount -= take;
-                            }
-                        }
-                        // Any leftover mana from this single tap covers generic.
-                        let take = remaining_hint.generic.min(remaining_amount);
-                        remaining_hint.generic -= take;
-                    }
-                    crate::core::ManaProductionKind::Colorless => {
-                        // Colorless covers colorless first, then generic.
-                        let take_c = remaining_hint.colorless.min(remaining_amount);
-                        remaining_hint.colorless -= take_c;
-                        remaining_amount -= take_c;
-                        let take_g = remaining_hint.generic.min(remaining_amount);
-                        remaining_hint.generic -= take_g;
-                    }
-                    crate::core::ManaProductionKind::Choice(_) | crate::core::ManaProductionKind::AnyColor => {
-                        // For choice/any-color lands, the chosen colour matches the
-                        // first remaining colored requirement; remaining mana from
-                        // this tap can satisfy generic. This loop drains all `n`
-                        // pips produced by this single activation.
-                        while remaining_amount > 0 {
-                            if remaining_hint.white > 0 {
-                                remaining_hint.white -= 1;
-                            } else if remaining_hint.blue > 0 {
-                                remaining_hint.blue -= 1;
-                            } else if remaining_hint.black > 0 {
-                                remaining_hint.black -= 1;
-                            } else if remaining_hint.red > 0 {
-                                remaining_hint.red -= 1;
-                            } else if remaining_hint.green > 0 {
-                                remaining_hint.green -= 1;
-                            } else if remaining_hint.generic > 0 {
-                                remaining_hint.generic -= 1;
-                            } else {
-                                break; // No more cost to cover
-                            }
-                            remaining_amount -= 1;
-                        }
-                    }
-                }
-            }
         }
 
         // Step 7: Pay costs (from both regular and combat mana pools).
@@ -2548,7 +2472,9 @@ impl GameState {
                     Some(prev_target) => prev_target,
                     None => {
                         log::warn!(target: "resolve_effect", "TapPermanent has reuse_previous but no previous target");
-                        return effect.clone();
+                        return Effect::TapPermanent {
+                            target: CardId::placeholder(),
+                        };
                     }
                 };
                 let survives = self.battlefield.contains(prev)
@@ -2673,7 +2599,9 @@ impl GameState {
                     Effect::UntapPermanent { target: prev_target }
                 } else {
                     log::warn!(target: "resolve_effect", "UntapPermanent has reuse_previous but no previous target");
-                    effect.clone()
+                    Effect::UntapPermanent {
+                        target: CardId::placeholder(),
+                    }
                 }
             }
             Effect::UntapPermanent { target } if target.is_placeholder() => {
@@ -3739,8 +3667,8 @@ impl GameState {
                 ));
             }
             Effect::TapPermanent { target } => {
-                // Skip if target is still placeholder (0) - no valid targets found
-                if target.is_placeholder() {
+                // Skip if target is still placeholder (0) or unresolved sentinel
+                if target.is_placeholder() || target.is_reuse_previous() {
                     // Spell fizzles - no valid targets
                     return Ok(());
                 }
@@ -3750,6 +3678,10 @@ impl GameState {
                 self.check_triggers(TriggerEvent::Taps, *target)?;
             }
             Effect::UntapPermanent { target } => {
+                // Skip if target is placeholder (0) or unresolved sentinel
+                if target.is_placeholder() || target.is_reuse_previous() {
+                    return Ok(());
+                }
                 // Use helper that handles untap + undo log + mana version
                 self.untap_permanent(*target)?;
             }
@@ -9146,6 +9078,59 @@ impl GameState {
     ///
     /// For mana abilities with sacrifice costs (e.g., Black Lotus), this will also
     /// sacrifice the permanent after activating the mana ability.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the card cannot be tapped for mana or is already tapped.
+    pub fn tap_for_mana_and_update_hint(
+        &mut self,
+        player_id: PlayerId,
+        card_id: CardId,
+        remaining_hint: &mut crate::core::ManaCost,
+    ) -> Result<()> {
+        let pool_before = self.get_player(player_id)?.mana_pool;
+        self.tap_for_mana_for_cost(player_id, card_id, remaining_hint)?;
+        let pool_after = self.get_player(player_id)?.mana_pool;
+
+        let produced_white = pool_after.white.saturating_sub(pool_before.white);
+        let produced_blue = pool_after.blue.saturating_sub(pool_before.blue);
+        let produced_black = pool_after.black.saturating_sub(pool_before.black);
+        let produced_red = pool_after.red.saturating_sub(pool_before.red);
+        let produced_green = pool_after.green.saturating_sub(pool_before.green);
+        let produced_colorless = pool_after.colorless.saturating_sub(pool_before.colorless);
+
+        let take_white = remaining_hint.white.min(produced_white);
+        remaining_hint.white -= take_white;
+        let unused_white = produced_white - take_white;
+
+        let take_blue = remaining_hint.blue.min(produced_blue);
+        remaining_hint.blue -= take_blue;
+        let unused_blue = produced_blue - take_blue;
+
+        let take_black = remaining_hint.black.min(produced_black);
+        remaining_hint.black -= take_black;
+        let unused_black = produced_black - take_black;
+
+        let take_red = remaining_hint.red.min(produced_red);
+        remaining_hint.red -= take_red;
+        let unused_red = produced_red - take_red;
+
+        let take_green = remaining_hint.green.min(produced_green);
+        remaining_hint.green -= take_green;
+        let unused_green = produced_green - take_green;
+
+        let take_colorless = remaining_hint.colorless.min(produced_colorless);
+        remaining_hint.colorless -= take_colorless;
+        let unused_colorless = produced_colorless - take_colorless;
+
+        let total_unused = unused_white + unused_blue + unused_black + unused_red + unused_green + unused_colorless;
+        let take_generic = remaining_hint.generic.min(total_unused);
+        remaining_hint.generic -= take_generic;
+
+        Ok(())
+    }
+
+    /// Taps a permanent for mana to pay a cost.
     ///
     /// # Errors
     ///

@@ -146,6 +146,10 @@ def extract_error_lines(log_path: str) -> List[str]:
         with open(log_path, 'r') as f:
             for line in f:
                 if _ERROR_LINE_RE.search(line):
+                    # Filter out non-bug priority action validation rollbacks (insufficient mana to pay cost)
+                    # which are normal rules-enforcement events when a player makes an invalid choice.
+                    if 'Failed to pay mana cost' in line or 'Insufficient mana' in line or 'Insufficient total mana' in line:
+                        continue
                     clean = re.sub(r'\x1b\[[0-9;]*m', '', line)
                     clean = re.sub(r'[^\x20-\x7e]', '', clean)  # ASCII only
                     clean = re.sub(r'^\[.*?\] ', '', clean)
