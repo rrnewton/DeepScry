@@ -252,6 +252,14 @@ impl<'a> GameLoop<'a> {
                     }
                 }
             }
+            Effect::DealDamageDynamic { .. } => {
+                // DealDamageDynamic is converted to a concrete DealDamage by
+                // resolve_effect_target before execution; the resulting DealDamage
+                // is what gets logged. This arm is only reached via the pre-resolution
+                // logging loop in priority.rs where the effect hasn't been resolved yet
+                // — in that case, no gamelog line is emitted (the concrete DealDamage
+                // will log when it executes).
+            }
             Effect::DealDamageToTriggeredPlayer { .. } => {
                 // Phase-trigger damage (Karma, Black Vise) is resolved into a
                 // concrete Effect::DealDamage by check_triggers_for_controller and

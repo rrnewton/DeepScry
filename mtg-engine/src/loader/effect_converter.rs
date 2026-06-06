@@ -385,18 +385,21 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
         }
 
         ApiType::Counter => {
-            // ValidTgts$ may carry a color qualifier (e.g. Red Elemental Blast's
-            // `Card.Blue` => only blue spells). Reuse TargetRestriction::parse to
-            // extract the color, then keep just that restriction on CounterSpell.
-            let required_color = params
+            // ValidTgts$ carries the full spell restriction:
+            //   - color qualifier (`Card.Blue` → Red Elemental Blast)
+            //   - type restriction (`Creature` → Essence Scatter, `Artifact,Enchantment` → Annul)
+            //   - nonCreature modifier (`Card.nonCreature` → Negate)
+            //   - cmcGE modifier (`Card.cmcGE4` → Disdainful Stroke)
+            let spell_restriction = params
                 .get("ValidTgts")
-                .and_then(|v| TargetRestriction::parse(v).required_color);
+                .map(TargetRestriction::parse)
+                .unwrap_or_else(TargetRestriction::any);
             // RememberCounteredCMC$ True (Mana Drain): record the countered
             // spell's mana value so a chained delayed trigger can use it.
             let remember_mana_value = params.get("RememberCounteredCMC") == Some("True");
             Some(Effect::CounterSpell {
                 target: CardId::new(0), // Placeholder
-                required_color,
+                spell_restriction,
                 remember_mana_value,
             })
         }
@@ -2026,6 +2029,26 @@ pub fn params_to_effect_with_svars(params: &AbilityParams, svars: &HashMap<Strin
         }
         // Fall back to name-based detection if SVar lookup fails
         return params_to_effect(params);
+    }
+
+    // DealDamage: when NumDmg$ X refers to a Count$ValidGraveyard (or any other
+    // non-xPaid Count$) SVar, emit DealDamageDynamic instead of DealDamageXPaid.
+    // `params_to_effect` can't do this because it has no SVar access.
+    if params.api_type == ApiType::DealDamage && params.get("NumDmg") == Some("X") {
+        if let Some(svar_body) = svars.get("X") {
+            // Only intercept Count$... bodies that are NOT "Count$xPaid"
+            // (xPaid → DealDamageXPaid, handled by params_to_effect).
+            if svar_body.starts_with("Count$") && svar_body != "Count$xPaid" {
+                let count = crate::core::CountExpression::parse("X", svars);
+                if !matches!(count, crate::core::CountExpression::Fixed(0)) {
+                    let target = match params.get("Defined") {
+                        Some("You") => TargetRef::Player(crate::core::PlayerId::new(0)),
+                        _ => TargetRef::None,
+                    };
+                    return Some(Effect::DealDamageDynamic { target, count });
+                }
+            }
+        }
     }
 
     // For all other types, delegate to the base function

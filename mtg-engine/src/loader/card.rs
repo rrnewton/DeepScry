@@ -1733,7 +1733,7 @@ impl CardDefinition {
     fn parse_effects(&self) -> Vec<crate::core::Effect> {
         use super::ability_parser::{AbilityParams, ApiType};
         use super::effect_converter::{
-            params_to_charm_effect_with_svars, params_to_delayed_trigger_with_svars, params_to_effect,
+            params_to_charm_effect_with_svars, params_to_delayed_trigger_with_svars, params_to_effect_with_svars,
             params_to_immediate_trigger_with_svars,
         };
 
@@ -1760,9 +1760,11 @@ impl CardDefinition {
             };
 
             // Convert parameters to Effect (if supported)
-            // For Charm abilities, use SVar-aware conversion to resolve mode effects
-            // For DelayedTrigger abilities, use SVar-aware conversion to resolve Execute$ effect
-            // For ImmediateTrigger abilities, use SVar-aware conversion to resolve Execute$ effect
+            // Use SVar-aware conversion for all spell abilities so that effects
+            // like DealDamageDynamic (Count$ValidGraveyard) can resolve their SVar.
+            // Charm/DelayedTrigger/ImmediateTrigger use their dedicated SVar-aware
+            // converters; everything else uses params_to_effect_with_svars which
+            // falls back to params_to_effect for types it doesn't specialise.
             let effect = if params.api_type == ApiType::Charm {
                 params_to_charm_effect_with_svars(&params, &self.svars)
             } else if params.api_type == ApiType::DelayedTrigger {
@@ -1770,7 +1772,7 @@ impl CardDefinition {
             } else if params.api_type == ApiType::ImmediateTrigger {
                 params_to_immediate_trigger_with_svars(&params, &self.svars)
             } else {
-                params_to_effect(&params)
+                params_to_effect_with_svars(&params, &self.svars)
             };
 
             if let Some(effect) = effect {
@@ -1883,7 +1885,7 @@ impl CardDefinition {
     ) {
         use super::ability_parser::{AbilityParams, ApiType};
         use super::effect_converter::{
-            params_to_charm_effect_with_svars, params_to_delayed_trigger_with_svars, params_to_effect,
+            params_to_charm_effect_with_svars, params_to_delayed_trigger_with_svars, params_to_effect_with_svars,
             params_to_immediate_trigger_with_svars,
         };
 
@@ -1930,14 +1932,15 @@ impl CardDefinition {
         // SVar-aware converters (mirroring `parse_effects`) so their `Execute$`
         // / mode SVars resolve — e.g. Mana Drain's `SubAbility$ DBDelTrig`
         // (`DB$ DelayedTrigger | Mode$ Phase | ... | Execute$ AddMana`).
-        // Most ApiTypes use the plain converter; only the three SVar-resolving
-        // shapes need their specialized builders. The wildcard is intentional.
+        // Most ApiTypes use the SVar-aware converter so that DealDamageDynamic
+        // (and any future SVar-resolved effects) also work from SubAbility chains.
+        // Charm/DelayedTrigger/ImmediateTrigger use their own dedicated builders.
         #[allow(clippy::wildcard_enum_match_arm)]
         let sub_effect = match sub_params.api_type {
             ApiType::Charm => params_to_charm_effect_with_svars(&sub_params, &self.svars),
             ApiType::DelayedTrigger => params_to_delayed_trigger_with_svars(&sub_params, &self.svars),
             ApiType::ImmediateTrigger => params_to_immediate_trigger_with_svars(&sub_params, &self.svars),
-            _ => params_to_effect(&sub_params),
+            _ => params_to_effect_with_svars(&sub_params, &self.svars),
         };
         if let Some(effect) = self.gain_life_dynamic_from_params(&sub_params) {
             effects.push(effect);

@@ -387,7 +387,7 @@ mod tests {
         counterspell.mana_cost = ManaCost::from_string("UU");
         counterspell.effects.push(Effect::CounterSpell {
             target: bolt_id,
-            required_color: None,
+            spell_restriction: crate::core::TargetRestriction::any(),
             remember_mana_value: false,
         });
         game.cards.insert(counter_id, counterspell);
@@ -448,7 +448,7 @@ mod tests {
         // Use placeholder target - should automatically target opponent's spell
         counterspell.effects.push(Effect::CounterSpell {
             target: crate::core::CardId::new(0),
-            required_color: None,
+            spell_restriction: crate::core::TargetRestriction::any(),
             remember_mana_value: false,
         });
         game.cards.insert(counter_id, counterspell);
@@ -6063,8 +6063,8 @@ mod tests {
     ///   SVar:DBDestroy:DB$ Destroy | ValidTgts$ Permanent.Blue
     ///
     /// Parser-shape regression for the Charm per-mode color restriction
-    /// (mtg-af24s): the Counter mode must carry `required_color = Blue` on its
-    /// CounterSpell, and the Destroy mode must carry `required_color = Blue` on
+    /// (mtg-af24s): the Counter mode must carry `spell_restriction.required_color = Blue`
+    /// on its CounterSpell, and the Destroy mode must carry `required_color = Blue` on
     /// its DestroyPermanent restriction. Previously the color was dropped, so
     /// REBL could destroy/counter objects of any color (illegal targeting,
     /// CR 115.4). BEBL is the mirror with Red.
@@ -6100,8 +6100,13 @@ mod tests {
             let mut saw_counter_color = false;
             let mut saw_destroy_color = false;
             for mode in modal {
-                if let Effect::CounterSpell { required_color, .. } = mode.effect.as_ref() {
-                    assert_eq!(*required_color, Some(color), "{}: counter mode color", name);
+                if let Effect::CounterSpell { spell_restriction, .. } = mode.effect.as_ref() {
+                    assert_eq!(
+                        spell_restriction.required_color,
+                        Some(color),
+                        "{}: counter mode color",
+                        name
+                    );
                     saw_counter_color = true;
                 }
                 if let Effect::DestroyPermanent { restriction, .. } = mode.effect.as_ref() {
@@ -7199,5 +7204,280 @@ mod tests {
         } else {
             eprintln!("Skipping origin_set stamping check: cardsfolder not canonicalizable");
         }
+    }
+
+    /// Parser-shape regression for restricted counterspells (mtg-h0jqf):
+    /// Annul, Essence Scatter, Negate, and Disdainful Stroke each carry a
+    /// `ValidTgts$` restriction that must limit which spells on the stack are
+    /// legal targets.
+    ///
+    /// Before the fix, `TargetRestriction::parse` discarded nonCreature and
+    /// cmcGE modifiers silently, so all four cards fell back to countering any
+    /// spell (identical to plain Counterspell). After the fix each card's
+    /// `CounterSpell::spell_restriction` must carry the appropriate flag.
+    #[test]
+    fn test_card_compat_restricted_counterspells_parser_shape() {
+        use crate::core::{CardType, Effect, TargetType};
+        use std::path::PathBuf;
+
+        let cardsfolder = PathBuf::from("../cardsfolder");
+        if !cardsfolder.exists() {
+            eprintln!("Skipping: cardsfolder not present");
+            return;
+        }
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let db = crate::loader::CardDatabase::new(cardsfolder);
+
+        // --- Annul: counter target artifact OR enchantment spell ---
+        let annul_def = rt
+            .block_on(async { db.get_card("Annul").await })
+            .expect("load Annul")
+            .expect("Annul exists");
+        let annul = annul_def.instantiate(crate::core::CardId::new(1), PlayerId::new(0));
+        let annul_effect = annul
+            .effects
+            .iter()
+            .find(|e| matches!(e, Effect::CounterSpell { .. }))
+            .expect("Annul must have a CounterSpell effect");
+        if let Effect::CounterSpell { spell_restriction, .. } = annul_effect {
+            assert!(
+                spell_restriction.types.contains(&TargetType::Artifact),
+                "Annul must restrict to Artifact targets"
+            );
+            assert!(
+                spell_restriction.types.contains(&TargetType::Enchantment),
+                "Annul must restrict to Enchantment targets"
+            );
+            assert!(
+                !spell_restriction.types.contains(&TargetType::Creature),
+                "Annul must NOT allow Creature targets"
+            );
+            assert!(
+                !spell_restriction.requires_noncreature,
+                "Annul uses type list, not requires_noncreature"
+            );
+            assert_eq!(spell_restriction.min_cmc, None, "Annul has no CMC restriction");
+        } else {
+            panic!("Expected CounterSpell effect");
+        }
+
+        // --- Essence Scatter: counter target creature spell ---
+        let es_def = rt
+            .block_on(async { db.get_card("Essence Scatter").await })
+            .expect("load Essence Scatter")
+            .expect("Essence Scatter exists");
+        let es = es_def.instantiate(crate::core::CardId::new(2), PlayerId::new(0));
+        let es_effect = es
+            .effects
+            .iter()
+            .find(|e| matches!(e, Effect::CounterSpell { .. }))
+            .expect("Essence Scatter must have a CounterSpell effect");
+        if let Effect::CounterSpell { spell_restriction, .. } = es_effect {
+            assert!(
+                spell_restriction.types.contains(&TargetType::Creature),
+                "Essence Scatter must restrict to Creature targets"
+            );
+            assert!(
+                !spell_restriction.types.contains(&TargetType::Artifact),
+                "Essence Scatter must NOT allow Artifact targets"
+            );
+            assert!(
+                !spell_restriction.requires_noncreature,
+                "Essence Scatter uses type list"
+            );
+            assert_eq!(
+                spell_restriction.min_cmc, None,
+                "Essence Scatter has no CMC restriction"
+            );
+        } else {
+            panic!("Expected CounterSpell effect");
+        }
+
+        // --- Negate: counter target noncreature spell ---
+        let negate_def = rt
+            .block_on(async { db.get_card("Negate").await })
+            .expect("load Negate")
+            .expect("Negate exists");
+        let negate = negate_def.instantiate(crate::core::CardId::new(3), PlayerId::new(0));
+        let negate_effect = negate
+            .effects
+            .iter()
+            .find(|e| matches!(e, Effect::CounterSpell { .. }))
+            .expect("Negate must have a CounterSpell effect");
+        if let Effect::CounterSpell { spell_restriction, .. } = negate_effect {
+            assert!(
+                spell_restriction.requires_noncreature,
+                "Negate must have requires_noncreature=true"
+            );
+            assert!(
+                spell_restriction.types.is_empty(),
+                "Negate types list should be empty (uses requires_noncreature)"
+            );
+            assert_eq!(spell_restriction.min_cmc, None, "Negate has no CMC restriction");
+        } else {
+            panic!("Expected CounterSpell effect");
+        }
+
+        // --- Disdainful Stroke: counter target spell with mana value 4 or greater ---
+        let ds_def = rt
+            .block_on(async { db.get_card("Disdainful Stroke").await })
+            .expect("load Disdainful Stroke")
+            .expect("Disdainful Stroke exists");
+        let ds = ds_def.instantiate(crate::core::CardId::new(4), PlayerId::new(0));
+        let ds_effect = ds
+            .effects
+            .iter()
+            .find(|e| matches!(e, Effect::CounterSpell { .. }))
+            .expect("Disdainful Stroke must have a CounterSpell effect");
+        if let Effect::CounterSpell { spell_restriction, .. } = ds_effect {
+            assert_eq!(
+                spell_restriction.min_cmc,
+                Some(4),
+                "Disdainful Stroke must restrict to spells with CMC >= 4"
+            );
+            assert!(
+                !spell_restriction.requires_noncreature,
+                "Disdainful Stroke has no noncreature restriction"
+            );
+            assert!(
+                spell_restriction.types.is_empty(),
+                "Disdainful Stroke has no type restriction"
+            );
+        } else {
+            panic!("Expected CounterSpell effect");
+        }
+
+        // --- Targeting filter: verify valid_spell_targets enforces restrictions ---
+        // We construct a minimal GameState, put spells on the stack, and check
+        // that get_valid_targets filters correctly.
+
+        let p1 = PlayerId::new(0);
+        let p2 = PlayerId::new(1);
+
+        // Helper: make a fake spell card of a given type and CMC on the stack
+        let make_spell = |id: u32, types: &[CardType], mana_cmc: u8, game: &mut GameState| {
+            let cid = crate::core::CardId::new(id);
+            let mut card = crate::core::Card::new(cid, format!("TestSpell{}", id), p2);
+            for t in types {
+                card.add_type(*t);
+            }
+            // Set a simple mana cost matching the given CMC using the string parser
+            // e.g. CMC 5 → "5", CMC 1 → "1", CMC 0 → ""
+            let cost_str = if mana_cmc > 0 {
+                mana_cmc.to_string()
+            } else {
+                String::new()
+            };
+            card.mana_cost = ManaCost::from_string(&cost_str);
+            game.cards.insert(cid, card);
+            game.stack.add(cid);
+            cid
+        };
+
+        // Build a game with multiple spells on the stack
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+
+        let creature_spell = make_spell(10, &[CardType::Creature], 1, &mut game);
+        let artifact_spell = make_spell(11, &[CardType::Artifact], 2, &mut game);
+        let enchantment_spell = make_spell(12, &[CardType::Enchantment], 2, &mut game);
+        let sorcery_spell = make_spell(13, &[CardType::Sorcery], 2, &mut game);
+        let big_spell = make_spell(14, &[CardType::Sorcery], 5, &mut game); // CMC 5
+
+        // Add Annul on stack (targeting placeholder)
+        let annul_id = crate::core::CardId::new(20);
+        let annul_card = annul_def.instantiate(annul_id, p1);
+        game.cards.insert(annul_id, annul_card);
+        game.stack.add(annul_id);
+
+        // Add Negate on stack (targeting placeholder)
+        let negate_id = crate::core::CardId::new(21);
+        let negate_card = negate_def.instantiate(negate_id, p1);
+        game.cards.insert(negate_id, negate_card);
+        game.stack.add(negate_id);
+
+        // Add Disdainful Stroke on stack (targeting placeholder)
+        let ds_id = crate::core::CardId::new(22);
+        let ds_card = ds_def.instantiate(ds_id, p1);
+        game.cards.insert(ds_id, ds_card);
+        game.stack.add(ds_id);
+
+        // Add Essence Scatter on stack (targeting placeholder)
+        let es_id = crate::core::CardId::new(23);
+        let es_card = es_def.instantiate(es_id, p1);
+        game.cards.insert(es_id, es_card);
+        game.stack.add(es_id);
+
+        // Annul: should only see artifact + enchantment spells
+        let annul_targets = game
+            .get_valid_targets_for_spell(annul_id)
+            .expect("get_valid_targets_for_spell(Annul)");
+        assert!(
+            !annul_targets.contains(&creature_spell),
+            "Annul must NOT target creature spells"
+        );
+        assert!(
+            annul_targets.contains(&artifact_spell),
+            "Annul must target artifact spells"
+        );
+        assert!(
+            annul_targets.contains(&enchantment_spell),
+            "Annul must target enchantment spells"
+        );
+        assert!(
+            !annul_targets.contains(&sorcery_spell),
+            "Annul must NOT target sorcery spells"
+        );
+
+        // Negate: should see artifact + sorcery + enchantment but NOT creature
+        let negate_targets = game
+            .get_valid_targets_for_spell(negate_id)
+            .expect("get_valid_targets_for_spell(Negate)");
+        assert!(
+            !negate_targets.contains(&creature_spell),
+            "Negate must NOT target creature spells"
+        );
+        assert!(
+            negate_targets.contains(&sorcery_spell),
+            "Negate must target sorcery spells"
+        );
+        assert!(
+            negate_targets.contains(&artifact_spell),
+            "Negate must target artifact spells (non-creature)"
+        );
+
+        // Disdainful Stroke: only big spells (CMC >= 4)
+        let ds_targets = game
+            .get_valid_targets_for_spell(ds_id)
+            .expect("get_valid_targets_for_spell(Disdainful Stroke)");
+        assert!(
+            !ds_targets.contains(&creature_spell),
+            "Disdainful Stroke must NOT target CMC-1 spell"
+        );
+        assert!(
+            !ds_targets.contains(&sorcery_spell),
+            "Disdainful Stroke must NOT target CMC-2 sorcery"
+        );
+        assert!(
+            ds_targets.contains(&big_spell),
+            "Disdainful Stroke must target CMC-5 spell"
+        );
+
+        // Essence Scatter: only creature spells
+        let es_targets = game
+            .get_valid_targets_for_spell(es_id)
+            .expect("get_valid_targets_for_spell(Essence Scatter)");
+        assert!(
+            es_targets.contains(&creature_spell),
+            "Essence Scatter must target creature spells"
+        );
+        assert!(
+            !es_targets.contains(&sorcery_spell),
+            "Essence Scatter must NOT target sorcery spells"
+        );
+        assert!(
+            !es_targets.contains(&artifact_spell),
+            "Essence Scatter must NOT target artifact spells (non-creature)"
+        );
     }
 }

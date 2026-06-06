@@ -28,6 +28,7 @@ fn expand_all_players_effect(effect: &Effect, player_ids: &[PlayerId]) -> smallv
         Effect::DealDamage { .. }
         | Effect::DealDamageXPaid { .. }
         | Effect::DealDamageDivided { .. }
+        | Effect::DealDamageDynamic { .. }
         | Effect::DealDamageToTriggeredPlayer { .. }
         | Effect::EachDamage { .. }
         | Effect::Loot { .. }
@@ -148,6 +149,7 @@ fn expand_all_players_effect(effect: &Effect, player_ids: &[PlayerId]) -> smallv
             Effect::DealDamage { .. }
             | Effect::DealDamageXPaid { .. }
             | Effect::DealDamageDivided { .. }
+            | Effect::DealDamageDynamic { .. }
             | Effect::DealDamageToTriggeredPlayer { .. }
             | Effect::EachDamage { .. }
             | Effect::Loot { .. }
@@ -2296,6 +2298,42 @@ impl GameState {
                 }
             }
 
+            // DealDamageDynamic: resolve the chosen target AND evaluate the
+            // CountExpression (e.g. Combustion Technique's
+            // `Count$ValidGraveyard Lesson.YouOwn/Plus.2`) against the caster's
+            // controller right now, then produce a concrete DealDamage so
+            // execute_effect can run without needing the controller context.
+            Effect::DealDamageDynamic {
+                target: TargetRef::None,
+                count,
+            } => {
+                let amount = self.evaluate_count_expression(count, card_owner).unwrap_or(0).max(0);
+                if *target_index < chosen_targets.len() {
+                    let raw = chosen_targets[*target_index];
+                    *target_index += 1;
+                    *last_resolved_target = Some(raw);
+                    Effect::DealDamage {
+                        target: crate::core::target_ref_from_chosen_target(raw),
+                        amount,
+                    }
+                } else if let Some(opp) = opponent_id {
+                    Effect::DealDamage {
+                        target: TargetRef::Player(opp),
+                        amount,
+                    }
+                } else {
+                    effect.clone()
+                }
+            }
+            // DealDamageDynamic with a resolved target: just evaluate the count.
+            Effect::DealDamageDynamic { target, count } => {
+                let amount = self.evaluate_count_expression(count, card_owner).unwrap_or(0).max(0);
+                Effect::DealDamage {
+                    target: target.clone(),
+                    amount,
+                }
+            }
+
             // DivideEvenly$ RoundedDown (Fireball, CR 601.2d): resolve_x_paid_effect
             // already produced a target-less DealDamageDivided whose `amount_each`
             // holds the UNDIVIDED total X. Consume ALL remaining chosen targets and
@@ -2660,7 +2698,7 @@ impl GameState {
             }
             Effect::CounterSpell {
                 target,
-                required_color,
+                spell_restriction,
                 remember_mana_value,
             } if target.is_placeholder() => {
                 if *target_index < chosen_targets.len() {
@@ -2668,7 +2706,7 @@ impl GameState {
                     *target_index += 1;
                     Effect::CounterSpell {
                         target: resolved_target,
-                        required_color: *required_color,
+                        spell_restriction: spell_restriction.clone(),
                         remember_mana_value: *remember_mana_value,
                     }
                 } else {
@@ -3250,6 +3288,13 @@ impl GameState {
                         }
                     }
                 }
+            }
+
+            // DealDamageDynamic is always resolved into a concrete DealDamage by
+            // resolve_effect_target (which has the card_owner context). If it
+            // somehow reaches execute_effect unresolved, fizzle.
+            Effect::DealDamageDynamic { .. } => {
+                log::debug!("DealDamageDynamic reached execute_effect unresolved - fizzling");
             }
 
             // DealDamageToTriggeredPlayer is resolved into a concrete
@@ -9930,6 +9975,16 @@ impl GameState {
                 } else {
                     Ok(0)
                 }
+            }
+            CountExpression::ValidGraveyard { filter, modifier } => {
+                // Count cards in the controller's graveyard matching `filter`,
+                // then apply the arithmetic modifier (e.g. `/Plus.2` for
+                // Combustion Technique: "Lesson cards in graveyard + 2").
+                // Graveyard contents are public (CR 400.2), so this is
+                // information-independent for network determinism.
+                let raw = self.count_cards_matching_filter(controller, filter, crate::zones::Zone::Graveyard);
+                let raw_i32 = i32::try_from(raw).unwrap_or(i32::MAX);
+                Ok(modifier.apply(raw_i32))
             }
             CountExpression::Compare {
                 source,

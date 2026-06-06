@@ -1,0 +1,22 @@
+---
+title: 'ValidGraveyard count expressions: Times.2 modifier and multi-type filters not yet supported'
+status: open
+priority: 3
+issue_type: task
+created_at: 2026-06-06T06:10:06.733653951+00:00
+updated_at: 2026-06-06T06:10:06.733653951+00:00
+---
+
+# Description
+
+The CountExpression::ValidGraveyard variant added in the counterspell/CombustionTechnique fix supports simple filters (Lesson.YouOwn/Plus.2) and comma-separated type lists (Instant.YouOwn,Sorcery.YouOwn), but several other forms remain unimplemented:
+
+- **Times.N modifier** (e.g. Ancestral Tribute, Archangel's Light: Count$ValidGraveyard Card.YouOwn/Times.2 — '2 times the number of cards in your graveyard'). CountModifier only supports Plus/Minus/None currently.
+- **Multi-zone variant** (Beacon Bolt: Count$ValidGraveyard,Exile Instant.YouOwn,Sorcery.YouOwn). Needs a ValidGraveyardExile or multi-zone count.
+- **Complex selectors** (aven_shrine: Count$ValidGraveyard Card.sharesNameWith TriggeredCard; angrath: Card.RememberedPlayerCtrl). These reference trigger context.
+
+Cards affected include: Ancestral Tribute, Archangel's Light, Beacon Bolt, Aven Shrine, Angrath the Flame-Chained, Blitz of the Thunder Raptor, Cavalier of Flame, Command the Dreadhorde, Cyclops Electromancer, Dwarven Shrine, Feast of Flesh, and ~45 others.
+
+The fix in the CombustionTechnique commit handles the simple Plus.N case correctly. The above cases still silently resolve to 0.
+
+See: compatible beads issue for Combustion Technique fix commit that introduced ValidGraveyard support.

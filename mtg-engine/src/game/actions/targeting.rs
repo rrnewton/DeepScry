@@ -138,6 +138,10 @@ impl GameState {
                 | Effect::DealDamageXPaid {
                     target: TargetRef::None,
                     ..
+                }
+                | Effect::DealDamageDynamic {
+                    target: TargetRef::None,
+                    ..
                 } => {
                     // Damage targets per the spell's ValidTgts (CR 115.4):
                     //   "any target"   (Lightning Bolt) -> creatures + players
@@ -313,22 +317,51 @@ impl GameState {
                     }
                 }
                 Effect::CounterSpell {
-                    target, required_color, ..
+                    target,
+                    spell_restriction,
+                    ..
                 } if target.is_placeholder() => {
                     // Counter can target spells on the stack (except self).
-                    // A color-restricted counter (Red Elemental Blast's "blue
-                    // spell") only sees spells of the required color.
+                    // The spell_restriction encodes all ValidTgts$ constraints:
+                    // color (Red Elemental Blast), type (Essence Scatter, Annul),
+                    // nonCreature (Negate), and min_cmc (Disdainful Stroke).
                     for &card_id in &self.stack.cards {
                         if card_id == spell_card_id {
                             continue;
                         }
-                        if let Some(color) = required_color {
-                            // Same color-membership rule as TargetRestriction's
-                            // color qualifier (Card::is_color), shared via the
-                            // Card helper so counter-mode and destroy-mode color
-                            // checks stay one concept.
-                            let color_ok = self.cards.get(card_id).map(|c| c.is_color(*color)).unwrap_or(false);
-                            if !color_ok {
+                        let Ok(target_card) = self.cards.get(card_id) else {
+                            continue;
+                        };
+                        // Color restriction (e.g. Red Elemental Blast)
+                        if let Some(color) = spell_restriction.required_color {
+                            if !target_card.is_color(color) {
+                                continue;
+                            }
+                        }
+                        // Type restriction: must match one of the listed types
+                        // (e.g. Creature for Essence Scatter, Artifact or Enchantment for Annul)
+                        if !spell_restriction.types.is_empty() {
+                            let type_ok = spell_restriction.types.iter().any(|t| match t {
+                                crate::core::TargetType::Creature => target_card.is_creature(),
+                                crate::core::TargetType::Artifact => target_card.is_artifact(),
+                                crate::core::TargetType::Enchantment => target_card.is_enchantment(),
+                                crate::core::TargetType::Land => target_card.is_land(),
+                                crate::core::TargetType::Planeswalker => {
+                                    target_card.types.contains(&crate::core::CardType::Planeswalker)
+                                }
+                                crate::core::TargetType::Any => true,
+                            });
+                            if !type_ok {
+                                continue;
+                            }
+                        }
+                        // nonCreature restriction (Negate)
+                        if spell_restriction.requires_noncreature && target_card.is_creature() {
+                            continue;
+                        }
+                        // Minimum CMC restriction (Disdainful Stroke: cmcGE4)
+                        if let Some(min) = spell_restriction.min_cmc {
+                            if target_card.mana_cost.cmc() < min {
                                 continue;
                             }
                         }
@@ -560,6 +593,7 @@ impl GameState {
                             Effect::DealDamage { .. }
                             | Effect::DealDamageXPaid { .. }
                             | Effect::DealDamageDivided { .. }
+                            | Effect::DealDamageDynamic { .. }
                             | Effect::DealDamageToTriggeredPlayer { .. }
                             | Effect::EachDamage { .. }
                             | Effect::DrawCards { .. }
@@ -700,7 +734,8 @@ impl GameState {
                 // The handlers above only match when target.is_placeholder()
                 Effect::DealDamage { .. }
                 | Effect::DealDamageXPaid { .. }
-                | Effect::DealDamageDivided { .. } => {
+                | Effect::DealDamageDivided { .. }
+                | Effect::DealDamageDynamic { .. } => {
                     // Either TargetRef::Player (already specified) or TargetRef::Permanent (already specified)
                     // TargetRef::None case handled above
                 }
@@ -1301,8 +1336,11 @@ impl GameState {
                     // PreventAllCombatDamageThisTurn: reuses UntapPermanent's last_resolved_target
                 }
                 // Effects with pre-specified targets (guard failed: target.as_u32() != 0)
-                Effect::DealDamage { .. } | Effect::DealDamageXPaid { .. } | Effect::DealDamageDivided { .. } => {
-                    // TargetRef::Player/Permanent - target already specified
+                Effect::DealDamage { .. }
+                | Effect::DealDamageXPaid { .. }
+                | Effect::DealDamageDivided { .. }
+                | Effect::DealDamageDynamic { .. } => {
+                    // TargetRef::Player/Permanent - target already specified (or resolved below)
                 }
                 Effect::DestroyPermanent { .. }
                 | Effect::PumpCreature { .. }
@@ -1622,7 +1660,10 @@ impl GameState {
             // ===== EXHAUSTIVE EFFECT HANDLING =====
             // Effects with pre-specified targets (guard failed: target.as_u32() != 0)
             // These already have targets, so they "have valid targets"
-            Effect::DealDamage { .. } | Effect::DealDamageXPaid { .. } | Effect::DealDamageDivided { .. } => true, // TargetRef::Player/Permanent already specified
+            Effect::DealDamage { .. }
+            | Effect::DealDamageXPaid { .. }
+            | Effect::DealDamageDivided { .. }
+            | Effect::DealDamageDynamic { .. } => true, // TargetRef::Player/Permanent already specified
             Effect::DestroyPermanent { .. }
             | Effect::PumpCreature { .. }
             | Effect::DebuffCreature { .. }

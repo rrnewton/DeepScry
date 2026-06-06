@@ -275,6 +275,23 @@ pub enum CountExpression {
     /// Count spells cast this turn (Count$YouCastThisTurn)
     SpellsCastThisTurn,
 
+    /// Count cards in a player's GRAVEYARD matching a filter, with an optional
+    /// arithmetic post-modifier.
+    ///
+    /// Corresponds to Forge's `Count$ValidGraveyard <filter>[/Modifier]`.
+    /// Example — Combustion Technique:
+    /// `SVar:X:Count$ValidGraveyard Lesson.YouOwn/Plus.2` = "Lesson cards in
+    /// your graveyard plus 2". The filter resolves against the controller of the
+    /// spell being cast (the `controller` passed to `evaluate_count_expression`).
+    /// Graveyard contents are public information (CR 400.2), so this is
+    /// information-independent and safe for network determinism.
+    ValidGraveyard {
+        /// The filter string (e.g., `"Lesson.YouOwn"`).
+        filter: String,
+        /// Arithmetic post-modifier applied to the raw count (`/Plus.N`).
+        modifier: CountModifier,
+    },
+
     /// Compare a source count against a condition and return true/false value
     /// Pattern: Count$Compare SourceSVar Condition.TrueValue.FalseValue
     /// Example: Count$Compare Y GE1.2.1 → if Y >= 1 then 2 else 1
@@ -432,6 +449,15 @@ impl CountExpression {
                         None => (hand_rest.to_string(), CountModifier::None),
                     };
                     return CountExpression::CardsInHand { selector, modifier };
+                } else if let Some(graveyard_rest) = rest.strip_prefix("ValidGraveyard ") {
+                    // Count$ValidGraveyard <filter>[/Modifier]
+                    // (Combustion Technique: "Count$ValidGraveyard Lesson.YouOwn/Plus.2").
+                    // Split the optional "/Modifier" arithmetic suffix off the filter.
+                    let (filter, modifier) = match graveyard_rest.split_once('/') {
+                        Some((f, suffix)) => (f.to_string(), CountModifier::parse(suffix)),
+                        None => (graveyard_rest.to_string(), CountModifier::None),
+                    };
+                    return CountExpression::ValidGraveyard { filter, modifier };
                 } else if rest.starts_with("Valid ") {
                     // Count$Valid filter
                     let filter = rest.strip_prefix("Valid ").unwrap_or(rest).to_string();
@@ -478,15 +504,20 @@ impl CountExpression {
     }
 }
 
-/// Restrictions on what types of permanents can be targeted
+/// Restrictions on what types of permanents (or spells on the stack) can be targeted
 ///
 /// For spells like Disenchant ("destroy target artifact or enchantment"),
 /// this would contain [Artifact, Enchantment].
 /// For Terror ("destroy target creature"), this would contain [Creature].
-/// An empty vec means any permanent can be targeted.
+/// An empty vec means any permanent/spell is valid.
+///
+/// Also used for CounterSpell spell restrictions:
+/// - `requires_noncreature` encodes `ValidTgts$ Card.nonCreature` (Negate)
+/// - `min_cmc` encodes `ValidTgts$ Card.cmcGE4` (Disdainful Stroke)
+/// - `types` with Creature/Artifact/Enchantment encodes type-specific counters (Essence Scatter, Annul)
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TargetRestriction {
-    /// Valid target types (if empty, any permanent is valid)
+    /// Valid target types (if empty, any permanent/spell is valid)
     pub types: SmallVec<[TargetType; 2]>,
     /// If true, target must have no counters on it (e.g., Heartless Act mode 1)
     #[serde(default)]
@@ -544,6 +575,15 @@ pub struct TargetRestriction {
     /// [`TargetRestriction::matches_with_source_power`] when this is set.
     #[serde(default)]
     pub power_le_source: bool,
+    /// If true, target must NOT be a creature spell (Negate: `ValidTgts$ Card.nonCreature`).
+    /// Checked at the CounterSpell targeting site against the spell on the stack.
+    #[serde(default)]
+    pub requires_noncreature: bool,
+    /// Minimum mana value (CMC) requirement for a spell on the stack
+    /// (Disdainful Stroke: `ValidTgts$ Card.cmcGE4`).
+    /// `None` means no minimum CMC restriction.
+    #[serde(default)]
+    pub min_cmc: Option<u8>,
 }
 
 impl TargetRestriction {
@@ -563,6 +603,8 @@ impl TargetRestriction {
             requires_other: false,
             required_subtype: None,
             power_le_source: false,
+            requires_noncreature: false,
+            min_cmc: None,
         }
     }
 
@@ -582,6 +624,8 @@ impl TargetRestriction {
             requires_other: false,
             required_subtype: None,
             power_le_source: false,
+            requires_noncreature: false,
+            min_cmc: None,
         }
     }
 
@@ -810,12 +854,16 @@ impl TargetRestriction {
     /// - "Creature.!HasCounters" -> [Creature] with requires_no_counters=true
     /// - "Creature.powerGE4" -> [Creature] with power_ge=4
     /// - "Creature.powerLE2" -> [Creature] with power_le=2
+    /// - "Card.nonCreature" -> requires_noncreature=true (Negate: counter any noncreature spell)
+    /// - "Card.cmcGE4" -> min_cmc=4 (Disdainful Stroke: counter spells with CMC >= 4)
     pub fn parse(valid_tgts: &str) -> Self {
         let mut types = SmallVec::new();
         let mut requires_no_counters = false;
         let mut requires_nontoken = false;
         let mut requires_remembered = false;
         let mut requires_nonartifact = false;
+        let mut requires_noncreature = false;
+        let mut min_cmc = None;
         let mut controller = ControllerRestriction::Any;
         let mut power_ge = None;
         let mut power_le = None;
@@ -843,7 +891,14 @@ impl TargetRestriction {
                         "OppCtrl" => controller = ControllerRestriction::OppCtrl,
                         "ActivePlayerCtrl" => controller = ControllerRestriction::ActivePlayerCtrl,
                         "nonArtifact" => requires_nonartifact = true,
+                        "nonCreature" => requires_noncreature = true,
                         "Other" => requires_other = true,
+                        m if m.starts_with("cmcGE") => {
+                            // Parse cmcGE4 -> min_cmc = 4 (Disdainful Stroke)
+                            if let Ok(n) = m.trim_start_matches("cmcGE").parse::<u8>() {
+                                min_cmc = Some(n);
+                            }
+                        }
                         // Set-origin qualifier `set<CODE>` (e.g. `setARN`):
                         // matches a card whose earliest printing is that set.
                         m if m.starts_with("set") && m.len() > 3 => {
@@ -906,6 +961,8 @@ impl TargetRestriction {
             requires_other,
             required_subtype,
             power_le_source,
+            requires_noncreature,
+            min_cmc,
         }
     }
 
@@ -986,6 +1043,18 @@ pub enum Effect {
     /// (remainder lost); when `None`, exactly one target is consumed and dealt
     /// the full `x_paid`.
     DealDamageXPaid { target: TargetRef, divide: DamageDivision },
+
+    /// Deal damage equal to a `CountExpression` evaluated at resolution time.
+    ///
+    /// Used when `NumDmg$ X` refers to a `Count$...` SVar that is NOT a plain
+    /// X-paid payment — for example Combustion Technique:
+    /// `SVar:X:Count$ValidGraveyard Lesson.YouOwn/Plus.2`
+    /// "deals damage equal to 2 plus the number of Lesson cards in your graveyard."
+    ///
+    /// `target` is resolved from `ValidTgts$` at cast time (like `DealDamage`).
+    /// `count` is evaluated against the casting player at resolution (like
+    /// `DealDamageToTriggeredPlayer`), combining both concerns cleanly.
+    DealDamageDynamic { target: TargetRef, count: CountExpression },
 
     /// Resolved form of a `DivideEvenly$` X-damage spell (Fireball). Produced at
     /// resolution from `DealDamageXPaid { divide: EvenlyRoundedDown }` once the
@@ -1321,13 +1390,20 @@ pub enum Effect {
     /// Counter a spell on the stack
     /// Example: "Counter target spell"
     ///
-    /// `required_color` restricts which spells are legal targets, from a color
-    /// qualifier in `ValidTgts$` (e.g. Red Elemental Blast's `Card.Blue` =
-    /// "counter target blue spell"). `None` = any spell (plain Counterspell).
+    /// `spell_restriction` restricts which spells are legal targets, parsed from
+    /// `ValidTgts$`. The restriction's fields encode:
+    /// - `required_color`: color-hosers (Red/Blue Elemental Blast, `Card.Blue`)
+    /// - `types`: type-specific counters (Essence Scatter `Creature`, Annul `Artifact,Enchantment`)
+    /// - `requires_noncreature`: Negate (`Card.nonCreature`)
+    /// - `min_cmc`: Disdainful Stroke (`Card.cmcGE4`)
+    ///
+    /// A default (all-none) restriction means any spell is a legal target (plain Counterspell).
     CounterSpell {
         target: CardId,
-        #[serde(default)]
-        required_color: Option<crate::core::Color>,
+        /// Restriction on which spells on the stack are legal targets.
+        /// Default (all fields unset) = counter any spell.
+        #[serde(default = "TargetRestriction::any")]
+        spell_restriction: TargetRestriction,
         /// `RememberCounteredCMC$ True` — record the countered spell's mana
         /// value into `GameState::remembered_amount` so a chained delayed
         /// trigger (Mana Drain) can add that much mana later.
@@ -2153,6 +2229,8 @@ impl Effect {
             | Effect::Proliferate
             // Phase-trigger "deal damage to the active/triggered player" — the
             // target player is resolved at trigger time (no cast-time target).
+            // DealDamageDynamic IS a targeted effect (target collected at cast
+            // time), so it falls through to the default `true` return below.
             | Effect::DealDamageToTriggeredPlayer { .. }
             | Effect::SelfExileFromStack { .. }
             // Self-zone-move and conditional-self wrappers operate on the source
@@ -2192,6 +2270,7 @@ impl Effect {
             Effect::DealDamage { .. }
             | Effect::DealDamageXPaid { .. }
             | Effect::DealDamageDivided { .. }
+            | Effect::DealDamageDynamic { .. }
             | Effect::EachDamage { .. }
             | Effect::DestroyPermanent { .. }
             | Effect::GainControl { .. }
@@ -4131,6 +4210,7 @@ mod tests {
             | CountExpression::CardsDrawnThisTurn
             | CountExpression::XPaid
             | CountExpression::SpellsCastThisTurn
+            | CountExpression::ValidGraveyard { .. }
             | CountExpression::Compare { .. } => panic!("Expected CardsInHand, got {:?}", expr),
         }
 
@@ -4157,6 +4237,37 @@ mod tests {
         assert_eq!(CountModifier::Minus(4).apply(3), -1); // unclamped; caller clamps
         assert_eq!(CountModifier::None.apply(5), 5);
         assert_eq!(CountModifier::Plus(2).apply(5), 7);
+
+        // Combustion Technique: Count$ValidGraveyard Lesson.YouOwn/Plus.2
+        // should parse to ValidGraveyard { filter: "Lesson.YouOwn", modifier: Plus(2) }.
+        svars.insert(
+            "CT".to_string(),
+            "Count$ValidGraveyard Lesson.YouOwn/Plus.2".to_string(),
+        );
+        match CountExpression::parse("CT", &svars) {
+            CountExpression::ValidGraveyard { filter, modifier } => {
+                assert_eq!(filter, "Lesson.YouOwn");
+                assert_eq!(modifier, CountModifier::Plus(2));
+            }
+            CountExpression::Fixed(_)
+            | CountExpression::ValidPermanents { .. }
+            | CountExpression::CardsDrawnThisTurn
+            | CountExpression::CardsInHand { .. }
+            | CountExpression::XPaid
+            | CountExpression::SpellsCastThisTurn
+            | CountExpression::Compare { .. } => {
+                panic!("Expected ValidGraveyard, got {:?}", &svars["CT"])
+            }
+        }
+        // No-modifier variant.
+        svars.insert("CTB".to_string(), "Count$ValidGraveyard Spell.YouOwn".to_string());
+        assert!(matches!(
+            CountExpression::parse("CTB", &svars),
+            CountExpression::ValidGraveyard {
+                modifier: CountModifier::None,
+                ..
+            }
+        ));
     }
 
     #[test]
@@ -4186,6 +4297,7 @@ mod tests {
                     | CountExpression::CardsInHand { .. }
                     | CountExpression::XPaid
                     | CountExpression::SpellsCastThisTurn
+                    | CountExpression::ValidGraveyard { .. }
                     | CountExpression::Compare { .. } => {
                         panic!("Expected ValidPermanents, got {:?}", source)
                     }
@@ -4201,7 +4313,8 @@ mod tests {
             | CountExpression::CardsDrawnThisTurn
             | CountExpression::CardsInHand { .. }
             | CountExpression::XPaid
-            | CountExpression::SpellsCastThisTurn => panic!("Expected Compare, got {:?}", expr),
+            | CountExpression::SpellsCastThisTurn
+            | CountExpression::ValidGraveyard { .. } => panic!("Expected Compare, got {:?}", expr),
         }
     }
 

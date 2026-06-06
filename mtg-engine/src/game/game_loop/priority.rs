@@ -147,12 +147,12 @@ impl<'a> GameLoop<'a> {
                     },
                     Effect::CounterSpell {
                         target,
-                        required_color,
+                        spell_restriction,
                         remember_mana_value,
                     } if target.is_placeholder() && target_index < targets.len() => {
                         let replaced = Effect::CounterSpell {
                             target: targets[target_index],
-                            required_color: *required_color,
+                            spell_restriction: spell_restriction.clone(),
                             remember_mana_value: *remember_mana_value,
                         };
                         target_index += 1;
@@ -3995,12 +3995,12 @@ impl<'a> GameLoop<'a> {
                     }
                     Effect::CounterSpell {
                         target,
-                        required_color,
+                        spell_restriction,
                         remember_mana_value,
                     } if target.is_placeholder() && target_index < targets.len() => {
                         let replaced = Effect::CounterSpell {
                             target: targets[target_index],
-                            required_color: *required_color,
+                            spell_restriction: spell_restriction.clone(),
                             remember_mana_value: *remember_mana_value,
                         };
                         target_index += 1;

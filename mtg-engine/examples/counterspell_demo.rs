@@ -58,7 +58,7 @@ fn main() -> Result<()> {
     // Target Lightning Bolt
     counterspell.effects.push(Effect::CounterSpell {
         target: bolt_id,
-        required_color: None,
+        spell_restriction: mtg_engine::core::TargetRestriction::any(),
         remember_mana_value: false,
     });
     game.cards.insert(counter_id, counterspell);
