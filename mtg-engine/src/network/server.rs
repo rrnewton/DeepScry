@@ -705,6 +705,11 @@ async fn handle_lobby_connection(
     card_db: Arc<AsyncCardDatabase>,
     config: ServerConfig,
 ) -> Result<()> {
+    // Disable Nagle's algorithm: every game choice is a small message that
+    // must be delivered immediately. Without this, the Linux delayed-ACK
+    // timer (40ms) fires on every round-trip, causing ~28ms latency per
+    // choice on loopback and ~248× game-speed regression vs. native-local.
+    let _ = stream.set_nodelay(true);
     let ws_stream = accept_async(stream).await?;
 
     // Assign a stable per-connection ID so we can clean up registrations on

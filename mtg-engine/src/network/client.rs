@@ -1719,6 +1719,13 @@ impl NetworkClient {
         } else {
             connect_async(&url).await?
         };
+        // Disable Nagle's algorithm on the underlying TCP stream so each
+        // ChoiceRequest/ChoiceResponse round-trip is sent immediately.
+        // Without this the Linux delayed-ACK timer (~40ms) dominates per-choice
+        // latency (~28ms on loopback, ~248× vs native-local game speed).
+        if let tokio_tungstenite::MaybeTlsStream::Plain(ref tcp) = *ws.get_ref() {
+            let _ = tcp.set_nodelay(true);
+        }
         self.ws = Some(ws);
 
         // Send authentication
