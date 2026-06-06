@@ -1976,6 +1976,24 @@ impl CardDefinition {
             }
         };
 
+        // Guard: skip sub-abilities that require CollectEvidence to have been paid.
+        // `ConditionDefined$ Collected` (or `CastSA>Collected`) with `ConditionPresent$ Card`
+        // and *no* `ConditionCompare$ EQ0` means "fire only when evidence IS collected."
+        // CollectEvidence (the optional cost mechanic) is not yet implemented, so evidence
+        // is never collected; unconditionally executing these sub-effects fires the
+        // "evidence was collected" branch even when it wasn't, e.g. double-search in
+        // Analyze the Pollen (mtg-834). Skip them entirely until CollectEvidence lands.
+        // TODO(mtg-834): remove this guard and replace with a proper runtime condition check.
+        {
+            let condition_defined = sub_params.get("ConditionDefined").unwrap_or("");
+            if condition_defined.contains("Collected")
+                && sub_params.get("ConditionPresent").is_some()
+                && sub_params.get("ConditionCompare") != Some("EQ0")
+            {
+                return;
+            }
+        }
+
         // Convert to effect. A `DB$ GainLife` with a dynamic `LifeAmount$`
         // (e.g. Swords to Plowshares `LifeAmount$ X` / `SVar:X:Targeted$CardPower`)
         // is not expressible as a fixed-amount `Effect::GainLife`, so route it
