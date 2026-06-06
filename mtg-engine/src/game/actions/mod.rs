@@ -10440,14 +10440,6 @@ impl GameState {
                     Ok(*false_value)
                 }
             }
-            CountExpression::ValidGraveyard { filter, modifier } => {
-                // Count cards in the controller's graveyard matching `filter`,
-                // then apply the arithmetic modifier (e.g. `/Plus.2` for
-                // Combustion Technique: "Lesson cards in graveyard + 2").
-                let raw = self.count_cards_matching_filter(controller, filter, crate::zones::Zone::Graveyard);
-                let raw_i32 = i32::try_from(raw).unwrap_or(i32::MAX);
-                Ok(modifier.apply(raw_i32))
-            }
             CountExpression::Kicked {
                 kicked_value: _,
                 unkicked_value,
