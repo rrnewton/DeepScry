@@ -127,6 +127,10 @@ pub struct CardCache {
     /// Spell targets creature(s) (e.g., "Destroy target creature")
     pub spell_targets_creature: bool,
 
+    /// Spell targets planeswalker(s) (e.g., "deals damage to target creature or planeswalker")
+    #[serde(default)]
+    pub spell_targets_planeswalker: bool,
+
     /// Spell targets player(s) (e.g., "Target player draws three cards")
     pub spell_targets_player: bool,
 
@@ -231,6 +235,10 @@ impl CardCache {
                 || text_lower.contains("target tapped creature")
                 || text_lower.contains("target untapped creature"))
                 && !text_lower.contains("any target"),
+            // "target planeswalker" means planeswalkers can be targeted (Broadside Barrage)
+            spell_targets_planeswalker: text_lower.contains("target planeswalker")
+                || text_lower.contains("creature or planeswalker")
+                || text_lower.contains("any target"),
             // "target player" for draw/life effects
             spell_targets_player: text_lower.contains("target player") || text_lower.contains("target opponent"),
             // "any target" means creatures or players (e.g., Lightning Bolt)

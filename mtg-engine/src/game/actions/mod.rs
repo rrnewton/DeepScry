@@ -8896,15 +8896,37 @@ impl GameState {
             if amount <= 0 {
                 return Ok(());
             }
+
+            // Apply replacement effects (e.g. Artist's Talent Level 3)
+            let mut final_amount = amount;
+            if let Some(source_id) = source {
+                if let Ok(source_card) = self.cards.get(source_id) {
+                    let source_controller = source_card.controller;
+                    if target_id != source_controller {
+                        // Check for Artist's Talent level 3
+                        for &card_id in &self.battlefield.cards {
+                            if let Ok(card) = self.cards.get(card_id) {
+                                if card.name.as_str() == "Artist's Talent"
+                                    && card.controller == source_controller
+                                    && card.get_counter(crate::core::CounterType::Level) >= 3
+                                {
+                                    final_amount += 2;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             // Apply damage prevention shield (CR 615.1)
             let (actual_amount, prevented) = {
                 let player = self.get_player_mut(target_id)?;
                 if player.damage_prevention > 0 {
-                    let prevented = amount.min(player.damage_prevention);
+                    let prevented = final_amount.min(player.damage_prevention);
                     player.damage_prevention -= prevented;
-                    (amount - prevented, prevented)
+                    (final_amount - prevented, prevented)
                 } else {
-                    (amount, 0)
+                    (final_amount, 0)
                 }
             };
 
@@ -8955,10 +8977,10 @@ impl GameState {
     ///
     /// Returns an error if the target is not a creature or cannot be found.
     pub fn deal_damage_to_creature(&mut self, target_id: CardId, amount: i32) -> Result<()> {
-        // Get info about the creature first (without holding the borrow)
-        let (is_creature, creature_name) = {
+        // Get info about the target first (without holding the borrow)
+        let (is_creature, is_planeswalker, creature_name) = {
             let card = self.cards.get(target_id)?;
-            (card.is_creature(), card.name.clone())
+            (card.is_creature(), card.is_planeswalker(), card.name.clone())
         };
 
         if is_creature {
@@ -8985,26 +9007,95 @@ impl GameState {
                 return Ok(());
             }
 
+            // Apply replacement effects (e.g. Artist's Talent Level 3)
+            let mut final_amount = actual_amount;
+            if let Some(source_id) = self.current_damage_source {
+                if let Ok(source_card) = self.cards.get(source_id) {
+                    let source_controller = source_card.controller;
+                    if let Ok(target_card) = self.cards.get(target_id) {
+                        if target_card.controller != source_controller {
+                            // Check for Artist's Talent level 3
+                            for &card_id in &self.battlefield.cards {
+                                if let Ok(card) = self.cards.get(card_id) {
+                                    if card.name.as_str() == "Artist's Talent"
+                                        && card.controller == source_controller
+                                        && card.get_counter(crate::core::CounterType::Level) >= 3
+                                    {
+                                        final_amount += 2;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             // Mark damage on the creature (MTG CR 120.3)
             // Damage persists until cleanup step (CR 704.5f)
             // Snapshot marked damage for undo BEFORE mutating (mtg-728 sig-2f).
             self.log_damage(target_id);
             let card = self.cards.get_mut(target_id)?;
-            card.damage += actual_amount;
+            card.damage += final_amount;
 
             let message = format!(
                 "{} ({}) takes {} damage (total: {})",
-                creature_name, target_id, actual_amount, card.damage
+                creature_name, target_id, final_amount, card.damage
             );
             self.logger.normal(&message);
 
             // Accumulate for the non-combat "deals damage" trigger (Spirit Link,
             // CR 119.3): damage dealt to creatures counts too. Fired once per
             // resolution at the end of resolve_spell_execute_effects.
-            self.accumulate_source_damage(actual_amount);
+            self.accumulate_source_damage(final_amount);
 
             // Note: We don't destroy the creature here - that happens in state-based actions
             // This allows multiple damage sources to accumulate before checking lethal damage
+            return Ok(());
+        } else if is_planeswalker {
+            // Apply replacement effects (e.g. Artist's Talent Level 3)
+            let mut final_amount = amount;
+            if let Some(source_id) = self.current_damage_source {
+                if let Ok(source_card) = self.cards.get(source_id) {
+                    let source_controller = source_card.controller;
+                    if let Ok(target_card) = self.cards.get(target_id) {
+                        if target_card.controller != source_controller {
+                            // Check for Artist's Talent level 3
+                            for &card_id in &self.battlefield.cards {
+                                if let Ok(card) = self.cards.get(card_id) {
+                                    if card.name.as_str() == "Artist's Talent"
+                                        && card.controller == source_controller
+                                        && card.get_counter(crate::core::CounterType::Level) >= 3
+                                    {
+                                        final_amount += 2;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if final_amount <= 0 {
+                return Ok(());
+            }
+
+            // CR 120.3c: Damage dealt to a planeswalker causes that many loyalty counters to be removed from it.
+            self.remove_counters(target_id, crate::core::CounterType::Loyalty, final_amount as u8)?;
+
+            let new_loyalty = self
+                .cards
+                .get(target_id)?
+                .get_counter(crate::core::CounterType::Loyalty);
+            let message = format!(
+                "{} ({}) takes {} damage (loyalty: {})",
+                creature_name, target_id, final_amount, new_loyalty
+            );
+            self.logger.normal(&message);
+
+            // Accumulate damage for deals-damage triggers
+            self.accumulate_source_damage(final_amount);
+
+            // Note: We don't put the planeswalker in graveyard here - that happens in state-based actions
             return Ok(());
         }
 

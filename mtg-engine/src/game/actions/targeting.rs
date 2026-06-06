@@ -112,13 +112,23 @@ impl GameState {
 
         // Get the spell's owner, effects count, and targeting restrictions from cache
         // Extract primitives first to avoid holding a borrow while iterating
-        let (spell_owner, num_effects, targets_land, targets_creature, targets_any, targets_player, spell_colors) = {
+        let (
+            spell_owner,
+            num_effects,
+            targets_land,
+            targets_creature,
+            targets_planeswalker,
+            targets_any,
+            targets_player,
+            spell_colors,
+        ) = {
             let spell_card = self.cards.get(spell_card_id)?;
             (
                 spell_card.owner,
                 spell_card.effects.len(),
                 spell_card.definition.cache.spell_targets_land,
                 spell_card.definition.cache.spell_targets_creature,
+                spell_card.definition.cache.spell_targets_planeswalker,
                 spell_card.definition.cache.spell_targets_any,
                 spell_card.definition.cache.spell_targets_player,
                 spell_card.colors.clone(),
@@ -144,7 +154,7 @@ impl GameState {
                     ..
                 } => {
                     // Damage targets per the spell's ValidTgts (CR 115.4):
-                    //   "any target"   (Lightning Bolt) -> creatures + players
+                    //   "any target"   (Lightning Bolt) -> creatures + players + planeswalkers
                     //   "target player"                  -> players only
                     //   "target creature" (Magma Rift)   -> creatures only
                     // Add every legally-targetable creature on the battlefield
@@ -154,6 +164,18 @@ impl GameState {
                         for &card_id in &self.battlefield.cards {
                             if let Ok(target_card) = self.cards.get(card_id) {
                                 if target_card.is_creature() && is_legal_target(target_card, spell_owner, &spell_colors)
+                                {
+                                    valid_targets.push(card_id);
+                                }
+                            }
+                        }
+                    }
+                    // Add every legally-targetable planeswalker on the battlefield when allowed.
+                    let allow_planeswalkers = targets_any || targets_planeswalker;
+                    if allow_planeswalkers {
+                        for &card_id in &self.battlefield.cards {
+                            if let Ok(target_card) = self.cards.get(card_id) {
+                                if target_card.is_planeswalker() && is_legal_target(target_card, spell_owner, &spell_colors)
                                 {
                                     valid_targets.push(card_id);
                                 }

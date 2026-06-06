@@ -651,4 +651,113 @@ mod tests {
         let equip_attached_after = game.cards.get(equip_id).unwrap().get_attached_to();
         assert_eq!(equip_attached_after, None, "Equipment-creature still attached");
     }
+
+    #[test]
+    fn test_deal_damage_to_planeswalker() {
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+
+        let p1_id = game.players.first().unwrap().id;
+
+        // Create a planeswalker on battlefield with 4 loyalty counters
+        let card_id = game.next_card_id();
+        let mut card = Card::new(card_id, "Jace".to_string(), p1_id);
+        card.add_type(CardType::Planeswalker);
+        card.add_counter(crate::core::CounterType::Loyalty, 4);
+        game.cards.insert(card_id, card);
+        game.battlefield.add(card_id);
+
+        // Deal 3 damage (removes 3 loyalty counters)
+        let result = game.deal_damage_to_creature(card_id, 3);
+        assert!(result.is_ok(), "deal_damage_to_planeswalker failed: {result:?}");
+
+        // Check loyalty is 1
+        assert_eq!(
+            game.cards
+                .get(card_id)
+                .unwrap()
+                .get_counter(crate::core::CounterType::Loyalty),
+            1
+        );
+
+        // Check SBA: planeswalker should still be on battlefield
+        game.check_lethal_damage().unwrap();
+        assert!(
+            game.battlefield.contains(card_id),
+            "Planeswalker should still be on battlefield"
+        );
+
+        // Deal 2 more damage (removes last counter)
+        let result = game.deal_damage_to_creature(card_id, 2);
+        assert!(result.is_ok());
+
+        // Check loyalty is 0
+        assert_eq!(
+            game.cards
+                .get(card_id)
+                .unwrap()
+                .get_counter(crate::core::CounterType::Loyalty),
+            0
+        );
+
+        // Check SBA: planeswalker should go to graveyard
+        game.check_lethal_damage().unwrap();
+        assert!(
+            !game.battlefield.contains(card_id),
+            "Planeswalker should be put in graveyard"
+        );
+        if let Some(zones) = game.get_player_zones(p1_id) {
+            assert!(zones.graveyard.contains(card_id), "Card not in graveyard");
+        }
+    }
+
+    #[test]
+    fn test_artists_talent_damage_bonus() {
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+
+        let p1_id = game.players.first().unwrap().id;
+        let p2_id = game.players.get(1).unwrap().id;
+
+        // Create Artist's Talent on the battlefield controlled by P1, at Level 3
+        let talent_id = game.next_card_id();
+        let mut talent = Card::new(talent_id, "Artist's Talent".to_string(), p1_id);
+        talent.add_type(CardType::Enchantment);
+        talent.add_counter(crate::core::CounterType::Level, 3);
+        game.cards.insert(talent_id, talent);
+        game.battlefield.add(talent_id);
+
+        // Create a Grizzly Bears controlled by P2 (opponent)
+        let bears_id = game.next_card_id();
+        let mut bears = Card::new(bears_id, "Grizzly Bears".to_string(), p2_id);
+        bears.add_type(CardType::Creature);
+        bears.set_base_power(Some(2));
+        bears.set_base_toughness(Some(4));
+        game.cards.insert(bears_id, bears);
+        game.battlefield.add(bears_id);
+
+        // Create a damage source controlled by P1
+        let source_id = game.next_card_id();
+        let mut source = Card::new(source_id, "Lightning Bolt".to_string(), p1_id);
+        source.add_type(CardType::Instant);
+        game.cards.insert(source_id, source);
+
+        // Set current damage source
+        game.current_damage_source = Some(source_id);
+
+        // Deal 2 noncombat damage to P2's creature. Artist's Talent Level 3 should make it 4!
+        let result = game.deal_damage_to_creature(bears_id, 2);
+        assert!(result.is_ok());
+
+        let target_card = game.cards.get(bears_id).unwrap();
+        assert_eq!(target_card.damage, 4, "Expected 2 + 2 = 4 damage");
+
+        // Deal 1 noncombat damage to P2 (opponent). Artist's Talent should make it 3!
+        let result = game.deal_damage(p2_id, 1);
+        assert!(result.is_ok());
+
+        let p2 = game.get_player(p2_id).unwrap();
+        assert_eq!(p2.life, 17, "Expected P2 life to be 20 - 3 = 17");
+
+        // Clear damage source
+        game.current_damage_source = None;
+    }
 }

@@ -1457,7 +1457,12 @@ impl<'a> GameLoop<'a> {
                 | Effect::DealDamageDynamic {
                     target: crate::core::TargetRef::None,
                     ..
-                } if card.definition.cache.spell_targets_creature && !card.definition.cache.spell_targets_any => true,
+                } if (card.definition.cache.spell_targets_creature
+                    || card.definition.cache.spell_targets_planeswalker)
+                    && !card.definition.cache.spell_targets_any =>
+                {
+                    true
+                }
                 _ => false,
             }
         })

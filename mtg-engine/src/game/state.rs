@@ -2440,6 +2440,34 @@ impl GameState {
             }
         }
 
+        // Put planeswalkers with 0 loyalty in graveyard (MTG CR 704.5i)
+        let planeswalkers_to_destroy: smallvec::SmallVec<[(CardId, PlayerId); 4]> = self
+            .battlefield
+            .cards
+            .iter()
+            .copied()
+            .filter_map(|card_id| {
+                let card = self.cards.try_get(card_id)?;
+                if card.is_planeswalker() && card.get_counter(crate::core::CounterType::Loyalty) == 0 {
+                    Some((card_id, card.owner))
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        for (card_id, owner) in planeswalkers_to_destroy {
+            let card_name = self.cards.try_get(card_id).map(|c| c.name.clone());
+            let dest = self.death_destination_for_card(card_id);
+            self.move_card(card_id, Zone::Battlefield, dest, owner)?;
+            if let Some(name) = card_name {
+                self.logger.gamelog(&format!(
+                    "{} ({}) has 0 loyalty and is put into the graveyard",
+                    name, card_id
+                ));
+            }
+        }
+
         Ok(())
     }
 
