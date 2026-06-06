@@ -347,6 +347,16 @@ async fn proxy_connection(client_ws: WebSocket, state: AppState) {
         }
     };
 
+    match upstream_ws.get_ref() {
+        tokio_tungstenite::MaybeTlsStream::Plain(ref tcp) => {
+            let _ = tcp.set_nodelay(true);
+        }
+        tokio_tungstenite::MaybeTlsStream::Rustls(ref tls) => {
+            let _ = tls.get_ref().0.set_nodelay(true);
+        }
+        _ => {}
+    }
+
     let (client_tx, client_rx) = client_ws.split();
     let (upstream_tx, upstream_rx) = upstream_ws.split();
 

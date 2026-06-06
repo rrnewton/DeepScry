@@ -229,7 +229,28 @@ mod websocket_integration {
     use std::time::Duration;
     use tokio::net::TcpStream;
     use tokio::time::timeout;
-    use tokio_tungstenite::{connect_async, tungstenite::Message, MaybeTlsStream, WebSocketStream};
+    use tokio_tungstenite::{
+        connect_async as raw_connect_async, tungstenite::Message, MaybeTlsStream, WebSocketStream,
+    };
+
+    async fn connect_async<R>(
+        request: R,
+    ) -> Result<
+        (
+            WebSocketStream<MaybeTlsStream<TcpStream>>,
+            tokio_tungstenite::tungstenite::handshake::client::Response,
+        ),
+        tokio_tungstenite::tungstenite::Error,
+    >
+    where
+        R: tokio_tungstenite::tungstenite::client::IntoClientRequest + Unpin,
+    {
+        let (ws, response) = raw_connect_async(request).await?;
+        if let MaybeTlsStream::Plain(ref tcp) = *ws.get_ref() {
+            let _ = tcp.set_nodelay(true);
+        }
+        Ok((ws, response))
+    }
 
     /// Allocate a random available port by binding to port 0
     /// Returns the allocated port number. There's a small race window between

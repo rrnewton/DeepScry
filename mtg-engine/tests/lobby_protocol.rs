@@ -73,11 +73,15 @@ async fn pending_game_handoff_oneshot_round_trip() {
     let addr = listener.local_addr().unwrap();
     let server_accept = tokio::spawn(async move {
         let (s, _) = listener.accept().await.unwrap();
+        s.set_nodelay(true).unwrap();
         tokio_tungstenite::accept_async(s).await.unwrap()
     });
     let (client, _) = tokio_tungstenite::connect_async(format!("ws://{}", addr))
         .await
         .unwrap();
+    if let tokio_tungstenite::MaybeTlsStream::Plain(ref tcp) = *client.get_ref() {
+        let _ = tcp.set_nodelay(true);
+    }
     let server_ws = server_accept.await.unwrap();
 
     let (tx, rx) = tokio::sync::oneshot::channel::<JoinedPlayer>();
@@ -414,6 +418,9 @@ async fn start_lobby_only_server(server_password: &str, max_memory_percent: u32)
 async fn open_ws(port: u16) -> WebSocketStream<MaybeTlsStream<TcpStream>> {
     let url = format!("ws://127.0.0.1:{}", port);
     let (ws, _) = connect_async(url).await.expect("connect");
+    if let tokio_tungstenite::MaybeTlsStream::Plain(ref tcp) = *ws.get_ref() {
+        let _ = tcp.set_nodelay(true);
+    }
     ws
 }
 

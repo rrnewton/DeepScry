@@ -1723,8 +1723,14 @@ impl NetworkClient {
         // ChoiceRequest/ChoiceResponse round-trip is sent immediately.
         // Without this the Linux delayed-ACK timer (~40ms) dominates per-choice
         // latency (~28ms on loopback, ~248× vs native-local game speed).
-        if let tokio_tungstenite::MaybeTlsStream::Plain(ref tcp) = *ws.get_ref() {
-            let _ = tcp.set_nodelay(true);
+        match ws.get_ref() {
+            tokio_tungstenite::MaybeTlsStream::Plain(ref tcp) => {
+                let _ = tcp.set_nodelay(true);
+            }
+            tokio_tungstenite::MaybeTlsStream::Rustls(ref tls) => {
+                let _ = tls.get_ref().0.set_nodelay(true);
+            }
+            _ => {}
         }
         self.ws = Some(ws);
 

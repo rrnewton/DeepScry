@@ -34,6 +34,9 @@ async fn main() -> Result<()> {
     let url = format!("ws://127.0.0.1:{port}");
     eprintln!("[probe] connecting to {url}");
     let (mut ws, _) = connect_async(&url).await?;
+    if let tokio_tungstenite::MaybeTlsStream::Plain(ref tcp) = *ws.get_ref() {
+        let _ = tcp.set_nodelay(true);
+    }
 
     eprintln!("[probe] sending ListGames");
     let msg = ClientMessage::ListGames {
