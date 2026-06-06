@@ -1,7 +1,7 @@
 // TODO(mtg-211): Remove once wildcard patterns are audited
 #![allow(clippy::wildcard_enum_match_arm)]
 
-//! CLASS-A server<->shadow per-action LOCKSTEP ORACLE (mtg-mb668 CHUNK 2).
+//! CLASS-A server<->shadow per-action LOCKSTEP ORACLE (mtg-728 CHUNK 2).
 //!
 //! ## What this proves / enumerates
 //!
@@ -51,7 +51,7 @@
 //! path directly (the `game/game_loop/mod.rs` `opponent_library_search_fetch_*` /
 //! `shuffle_replay_byte_*` / `mass_draw_replay_*` native oracle pattern), since
 //! the WASM client is a thin wasm32 transport+buffer wrapper over those native
-//! engine primitives. See mtg-mb668.
+//! engine primitives. See mtg-728.
 //!
 //! ALL tests here are therefore expected GREEN. A FAILURE means a genuine NEW
 //! desync in the non-rewinding native shadow path — surface it, never paper over

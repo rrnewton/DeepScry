@@ -1,7 +1,7 @@
 # Native buffer shim (TASK 1 / "Piece 2") — implementation plan
 
 **Branch:** netarch-reveal-actionlog-unify. **Author:** slot02-netarch.
-**Status:** PLANNED (not started). TASK 0 settled first (see below + beads mtg-o99ow).
+**Status:** PLANNED (not started). TASK 0 settled first (see below + beads mtg-752).
 
 ## Why this is now GATING (TASK 0 result, 2026-06-04)
 
@@ -15,12 +15,12 @@ hand off-by-one → fatal hash mismatch).
 
 Root cause pinned by single-variable diagnostic: this branch's new
 shuffle→`LibraryReordered` emission (`game/state.rs` ~818-837, added for
-mtg-yexvc Timetwister stale-library) fires an EXTRA async message that races,
+mtg-744 Timetwister stale-library) fires an EXTRA async message that races,
 over the websocket, against the found-card reveal; the native EAGER
 (synthetic-ac, order-sensitive, greedy-drain) apply path drops the found-card
 reveal when they arrive out of order. Disabling JUST that emit → equiv-zero
 8/8 green (diagnostic only; reverted — removing it permanently reintroduces
-mtg-yexvc).
+mtg-744).
 
 **The principled fix IS this shim:** make native consume the single
 ascending-`action_count` buffer carried in `ChoiceRequest` (one ordered
@@ -138,7 +138,7 @@ dual-emit of mid-game choices.
   (it does in WASM; native runs the same GameLoop). Verify early with a logged
   assert at the first ChoiceRequest (shadow ac vs ChoiceRequest.action_count).
 - `SearchCandidates` = ONE entry at the search-resolution ac (do not re-expand).
-- Searched-dummy reveal stays at the search-resolution ac (mtg-mb668).
+- Searched-dummy reveal stays at the search-resolution ac (mtg-728).
 - Distinct ac per delta; same-ac equal delta = drop, differing = FATAL.
 - Desync ALWAYS fatal; never paper over. equiv-zero is a GATE, not an exclusion.
 - HARD STOP + surface if the buffer-driven native path won't converge.

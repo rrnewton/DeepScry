@@ -385,7 +385,7 @@ impl<'a> GameLoop<'a> {
         if !self.is_network_mode() {
             // Hidden-info-replay: if the controller is replaying a recorded
             // library search, APPLY the authoritative fetched CardId directly
-            // (mtg-610 / mtg-mb668). On an opponent's shadow the fetched card is
+            // (mtg-610 / mtg-728). On an opponent's shadow the fetched card is
             // hidden and excluded from `valid_cards`, so re-deriving a positional
             // index here would lose the fetch — replay carries the CardId.
             if let Some(recorded) = controller.replay_library_search() {
@@ -405,7 +405,7 @@ impl<'a> GameLoop<'a> {
             // the ChoiceRequest for the coordinator to resolve back to CardId.
             // No-op for non-network controllers (trait default is empty).
             controller.set_pending_library_search_card_ids(valid_cards);
-            // mtg-ho2r8 seed-7: a REMOTE controller replays an OPPONENT's hidden
+            // mtg-799 seed-7: a REMOTE controller replays an OPPONENT's hidden
             // library search. The observer's `valid_cards` is only the MATERIALIZED
             // subset of the opponent's library (e.g. 4 of the server's 37 — the
             // unrevealed reserved cards are excluded), so the server's index (which

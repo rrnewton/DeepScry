@@ -5,13 +5,13 @@
 // 1. Loads the fancy TUI page
 // 2. Launches a local game to expose the floating controls widget
 // 3. Verifies the bug report modal UI and validation
-// 4. Verifies connect-on-demand (mtg-5ejgo): in a SOLO/local game with no live
+// 4. Verifies connect-on-demand (mtg-749): in a SOLO/local game with no live
 //    game WebSocket, Submit is enabled (no "not connected" dead-end) and the
 //    widget lazily opens a transient lobby connection to file the report,
 //    runs the two-phase flow over it, and closes it.
 // 5. Verifies cancel/reset behavior
 // 6. Mocks the two-phase bug_report_stored + bug_report_issue_result responses
-//    (mtg-5ejgo) and asserts the two-checkbox flow: box 1 checks on the disk
+//    (mtg-749) and asserts the two-checkbox flow: box 1 checks on the disk
 //    confirmation, box 2 checks + links on the issue result, the GitHub-failed
 //    case shows a failure (never a spinner) yet still finalizes the button, the
 //    client-side backstop finalizes if the second message never arrives, and a
@@ -166,7 +166,7 @@ async function runTest() {
         await page.screenshot({ path: path.join(screenshotDir, 'bug_report_03_modal.png'), fullPage: true });
         testResults.steps.push({ name: 'modal_open', timestamp: new Date().toISOString() });
 
-        // mtg-5ejgo: in a SOLO/local game there is no live game WS, but the
+        // mtg-749: in a SOLO/local game there is no live game WS, but the
         // widget connects on demand to the lobby endpoint — so Submit must be
         // ENABLED with NO "Not connected — start a network game" banner (that old
         // mtg-596 dead-end is replaced by connect-on-demand).
@@ -192,7 +192,7 @@ async function runTest() {
         }
         testResults.steps.push({ name: 'close_reset', timestamp: new Date().toISOString() });
 
-        // ── SOLO SUBMIT (mtg-5ejgo): connect-on-demand transient WS ───────────
+        // ── SOLO SUBMIT (mtg-749): connect-on-demand transient WS ───────────
         // With NO live game client, the widget must lazily open a transient lobby
         // connection, send the report (incl. local game logs for repro), run the
         // two-checkbox flow over it, and close the connection when finalized. We
@@ -287,7 +287,7 @@ async function runTest() {
         }, { timeout: 5000 });
         testResults.steps.push({ name: 'validation_error', timestamp: new Date().toISOString() });
 
-        // ── HAPPY PATH (mtg-5ejgo): two checkboxes, phase 1 then phase 2 ──────
+        // ── HAPPY PATH (mtg-749): two checkboxes, phase 1 then phase 2 ──────
         // Box 1 ("saved to disk") checks on the immediate stored-confirmation;
         // box 2 ("filed on GitHub") checks + shows a link on the issue result;
         // then Submit finalizes to a disabled "Already submitted".
@@ -357,7 +357,7 @@ async function runTest() {
         testResults.steps.push({ name: 'success_two_phase', timestamp: new Date().toISOString() });
         await closeBugReportModal(page);
 
-        // ── GITHUB-FAILED PATH (mtg-5ejgo): no spinner, button still finalizes ─
+        // ── GITHUB-FAILED PATH (mtg-749): no spinner, button still finalizes ─
         // Box 1 checks, box 2 shows a clear failure ("report saved"), and the
         // Submit button STILL finalizes because the report IS saved.
         log('GitHub-failed path: box 2 shows failure (no spinner), button still finalizes...');
@@ -402,7 +402,7 @@ async function runTest() {
         testResults.steps.push({ name: 'github_failed_no_spinner', timestamp: new Date().toISOString() });
         await closeBugReportModal(page);
 
-        // ── CLIENT-SIDE TIMEOUT BACKSTOP (mtg-5ejgo) ──────────────────────────
+        // ── CLIENT-SIDE TIMEOUT BACKSTOP (mtg-749) ──────────────────────────
         // If the phase-2 message never arrives, the client itself must resolve
         // box 2 to "status unknown — report saved" and finalize the button. Use a
         // short backstop so the test does not wait the production 18s.
@@ -437,7 +437,7 @@ async function runTest() {
         await closeBugReportModal(page);
         await page.evaluate(() => { delete window.__bugReportBackstopMs; });
 
-        // ── DISK-WRITE FAILURE (mtg-5ejgo): box 1 shows ✗, user may retry ─────
+        // ── DISK-WRITE FAILURE (mtg-749): box 1 shows ✗, user may retry ─────
         log('Disk-write failure: box 1 shows error, Submit re-enabled (not finalized)...');
         await openBugReportModal(page);
         await page.waitForFunction(() => {

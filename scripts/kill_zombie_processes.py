@@ -32,7 +32,7 @@ def _scope_cgroup_path(unit):
 
 
 def stop_my_validate_scopes(current_dir):
-    """mtg-ibj22: atomically reap LEFTOVER transient validate-*.scope cgroups
+    """mtg-743: atomically reap LEFTOVER transient validate-*.scope cgroups
     belonging to THIS worktree (from a SIGKILLed scoped `make validate`) —
     `systemctl --user stop` kills the whole cgroup including setsid escapees the
     per-PID scan misses. CROSS-SLOT SAFE: only stops a scope if one of its

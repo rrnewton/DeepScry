@@ -348,7 +348,7 @@ impl GameState {
         {
             self.log_combat_mana_pool(player_id);
         }
-        // Snapshot the regular mana pool for undo before the payment (mtg-t233k).
+        // Snapshot the regular mana pool for undo before the payment (mtg-733).
         self.log_mana_pool(player_id);
         let player = self.get_player_mut(player_id)?;
         player
@@ -1618,7 +1618,7 @@ impl GameState {
             }
         };
 
-        // mtg-mb668 class-A / mtg-725 R1: on a SHADOW game the opponent's
+        // mtg-728 class-A / mtg-725 R1: on a SHADOW game the opponent's
         // Hand/Library cards are RESERVED (instance-less) ids. `try_get` returns
         // None for them, so the server (real instances) counts them while the
         // shadow drops them — a branch-on-absence count desync. Handle the
@@ -2182,7 +2182,7 @@ impl GameState {
         {
             self.log_combat_mana_pool(player_id);
         }
-        // Snapshot the regular mana pool for undo before the payment (mtg-t233k).
+        // Snapshot the regular mana pool for undo before the payment (mtg-733).
         self.log_mana_pool(player_id);
         let player = self.get_player_mut(player_id)?;
         if let Err(e) = player.pay_from_total_mana(&mana_cost) {
@@ -3736,7 +3736,7 @@ impl GameState {
                 // + rewind sweep can remove them deterministically; mtg-610).
                 // Record ONLY the keywords this pump *newly* added so the undo
                 // entry removes exactly those, never a printed/other-source
-                // keyword (mtg-w5sa2: Rockface Village pumping a printed-haste
+                // keyword (mtg-731: Rockface Village pumping a printed-haste
                 // creature was stripping its Haste).
                 let mut newly_granted: smallvec::SmallVec<[crate::core::Keyword; 2]> = smallvec::SmallVec::new();
                 for keyword in keywords_granted.iter() {
@@ -3793,7 +3793,7 @@ impl GameState {
                 card.power_bonus += power_bonus;
                 card.toughness_bonus += toughness_bonus;
                 // Record ONLY newly-added keywords so undo never strips a
-                // printed/other-source keyword (mtg-w5sa2).
+                // printed/other-source keyword (mtg-731).
                 let mut newly_granted: smallvec::SmallVec<[crate::core::Keyword; 2]> = smallvec::SmallVec::new();
                 for keyword in keywords_granted.iter() {
                     if card.grant_keyword_until_eot(*keyword) {
@@ -4286,7 +4286,7 @@ impl GameState {
                 // mass bounce/exile list one. Track (card, owner, source-zone)
                 // so each card moves from the zone it actually lives in.
                 let mut cards_to_move: Vec<(CardId, PlayerId, crate::zones::Zone)> = Vec::new();
-                // SHADOW determinism (mtg-mb668 sig-2c): the opponent's hidden
+                // SHADOW determinism (mtg-728 sig-2c): the opponent's hidden
                 // hand/library cards are late-bound reserved CardIds with NO
                 // instance, so `try_get` returns None and `restriction.matches`
                 // can't be evaluated. For an UNRESTRICTED mass move (Timetwister
@@ -4334,7 +4334,7 @@ impl GameState {
                                             }
                                         }
                                         // Reserved (instance-less) shadow card under an
-                                        // unrestricted mass move (mtg-mb668 sig-2c).
+                                        // unrestricted mass move (mtg-728 sig-2c).
                                         None if move_reserved_in_shadow => {
                                             cards_to_move.push((card_id, *player_id, origin));
                                         }
@@ -5376,7 +5376,7 @@ impl GameState {
                     .collect();
 
                 for card_id in targets {
-                    // Snapshot marked damage for undo BEFORE mutating (mtg-mb668 sig-2f).
+                    // Snapshot marked damage for undo BEFORE mutating (mtg-728 sig-2f).
                     self.log_damage(card_id);
                     let card = self.cards.get_mut(card_id)?;
                     card.damage += *amount;
@@ -8355,7 +8355,7 @@ impl GameState {
     }
 
     /// Snapshot a player's REGULAR `mana_pool` for undo BEFORE a payment
-    /// consumes it (mtg-t233k). `pay_from_total_mana` / `ManaPool::pay_cost`
+    /// consumes it (mtg-733). `pay_from_total_mana` / `ManaPool::pay_cost`
     /// mutate the pool with no other covering action, so a per-action (MCTS /
     /// human / UndoTest) partial rewind stopping between an `AddMana` and its
     /// consuming payment would otherwise observe the wrong pool. Mirrors
@@ -8371,7 +8371,7 @@ impl GameState {
 
     /// Snapshot a creature's marked `damage` for undo BEFORE a `card.damage +=`
     /// mutation (`deal_damage_to_creature` — e.g. Triskelion's ping — and
-    /// `Effect::DamageAll`) (mtg-mb668 sig-2f). Marked damage was applied with no
+    /// `Effect::DamageAll`) (mtg-728 sig-2f). Marked damage was applied with no
     /// covering GameAction, so a mid-turn rewind+replay (network/WASM blocking;
     /// per-action MCTS/human undo) left it STALE and replay DOUBLE-applied it.
     /// `undo()` restores the captured value. No-op if the card is missing.
@@ -8385,7 +8385,7 @@ impl GameState {
     }
 
     /// Set a card's `x_paid` (the chosen X for an X-spell/ability, CR 107.3),
-    /// snapshotting the prior value for undo FIRST (mtg-mb668 sig-2g). `x_paid`
+    /// snapshotting the prior value for undo FIRST (mtg-728 sig-2g). `x_paid`
     /// was overwritten in the priority loop with no covering GameAction, so a
     /// mid-turn rewind+replay left the chosen X stale on the card (robots42
     /// within-side "cards[N].x_paid changed across rewinds" REWIND/REPLAY FATAL).
@@ -8571,7 +8571,7 @@ impl GameState {
 
             // Mark damage on the creature (MTG CR 120.3)
             // Damage persists until cleanup step (CR 704.5f)
-            // Snapshot marked damage for undo BEFORE mutating (mtg-mb668 sig-2f).
+            // Snapshot marked damage for undo BEFORE mutating (mtg-728 sig-2f).
             self.log_damage(target_id);
             let card = self.cards.get_mut(target_id)?;
             card.damage += actual_amount;
@@ -9206,7 +9206,7 @@ impl GameState {
             }
 
             Cost::Mana(mana_cost) => {
-                // Pay mana from pool. Snapshot the pool for undo (mtg-t233k).
+                // Pay mana from pool. Snapshot the pool for undo (mtg-733).
                 self.log_mana_pool(player_id);
                 let player = self.get_player_mut(player_id)?;
                 if !player.mana_pool.can_pay(mana_cost) {
@@ -9232,7 +9232,7 @@ impl GameState {
                 // Check for Taps triggers (e.g., Gran-Gran: "Whenever ~ becomes tapped")
                 self.check_triggers(TriggerEvent::Taps, card_id)?;
 
-                // Then pay mana. Snapshot the pool for undo (mtg-t233k).
+                // Then pay mana. Snapshot the pool for undo (mtg-733).
                 self.log_mana_pool(player_id);
                 let player = self.get_player_mut(player_id)?;
                 if !player.mana_pool.can_pay(mana_cost) {
@@ -9446,7 +9446,7 @@ impl GameState {
                 if remaining > 0 && floating_mana > 0 {
                     let use_from_pool = remaining.min(floating_mana);
                     let mana_cost = ManaCost::from_string(&use_from_pool.to_string());
-                    // Snapshot the pool for undo before spending floating mana (mtg-t233k).
+                    // Snapshot the pool for undo before spending floating mana (mtg-733).
                     self.log_mana_pool(player_id);
                     let player = self.get_player_mut(player_id)?;
                     player.mana_pool.pay_cost(&mana_cost).map_err(MtgError::InvalidAction)?;
@@ -9562,7 +9562,7 @@ impl GameState {
                     )));
                 }
                 // Route through the LOGGED counter-removal so this cost is a
-                // faithful undo-log inverse (mtg-mb668 sig-2e). The previous
+                // faithful undo-log inverse (mtg-728 sig-2e). The previous
                 // direct `card.remove_counter(...)` mutated the card with NO
                 // GameAction::RemoveCounter entry, so a rewind+replay (network
                 // shadow / MCTS / undo) left the counters stale — the WASM
@@ -9649,7 +9649,7 @@ impl GameState {
                     for card_id in cards_to_discard {
                         self.move_card(card_id, Zone::Hand, Zone::Graveyard, player_id)?;
 
-                        // Log the discard. mtg-d4j9v: emit UNCONDITIONALLY with a
+                        // Log the discard. mtg-795: emit UNCONDITIONALLY with a
                         // reveal-timing-INDEPENDENT verifier key (mirrors the
                         // move_card Hand→Graveyard discard line and the
                         // discard_card line, both fixed under mtg-677). On a

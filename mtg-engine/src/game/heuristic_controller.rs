@@ -6187,10 +6187,10 @@ impl PlayerController for HeuristicController {
     ) -> ChoiceResult<SmallVec<[CardId; 7]>> {
         // Simple heuristic: Discard lands first, then worst creatures.
         //
-        // HARDENING (mtg-u3dwj): every id in `hand` is one of the deciding
+        // HARDENING (mtg-768): every id in `hand` is one of the deciding
         // player's OWN cards, so it MUST resolve in `view`. Silently dropping an
         // unresolvable id (the old `filter_map`) is exactly what masked the
-        // mtg-u3dwj desync: on a network client's shadow a just-drawn own card
+        // mtg-768 desync: on a network client's shadow a just-drawn own card
         // that has not yet been materialised (its reveal still unapplied) would be
         // dropped from the discard candidate set, so the heuristic discarded the
         // WRONG cards vs the server's full-state decision — an
@@ -6204,7 +6204,7 @@ impl PlayerController for HeuristicController {
                 None => debug_assert!(
                     false,
                     "choose_cards_to_discard: own hand card {id:?} is not resolvable in the shadow view — \
-                     a draw/reveal was not applied before the discard decision (mtg-u3dwj class: \
+                     a draw/reveal was not applied before the discard decision (mtg-768 class: \
                      information-independence desync; NETWORK_ARCHITECTURE.md: Desync is ALWAYS Fatal)."
                 ),
             }

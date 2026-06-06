@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Regression test for mtg-zhu4p: an AURA attached to a LAND must (a1) render as
+ * Regression test for mtg-747: an AURA attached to a LAND must (a1) render as
  * its own card in the battlefield (not be skipped) and (a2-consumed) surface as
  * an attachment badge on its host land.
  *

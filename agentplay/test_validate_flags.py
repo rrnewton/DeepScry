@@ -1,4 +1,4 @@
-"""Smoke test for scripts/validate.py opt-out flags (mtg-w6u7c / mtg-717).
+"""Smoke test for scripts/validate.py opt-out flags (mtg-764 / mtg-717).
 
 Pins the locked-down-host escape hatch: --no-wasm-e2e and --no-network must
 reach validate.py's argparse (they're forwarded verbatim by `make validate
@@ -152,7 +152,7 @@ def test_keep_going_runs_all_despite_failure():
 
 
 def test_dot_emits_valid_graph_with_deps_and_resource_edges():
-    """--dot (mtg-iywhs): emits graphviz from build_registry() with solid dep
+    """--dot (mtg-762): emits graphviz from build_registry() with solid dep
     edges AND dashed cap-1 resource-serialization edges, clustered per jobGroup."""
     import io
     import contextlib

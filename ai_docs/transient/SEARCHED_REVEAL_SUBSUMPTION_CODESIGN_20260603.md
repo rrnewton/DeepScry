@@ -1,11 +1,11 @@
 # Searched/Reorder Reveal Subsumption — Co-Design Note (2026-06-03)
 
-**Context:** netarch reveal-action-log unification (`mtg-o99ow`, branch
+**Context:** netarch reveal-action-log unification (`mtg-752`, branch
 `netarch-reveal-actionlog-unify`, slot01). This note is the **co-design
 checkpoint** the orchestrator requested before touching `searched_card_for`
 semantics / starting 4a-client. It shows how server-authoritative
 *reorder*/*search* reveals stamped by **game action_count** subsume class-A
-residual #1 (`mtg-yexvc`), and the exact decisions to lock before 4a.
+residual #1 (`mtg-744`), and the exact decisions to lock before 4a.
 
 **HOLD POINT:** do NOT touch the dummy `Searched`-reveal stamp (server.rs
 ~2992) nor key the client ActionLog by game ac (4a-client) until the
@@ -28,7 +28,7 @@ The canonical ac per delta kind:
 - **opponent `Searched` fetch (dummy, hidden id)** → the **LibrarySearch resolution ac** (where the shadow records the `LibrarySearch(Some(id))` ChoicePoint). KEEP here; do NOT move to an earlier `RevealCard` position (see §3 RISK).
 
 ## 2. Residual #1 mechanism (CONFIRMED) and how the model subsumes it
-`mtg-yexvc` decisive evidence: seed-2 turn-16, after the Timetwister
+`mtg-744` decisive evidence: seed-2 turn-16, after the Timetwister
 server-RNG shuffle, the shadow's P1 hand is missing card 105 — "the shadow
 can't reproduce P1's post-shuffle library order." Root cause CONFIRMED in
 code: `GameState::shuffle_library` (state.rs:745) logs `GameAction::ShuffleLibrary`
@@ -54,7 +54,7 @@ reveal.
 
 ## 3. The Searched-reveal seam + the RISK to `searched_card_for`
 `searched_card_for(searcher, target_action)` (wasm/network/client.rs:1254)
-is the mtg-mb668 fix: for an OPPONENT tutor, the server sends a dummy
+is the mtg-728 fix: for an OPPONENT tutor, the server sends a dummy
 `Searched` reveal (empty name, authoritative CardId) stamped at the search
 **choice** ac; the shadow picks the dummy `Searched` reveal owned by
 `searcher` with the GREATEST `effective_ac <= target_action`, where
@@ -96,9 +96,9 @@ out naturally — must verify.
 3. `LibraryReordered` gains `action_count: u64`; `shuffle_library` emits it at
    the `ShuffleLibrary` ac (confirm; this is residual-#1 fix folded into 4a).
 4. Collision audit outcome (§4) → choose (a)/(b)/(c).
-5. Sequencing vs mtg-mb668: since searched_card_for + reorder alignment ARE the
+5. Sequencing vs mtg-728: since searched_card_for + reorder alignment ARE the
    class-A residual, do we land 4a (which makes them ac-aligned) as the fix for
-   mtg-yexvc seed-2/seed-5 directly, with robots42 un-excluded-green as the
+   mtg-744 seed-2/seed-5 directly, with robots42 un-excluded-green as the
    acceptance gate? (Orchestrator owns this since slot03 archived.)
 
 ## 5b. PRE-4a COLLISION AUDIT RESULT (decision #4) — GENUINE atomic-multi-delta FOUND, SURFACING

@@ -1477,7 +1477,7 @@ impl Card {
     /// (a printed `K:Haste` like Screaming Nemesis, or another permanent source),
     /// it is NOT tracked as temporary — so the forward cleanup / rewind sweep
     /// (`clear_temp_keywords_until_eot`) and the per-action `PumpCreature` undo
-    /// never strip a printed/other-source keyword (mtg-w5sa2: a Rockface Village
+    /// never strip a printed/other-source keyword (mtg-731: a Rockface Village
     /// "+1/+0 and gains haste" on a printed-haste creature was stripping the
     /// printed Haste at EOT cleanup AND drifting the turn-start keyword set
     /// across rewinds). Mirrors the `AnimateTypeline` granted-keyword tracking.
@@ -1625,7 +1625,7 @@ mod tests {
 
     #[test]
     fn grant_keyword_until_eot_never_strips_printed_keyword() {
-        // Regression (mtg-w5sa2): a Rockface Village "+1/+0 and gains haste
+        // Regression (mtg-731): a Rockface Village "+1/+0 and gains haste
         // until EOT" on a creature with PRINTED Haste (Screaming Nemesis) was
         // stripping the printed Haste at the forward EOT cleanup AND drifting
         // the turn-start keyword set across rewinds, because the grant tracked

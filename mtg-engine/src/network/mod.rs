@@ -29,7 +29,7 @@ mod reveal_processor;
 pub use reveal_processor::*;
 
 // Generic append-only, action_count-indexed log. The foundational primitive
-// for the network re-architecture (mtg-o99ow)
+// for the network re-architecture (mtg-752)
 // that backs (a) each controller's private choice buffer, (b) the
 // NetworkClient-owned shadow state-sync log, and (c) future MCTS
 // rollout logs. See docs/NETWORK_ACTION_LOG.md for the ownership split.

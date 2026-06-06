@@ -330,7 +330,7 @@ pub struct GameState {
     /// Each entry is `(player, action_count)` where `action_count` is the
     /// undo-log position of the reorder's own action (`ReorderLibrary` for
     /// scry/surveil, `ShuffleLibrary` for a shuffle) — the game position at
-    /// which the post-reorder order is in effect (mtg-o99ow). The
+    /// which the post-reorder order is in effect (mtg-752). The
     /// `NetworkController` carries this ac onto the `ServerMessage::LibraryReordered`
     /// so the shadow can key the new order in its game-ac-indexed state-sync log.
     #[serde(skip)]
@@ -753,7 +753,7 @@ impl GameState {
         use rand::seq::SliceRandom;
 
         // Capture the RNG state BEFORE the shuffle consumes randomness
-        // (mtg-mb668 sig-2). Reversing the shuffle restores this, so a
+        // (mtg-728 sig-2). Reversing the shuffle restores this, so a
         // partial-rewind replay re-shuffles from the SAME RNG and
         // byte-reproduces the forward order. Captured here (before the
         // `player_zones` mutable borrow) to avoid a borrow conflict.
@@ -815,14 +815,14 @@ impl GameState {
                 prior_log_size,
             );
 
-            // NETWORK SYNC (mtg-o99ow L2b, residual-#1 fix): emit a
+            // NETWORK SYNC (mtg-752 L2b, residual-#1 fix): emit a
             // `LibraryReordered` for this shuffle so the shadow can reproduce the
             // owner's post-shuffle library order. Previously ONLY scry/surveil
             // (`log_library_reorder` callers) enqueued reorders — a bare
             // `shuffle_library` (Timetwister, Wheel, tutor-then-shuffle) logged
             // `ShuffleLibrary` for undo but emitted NO `LibraryReordered`, so the
             // shadow's library order went stale after any shuffle and subsequent
-            // draws popped the wrong CardIds (mtg-yexvc seed-2 turn-16: P1's hand
+            // draws popped the wrong CardIds (mtg-744 seed-2 turn-16: P1's hand
             // missing card 105 after a Timetwister). Stamp at the `ShuffleLibrary`
             // action's own ac (undo-log length right after the log above), so the
             // shadow adopts the new order at the SAME game position on the forward
@@ -1204,7 +1204,7 @@ impl GameState {
         }
     }
 
-    /// Conceal a card that is entering a hidden library (mtg-mb668 sig-2b).
+    /// Conceal a card that is entering a hidden library (mtg-728 sig-2b).
     ///
     /// A card put into the library becomes hidden again (CR 401: the library is a
     /// hidden zone; a card shuffled in is no longer revealed). If we leave a
@@ -1220,7 +1220,7 @@ impl GameState {
     ///
     /// Mirrors `maybe_reveal_to_player`: gated on `skip_reveals`, logs an
     /// (undoable) `SetRevealedToMask`. Concealing on library ENTRY makes the
-    /// later draw's reveal UNCONDITIONAL on both sides (mtg-mb668 sig-2d):
+    /// later draw's reveal UNCONDITIONAL on both sides (mtg-728 sig-2d):
     /// without it a card that cycled library->hand->library keeps a stale
     /// `revealed_to_mask` on the SERVER (real instance) so the redraw SKIPS the
     /// RevealCard, while the viewer's shadow holds it as a reserved ID and logs
@@ -1240,7 +1240,7 @@ impl GameState {
             return;
         }
         if let Some(card) = self.cards.try_get_mut(card_id) {
-            // Conceal ANY card that is revealed to anyone (mtg-mb668 sig-2d):
+            // Conceal ANY card that is revealed to anyone (mtg-728 sig-2d):
             // a card in the hidden library must be revealed to nobody, so a
             // later draw uniformly re-reveals regardless of prior reveal history.
             if card.revealed_to_mask != 0 {
@@ -1257,7 +1257,7 @@ impl GameState {
             }
         } else if self.is_shadow_game {
             // Reserved (instance-less) opponent card on a shadow — count-parity
-            // conceal mirroring the server's real-card conceal (mtg-mb668 sig-2d).
+            // conceal mirroring the server's real-card conceal (mtg-728 sig-2d).
             self.undo_log.log(
                 crate::undo::GameAction::SetRevealedToMask {
                     card_id,
@@ -1312,7 +1312,7 @@ impl GameState {
                     self.maybe_reveal_to_player(card_id, owner, prior_log_size);
                 }
                 // Anything → Library: the card becomes hidden again, so clear any
-                // stale revealed_to_mask (mtg-mb668 sig-2b). Without this, a
+                // stale revealed_to_mask (mtg-728 sig-2b). Without this, a
                 // previously-public card drawn back out skips its RevealCard and
                 // the server/shadow reveal counts diverge across independent
                 // shuffles.
@@ -2110,7 +2110,7 @@ impl GameState {
         if library_actually_changed && !self.skip_reveals && !self.is_shadow_game {
             // ac = undo-log length right after `log_library_reorder` logged the
             // `ReorderLibrary` action (the raw reorder ops below log nothing), i.e.
-            // the position at which the post-reorder order is in effect (mtg-o99ow).
+            // the position at which the post-reorder order is in effect (mtg-752).
             let reorder_ac = self.undo_log.len() as u64;
             self.pending_library_reorders.borrow_mut().push((player_id, reorder_ac));
         }
@@ -2198,7 +2198,7 @@ impl GameState {
 
         // NETWORK SYNC: see scry_apply_decision for rationale (mtg-420).
         if library_actually_changed && !self.skip_reveals && !self.is_shadow_game {
-            // ac = undo-log length after `log_library_reorder` (mtg-o99ow).
+            // ac = undo-log length after `log_library_reorder` (mtg-752).
             let reorder_ac = self.undo_log.len() as u64;
             self.pending_library_reorders.borrow_mut().push((player_id, reorder_ac));
         }
@@ -3313,7 +3313,7 @@ impl GameState {
                 _ => {
                     // Not a choice point - undo this action
                     // Delegate to the canonical reversal so this rewind path
-                    // shares the single source of truth (mtg-ey2vf). The prior
+                    // shares the single source of truth (mtg-732). The prior
                     // inline match was a SUBSET with a silent `_ => {}` that
                     // skipped ShuffleLibrary / DeclareAttacker / ClearCombat /
                     // CloneCard / AnimateTypeline / SetCommanderDamage / ... —
@@ -3389,7 +3389,7 @@ impl GameState {
         if let Some((action, prior_log_size)) = self.undo_log.pop() {
             // Delegate the per-variant reversal to the single canonical
             // implementation `GameAction::undo` (undo.rs) so there is exactly
-            // ONE source of truth for how each action is reversed (mtg-ey2vf).
+            // ONE source of truth for how each action is reversed (mtg-732).
             // Previously this match RE-IMPLEMENTED every arm inline, a DRY
             // footgun where a new variant (or a fix to an existing one) had to
             // be mirrored in both impls or they silently diverged. On the rare

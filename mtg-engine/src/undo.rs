@@ -551,7 +551,7 @@ pub enum GameAction {
     },
 
     /// Snapshot of a player's regular `mana_pool` captured BEFORE a payment
-    /// (`pay_from_total_mana` / `ManaPool::pay_cost`) consumed it (mtg-t233k).
+    /// (`pay_from_total_mana` / `ManaPool::pay_cost`) consumed it (mtg-733).
     /// These spends mutate the pool with no other covering action. The pool
     /// empties at every step boundary (CR 500.4), so a turn-start rewind always
     /// lands on `mana_pool == 0` and was already safe; but a PARTIAL (per-action
@@ -566,7 +566,7 @@ pub enum GameAction {
 
     /// Snapshot of a creature's marked `damage` captured BEFORE a `card.damage +=`
     /// mutation (`deal_damage_to_creature` — e.g. Triskelion's ping — and
-    /// `Effect::DamageAll`) (mtg-mb668 sig-2f). Marked damage was applied with no
+    /// `Effect::DamageAll`) (mtg-728 sig-2f). Marked damage was applied with no
     /// covering GameAction, so a turn-start cleanup (CR 514.2) clears it and any
     /// blanket turn-start rewind blanket-clears it (safe), BUT a mid-turn
     /// rewind+replay (network/WASM blocking; per-action MCTS/human undo) left the
@@ -578,7 +578,7 @@ pub enum GameAction {
 
     /// Snapshot of a card's `x_paid` (the X value chosen when an X-spell/ability
     /// was cast/activated, CR 107.3) captured BEFORE it is overwritten in the
-    /// priority loop (mtg-mb668 sig-2g). `x_paid` is set with no covering
+    /// priority loop (mtg-728 sig-2g). `x_paid` is set with no covering
     /// GameAction, so a mid-turn rewind+replay (network/WASM blocking; per-action
     /// MCTS/human undo) left the chosen X STALE on the card — the robots42
     /// within-side "cards[N].x_paid changed across rewinds" REWIND/REPLAY FATAL
@@ -1118,7 +1118,7 @@ impl GameAction {
                 // construction (the starting seat) and left constant thereafter.
                 // "Restoring" it from `from_player`'s position would write a
                 // value the forward game never produces, diverging the per-action
-                // undo hash (mtg-ey2vf: this was a silent divergence between the
+                // undo hash (mtg-732: this was a silent divergence between the
                 // two undo impls — the old GameState::undo correctly left it
                 // alone). `rewind_to_turn_start` never reaches this arm (it stops
                 // AT the ChangeTurn boundary without undoing it).
@@ -1354,7 +1354,7 @@ impl GameAction {
                     ));
                 }
 
-                // Restore the pre-shuffle RNG state (mtg-mb668 sig-2) so a
+                // Restore the pre-shuffle RNG state (mtg-728 sig-2) so a
                 // partial-rewind replay re-runs the shuffle from the SAME RNG
                 // and byte-reproduces the forward library order. Mirrors the
                 // ChangeTurn arm above. `None` only for legacy logs.
@@ -1631,13 +1631,13 @@ impl GameAction {
                 }
             }
             GameAction::SetManaPool { player_id, prev } => {
-                // Restore the captured regular mana pool (mtg-t233k).
+                // Restore the captured regular mana pool (mtg-733).
                 if let Some(player) = game.players.iter_mut().find(|p| p.id == *player_id) {
                     player.mana_pool = *prev;
                 }
             }
             GameAction::SetDamage { card_id, prev } => {
-                // Restore the captured marked damage (mtg-mb668 sig-2f). get_mut
+                // Restore the captured marked damage (mtg-728 sig-2f). get_mut
                 // tolerates a missing card (it may have left the battlefield),
                 // matching the other card-field undos.
                 if let Ok(card) = game.cards.get_mut(*card_id) {
@@ -1645,7 +1645,7 @@ impl GameAction {
                 }
             }
             GameAction::SetXPaid { card_id, prev } => {
-                // Restore the captured X-paid value (mtg-mb668 sig-2g). get_mut
+                // Restore the captured X-paid value (mtg-728 sig-2g). get_mut
                 // tolerates a missing card, matching the other card-field undos.
                 if let Ok(card) = game.cards.get_mut(*card_id) {
                     card.x_paid = *prev;
@@ -1760,7 +1760,7 @@ impl UndoLog {
     /// is the deterministic, position-keyed record of state at its head, so this
     /// is a pure function of game position.
     ///
-    /// mtg-o99ow: the network shadow's per-turn rewind re-materialises a revealed
+    /// mtg-752: the network shadow's per-turn rewind re-materialises a revealed
     /// OPPONENT permanent with a NON-undo-logged `cards.insert` that starts the
     /// instance untapped. The undo rewind cannot restore tap-state set by a
     /// `TapCard` BEFORE the rewind point (it only reverses actions AFTER it, and
@@ -1782,7 +1782,7 @@ impl UndoLog {
     /// `ChangeController` action in this log by replaying it forward (last
     /// `ChangeController` per card wins → its `new_controller`).
     ///
-    /// mtg-f0w57: the exact twin of [`reconstruct_tapped_states`] for the OTHER
+    /// mtg-797: the exact twin of [`reconstruct_tapped_states`] for the OTHER
     /// hashed per-card battlefield field. A re-materialised revealed OPPONENT
     /// permanent is rebuilt from the blank card template, which defaults
     /// `controller = owner`; if a `ChangeController` (Control Magic, Old Man of
@@ -2159,7 +2159,7 @@ mod tests {
 
     #[test]
     fn test_reconstruct_tapped_states() {
-        // mtg-o99ow: the network shadow uses this to re-derive the position-R
+        // mtg-752: the network shadow uses this to re-derive the position-R
         // tapped state of a reveal-materialised opponent permanent. Last TapCard
         // per card wins; absence means never tapped.
         let mut log = UndoLog::new();
@@ -2216,7 +2216,7 @@ mod tests {
 
     #[test]
     fn test_reconstruct_controller_states() {
-        // mtg-f0w57: twin of test_reconstruct_tapped_states for the `controller`
+        // mtg-797: twin of test_reconstruct_tapped_states for the `controller`
         // field. Last ChangeController per card wins (→ its new_controller);
         // absence means the card was never re-controlled (caller defaults owner).
         let mut log = UndoLog::new();

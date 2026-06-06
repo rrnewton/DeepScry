@@ -440,7 +440,7 @@ impl PlayerController for RemoteController {
                 if killable_blockers.iter().any(|(id, _)| *id == blocker_id) {
                     return ChoiceResult::Ok(blocker_id);
                 }
-                // HARD ERROR (mtg-w5sa2): a CardId WAS submitted but is NOT in
+                // HARD ERROR (mtg-731): a CardId WAS submitted but is NOT in
                 // our authoritative killable_blockers — the two sides' combat
                 // state has diverged. The old index fallback MASKED this by
                 // silently picking a different, order-dependent blocker, which
@@ -450,7 +450,7 @@ impl PlayerController for RemoteController {
                 // forbids).
                 let error_msg = format!(
                     "FATAL DESYNC: RemoteController lethal-damage blocker {:?} not in killable_blockers {:?} \
-                     (combat-state divergence; index fallback removed — mtg-w5sa2)",
+                     (combat-state divergence; index fallback removed — mtg-731)",
                     card_ids,
                     killable_blockers.iter().map(|(id, _)| id.as_u32()).collect::<Vec<_>>()
                 );
@@ -502,13 +502,13 @@ impl PlayerController for RemoteController {
                 if remaining_blockers.contains(&blocker_id) {
                     return ChoiceResult::Ok(blocker_id);
                 }
-                // HARD ERROR (mtg-w5sa2): submitted CardId not in our
+                // HARD ERROR (mtg-731): submitted CardId not in our
                 // authoritative remaining_blockers → combat-state divergence.
                 // Index fallback removed (it masked the desync by picking a
                 // different order-dependent blocker). Desync is ALWAYS fatal.
                 let error_msg = format!(
                     "FATAL DESYNC: RemoteController remaining-damage blocker {:?} not in remaining_blockers {:?} \
-                     (combat-state divergence; index fallback removed — mtg-w5sa2)",
+                     (combat-state divergence; index fallback removed — mtg-731)",
                     card_ids, remaining_blockers
                 );
                 log::error!("{}", error_msg);

@@ -7,7 +7,7 @@ seeds 7/11/19 still fatal, blocking the action_count re-inclusion prize (`eb8f93
 
 ## What is FIXED (committed @bcec4890, validate green, merged to integration @a80e49a5)
 
-- **mtg-d4j9v (seeds 7 & 11 — Balance):** was a LOG-ordering bug, not a state
+- **mtg-795 (seeds 7 & 11 — Balance):** was a LOG-ordering bug, not a state
   divergence. `execute_balance_effect` (Hand zone) emitted
   `"{p} discards {c} to Balance"` only when `cards.try_get(card_id)` was Some. On a
   network shadow the discarded opponent card's public reveal can arrive one
@@ -17,9 +17,9 @@ seeds 7/11/19 still fatal, blocking the action_count re-inclusion prize (`eb8f93
   via `gamelog_reveal_stable`, verifier key `"{p} discards card#{id} to Balance"` (the
   3rd discard-log site of the mtg-677 reveal-timing class). **Seed 11 → PASS; seed 7 →
   advances past Balance to the deeper divergence below.**
-- **mtg-f0w57:** controller reconstruction on rewind re-materialization
+- **mtg-797:** controller reconstruction on rewind re-materialization
   (`reconstruct_controller_states`), twin of tapped. Unit-tested; robots can't exercise.
-- **mtg-j4krs #1:** corrected the stale `SubmitChoice.spell_ability` doc.
+- **mtg-789 #1:** corrected the stale `SubmitChoice.spell_ability` doc.
 
 Broad strict sweep (action_count RE-INCLUDED), mtime-fresh: **PASS 2,5,6,9,11,18,20,42 (8/10).**
 
@@ -46,14 +46,14 @@ the Demonic-Tutor resolution sync/choice point BEFORE the search-result has been
 to the shadow — the tutored card's library→hand move (and its undo-log action) is carried
 by a reveal/SearchCandidates message that arrives slightly later, so the shadow is short
 the moved card (hand 5 vs 6) and short the move action(s) (ac 1339 vs 1341). This is the
-**deep-ac in-stack-resolution reveal-application lag** class (mtg-o99ow / mtg-559), the
+**deep-ac in-stack-resolution reveal-application lag** class (mtg-752 / mtg-559), the
 SAME family as the historical seed-2 turn-17 reserved-card reveal-materialization timing.
 It is NOT the tapped/controller re-materialization class and NOT a log-ordering bug.
 
 **First divergence:** the put-into-hand of the Demonic-Tutor-searched card is reflected
 on the server but not yet on the shadow at choice_seq=230 / ac≈1341 (client ac 1339).
 
-**Fix direction:** the principled reveal-actionlog unification (**mtg-ho2r8**) — drive the
+**Fix direction:** the principled reveal-actionlog unification (**mtg-799**) — drive the
 search-to-hand move through the action_count-keyed consensus log so the shadow applies it
 in lockstep before the resolution sync point, rather than per-field/per-effect patching.
 
@@ -132,12 +132,12 @@ stamp choice_seq→ac identically on both replicas.
 **Root class & assessment:** the shadow's choice-point/ac bookkeeping is not held in
 lockstep with the server's per-choice validation across an in-stack resolution that flows
 directly into the local player's next main-phase action — the in-stack **lockstep** half
-of mtg-ho2r8 (NOT the missing-opponent-delta half the design doc §1-2 covers). It spans
+of mtg-799 (NOT the missing-opponent-delta half the design doc §1-2 covers). It spans
 `network/server.rs` choice_seq/ac stamping + `wasm/network/client.rs` apply/advance
 cursors + the fancy_tui sync loop = netarch rearchitecture, NOT a one-session surgical
 patch. Handed off at this pin; do not band-aid.
 
-## STILL BLOCKING — seed 19: Fireball option-set divergence (mtg-8ow9h)
+## STILL BLOCKING — seed 19: Fireball option-set divergence (mtg-796)
 
 **Symptom:** `DESYNC DETECTED: NetworkController 1 received invalid choice index 2
 (only 2 options available). Client sent indices [2]` at WebRandom's Fireball (118) cast,
@@ -146,9 +146,9 @@ info-independent local controller enumerated ≥3 options where the server has 2
 index 2 (the 3rd), which the server rejects. Persists in strict mode (action_count
 included), so the upstream shadow divergence is in a field that does NOT enter the view
 hash but DOES affect option generation (e.g. mana availability / a tapped-or-zone state
-that happened to hash-match) — the mtg-0e1wo controller option-set family.
+that happened to hash-match) — the mtg-784 controller option-set family.
 
-**Next instrumentation (recommended):** finish **mtg-j4krs #2** (populate
+**Next instrumentation (recommended):** finish **mtg-789 #2** (populate
 `SubmitChoice.spell_ability` in the WASM client, mirroring `local_controller.rs:461-484`)
 so the server's always-on cross-check crashes EARLIER by CardId at the priority choice,
 pinning exactly which ability the client over-generated. Then bisect the first
@@ -157,4 +157,4 @@ shadow-state divergence upstream of turn 24.
 ## Box note
 All above is from existing captured logs (read/analysis only). A fresh instrumented repro
 (per-action WebRandom hand-count + the reveal-application order around the tutor) needs a
-network-e2e run — gated on validate-box availability (no netns isolation; mtg-vnirl pending).
+network-e2e run — gated on validate-box availability (no netns isolation; mtg-806 pending).

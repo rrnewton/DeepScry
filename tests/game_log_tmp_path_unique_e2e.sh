@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# mtg-zw363 regression: the engine's auto-saved game-log path
+# mtg-767 regression: the engine's auto-saved game-log path
 # (/tmp/mtg_game_*.log, announced on stderr as "Log saved to <path>") MUST be
 # unique per process so concurrent games never collide. The old per-second
 # global path (/tmp/mtg_game_YYYYMMDD_HHMMSS.log) made two games finishing in
@@ -61,4 +61,4 @@ if [[ "$P1" == "$P2" ]]; then
     exit 1
 fi
 echo -e "${GREEN}✓ concurrent games got DISTINCT paths (no collision)${NC}"
-echo -e "${GREEN}=== PASS: game-log /tmp path is unique per process (mtg-zw363) ===${NC}"
+echo -e "${GREEN}=== PASS: game-log /tmp path is unique per process (mtg-767) ===${NC}"

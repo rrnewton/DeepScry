@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Regression test for mtg-6vzht v1 — the updateUI CHANGE-DETECTION whole-render
+ * Regression test for mtg-751 v1 — the updateUI CHANGE-DETECTION whole-render
  * skip. Two properties, the first is the safety-critical one:
  *
  *  (B) A REAL CHANGE IS NEVER SKIPPED (no under-render → no stale UI). After

@@ -364,7 +364,7 @@ fn log_state_differences(server: &DebugSyncInfo, client: &DebugSyncInfo) {
         log::error!("║      Server: {:?}", server.requesting_player_hand_ids);
         log::error!("║      Client: {:?}", client.requesting_player_hand_ids);
     }
-    // mtg-ho2r8 seed-7: name the lost/extra card per player when hand SIZE diverges.
+    // mtg-799 seed-7: name the lost/extra card per player when hand SIZE diverges.
     for p in 0..2usize {
         if server.hand_ids[p] != client.hand_ids[p] {
             let s: std::collections::BTreeSet<u32> = server.hand_ids[p].iter().copied().collect();
@@ -376,7 +376,7 @@ fn log_state_differences(server: &DebugSyncInfo, client: &DebugSyncInfo) {
             );
         }
     }
-    // mtg-mb668 class-A: pinpoint the per-card battlefield divergence (a tap-status
+    // mtg-728 class-A: pinpoint the per-card battlefield divergence (a tap-status
     // or controller mismatch on a single card) when the coarse sizes all match.
     if server.battlefield_detail != client.battlefield_detail {
         log::error!("║   - Battlefield (id,tapped,ctrl) DIFFERS");
@@ -482,7 +482,7 @@ enum GameToHandler {
     LibraryReordered {
         player: PlayerId,
         new_order: Vec<CardId>,
-        /// Game `action_count` of the reorder's own undo action (mtg-o99ow).
+        /// Game `action_count` of the reorder's own undo action (mtg-752).
         action_count: u64,
     },
     /// Game has ended normally.
@@ -643,7 +643,7 @@ impl GameServer {
         // Log the ACTUAL bound address (listener.local_addr()), not the requested
         // `addr` — with `--port 0` the OS assigns an ephemeral port, so the
         // requested string would read ":0". Reporting the real port lets callers
-        // (e.g. the network-equiv e2e harness, mtg-ibj22) bind :0 atomically and
+        // (e.g. the network-equiv e2e harness, mtg-743) bind :0 atomically and
         // then discover the chosen port from this line — eliminating the
         // RANDOM-port-collision false-positive class with no TOCTOU.
         let bound = listener
@@ -982,7 +982,7 @@ async fn run_lobby_dispatch(
                 console_logs,
                 trusted_password,
             } => {
-                // Two-phase bug report (mtg-5ejgo): flush the disk-write
+                // Two-phase bug report (mtg-749): flush the disk-write
                 // confirmation IMMEDIATELY, then attempt the (timeout-bounded)
                 // GitHub filing and send its result. The two sends are inlined
                 // rather than wrapped in a single helper because phase 1 must
@@ -2122,7 +2122,7 @@ async fn run_game(
 
     // Both clients receive both library orders for symmetry
     // Game-start library sync: no undo actions have been logged yet, so the
-    // alignment ac is 0 (mtg-o99ow). The shadow adopts this order before any
+    // alignment ac is 0 (mtg-752). The shadow adopts this order before any
     // draw. Real reorder acs (shuffle / scry / surveil mid-game) are stamped at
     // their own undo-log position by the reorder-emission paths below.
     p1_conn
@@ -2167,7 +2167,7 @@ async fn run_game(
     // - Own cards: real reveal with name (player can see their hand)
     // - Opponent cards: dummy reveal with empty name (keeps count synced, reveals nothing)
 
-    // mtg-o99ow L2c: stamp each opening-hand reveal at its REAL per-draw game
+    // mtg-752 L2c: stamp each opening-hand reveal at its REAL per-draw game
     // `action_count` (the undo-log position of that draw's `RevealCard`), NOT a
     // bundled `Some(0)`. The shadow runs the SAME `skip_opening_hands` GameLoop
     // and draws P1's 7 then P2's 7 via `draw_card_silent`, each draw logging
@@ -2252,7 +2252,7 @@ async fn run_game(
     // reveals above at their real per-draw acs, so the controller MUST skip that entire
     // action span — otherwise it re-collects each player's own opening-hand draws at the
     // SAME forward_idx the pre-send already used, which under the game-`action_count`-keyed
-    // shadow log (mtg-o99ow L3) is a duplicate/out-of-order `ActionLog::push` => FATAL
+    // shadow log (mtg-752 L3) is a duplicate/out-of-order `ActionLog::push` => FATAL
     // (last>new). The prior `opening_hand_count` (CARD count) value under-skipped by 2x and
     // only survived because the legacy synthetic key tolerated the re-collected duplicates.
     let opening_hand_count = p1_hand.len() + p2_hand.len();
@@ -2556,7 +2556,7 @@ async fn run_coordinator(
                                     "Coordinator: P1 ChoiceResponse seq={} indices={:?}",
                                     response.choice_seq, response.choice_indices
                                 );
-                                // mtg-mb668 class-A snapshot verification: ground-truth of what the
+                                // mtg-728 class-A snapshot verification: ground-truth of what the
                                 // server RECEIVED for this P1 response vs what it expects, so the
                                 // WASM_SUBMIT (seq,ac,hash) can be aligned and choice_seq↔ac↔hash
                                 // misalignment detected. network_debug-gated (opt-in diagnostics).
@@ -2927,7 +2927,7 @@ async fn handle_player_websocket(
     // Track if we're currently waiting for a choice from the client
     let mut waiting_for_choice: Option<ChoiceRequest> = None;
 
-    // ── Minimal lazy protocol (mtg-o99ow), Phase 1 dual-emit accumulators ──
+    // ── Minimal lazy protocol (mtg-752), Phase 1 dual-emit accumulators ──
     // Facts that arrive eagerly from the coordinator (opponent choices via
     // `OpponentMadeChoice`, library reorders via `LibraryReordered`) since this
     // client's last `ChoiceRequest`. They are drained into the next
@@ -2962,7 +2962,7 @@ async fn handle_player_websocket(
                                         owner: reveal_info.owner,
                                         card: card_reveal,
                                         reason,
-                                        // mtg-o99ow: stamp with the reveal's OWN
+                                        // mtg-752: stamp with the reveal's OWN
                                         // game action_count (the undo-log position
                                         // of its RevealCard action), not the
                                         // bundling choice's action_count (prior
@@ -2981,7 +2981,7 @@ async fn handle_player_websocket(
                         // For LibrarySearchByName choices, reveal all searchable library cards
                         // BEFORE sending ChoiceRequest so client can filter them (mtg-253 fix).
                         //
-                        // mtg-o99ow L2d: emit ONE `SearchCandidates` message carrying the full
+                        // mtg-752 L2d: emit ONE `SearchCandidates` message carrying the full
                         // `Vec<CardReveal>` at the single search-choice ac, NOT N separate
                         // `CardRevealed` messages all stamped at that one ac. Under the
                         // game-`action_count`-keyed shadow log (L3) the N-at-one-ac form would
@@ -2993,7 +2993,7 @@ async fn handle_player_websocket(
                         if let Some(ref library_cards) = choice_request.library_search_cards {
                             let game_guard = game.lock().await;
                             log::debug!(
-                                "Handler P{}: Sending SearchCandidates ({} cards) for library search (mtg-253/mtg-o99ow)",
+                                "Handler P{}: Sending SearchCandidates ({} cards) for library search (mtg-253/mtg-752)",
                                 conn.player_id, library_cards.len()
                             );
                             let cards: Vec<CardReveal> = library_cards
@@ -3016,7 +3016,7 @@ async fn handle_player_websocket(
                             }
                         }
 
-                        // Minimal lazy protocol (mtg-o99ow) Phase-1 dual-emit:
+                        // Minimal lazy protocol (mtg-752) Phase-1 dual-emit:
                         // assemble the single catch-up buffer carried by this
                         // ChoiceRequest. The eager messages above/below are still
                         // sent; a buffer-aware client consumes the buffer and
@@ -3087,7 +3087,7 @@ async fn handle_player_websocket(
                             conn.player_id, info.choice_seq
                         );
 
-                        // Minimal lazy protocol (mtg-o99ow) TASK 2 — buffer is the
+                        // Minimal lazy protocol (mtg-752) TASK 2 — buffer is the
                         // SOLE source of the opponent decision. We ONLY accumulate
                         // it for the next ChoiceRequest's `buffer`
                         // (`assemble_choice_buffer` emits the `BufferedFact::Choice`
@@ -3112,7 +3112,7 @@ async fn handle_player_websocket(
                             conn.player_id, choice_seq
                         );
 
-                        // mtg-o99ow Phase 2: do NOT eagerly re-reveal the found card here.
+                        // mtg-752 Phase 2: do NOT eagerly re-reveal the found card here.
                         //
                         // The own-library search found card is ALREADY delivered to the
                         // recipient by `collect_reveals_since_last_choice` at its TRUE
@@ -3149,7 +3149,7 @@ async fn handle_player_websocket(
                             conn.player_id, player, new_order.len(), action_count
                         );
 
-                        // Minimal lazy protocol (mtg-o99ow) Phase-1 dual-emit:
+                        // Minimal lazy protocol (mtg-752) Phase-1 dual-emit:
                         // accumulate this reorder for the next ChoiceRequest
                         // buffer (BLOCKER 2: the new order exists here, not in a
                         // backward undo-log scan). The eager LibraryReordered
@@ -3159,7 +3159,7 @@ async fn handle_player_websocket(
                         conn.send(&ServerMessage::LibraryReordered {
                             player,
                             new_order,
-                            // mtg-o99ow L2: the reorder's own undo-log position
+                            // mtg-752 L2: the reorder's own undo-log position
                             // (ReorderLibrary for scry/surveil), threaded from
                             // pending_library_reorders. Client keys on it in L3.
                             action_count,
@@ -3264,7 +3264,7 @@ async fn handle_player_websocket(
                                 console_logs,
                                 trusted_password,
                             }) => {
-                                // Two-phase bug report (mtg-5ejgo): see the lobby
+                                // Two-phase bug report (mtg-749): see the lobby
                                 // call site above for why the phase-1 disk
                                 // confirmation and phase-2 GitHub result are sent
                                 // as two separate messages.
@@ -3452,7 +3452,7 @@ fn build_card_reveal(game: &GameState, info: &CardRevealInfo) -> Option<CardReve
     })
 }
 
-/// Assemble the minimal-lazy-protocol `ChoiceRequest` buffer (mtg-o99ow).
+/// Assemble the minimal-lazy-protocol `ChoiceRequest` buffer (mtg-752).
 ///
 /// Collects every reveal-class + opponent-choice fact the recipient needs to
 /// replay its shadow forward to this choice point into ONE ascending-`ac`
@@ -3681,7 +3681,7 @@ fn proxy_prefix_from(value: Option<&str>) -> Vec<String> {
 ///
 /// The previous code HARDCODED `/usr/bin/with-proxy`, which is absent on the
 /// deploy VM, so every `gh` invocation failed with ENOENT before `gh` even ran
-/// (mtg-zvlpk). Making the prefix config-driven + default-direct fixes filing on
+/// (mtg-758). Making the prefix config-driven + default-direct fixes filing on
 /// the VM (where `gh` is installed, authed, and has direct egress).
 fn command_proxy_prefix() -> Vec<String> {
     proxy_prefix_from(std::env::var("MTG_GH_PROXY").ok().as_deref())
@@ -3691,7 +3691,7 @@ fn command_proxy_prefix() -> Vec<String> {
 /// directory). An already-absolute `path` is returned unchanged — `Path::join`
 /// replaces the base when its argument is absolute. Used so the `gh` file-path
 /// args (`--body-file`, gist files) are absolute and therefore independent of
-/// `gh`'s own working directory (mtg-zvlpk).
+/// `gh`'s own working directory (mtg-758).
 fn absolutize_under(path: &Path, base: &Path) -> PathBuf {
     base.join(path)
 }
@@ -3984,7 +3984,7 @@ fn create_github_issue_with_runner(
     // relative file-path arg (and its own cwd) against ITS OWN working dir, so
     // mixing a relative cwd with relative `--body-file` paths is a footgun:
     //   - old code: cwd = bug_report_repo_root() = COMPILE-TIME crate path,
-    //     absent on the deploy VM → Command::spawn ENOENT (mtg-zvlpk);
+    //     absent on the deploy VM → Command::spawn ENOENT (mtg-758);
     //   - first fix: cwd = report_dir (relative) → gh resolved the relative
     //     `--body-file bug_reports/<ts>/…` UNDER report_dir → "no such file".
     // Make the whole class impossible: ABSOLUTIZE report_dir against the server's
@@ -4067,7 +4067,7 @@ fn create_github_issue_with_runner(
 /// up and report it as failed. The bug report is already persisted to disk by
 /// this point, so a slow or hung `gh` invocation must NEVER block the user — we
 /// time out and report the GitHub step as failed while the disk copy stays safe
-/// (mtg-5ejgo).
+/// (mtg-749).
 const GITHUB_ISSUE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
 
 /// Build the phase-1 (`BugReportStored`) message from the disk-write result.
@@ -4506,7 +4506,7 @@ mod tests {
         let calls = calls.lock().expect("lock calls");
         assert_eq!(calls.len(), 4);
         // Default (no MTG_GH_PROXY): each command is ["/usr/bin/gh", <sub>, ...]
-        // — invoked directly, no proxy wrapper (mtg-zvlpk).
+        // — invoked directly, no proxy wrapper (mtg-758).
         // 0: gh auth status preflight
         assert_eq!(calls[0][0], "/usr/bin/gh");
         assert_eq!(calls[0][1], "auth");
@@ -4516,7 +4516,7 @@ mod tests {
         assert!(calls[1].windows(2).any(|w| w[0] == "-R" && w[1] == "rrnewton/DeepScry"));
         // 2: gist create -- NOT repo-scoped (gists are user-scoped). File-path
         // args MUST be ABSOLUTE so gh can open them regardless of its cwd
-        // (mtg-zvlpk: a relative path resolved under the wrong cwd → "no such file").
+        // (mtg-758: a relative path resolved under the wrong cwd → "no such file").
         assert_eq!(calls[2][1], "gist");
         assert!(calls[2]
             .iter()
@@ -4530,7 +4530,7 @@ mod tests {
         assert!(calls[3].windows(2).any(|w| w[0] == "-R" && w[1] == "rrnewton/DeepScry"));
         assert!(calls[3].windows(2).any(|w| w[0] == "--label" && w[1] == "bug"));
         assert!(calls[3].windows(2).any(|w| w[0] == "--label" && w[1] == "triage"));
-        // --body-file MUST be an ABSOLUTE path (mtg-zvlpk).
+        // --body-file MUST be an ABSOLUTE path (mtg-758).
         assert!(calls[3].windows(2).any(|w| w[0] == "--body-file"
             && w[1].ends_with("github_issue_body.md")
             && Path::new(&w[1]).is_absolute()));
@@ -4572,7 +4572,7 @@ mod tests {
     fn test_absolutize_under() {
         // A relative path is resolved against the base (server working dir) →
         // absolute. This is what makes the gh `--body-file` arg independent of
-        // gh's own cwd (mtg-zvlpk: a relative arg + relative cwd double-nested).
+        // gh's own cwd (mtg-758: a relative arg + relative cwd double-nested).
         assert_eq!(
             absolutize_under(Path::new("bug_reports/123/github_issue_body.md"), Path::new("/srv/app")),
             PathBuf::from("/srv/app/bug_reports/123/github_issue_body.md")
@@ -4588,7 +4588,7 @@ mod tests {
     fn test_proxy_prefix_from() {
         // Unset / empty / whitespace → no proxy wrapper (invoke directly). This is
         // the default + production-VM path: the old hardcoded /usr/bin/with-proxy
-        // is absent on the VM and made gh ENOENT (mtg-zvlpk).
+        // is absent on the VM and made gh ENOENT (mtg-758).
         assert_eq!(proxy_prefix_from(None), Vec::<String>::new());
         assert_eq!(proxy_prefix_from(Some("")), Vec::<String>::new());
         assert_eq!(proxy_prefix_from(Some("   ")), Vec::<String>::new());
@@ -4643,7 +4643,7 @@ mod tests {
 
     /// The genuinely-bad case: a failed disk write must report `success: false`
     /// with the error, so the client's "saved to disk" box shows a failure and
-    /// the user can retry (mtg-5ejgo).
+    /// the user can retry (mtg-749).
     #[test]
     #[allow(clippy::wildcard_enum_match_arm)]
     fn test_bug_report_stored_message_reports_disk_failure() {
@@ -4663,7 +4663,7 @@ mod tests {
     }
 
     /// A `gh` invocation that returns ENOENT instantly must resolve phase 2 to a
-    /// failure message (no URL) WITHOUT hitting the timeout (mtg-5ejgo).
+    /// failure message (no URL) WITHOUT hitting the timeout (mtg-749).
     #[tokio::test]
     #[allow(clippy::wildcard_enum_match_arm)]
     async fn test_file_bug_report_issue_reports_github_failure() {
@@ -4703,7 +4703,7 @@ mod tests {
 
     /// A hung `gh` invocation must be bounded by the timeout: phase 2 resolves to
     /// a "timed out" failure message rather than blocking the user forever
-    /// (mtg-5ejgo). Uses a short timeout + a runner that sleeps past it.
+    /// (mtg-749). Uses a short timeout + a runner that sleeps past it.
     #[tokio::test]
     #[allow(clippy::wildcard_enum_match_arm)]
     async fn test_file_bug_report_issue_times_out_on_slow_gh() {

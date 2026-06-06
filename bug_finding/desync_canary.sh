@@ -36,7 +36,7 @@
 #   this canary GREEN  : avatar pair + monored mirror + counterspells mirror
 #                        (all three controllers) + rogerbrand mirror HEURISTIC
 #                        (combat two-choice + All Hallow's Eve mass-resurrection;
-#                        the mtg-u3dwj/mtg-d62r3 fix), BROAD seed ranges.
+#                        the mtg-768/mtg-770 fix), BROAD seed ranges.
 #                        (cycling/search/shuffle, burn/combat-damage,
 #                         counter/stack-interaction, in-resolution draw-then-discard)
 #   this canary KNOWN-RED: rogerbrand mirror random/zero only (mtg-586 load-flaky
@@ -67,7 +67,7 @@
 #   in-resolution discard was decided on the network client's shadow BEFORE the
 #   just-drawn cards' reveals (carried in the discard ChoiceRequest's buffer) were
 #   materialised, so the heuristic discarded the wrong cards — an
-#   information-independence desync. FIXED (mtg-u3dwj / mtg-d62r3): the DiscardCards
+#   information-independence desync. FIXED (mtg-768 / mtg-770): the DiscardCards
 #   handler now receives the ChoiceRequest before syncing (prepare -> sync ->
 #   decide), so rogerbrand heuristic seeds 1-4 are now 5/5-deterministically green
 #   and promoted into the gate above. The rogerbrand random/zero legs remain
@@ -150,7 +150,7 @@ GREEN_CORPUS=(
 #                          mass-resurrection. The deterministic HEURISTIC seed=3
 #                          divergence (the Bazaar-of-Baghdad in-resolution
 #                          draw-then-discard shadow-sync-ordering desync, mtg-u3dwj
-#                          / mtg-d62r3) was FIXED 2026-06-04 and PROMOTED into the
+#                          / mtg-770) was FIXED 2026-06-04 and PROMOTED into the
 #                          GREEN corpus above. The remaining random/zero legs on
 #                          rogerbrand stay here: they are mtg-586-class load-flaky
 #                          (network-server nondeterminism, NOT a same-game desync)

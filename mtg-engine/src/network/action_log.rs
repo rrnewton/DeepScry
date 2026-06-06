@@ -1,7 +1,7 @@
 //! Generic append-only, `action_count`-indexed, non-destructive log.
 //!
 //! This is the foundational primitive for the network re-architecture
-//! (mtg-o99ow) described in `docs/NETWORK_ACTION_LOG.md`. It is the SHARED
+//! (mtg-752) described in `docs/NETWORK_ACTION_LOG.md`. It is the SHARED
 //! substrate that backs
 //! THREE distinct owners (per the design doc § 3):
 //!
@@ -121,7 +121,7 @@ impl<T> ActionLog<T> {
     /// `LibraryReordered` broadcast (stamped at the reorder's own, often
     /// LARGER, undo-log ac) is sent BEFORE the handler's `choice.reveals`
     /// loop (stamped at each reveal's smaller ac). So a delta at ac 380 can
-    /// reach the client ahead of one at ac 376 (mtg-o99ow WASM bug #2). The
+    /// reach the client ahead of one at ac 376 (mtg-752 WASM bug #2). The
     /// log is **keyed and consumed by GAME `action_count`** ([`get`](Self::get)
     /// / [`frontier`](Self::frontier) / [`iter`](Self::iter) all operate on
     /// the sorted Vec), so the wire ARRIVAL order is an efficiency concern,
@@ -184,7 +184,7 @@ impl<T> ActionLog<T> {
     }
 
     /// Iterate `(action_count, &entry)` pairs in append (= `action_count`-
-    /// ascending) order. Useful for diagnostics and batch consumers (mtg-o99ow)
+    /// ascending) order. Useful for diagnostics and batch consumers (mtg-752)
     /// that walk the log from the engine's current cursor up to the frontier.
     pub fn iter(&self) -> impl Iterator<Item = (u64, &T)> {
         self.entries.iter().map(|(ac, e)| (*ac, e))
@@ -201,7 +201,7 @@ mod tests {
 
     // A trivial payload type to exercise the generic. The primitive itself
     // is payload-agnostic; integration tests for the concrete `ChoiceEntry`
-    // and `StateSyncEntry` types live with their owners (mtg-o99ow).
+    // and `StateSyncEntry` types live with their owners (mtg-752).
     #[derive(Debug, Clone, PartialEq, Eq)]
     struct Payload(u32);
 
@@ -300,7 +300,7 @@ mod tests {
     fn insert_sorted_tolerates_out_of_order_arrival() {
         // The state-sync log's arrival-order-independent appender: deltas can
         // arrive in any order; the Vec stays game-ac-sorted so get/iter/frontier
-        // see canonical game-position order (mtg-o99ow WASM bug #2).
+        // see canonical game-position order (mtg-752 WASM bug #2).
         let mut log = ActionLog::new();
         log.insert_sorted(380, Payload(380));
         log.insert_sorted(376, Payload(376)); // earlier ac arrives later

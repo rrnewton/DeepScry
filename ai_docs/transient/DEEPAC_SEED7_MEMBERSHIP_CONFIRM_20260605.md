@@ -13,7 +13,7 @@ INTO that player's hand. So the desktop thinks the browser has 5 cards in hand
 while the server (and the browser itself) correctly say 6. That one-card
 disagreement is hashed into the sync check and is fatal. This is a real
 lost-card bug, NOT a timing/labelling artifact, and it is the *observer-side
-missing-opponent-delta* family (mtg-ho2r8 §1-2 / mtg-o99ow), not the in-stack
+missing-opponent-delta* family (mtg-799 §1-2 / mtg-752), not the in-stack
 "stamping alignment" the previous checkpoint hypothesised.
 
 ## How this was proven (fresh, mtime-fresh, maximally-strict instrumented repro)
@@ -80,7 +80,7 @@ The observer of an OPPONENT's library search-to-hand:
   hand card. 97 leaves the library accounting (lib=36, matches) but is deposited
   nowhere countable → **lost card**.
 
-This is the SAME re-materialization class as mtg-ho2r8: an opponent
+This is the SAME re-materialization class as mtg-799: an opponent
 hidden-zone→hand move on the observer needs the card materialized into the
 opponent's hand zone as a counted, identity-hidden reserved card. The dummy
 `Searched` reveal deliberately preserves identity-hiding by skipping
@@ -187,10 +187,10 @@ the resolution through `choose_from_library_with_hook` like the activated-abilit
 path does. Either way it must materialize the reserved opponent card into the
 hand as a counted, identity-hidden slot and survive rewind/replay. Touching the
 `GameState::apply_effect` SearchLibrary arm to be network-shadow-aware is the
-core of the mtg-ho2r8 / mtg-725 work and was correctly NOT band-aided this
+core of the mtg-799 / mtg-725 work and was correctly NOT band-aided this
 session.
 
-## Fix direction (durable, mtg-ho2r8 §1-2 — NOT a session-surgical patch)
+## Fix direction (durable, mtg-799 §1-2 — NOT a session-surgical patch)
 
 Carry the opponent search-to-hand as a counted hand-membership delta on the
 observer: when the observer applies an opponent's `Searched`-into-hand, deposit
@@ -199,7 +199,7 @@ an identity-hidden reserved placeholder into the opponent's hand zone (so
 rewind/replay. This is the missing-opponent-delta half the prior checkpoint
 explicitly deferred. It must be verified across ALL 10 robots seeds in
 maximally-strict mode (action_count re-included) before the action_count
-exclusion prize (`eb8f938e`) is re-applied. Related: mtg-o99ow (reveal-as-choice
+exclusion prize (`eb8f938e`) is re-applied. Related: mtg-752 (reveal-as-choice
 unification keyed by ac), mtg-677 (rewind-faithful reveals).
 
 ## Why NOT the stamping-alignment fix the brief requested
@@ -224,7 +224,7 @@ behavior change. Repro artifacts: `debug/netarch-undo-dumps/gui_random_03_robots
 
 ---
 
-# Seed-19 (mtg-8ow9h) — mtg-j4krs #2 done + divergence pinned to the Fireball target choice
+# Seed-19 (mtg-796) — mtg-789 #2 done + divergence pinned to the Fireball target choice
 
 PLAIN-LANGUAGE: seed 19 crashes on turn 24 because the browser player's
 Fireball offers ONE MORE valid target than the server allows. Both sides agree
@@ -233,7 +233,7 @@ target. The most likely culprit is a Man-land (Mishra's Factory) whose
 "is currently an animated creature" status — a temporary continuous effect that
 is NOT part of the network sync hash — has drifted between the two sides.
 
-## mtg-j4krs #2 DONE (committed): WASM client now populates SubmitChoice.spell_ability
+## mtg-789 #2 DONE (committed): WASM client now populates SubmitChoice.spell_ability
 
 Threaded the chosen `SpellAbility` through the WASM priority path
 (`choose_spell_ability_to_play` → new `submit_choice_to_server_with_ability` →
@@ -267,7 +267,7 @@ were actively animated via `ActivateAbility{ability_index:1}` ("becomes a
 creature") in the turns leading up (WASM undo [1734]/[1739]/[1744]/[1746]).
 LEADING HYPOTHESIS: a Mishra's Factory is an animated CREATURE on the WASM
 shadow but a plain land on the server (or its animation expiry diverged), so the
-WASM offers it as an extra Fireball target. This is the mtg-0e1wo controller
+WASM offers it as an extra Fireball target. This is the mtg-784 controller
 option-set family: a continuous-effect / type-changing state (creature
 animation) that `compute_view_hash` does not capture (it hashes card_id + tapped
 + controller, NOT P/T/types/animation) diverges and surfaces only through option

@@ -26,7 +26,7 @@
  * The network client is expected to expose `isConnected()`, `send(json)`, and
  * the two settable two-phase callbacks `onBugReportStored` (phase 1: disk-write
  * confirmation) and `onBugReportIssueResult` (phase 2: GitHub issue outcome) —
- * see web/network.js and mtg-5ejgo.
+ * see web/network.js and mtg-749.
  */
 
 const MAX_CONSOLE_LINES = 500;
@@ -86,7 +86,7 @@ export function installConsoleCapture() {
     window.__originalConsole = originalConsole;
 }
 
-// ---- Connect-on-demand transient lobby WS (mtg-5ejgo) -----------------------
+// ---- Connect-on-demand transient lobby WS (mtg-749) -----------------------
 // A bug report is a single "commitment" message that the server's lobby handler
 // accepts on a bare connection (network/server.rs, same path as ListGames /
 // CreateGame). So when there is no live game WebSocket (e.g. a SOLO/local WASM
@@ -322,7 +322,7 @@ export function initBugReport(config) {
         getConsoleLogs = () => (typeof window.getRecentConsoleLogs === 'function' ? window.getRecentConsoleLogs() : []),
         getTurnInfo = () => document.getElementById('turn-info')?.textContent || '',
         getMode = () => document.getElementById('game-mode')?.value || 'unknown',
-        // Connect-on-demand hooks (mtg-5ejgo). `getWsUrl` resolves the lobby
+        // Connect-on-demand hooks (mtg-749). `getWsUrl` resolves the lobby
         // endpoint; `createTransientConnection` opens a transient transport when
         // there is no live game WS. Both are overridable for tests.
         getWsUrl = resolveLobbyWsUrl,
@@ -339,7 +339,7 @@ export function initBugReport(config) {
     // the module cannot reassign). Falls back to the page-provided getter.
     let activeClient = null;
 
-    // Two-phase submission state (mtg-5ejgo). The widget shows two checkboxes —
+    // Two-phase submission state (mtg-749). The widget shows two checkboxes —
     // "saved to disk" (phase 1) and "filed on GitHub" (phase 2) — and is
     // "finalized" once the flow reaches a terminal state, after which Submit is
     // permanently disabled ("Already submitted") so the user cannot double-file.
@@ -440,7 +440,7 @@ export function initBugReport(config) {
     }
 
     // True iff a live game WebSocket is connected and usable for sending. When
-    // present we reuse it; otherwise we connect on demand (mtg-5ejgo).
+    // present we reuse it; otherwise we connect on demand (mtg-749).
     function isConnectionReady() {
         const client = currentClient();
         return !!(client
@@ -449,7 +449,7 @@ export function initBugReport(config) {
             && typeof client.send === 'function');
     }
 
-    // mtg-5ejgo: a report can be filed from ANY context — reuse the live game WS
+    // mtg-749: a report can be filed from ANY context — reuse the live game WS
     // if connected, else connect on demand to the lobby endpoint. So the only
     // hard blocker is having no lobby URL to connect to at all (e.g. the page was
     // opened with no server origin).
@@ -457,14 +457,14 @@ export function initBugReport(config) {
         return isConnectionReady() || !!getWsUrl();
     }
 
-    // mtg-5ejgo: reflect filing readiness on the open dialog. The old mtg-596
+    // mtg-749: reflect filing readiness on the open dialog. The old mtg-596
     // "Not connected — start or join a network game" banner is gone: a solo
     // player connects on demand. Only when there is no server origin at all do we
     // disable Submit and explain why.
     function applyConnectionState() {
         // While a submission is in flight (or finalized) the connection poll must
         // not touch the Submit button or status area — the progress checkboxes
-        // and finalize logic own them (mtg-5ejgo).
+        // and finalize logic own them (mtg-749).
         if (bugReportSubmitting || bugReportFinalized) {
             return;
         }
@@ -527,7 +527,7 @@ export function initBugReport(config) {
     function openModal() {
         refreshCaptureCounts();
         // Every open starts a fresh report: clear any finalized/progress state
-        // from a previous submission so the two checkboxes reset (mtg-5ejgo).
+        // from a previous submission so the two checkboxes reset (mtg-749).
         resetSubmissionState();
         setStatus('');
         setSubmitting(false);
@@ -547,7 +547,7 @@ export function initBugReport(config) {
     function closeModal({ resetStatus = true } = {}) {
         // A submission in flight (phase 1 sent, awaiting phase 2 or the backstop)
         // keeps the modal open so the user sees the outcome. Once finalized the
-        // modal is freely closable (mtg-5ejgo).
+        // modal is freely closable (mtg-749).
         if (bugReportSubmitting && !bugReportFinalized) {
             return;
         }
@@ -603,7 +603,7 @@ export function initBugReport(config) {
             turnInfo: payload.turnInfo,
         });
 
-        // Resolve a transport (mtg-5ejgo): reuse the live game WS if connected,
+        // Resolve a transport (mtg-749): reuse the live game WS if connected,
         // otherwise connect on demand to the lobby endpoint (solo/local game).
         closeTransient();
         let transport;
@@ -630,7 +630,7 @@ export function initBugReport(config) {
 
         try {
             transport.send(JSON.stringify(message));
-            // Two-phase UX (mtg-5ejgo): the report is now in flight. Show the two
+            // Two-phase UX (mtg-749): the report is now in flight. Show the two
             // checkboxes and arm the client-side backstop. The Submit button stays
             // disabled until the flow finalizes.
             startSubmissionProgress();
@@ -641,7 +641,7 @@ export function initBugReport(config) {
         }
     }
 
-    // ---- Two-phase progress state machine (mtg-5ejgo) ------------------------
+    // ---- Two-phase progress state machine (mtg-749) ------------------------
 
     const CHECK_GLYPHS = { pending: '☐', ok: '☑', fail: '✗', unknown: '⚠' };
 

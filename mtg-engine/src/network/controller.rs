@@ -35,7 +35,7 @@ pub struct CardRevealInfo {
     /// Zone the card moved to
     pub to_zone: Zone,
     /// **The reveal's OWN game `action_count`** — the undo-log position of
-    /// the `RevealCard` action that produced this reveal (mtg-o99ow,
+    /// the `RevealCard` action that produced this reveal (mtg-752,
     /// reveal-as-choice unification). The server stamps each
     /// `ServerMessage::CardRevealed` with this value instead of bundling all
     /// reveals at the *following* `ChoiceRequest`'s `action_count` (the prior
@@ -570,7 +570,7 @@ impl NetworkController {
                             owner: card_owner,
                             from_zone: Zone::Library, // Still a placeholder, but less critical
                             to_zone,
-                            // mtg-o99ow: stamp with the reveal's OWN undo-log
+                            // mtg-752: stamp with the reveal's OWN undo-log
                             // position (this RevealCard action), not the
                             // bundling choice's action_count. forward_idx is
                             // the action_count at which this reveal occurred.
@@ -988,7 +988,7 @@ impl PlayerController for NetworkController {
                             );
                             return ChoiceResult::Ok(blocker_id);
                         }
-                        // HARD ERROR (mtg-w5sa2): the remote submitted a
+                        // HARD ERROR (mtg-731): the remote submitted a
                         // lethal-damage blocker CardId that is NOT in this
                         // (authoritative) killable_blockers list — combat state
                         // diverged between server and the remote shadow. The old
@@ -997,7 +997,7 @@ impl PlayerController for NetworkController {
                         // desync. Desync is ALWAYS fatal: surface it here.
                         let error_msg = format!(
                             "FATAL DESYNC: remote lethal-damage blocker {:?} not in killable_blockers {:?} \
-                             (combat-state divergence; index fallback removed — mtg-w5sa2)",
+                             (combat-state divergence; index fallback removed — mtg-731)",
                             card_ids,
                             killable_blockers.iter().map(|(id, _)| id.as_u32()).collect::<Vec<_>>()
                         );
@@ -1068,13 +1068,13 @@ impl PlayerController for NetworkController {
                             );
                             return ChoiceResult::Ok(blocker_id);
                         }
-                        // HARD ERROR (mtg-w5sa2): submitted remaining-damage
+                        // HARD ERROR (mtg-731): submitted remaining-damage
                         // blocker CardId not in this authoritative
                         // remaining_blockers list → combat-state divergence.
                         // Index fallback removed (it masked the desync). Fatal.
                         let error_msg = format!(
                             "FATAL DESYNC: remote remaining-damage blocker {:?} not in remaining_blockers {:?} \
-                             (combat-state divergence; index fallback removed — mtg-w5sa2)",
+                             (combat-state divergence; index fallback removed — mtg-731)",
                             card_ids,
                             remaining_blockers.iter().map(|id| id.as_u32()).collect::<Vec<_>>()
                         );

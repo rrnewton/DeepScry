@@ -211,7 +211,7 @@ async function runTest() {
         });
         await page.click('#btn-bug-report');
         await page.waitForSelector('#bug-report-modal', { state: 'visible', timeout: 5000 });
-        // mtg-5ejgo: in this local (solo) game there is no live game WS, but the
+        // mtg-749: in this local (solo) game there is no live game WS, but the
         // widget connects on demand to the lobby endpoint — so Submit is ENABLED
         // with no "not connected" banner (the old mtg-596 dead-end is gone). The
         // detailed two-phase flows below drive an injected live client.
@@ -277,7 +277,7 @@ async function runTest() {
             throw new Error('Bug report send payload did not include serialized logs');
         }
 
-        // Two-phase flow (mtg-5ejgo): phase 1 (stored) checks box 1; phase 2
+        // Two-phase flow (mtg-749): phase 1 (stored) checks box 1; phase 2
         // (issue result with URL) checks box 2 + renders the link and finalizes
         // the Submit button to a disabled "Already submitted".
         await page.evaluate(() => {

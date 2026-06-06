@@ -186,7 +186,7 @@ impl<C: PlayerController> WasmNetworkLocalController<C> {
 
     /// As [`submit_choice_to_server`], but also forwards the chosen `SpellAbility`
     /// so the server's always-on CardId cross-check protects the web path
-    /// (mtg-j4krs #2, mirrors native `local_controller.rs:461-484`). Used by the
+    /// (mtg-789 #2, mirrors native `local_controller.rs:461-484`). Used by the
     /// Priority path; all other choice types pass `None`.
     fn submit_choice_to_server_with_ability(
         &self,
@@ -220,7 +220,7 @@ impl<C: PlayerController> WasmNetworkLocalController<C> {
     /// (`submit_damage_choice_to_server`) submit paths so the damage/blocker
     /// submissions are no longer an UNINSTRUMENTED hash source — the rejected
     /// seed-2 client hash was produced here and was previously invisible
-    /// (mtg-yexvc / mtg-mb668 class-A). `action_count` is the server-echoed
+    /// (mtg-744 / mtg-728 class-A). `action_count` is the server-echoed
     /// action_count from the current ChoiceRequest.
     fn compute_submit_hash(
         &self,
@@ -252,7 +252,7 @@ impl<C: PlayerController> WasmNetworkLocalController<C> {
                 view.stack().len(),
                 hash,
             );
-            // mtg-mb668 class-A: emit the WASM shadow's REAL per-card detail (the
+            // mtg-728 class-A: emit the WASM shadow's REAL per-card detail (the
             // server only ever saw a reconstructed client view because the WASM
             // SubmitChoice carries debug_info=None). log::warn so the e2e captures
             // it. KEYED BY choice_seq (the authoritative shared sequence the server
@@ -263,7 +263,7 @@ impl<C: PlayerController> WasmNetworkLocalController<C> {
                 .peek_choice_request()
                 .map(|req| req.choice_seq)
                 .unwrap_or(u32::MAX);
-            // mtg-ho2r8 seed-7 membership confirm: dump the shadow's KNOWN hand
+            // mtg-799 seed-7 membership confirm: dump the shadow's KNOWN hand
             // CardIds for BOTH players. The local (own) hand is fully known; the
             // opponent's is the materialized subset (size-only zones contribute
             // nothing). A hand-SIZE-only desync is a LOST card iff these differ
@@ -290,13 +290,13 @@ impl<C: PlayerController> WasmNetworkLocalController<C> {
                 hand1,
                 crate::game::state_hash::format_view_card_detail(view),
             );
-            // mtg-mb668 class-A: UNCONDITIONAL shadow undo-log tail (network_debug).
+            // mtg-728 class-A: UNCONDITIONAL shadow undo-log tail (network_debug).
             // The action-count-mismatch dump below NEVER fires because the WASM
             // ECHOES the server action_count (action_count == local_action_count
             // always), so the shadow undo-log was never captured. The shadow's
             // action SEQUENCE is ground-truth (unlike the suspect seq↔hash mapping):
             // diffing it against the server's SERVER_FULL_UNDO_DUMP names the actions
-            // the shadow SKIPS (the reserved-id branch-on-absence sites, mtg-mb668).
+            // the shadow SKIPS (the reserved-id branch-on-absence sites, mtg-728).
             {
                 const SHADOW_DUMP_TAIL: usize = 60;
                 log::warn!(
@@ -455,7 +455,7 @@ impl<C: PlayerController + 'static> PlayerController for WasmNetworkLocalControl
                     Some(ability) => vec![available.iter().position(|a| a == ability).map(|i| i + 1).unwrap_or(0)],
                 };
                 // Forward the chosen SpellAbility for the server's CardId cross-check
-                // (mtg-j4krs #2). Pass (None) carries no ability, matching native.
+                // (mtg-789 #2). Pass (None) carries no ability, matching native.
                 self.submit_choice_to_server_with_ability(choice_indices, view, choice.clone());
 
                 // Return the choice immediately - local game can advance
@@ -503,7 +503,7 @@ impl<C: PlayerController + 'static> PlayerController for WasmNetworkLocalControl
                 // `NetworkLocalController::choose_targets` sends the same
                 // `filter_map(position).collect()` (empty for 0 targets), and the
                 // server decodes an empty index list as "0 targets chosen" — this
-                // restores WASM↔native parity (mtg-8ow9h seed-19: WebRandom rolls
+                // restores WASM↔native parity (mtg-796 seed-19: WebRandom rolls
                 // 0 of 2 animated-manland Fireball targets).
                 let choice_indices: Vec<usize> = targets
                     .iter()
@@ -779,14 +779,14 @@ impl<C: PlayerController + 'static> PlayerController for WasmNetworkLocalControl
         match self.inner.choose_cards_to_discard(view, hand, count) {
             ChoiceResult::Ok(discards) => {
                 // Same WASM↔native parity rule as choose_targets/_sacrifice
-                // (mtg-8ow9h): a "discard up to N" effect that legally chooses 0
+                // (mtg-796): a "discard up to N" effect that legally chooses 0
                 // encodes as an EMPTY index list, NOT a hand.len() sentinel. The
                 // server's choose_cards_to_discard decodes the index vector with
                 // the same `idx < hand.len()` loop as targets (no trailing "none"
                 // slot), so a `len` index is an out-of-range FATAL desync; the
                 // native NetworkLocalController already sends filter_map → empty
                 // for 0. Discard shares targets' decode semantics — only
-                // choose_mana_sources_to_pay genuinely differs (mtg-6cbob).
+                // choose_mana_sources_to_pay genuinely differs (mtg-809).
                 let choice_indices: Vec<usize> = discards
                     .iter()
                     .filter_map(|&c| hand.iter().position(|&h| h == c))
@@ -930,7 +930,7 @@ impl<C: PlayerController + 'static> PlayerController for WasmNetworkLocalControl
             .choose_permanents_to_sacrifice(view, valid_permanents, count, card_type_description)
         {
             ChoiceResult::Ok(sacrifices) => {
-                // Same WASM↔native parity rule as `choose_targets` (mtg-8ow9h):
+                // Same WASM↔native parity rule as `choose_targets` (mtg-796):
                 // "sacrifice nothing" (optional sacrifice) encodes as an EMPTY
                 // index list, NOT a `valid_permanents.len()` sentinel. The
                 // server's `choose_permanents_to_sacrifice` builds exactly

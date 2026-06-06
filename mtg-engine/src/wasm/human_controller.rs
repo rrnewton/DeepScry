@@ -152,7 +152,7 @@ impl PendingChoice {
                 // Resolve the UI index to the AUTHORITATIVE fetched CardId via the
                 // ChoiceContext (ReplayChoice stores CardId, not an index, so the
                 // fetch survives rewind+replay on a shadow whose valid_cards omit
-                // the hidden card — mtg-mb668).
+                // the hidden card — mtg-728).
                 if let Some(ChoiceContext::LibrarySearch { valid_cards, .. }) = context {
                     match opt_idx {
                         None => ReplayChoice::LibrarySearch(None),
@@ -262,7 +262,7 @@ pub struct WasmHumanController {
     /// CardIds of the cards offered in the pending library search, supplied by
     /// the game loop via `set_pending_library_search_card_ids`. Used to surface
     /// real CardIds in `ChoiceContext::LibrarySearch` so the UI index maps to the
-    /// AUTHORITATIVE fetched CardId for rewind+replay (mtg-mb668).
+    /// AUTHORITATIVE fetched CardId for rewind+replay (mtg-728).
     pending_library_search_ids: Vec<CardId>,
 }
 
@@ -562,7 +562,7 @@ impl PlayerController for WasmHumanController {
 
         // No pending choice - request input. Surface the authoritative CardIds
         // (supplied via set_pending_library_search_card_ids) so the UI index can
-        // be resolved to a CardId for rewind+replay (mtg-mb668). formatted_cards
+        // be resolved to a CardId for rewind+replay (mtg-728). formatted_cards
         // stays parallel to valid_cards by index.
         let formatted_cards: Vec<String> = valid_cards.iter().map(|def| def.name.to_string()).collect();
         ChoiceResult::NeedInput(ChoiceContext::LibrarySearch {

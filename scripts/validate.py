@@ -67,7 +67,7 @@ PROJECT_DIR = Path(__file__).resolve().parent.parent
 NODE = os.environ.get("NODE") or "node"
 NPM = os.environ.get("NPM") or "npm"
 
-# mtg-zsi9f / mtg-o99ow native-first pivot: the WASM browser e2e steps that
+# mtg-769 / mtg-752 native-first pivot: the WASM browser e2e steps that
 # EMPIRICALLY fail on the buffer-driven shadow-replay apply-frontier stall (B2;
 # "ACTION COUNT MISMATCH server=N local=M" at the first bundle-window choice).
 # Disabled by default (see run_orchestrator) until the foundation is hardened
@@ -148,7 +148,7 @@ def build_registry():
     # SHELL OUT to the prebuilt target/release/mtg at runtime, so the release
     # binary must exist before this step. The old monolithic CI test-unit job
     # built mtg in-job, which MASKED this dep; an isolated unit shard (mtg-717
-    # build-once) has no binary unless we declare it. (mtg-uxslu)
+    # build-once) has no binary unless we declare it. (mtg-761)
     add(Step("unit", "nextest", "cargo nextest run --features network",
              "make test", deps=["build.mtg-release"], env=_REUSE, timeout=BUILD_STEP_TIMEOUT))
     # --- examples (own debug build) ---
@@ -431,7 +431,7 @@ class Runner:
         # start_new_session=True puts the step in its OWN process group/session
         # (pgid == child pid), so we can reap the WHOLE tree (bash leader + mtg
         # server + http.server + chromium) by killing that group on completion —
-        # WITHOUT ever touching the runner's own group. mtg-ibj22: a failed/hung
+        # WITHOUT ever touching the runner's own group. mtg-743: a failed/hung
         # browser test used to leak chromium/server orphans that held resources
         # (and the stdout pipe) into later steps; scoped-killpg reaps them. The
         # historical exit-144 came from killpg WITHOUT start_new_session (the
@@ -484,7 +484,7 @@ class Runner:
         # completes regardless. proc.wait() already returned once the test
         # process itself exited; orphans don't gate us. Brief join, then move on.
         reader.join(timeout=2)
-        # mtg-ibj22: reap the step's whole process group, so any orphan
+        # mtg-743: reap the step's whole process group, so any orphan
         # grandchildren (mtg server / http.server / chromium that outlived the
         # test) are SIGKILLed now instead of leaking into later steps or holding
         # the stdout pipe. Scoped to the step's own session (start_new_session
@@ -600,7 +600,7 @@ def main():
     ap.add_argument("--enable-wasm-network", action="store_true",
                     help="DEPRECATED NO-OP. The WASM network-game e2e steps "
                          "(gui/multideck/human-input/redo-*) are now ENABLED BY DEFAULT "
-                         "(mtg-o99ow: the WASM reorder/reveal split + apply-frontier fix landed). "
+                         "(mtg-752: the WASM reorder/reveal split + apply-frontier fix landed). "
                          "Flag retained so existing invocations do not error; use --no-wasm-e2e to "
                          "disable all browser/chromium steps on a host without a usable browser.")
     ap.add_argument("--browser-capacity", type=int, default=1,
@@ -726,7 +726,7 @@ def run_orchestrator(args):
         for s in steps:
             if s.networkonly:
                 disabled[s.tag] = "--no-network"
-    # mtg-zsi9f / mtg-o99ow: the WASM network-GAME e2e steps were temporarily
+    # mtg-769 / mtg-752: the WASM network-GAME e2e steps were temporarily
     # disabled-by-default while the buffer-driven shadow-replay foundation was
     # hardened on NATIVE first. That work has landed (native buffer shim) AND the
     # WASM client now has the reorder/reveal split + eager-reveal apply-frontier
@@ -1012,7 +1012,7 @@ def _systemd_scope_available():
 
 
 def _maybe_reexec_in_scope(args):
-    """mtg-ibj22: re-exec a FULL local validate inside a transient systemd
+    """mtg-743: re-exec a FULL local validate inside a transient systemd
     --user SCOPE (a cgroup), so EVERY descendant — incl. setsid/double-forked
     escapees the per-step killpg reaper can't catch (orphan mtg server /
     http.server / chromium / util sampler) — is contained and reaped atomically
@@ -1049,7 +1049,7 @@ def _maybe_reexec_in_scope(args):
 
 def run_with_harness(args):
     # 0. self-isolate: re-exec inside a transient systemd --user scope so the
-    #    whole descendant tree is reaped atomically on exit (mtg-ibj22). No-op
+    #    whole descendant tree is reaped atomically on exit (mtg-743). No-op
     #    when already scoped / CI / --no-scope / systemd unavailable.
     _maybe_reexec_in_scope(args)
     # 1. clean-environment gate

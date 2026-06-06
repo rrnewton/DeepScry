@@ -206,7 +206,7 @@ fn step_harness(harness: &mut WasmAiHarness, client: SharedNetworkClient) -> Str
     // non-destructive — see docs/NETWORK_ACTION_LOG.md § 3.2.
     let client_for_sync = client.clone();
     let sync_callback = move |game: &mut GameState, target_action: u64| {
-        // mtg-o99ow L3: apply deltas keyed by game ac, bounded by the position the
+        // mtg-752 L3: apply deltas keyed by game ac, bounded by the position the
         // GameLoop is syncing to (no longer a greedy up-to-frontier drain).
         let applied = client_for_sync
             .borrow_mut()

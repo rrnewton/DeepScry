@@ -1110,7 +1110,7 @@ impl<'a> GameLoop<'a> {
                                         let x_value = x_value.min(max_x);
 
                                         // Store X paid on the card, snapshotting the
-                                        // prior value for undo first (mtg-mb668 sig-2g).
+                                        // prior value for undo first (mtg-728 sig-2g).
                                         self.game.set_x_paid_logged(card_id, x_value);
 
                                         // Log X value choice
@@ -1824,7 +1824,7 @@ impl<'a> GameLoop<'a> {
                                                 // index. On an opponent's shadow the fetched card
                                                 // is hidden and absent from `valid_cards`, so an
                                                 // index collapsed Some(card)->None and lost the
-                                                // fetch under rewind+replay (mtg-mb668).
+                                                // fetch under rewind+replay (mtg-728).
                                                 let replay_choice =
                                                     crate::game::ReplayChoice::LibrarySearch(chosen_card_opt);
                                                 self.log_choice_point(
@@ -1918,7 +1918,7 @@ impl<'a> GameLoop<'a> {
                                                     // NO discard ChoiceRequest. We MUST bail BEFORE the
                                                     // blocking prepare below, preserving the invariant
                                                     // "a network block happens iff a request will be sent"
-                                                    // (mtg-u3dwj BLOCKER-1): prepare_for_priority_choice()
+                                                    // (mtg-768 BLOCKER-1): prepare_for_priority_choice()
                                                     // blocks with no timeout and take_local_choice is a blind
                                                     // FIFO pop, so blocking here would hang the client forever
                                                     // OR pop the NEXT request → answer request N+1 to choice N
@@ -1926,7 +1926,7 @@ impl<'a> GameLoop<'a> {
                                                     continue;
                                                 }
 
-                                                // mtg-u3dwj: a discard choice that IMMEDIATELY follows
+                                                // mtg-768: a discard choice that IMMEDIATELY follows
                                                 // in-resolution draws (e.g. Bazaar of Baghdad "draw two,
                                                 // then discard three") must RECEIVE the server's discard
                                                 // ChoiceRequest BEFORE syncing the shadow: the just-drawn
@@ -3212,7 +3212,7 @@ impl<'a> GameLoop<'a> {
                         // MEMBERSHIP is already correct from its own draw; the drawn
                         // cards' IDENTITIES are materialised by the prepare→sync below,
                         // placed INSIDE the actual_count>0 guard so an empty-hand
-                        // discard never blocks (mtg-u3dwj BLOCKER-1).
+                        // discard never blocks (mtg-768 BLOCKER-1).
                         self.push_reveals(*player);
                         if let Some(opp) = self.game.get_other_player_id(*player) {
                             self.push_reveals(opp);
@@ -3231,7 +3231,7 @@ impl<'a> GameLoop<'a> {
                             } else {
                                 controller2
                             };
-                            // mtg-u3dwj BLOCKER-2: the structurally identical SPELL-
+                            // mtg-768 BLOCKER-2: the structurally identical SPELL-
                             // resolution draw-then-discard (Careful Study, Frantic
                             // Search, Thirst for Knowledge, Compulsive Research,
                             // Blast of Genius, Ancient Excavation, Artificer's
@@ -4373,7 +4373,7 @@ impl<'a> GameLoop<'a> {
     }
 }
 
-/// mtg-u3dwj BLOCKER-1 regression: the discard handler must call the BLOCKING
+/// mtg-768 BLOCKER-1 regression: the discard handler must call the BLOCKING
 /// `prepare_for_priority_choice()` (which, on a real network client, waits for
 /// the server's discard ChoiceRequest) ONLY when a request will actually be
 /// sent — i.e. only when `actual_count > 0`. On an empty hand the server sends

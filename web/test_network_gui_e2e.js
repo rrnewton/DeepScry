@@ -192,7 +192,7 @@ async function runTest() {
             '--password', SERVER_PASSWORD,
             '--name', 'NativeAI',
             '--controller', 'random',
-            // Pin the controller master seed (mtg-mb668): WITHOUT this the native
+            // Pin the controller master seed (mtg-728): WITHOUT this the native
             // RandomController falls back to an ENTROPY seed (main.rs ~1625), so
             // P2's CHOICES differ every run even at a fixed --seed — the deck
             // shuffle is pinned but the AI is not. That non-determinism is what
@@ -264,13 +264,13 @@ async function runTest() {
             name: `Web${HUMAN_MODE ? 'Human' : 'Random'}`,
             deck: browserDeckName,
             controller: controllerType,
-            // Pin the WASM controller master seed (mtg-mb668). Without it the page
+            // Pin the WASM controller master seed (mtg-728). Without it the page
             // defaults controllerSeed to 0 (tui_game.html ~2473) while the native
             // client uses entropy — so the two controllers' master seeds neither
             // match nor stay fixed across runs. Passing the same GAME_SEED to both
             // makes the FULL game (deck shuffle + both players' choices) reproducible.
             seed: GAME_SEED.toString(),
-            // mtg-rxacr: web games start PAUSED now. The unattended Random run
+            // mtg-780: web games start PAUSED now. The unattended Random run
             // must opt back into auto-advancing; Human mode drives via keyboard.
             ...(HUMAN_MODE ? {} : { auto_run: 'true' }),
         }).toString();
@@ -411,7 +411,7 @@ async function runTest() {
                 .filter(t => t.includes('ACTION COUNT MISMATCH') || t.includes('state hash mismatch'));
             const mismatchPath = path.join(debugDumpDir, `${stamp}_mismatch.log`);
             fs.writeFileSync(mismatchPath, mismatchLines.join('\n') || '(no mismatch lines)\n');
-            // mtg-mb668 class-A: per-action per-card detail (battlefield id/tapped/ctrl
+            // mtg-728 class-A: per-action per-card detail (battlefield id/tapped/ctrl
             // + graveyard ids) from BOTH sides, keyed by action_count, so the EXACT
             // diverging field at the desync AC can be diffed. WASM lines come from the
             // shadow's WASM_CARD_DETAIL log; the server's come from the SERVER STATE

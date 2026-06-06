@@ -46,7 +46,7 @@ pub enum ReplayChoice {
     /// opponent's shadow the fetched card is hidden/face-down and excluded from
     /// the filtered `valid_cards`, so a `position()` lookup collapsed a real
     /// `Some(card)` fetch to `None` and the fetch was LOST on rewind+replay
-    /// (mtg-mb668). Recording the CardId lets replay APPLY the authoritative
+    /// (mtg-728). Recording the CardId lets replay APPLY the authoritative
     /// move directly instead of re-deriving the selection against the shadow's
     /// incomplete view (mtg-610 hidden-info-replay principle).
     LibrarySearch(Option<CardId>),

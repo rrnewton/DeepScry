@@ -50,7 +50,7 @@ fn format_yyyymmdd_hhmmss_utc(secs: u64) -> String {
 
 /// Persist the in-memory game log buffer to
 /// `/tmp/mtg_game_YYYYMMDD_HHMMSS_<pid>_<seq>.log` (the pid+seq make the path
-/// unique per process so concurrent games never collide — mtg-zw363).
+/// unique per process so concurrent games never collide — mtg-767).
 ///
 /// Returns `Ok(Some(path))` if a log file was written, `Ok(None)` if the buffer
 /// was empty (nothing to save), or an `io::Error` on failure.
@@ -71,7 +71,7 @@ fn save_game_log_to_tmp(logger: &mtg_engine::game::logger::GameLogger) -> std::i
         .map(|d| d.as_secs())
         .unwrap_or(0);
     let timestamp = format_yyyymmdd_hhmmss_utc(secs);
-    // mtg-zw363 / mtg-632 (root-cause fix): the path MUST be unique per process,
+    // mtg-767 / mtg-632 (root-cause fix): the path MUST be unique per process,
     // not just per wall-clock second. The old `/tmp/mtg_game_{timestamp}.log`
     // used 1-second granularity on a GLOBAL /tmp path, so two `mtg` games
     // finishing in the same second (routine under the parallel `make validate`

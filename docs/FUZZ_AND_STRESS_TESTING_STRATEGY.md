@@ -145,7 +145,7 @@ counterspells) is restricted to deterministically-green combos and DRIVES the
 exit code. The **KNOWN-RED tier** (rogerbrand mirror) is run, captured, and
 reported every time as XFAIL but does NOT gate — these are pre-existing tracked
 desyncs (mtg-586 / mtg-589 / mtg-609, plus the native deterministic heuristic
-path mtg-u3dwj this canary pinned). If a known-red leg ever PASSES, the canary
+path mtg-768 this canary pinned). If a known-red leg ever PASSES, the canary
 says so (promote it into the green corpus + update the baseline). The netarch
 prototype's Phase-4 gate consumes this canary: it must keep the GREEN corpus
 green; it is not required to fix the known-red legs.

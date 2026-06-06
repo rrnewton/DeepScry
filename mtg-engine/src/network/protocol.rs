@@ -342,7 +342,7 @@ pub enum ClientMessage {
         debug_info: Option<DebugSyncInfo>,
         /// The actual spell ability chosen (for Priority choices)
         ///
-        /// VALIDATION ONLY (mtg-j4krs). The server's canonical choice is ALWAYS
+        /// VALIDATION ONLY (mtg-789). The server's canonical choice is ALWAYS
         /// the index-based lookup; when this field is present the server
         /// additionally asserts the index-selected ability `==` this
         /// `spell_ability` and treats any mismatch as a FATAL desync (early
@@ -351,7 +351,7 @@ pub enum ClientMessage {
         /// `docs/NETWORK_ARCHITECTURE.md` ("desync is always fatal"). The
         /// native local controller populates this for all priority choices; the
         /// WASM/web client currently sends `None`, so the cross-check is a no-op
-        /// on the deployed web path until it is threaded through (mtg-j4krs #2).
+        /// on the deployed web path until it is threaded through (mtg-789 #2).
         spell_ability: Option<SpellAbility>,
         /// Actual target CardIds for target choices
         ///
@@ -399,7 +399,7 @@ impl DeckSubmission {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// BUFFERED FACT (minimal lazy protocol, mtg-o99ow)
+// BUFFERED FACT (minimal lazy protocol, mtg-752)
 // ═══════════════════════════════════════════════════════════════════════════
 
 /// One server→client fact in a `ChoiceRequest` buffer, stamped at its TRUE game
@@ -408,7 +408,7 @@ impl DeckSubmission {
 /// This is the minimal-lazy-protocol replacement for the eager server→client
 /// message zoo: instead of firing `CardRevealed` / `LibraryReordered` /
 /// `SearchCandidates` / `OpponentChoice` as separate messages at choice-accept
-/// time (the dual-stamp source, mtg-o99ow), the server collects every fact the
+/// time (the dual-stamp source, mtg-752), the server collects every fact the
 /// recipient needs to replay its shadow forward to the choice point into ONE
 /// ascending-`ac` buffer carried by the next `ChoiceRequest`. The recipient
 /// splits the buffer by variant into the two consumer logs it already owns:
@@ -416,7 +416,7 @@ impl DeckSubmission {
 /// (keyed by game `ac`), and [`BufferedFact::Choice`] maps onto
 /// [`crate::network::ChoiceEntry`] (keyed by `choice_seq`).
 ///
-/// During the additive dual-emit phase (mtg-o99ow) the server sends both
+/// During the additive dual-emit phase (mtg-752) the server sends both
 /// this buffer AND the legacy eager messages — so old/new clients interoperate;
 /// the buffer is authoritative and the eager copies are ignored by a
 /// buffer-aware client.
@@ -494,7 +494,7 @@ pub enum ServerMessage {
     /// Phase-1 result of a bug report submission: the outcome of the server-side
     /// disk write, sent IMMEDIATELY after persistence is attempted and BEFORE any
     /// GitHub issue filing. This lets the client confirm the report is safely
-    /// stored without waiting on a slow or unreachable GitHub (mtg-5ejgo).
+    /// stored without waiting on a slow or unreachable GitHub (mtg-749).
     BugReportStored {
         /// Whether the report was successfully written to the server's disk.
         success: bool,
@@ -509,7 +509,7 @@ pub enum ServerMessage {
     /// issue-filing step, sent AFTER the (timeout-bounded) GitHub attempt
     /// completes. The report is already persisted by this point, so any failure
     /// here is non-fatal — the client surfaces it without ever spinning forever
-    /// (mtg-5ejgo).
+    /// (mtg-749).
     BugReportIssueResult {
         /// URL of the filed GitHub issue, when filing succeeded.
         issue_url: Option<String>,
@@ -740,7 +740,7 @@ pub enum ServerMessage {
         /// New order of CardIds in the library (top to bottom)
         /// Identities remain unknown until individually revealed
         new_order: Vec<CardId>,
-        /// **Game `action_count` at which this reorder takes effect (mtg-o99ow).**
+        /// **Game `action_count` at which this reorder takes effect (mtg-752).**
         /// The undo-log position of the reorder's own action (`ShuffleLibrary`
         /// for a shuffle, `ReorderLibrary` for scry/surveil). The shadow keys
         /// this entry in its game-`action_count`-indexed state-sync log so the
@@ -751,7 +751,7 @@ pub enum ServerMessage {
         action_count: u64,
     },
 
-    /// **Library-search candidate reveals (mtg-o99ow / mtg-253).**
+    /// **Library-search candidate reveals (mtg-752 / mtg-253).**
     ///
     /// A single atomic-multi-delta: the N candidate identities a searching
     /// player sees when resolving a `LibrarySearchByName` choice. Replaces the
@@ -806,7 +806,7 @@ pub enum ServerMessage {
         /// instead of locally-computed ones for NetworkLocalController.
         #[serde(default)]
         abilities: Option<Vec<Option<SpellAbility>>>,
-        /// **Minimal lazy protocol buffer (mtg-o99ow).** Every reveal-class and
+        /// **Minimal lazy protocol buffer (mtg-752).** Every reveal-class and
         /// opponent-choice fact with `ac` in `(recipient's last choice,
         /// action_count]`, each at its TRUE game `action_count`, in
         /// ascending-`ac` order. This is the single catch-up payload that
@@ -1434,7 +1434,7 @@ pub struct DebugSyncInfo {
     pub requesting_player_hand_ids: Vec<u32>,
     /// Per-battlefield-card detail `(card_id, is_tapped, controller)`, sorted by
     /// card_id — EXACTLY the per-card fields hashed by `compute_view_hash`
-    /// (mtg-mb668 class-A enumeration). When the coarse sizes all match but the
+    /// (mtg-728 class-A enumeration). When the coarse sizes all match but the
     /// view-hash still diverges, the diverging field is one of these (a tap-status
     /// or controller mismatch on a battlefield card) or `graveyard_ids` below.
     #[serde(default)]
@@ -1448,7 +1448,7 @@ pub struct DebugSyncInfo {
     /// `graveyard_ids`. `compute_view_hash` hashes only library SIZE (contents are
     /// private), so a `library_sizes` off-by-one can desync the hash with every
     /// other field byte-identical; dumping the ids names the extra/missing card.
-    /// Pinned the mtg-o99ow library-reorder-resurrection class (robots seed-5: a
+    /// Pinned the mtg-752 library-reorder-resurrection class (robots seed-5: a
     /// permanent cast to the battlefield reappearing in the shadow library).
     #[serde(default)]
     pub library_ids: [Vec<u32>; 2],
@@ -1457,7 +1457,7 @@ pub struct DebugSyncInfo {
     /// BOTH hands the side can see (the server sees both; a client sees its own
     /// fully + the materialized subset of the opponent's). When `hand_sizes`
     /// differs but every public zone is byte-identical, diffing these names the
-    /// exact card the shadow LOST vs a pure stamping skew (mtg-ho2r8 seed-7).
+    /// exact card the shadow LOST vs a pure stamping skew (mtg-799 seed-7).
     #[serde(default)]
     pub hand_ids: [Vec<u32>; 2],
 }

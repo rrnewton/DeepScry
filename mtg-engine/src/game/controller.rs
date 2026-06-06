@@ -976,7 +976,7 @@ impl<'a> GameStateView<'a> {
     ///
     /// Returns each `(player, current top-to-bottom library order, action_count)`
     /// triple queued by `scry_cards` / `surveil_cards` since the last drain
-    /// (the `action_count` is the reorder's own undo-log position, mtg-o99ow).
+    /// (the `action_count` is the reorder's own undo-log position, mtg-752).
     /// The returned
     /// `Vec` is empty when nothing changed (the common case). The order is
     /// the same direction the protocol uses (`LibraryReordered`), i.e.
@@ -1003,7 +1003,7 @@ impl<'a> GameStateView<'a> {
                     .get_player_zones(player)
                     .map(|z| z.library.cards.iter().rev().copied().collect())
                     .unwrap_or_default();
-                // `action_count` (mtg-o99ow): the reorder's own undo-log position,
+                // `action_count` (mtg-752): the reorder's own undo-log position,
                 // carried onto ServerMessage::LibraryReordered so the shadow keys
                 // the new order at the right game position.
                 (player, order, action_count)
@@ -1963,7 +1963,7 @@ pub trait PlayerController {
     ///
     /// This is the hidden-info-replay path: the recorded CardId is APPLIED
     /// directly rather than re-deriving a positional selection against a
-    /// shadow's incomplete `valid_cards` view (mtg-610 / mtg-mb668). Only
+    /// shadow's incomplete `valid_cards` view (mtg-610 / mtg-728). Only
     /// [`crate::game::ReplayController`] returns `Some`; all live controllers
     /// use the default.
     fn replay_library_search(&mut self) -> Option<Option<CardId>> {

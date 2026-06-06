@@ -653,7 +653,7 @@ fn per_action_undo_redo_declare_blocker_and_clear() {
     );
 }
 
-/// Hole sig-2f (mtg-mb668): marking damage on a creature is a reversible
+/// Hole sig-2f (mtg-728): marking damage on a creature is a reversible
 /// GameAction. Triskelion's ping (`deal_damage_to_creature`) and `DamageAll`
 /// both did `card.damage += ...` with NO logged GameAction, so a mid-turn
 /// rewind left the marked damage stale and a replay double-applied it — the

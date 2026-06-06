@@ -190,7 +190,7 @@ fn test_remove_counter_undo() {
     }
 }
 
-/// mtg-ey2vf: after the undo consolidation, `GameState::undo` delegates the
+/// mtg-732: after the undo consolidation, `GameState::undo` delegates the
 /// per-variant reversal to the canonical `GameAction::undo`. The canonical
 /// AddCounter/RemoveCounter arms were switched to direct `card.add_counter` /
 /// `card.remove_counter` mutators precisely because the previous

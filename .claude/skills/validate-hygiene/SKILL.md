@@ -174,7 +174,7 @@ message to a file and `git commit -F <file>`** (or use single-quoted `-m`).
 Recovery if it fires: kill the accidental tree + `kill_zombie_processes.py`,
 `git reset --soft HEAD~1` (drops the stray wip, keeps changes staged),
 `rm -f .validate.lock validate_logs/*.wip`, re-commit via `-F`. (See beads
-mtg-1ij9i.)
+mtg-765.)
 
 ## Locked-down / offline hosts (no npm install allowed)
 

@@ -347,14 +347,14 @@ impl PlayerController for WasmRemoteController {
                             );
                             return ChoiceResult::Ok(blocker_id);
                         }
-                        // HARD ERROR (mtg-w5sa2): the opponent's submitted blocker
+                        // HARD ERROR (mtg-731): the opponent's submitted blocker
                         // CardId is NOT in this shadow's killable_blockers →
                         // combat-state divergence. The old index fallback masked
                         // it (order-dependent wrong blocker → later view-hash
                         // desync). Desync is ALWAYS fatal.
                         let msg = format!(
                             "FATAL DESYNC: WasmRemoteController lethal-damage blocker {:?} not in killable_blockers {:?} \
-                             (combat-state divergence; index fallback removed — mtg-w5sa2)",
+                             (combat-state divergence; index fallback removed — mtg-731)",
                             blocker_id,
                             killable_blockers.iter().map(|(id, _)| id).collect::<Vec<_>>()
                         );
@@ -409,12 +409,12 @@ impl PlayerController for WasmRemoteController {
                             );
                             return ChoiceResult::Ok(blocker_id);
                         }
-                        // HARD ERROR (mtg-w5sa2): submitted CardId not in this
+                        // HARD ERROR (mtg-731): submitted CardId not in this
                         // shadow's remaining_blockers → combat-state divergence.
                         // Index fallback removed (it masked the desync). Fatal.
                         let msg = format!(
                             "FATAL DESYNC: WasmRemoteController remaining-damage blocker {:?} not in remaining_blockers {:?} \
-                             (combat-state divergence; index fallback removed — mtg-w5sa2)",
+                             (combat-state divergence; index fallback removed — mtg-731)",
                             blocker_id, remaining_blockers
                         );
                         log::error!("{}", msg);

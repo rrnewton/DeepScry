@@ -67,7 +67,7 @@ use crate::{MtgError, Result};
 type SyncCallback = Box<dyn Fn(&mut GameState, u64)>;
 
 /// Authoritative library-search-result lookup for the shadow rewind/replay path
-/// (mtg-mb668).
+/// (mtg-728).
 ///
 /// Given the current game state and the searching player, returns the
 /// authoritative fetched `CardId` for the library search resolving at the
@@ -86,7 +86,7 @@ type SyncCallback = Box<dyn Fn(&mut GameState, u64)>;
 /// rewind-surviving: at the FIRST resolution it can be absent (the authoritative
 /// datum hadn't arrived yet), so `None` is recorded into the `LibrarySearch`
 /// ChoicePoint and replayed forever — the fetch is lost, the searcher's library
-/// count diverges, and `compute_view_hash` desyncs (mtg-mb668 sig-1).
+/// count diverges, and `compute_view_hash` desyncs (mtg-728 sig-1).
 ///
 /// The reveal-history buffer, by contrast, is append-only and keyed by game
 /// position (effective `action_count`), so the same `Searched` reveal is
@@ -322,7 +322,7 @@ pub struct GameLoop<'a> {
     /// CardRevealed messages that instantiate cards before they're needed.
     sync_callback: Option<SyncCallback>,
     /// Optional authoritative library-search-result lookup for the shadow
-    /// rewind/replay path (mtg-mb668). See [`SearchedCardLookup`].
+    /// rewind/replay path (mtg-728). See [`SearchedCardLookup`].
     searched_card_lookup: Option<SearchedCardLookup>,
     /// Optional reveal pusher for network mode (server-side)
     ///
@@ -606,7 +606,7 @@ impl<'a> GameLoop<'a> {
     }
 
     /// Set the authoritative library-search-result lookup for the shadow
-    /// rewind/replay path (mtg-mb668). See [`SearchedCardLookup`].
+    /// rewind/replay path (mtg-728). See [`SearchedCardLookup`].
     ///
     /// The closure reads the rewind-surviving reveal-history buffer to return the
     /// authoritative fetched `CardId` for a library search resolving at the
@@ -623,7 +623,7 @@ impl<'a> GameLoop<'a> {
     }
 
     /// Query the authoritative library-search-result lookup, if configured, for
-    /// the given searcher at the current game position (mtg-mb668). Returns the
+    /// the given searcher at the current game position (mtg-728). Returns the
     /// rewind-surviving fetched `CardId`, or `None` when no lookup is wired or it
     /// has no authoritative result for this position.
     pub(super) fn searched_card_lookup(&self, searcher: PlayerId) -> Option<crate::core::CardId> {
@@ -756,7 +756,7 @@ impl<'a> GameLoop<'a> {
         } else {
             return None;
         };
-        // mtg-u3dwj / mtg-o99ow native buffer shim: before the controller decides,
+        // mtg-768 / mtg-752 native buffer shim: before the controller decides,
         // materialise every state-sync fact up to THIS choice's action_count into
         // the shadow. The ChoiceRequest that just unblocked the hook carried (and
         // the WS reader applied to the state-sync LOG + bumped the reveal
@@ -1891,7 +1891,7 @@ mod tests {
     }
 
     // ══════════════════════════════════════════════════════════════════════════
-    // mtg-mb668: opponent-shadow hidden-info library-search rewind/replay
+    // mtg-728: opponent-shadow hidden-info library-search rewind/replay
     //
     // Multi-rewind reproducer for sig-1. On an OPPONENT's shadow the searcher's
     // library is hidden, so `choose_from_library`'s `valid_cards` is empty and the
@@ -2153,7 +2153,7 @@ mod tests {
         out
     }
 
-    /// NEGATIVE GUARD (mtg-mb668 sig-1): with ONLY the raced source (no
+    /// NEGATIVE GUARD (mtg-728 sig-1): with ONLY the raced source (no
     /// rewind-surviving lookup), the opponent fetch is recorded as `None` at the
     /// first resolution and is therefore lost on every subsequent replay.
     #[test]
@@ -2182,12 +2182,12 @@ mod tests {
             assert_eq!(
                 replayed, None,
                 "replay cycle {cycle}: the lost fetch stays lost — this is the \
-                 None-replayed-forever desync (mtg-mb668)"
+                 None-replayed-forever desync (mtg-728)"
             );
         }
     }
 
-    /// FIX (mtg-mb668 sig-1): with the rewind-surviving reveal-history-buffer
+    /// FIX (mtg-728 sig-1): with the rewind-surviving reveal-history-buffer
     /// lookup wired, the FIRST resolution records the authoritative `Some(CardId)`
     /// and that value is returned identically across MULTIPLE rewind+replay
     /// cycles.
@@ -2221,13 +2221,13 @@ mod tests {
                 replayed,
                 Some(fetched),
                 "replay cycle {cycle}: the authoritative fetch must survive every \
-                 rewind+replay re-entry (mtg-mb668)"
+                 rewind+replay re-entry (mtg-728)"
             );
         }
     }
 
     // ------------------------------------------------------------------
-    // mtg-mb668 sig-2: mass-draw / shuffle content divergence on replay.
+    // mtg-728 sig-2: mass-draw / shuffle content divergence on replay.
     // ------------------------------------------------------------------
 
     /// Build a single-player-ish GameState with `n` distinct cards stacked in
@@ -2292,7 +2292,7 @@ mod tests {
             assert_eq!(
                 replay_order, forward_order,
                 "replay cycle {cycle}: partial-rewind shuffle must byte-reproduce \
-                 the forward order (mtg-mb668 sig-2 RNG-state undo capture)"
+                 the forward order (mtg-728 sig-2 RNG-state undo capture)"
             );
             rewind_to_log_len(&mut game, baseline);
         }
@@ -2331,7 +2331,7 @@ mod tests {
             assert_eq!(
                 replay_drawn, forward_drawn,
                 "replay cycle {cycle}: mass-draw must reproduce the same drawn \
-                 cards after a partial rewind (mtg-mb668 sig-2)"
+                 cards after a partial rewind (mtg-728 sig-2)"
             );
             rewind_to_log_len(&mut game, baseline);
         }

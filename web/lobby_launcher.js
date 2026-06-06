@@ -26,7 +26,7 @@
  *   &deck=<deck_name>             → pre-select deck in the game page launcher
  *   &name=<player_name>           → pre-fill player name field
  *   &ws=<ws_url>                  → override lobby WebSocket URL
- *   &advanced_options=true        → propagate the sticky advanced-options unlock (mtg-2csf2)
+ *   &advanced_options=true        → propagate the sticky advanced-options unlock (mtg-781)
  *   &allow_local_img_load=true    → legacy alias of advanced_options (local-image unlock)
  *   &ui=tui|native                → which game-page UI to land on (default: tui)
  *   &mode=local|network           → game mode hint (default: network when from lobby)
@@ -34,7 +34,7 @@
  *   &images=true|false            → show card images on the game page (pre-game pref)
  *   &img_src=local,scryfall,gatherer → enabled image sources, in fallback order
  *   &debug=true                   → enable TRACE logging on the game page
- *   &auto_run=true                → auto-advance an AI game (default: start PAUSED, mtg-rxacr)
+ *   &auto_run=true                → auto-advance an AI game (default: start PAUSED, mtg-780)
  * ──────────────────────────────────────────────────────────────────────────────
  *
  * GAME-PREFS contract (mtg-695 launcher-parity restore):
@@ -102,7 +102,7 @@ export function buildRedirectQuery(opts) {
     if (opts.deckName)         qp.set('deck', opts.deckName);
     if (opts.playerName)       qp.set('name', opts.playerName);
     if (opts.wsUrl)            qp.set('ws', opts.wsUrl);
-    // mtg-2csf2: advanced_options is the new gate (unlocks the Local image
+    // mtg-781: advanced_options is the new gate (unlocks the Local image
     // source + the advanced multiplayer-seed field). Emit allow_local_img_load
     // too as a backward-compatible alias so older consumers keep working.
     if (opts.advancedOptions || opts.allowLocalImgLoad) {
@@ -272,7 +272,7 @@ export function consumeNetworkParams() {
 }
 
 /**
- * True when the game page was opened with `?auto_run=true` (mtg-rxacr).
+ * True when the game page was opened with `?auto_run=true` (mtg-780).
  *
  * Web games now start PAUSED by default: an AI-vs-AI (e.g. random/random) game
  * no longer auto-runs to completion the instant both clients load — the player

@@ -402,14 +402,14 @@ the submitted `spell_ability` is *purely* the cross-check input.
 
 ---
 
-## Beads issues filed (all `related:mtg-o99ow`)
+## Beads issues filed (all `related:mtg-752`)
 
-- **mtg-1sp35** — A1/E1: remove dead eager `OpponentChoice` + dedup-against-eager shim.
-- **mtg-0jct2** — B1: DRY the choice payload (shared `ChoicePayload`).
-- **mtg-yvzet** — C1/C2/Q1: dedup the two remote controllers + retarget stale MVar docs.
-- **mtg-j4krs** — D/Q4: `spell_ability` cross-check — fix stale doc + populate in WASM client.
-- **mtg-3ubw4** — A2/A3/A4/Q3: finish eager→buffer migration + delete legacy mode/dead helper.
-- **mtg-qc2ue** — E2/Q2: fold library-search CardId into buffer, then remove `ChoiceAccepted` block.
+- **mtg-786** — A1/E1: remove dead eager `OpponentChoice` + dedup-against-eager shim.
+- **mtg-787** — B1: DRY the choice payload (shared `ChoicePayload`).
+- **mtg-788** — C1/C2/Q1: dedup the two remote controllers + retarget stale MVar docs.
+- **mtg-789** — D/Q4: `spell_ability` cross-check — fix stale doc + populate in WASM client.
+- **mtg-790** — A2/A3/A4/Q3: finish eager→buffer migration + delete legacy mode/dead helper.
+- **mtg-791** — E2/Q2: fold library-search CardId into buffer, then remove `ChoiceAccepted` block.
 
 ## Cleanup PLAN (grouped; ordering vs slot03-deepac2)
 

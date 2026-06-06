@@ -251,7 +251,7 @@ ENV
     # invokes `gh` (bug-report issue filing) directly, since the VM has direct
     # internet egress. Set it ONLY on a network that requires routing outbound
     # calls through an egress wrapper (e.g. a Meta devserver's /usr/bin/with-proxy).
-    # Leaving it unset is correct for deepscry.net (mtg-zvlpk).
+    # Leaving it unset is correct for deepscry.net (mtg-758).
     if [[ -n "${MTG_GH_PROXY:-}" ]]; then
         echo "MTG_GH_PROXY=${MTG_GH_PROXY}"
     fi
@@ -560,7 +560,7 @@ EOF
     # Copy the whole web/ to staging (cheap; web/ ≈ a few hundred MB
     # with images so we exclude those first). dist/ is trunk's output dir
     # and must not be shipped raw.
-    # DEV-ONLY files must NOT reach the public web root (mtg-geuk1):
+    # DEV-ONLY files must NOT reach the public web root (mtg-779):
     # the served VM has no source to build, so developer docs / npm manifests /
     # node test helpers / test-browser metadata are dead weight at best and leak
     # internal build instructions at worst (user found web/README.md — the

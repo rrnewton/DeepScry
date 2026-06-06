@@ -182,7 +182,7 @@ async function bootClient(browser, httpPort, serverPort, gameName, mode, rendere
         controller: 'random',
         mode: 'network',
         ui: renderer,
-        // mtg-rxacr: web games start PAUSED now; this unattended AI-vs-AI
+        // mtg-780: web games start PAUSED now; this unattended AI-vs-AI
         // multi-turn run opts back into auto-advancing with ?auto_run=true.
         auto_run: 'true',
     });

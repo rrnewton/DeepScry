@@ -1,6 +1,6 @@
-# Seed-19 (mtg-8ow9h) — RESOLVED: the bug was the WASM "0 targets" index encoding, NOT animation
+# Seed-19 (mtg-796) — RESOLVED: the bug was the WASM "0 targets" index encoding, NOT animation
 
-**Stamp:** 2026-06-05 (branch `fix-seed19-mtg-8ow9h`, slot03-seed19)
+**Stamp:** 2026-06-05 (branch `fix-seed19-mtg-796`, slot03-seed19)
 **Status:** FIXED. seed 19 FAIL→PASS + all 9 other broad-robots seeds PASS, mtime-fresh.
 
 PLAIN-LANGUAGE: seed 19 crashed on turn 24 when the browser player (WebRandom)
@@ -65,7 +65,7 @@ and `choose_permanents_to_sacrifice`, replacing it with the same
 This restores WASM↔native parity. Two sibling methods (`choose_mana_sources_to_pay`,
 `choose_cards_to_discard`) keep a similar sentinel but have DIFFERENT server
 decode semantics and are effectively unreached in robots play — left as-is and
-tracked in follow-up **mtg-6cbob**.
+tracked in follow-up **mtg-809**.
 
 ## Evidence (mtime-fresh: native + wasm both built 15:21)
 
@@ -85,4 +85,4 @@ cd web && node test_network_gui_e2e.js \
 ## Scope / relationships
 seed-7 fix (@6a708dda) does not regress here. This is the LAST broad-robots
 blocker before all-10-strict → the action_count exclusion prize (eb8f938e) → 100%.
-Related: mtg-0e1wo, mtg-f0w57, mtg-j4krs, mtg-610; follow-up mtg-6cbob.
+Related: mtg-784, mtg-797, mtg-789, mtg-610; follow-up mtg-809.

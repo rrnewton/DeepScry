@@ -226,7 +226,7 @@ pub struct CardView {
 
 /// A minimal reference to an attached card (for badges / stacks). Carries
 /// enough to render the attachment as a labelled tile/badge on its host —
-/// equipment on a creature, an aura on a land, etc. (mtg-zhu4p).
+/// equipment on a creature, an aura on a land, etc. (mtg-747).
 #[derive(Debug, Clone, Serialize)]
 pub struct AttachmentView {
     pub card_id: u32,
@@ -424,7 +424,7 @@ fn build_card_view(
     // a land/creature, a fortification on a land, etc. — regardless of THIS
     // card's type. Previously gated to `is_creature()` hosts and `is_equipment()`
     // attachments, so an aura on a LAND (e.g. Friendly Neighborhood enchanting a
-    // land) never surfaced its attachment (mtg-zhu4p).
+    // land) never surfaced its attachment (mtg-747).
     let attachments: Vec<AttachmentView> = game
         .battlefield
         .cards
@@ -1059,7 +1059,7 @@ mod tests {
         assert!(json.contains("\"error_message\":null"));
     }
 
-    /// mtg-zhu4p: an AURA attached to a LAND must (1) still appear as its own
+    /// mtg-747: an AURA attached to a LAND must (1) still appear as its own
     /// card in the battlefield (the Enchantment section) AND (2) be surfaced as
     /// an attachment on its host land, so the GUI can render the relationship.
     /// Before the fix, `attachments` was computed only for `is_creature()` hosts

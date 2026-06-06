@@ -59,7 +59,7 @@ mod tests {
         assert!(card.tapped);
     }
 
-    /// mtg-t233k: a regular `mana_pool` payment must round-trip on a PARTIAL
+    /// mtg-733: a regular `mana_pool` payment must round-trip on a PARTIAL
     /// (per-action) undo. Tapping two lands logs `AddMana` (pool = RR); a
     /// payment then consumes part of it. The payment itself logs nothing, but
     /// the `SetManaPool` snapshot taken BEFORE it must restore the pre-payment
@@ -93,7 +93,7 @@ mod tests {
         let baseline = game.undo_log.len();
 
         // Pay R through the snapshot-then-spend path used by the production
-        // pay sites (mtg-t233k).
+        // pay sites (mtg-733).
         game.log_mana_pool(p1_id);
         let cost = ManaCost::from_string("R");
         game.get_player_mut(p1_id).unwrap().mana_pool.pay_cost(&cost).unwrap();
@@ -115,11 +115,11 @@ mod tests {
         assert_eq!(
             game.get_player(p1_id).unwrap().mana_pool.red,
             2,
-            "partial undo of the payment must restore the pre-payment pool (mtg-t233k)"
+            "partial undo of the payment must restore the pre-payment pool (mtg-733)"
         );
     }
 
-    /// mtg-mb668 sig-2b: a card entering the hidden library must lose its
+    /// mtg-728 sig-2b: a card entering the hidden library must lose its
     /// `revealed_to_mask`, so a later draw of it re-emits `RevealCard`. Without
     /// this, a previously-public card (e.g. shuffled in from the graveyard via
     /// Timetwister) is drawn with NO reveal, while a fresh card on the other
@@ -176,7 +176,7 @@ mod tests {
         );
     }
 
-    /// mtg-mb668 sig-2c: on a SHADOW game, an unrestricted hand+graveyard ->
+    /// mtg-728 sig-2c: on a SHADOW game, an unrestricted hand+graveyard ->
     /// library mass shuffle (Timetwister / Wheel / Windfall) MUST move the
     /// opponent's hidden hand cards — which are late-bound reserved CardIds with
     /// no instance — into the library, exactly as the server does. Otherwise the
@@ -241,7 +241,7 @@ mod tests {
         );
     }
 
-    /// mtg-mb668 sig-2d: a card revealed to ONLY its owner (an owner-only mask,
+    /// mtg-728 sig-2d: a card revealed to ONLY its owner (an owner-only mask,
     /// e.g. a card the owner drew) must ALSO be concealed when it enters the
     /// library — not just revealed-to-ALL cards. Otherwise, after the card
     /// cycles library->hand->library (Timetwister/Wheel), the SERVER (real
@@ -302,7 +302,7 @@ mod tests {
         );
     }
 
-    /// mtg-mb668 sig-2d (shadow count-parity): a reserved (instance-less)
+    /// mtg-728 sig-2d (shadow count-parity): a reserved (instance-less)
     /// opponent card entering the library on a SHADOW must log a count-parity
     /// `SetRevealedToMask`, mirroring the server's conceal of the corresponding
     /// real (owner-revealed) card — so the action count stays in lockstep.
@@ -336,7 +336,7 @@ mod tests {
         assert!(game.undo_log.actions().len() > before);
     }
 
-    /// mtg-mb668 sig-2e: paying a `Cost::SubCounter` (Triskelion's
+    /// mtg-728 sig-2e: paying a `Cost::SubCounter` (Triskelion's
     /// "remove a +1/+1 counter: deal 1 damage" ping cost) must be a faithful
     /// undo-log inverse. The cost previously mutated the card directly with NO
     /// `GameAction::RemoveCounter` entry, so a rewind+replay (network shadow /
@@ -395,7 +395,7 @@ mod tests {
         );
     }
 
-    /// mtg-mb668 sig-2g: setting a card's `x_paid` (the chosen X for an X-spell,
+    /// mtg-728 sig-2g: setting a card's `x_paid` (the chosen X for an X-spell,
     /// CR 107.3) must be a faithful undo-log inverse. The priority loop previously
     /// overwrote `card.x_paid` directly with NO `GameAction`, so a rewind+replay
     /// (network shadow / MCTS / undo) left the chosen X stale — the WASM replay

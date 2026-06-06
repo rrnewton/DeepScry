@@ -197,7 +197,7 @@ echo -e "${BLUE}Starting NETWORK game...${NC}"
 
 # Bind a kernel-assigned EPHEMERAL port (--port 0) instead of a random fixed
 # port. RANDOM % 10000 collided across concurrent test runs / leftover servers
-# (mtg-ibj22 / mtg-726 port-collision false-positives); --port 0 is atomic with
+# (mtg-743 / mtg-726 port-collision false-positives); --port 0 is atomic with
 # NO TOCTOU — the OS picks a free port at bind time and the server logs the
 # ACTUAL bound port ("listening on HOST:PORT"), which we parse below.
 # Start server with --network-debug for strict reveal validation

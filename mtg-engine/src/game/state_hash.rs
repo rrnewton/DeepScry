@@ -413,7 +413,7 @@ pub fn compute_view_hash(view: &crate::game::controller::GameStateView) -> u64 {
     // `as_hash_u32()` returns a fixed u32 from an explicit match, identical on all platforms.
     view.current_step().as_hash_u32().hash(&mut hasher);
     // `action_count` (the undo-log length) IS hashed as a cross-replica invariant
-    // (mtg-o99ow closing commit; reverts the mtg-mb668 class-A / mtg-yexvc
+    // (mtg-752 closing commit; reverts the mtg-728 class-A / mtg-yexvc
     // exclusion). The exclusion was an INTERIM workaround: before the
     // reveal-as-choice / consensus-undo-log unification, a client did not execute
     // every server action in lock-step — it applied reveals/reorders via several
@@ -424,7 +424,7 @@ pub fn compute_view_hash(view: &crate::game::controller::GameStateView) -> u64 {
     // at the source: server and client now consume the SAME ordered per-choice
     // buffer, so their undo logs advance identically and `action_count` is once
     // again a true consensus value. Re-including it restores the strongest
-    // cross-replica equality check. Empirically verified safe (mtg-o99ow probe:
+    // cross-replica equality check. Empirically verified safe (mtg-752 probe:
     // full un-excluded desync canary + `make validate` green with action_count
     // re-included — avatar-cycling/monored/counterspells/rogerbrand green gates,
     // robots42 Timetwister, native+WASM equivalence sweeps, all green).
@@ -497,7 +497,7 @@ pub fn compute_view_hash(view: &crate::game::controller::GameStateView) -> u64 {
 /// hand desync between server and client.
 /// Per-battlefield-card `(card_id, is_tapped, controller)`, sorted by card_id —
 /// EXACTLY the per-card fields hashed by `compute_view_hash`. When the coarse
-/// view fields all match but the view-hash still diverges (mtg-mb668 class-A),
+/// view fields all match but the view-hash still diverges (mtg-728 class-A),
 /// the divergence is in one of these tuples (a tap-status or controller mismatch)
 /// or in `view_graveyard_ids` below. Available to BOTH the native server and the
 /// WASM shadow so a desync can be diffed field-for-field on either side.
@@ -583,7 +583,7 @@ pub fn build_debug_sync_info(
         view.player_library(p1).iter().map(|id| id.as_u32()).collect(),
         view.player_library(p2).iter().map(|id| id.as_u32()).collect(),
     ];
-    // Both players' KNOWN hand CardIds (sorted) — for the mtg-ho2r8 seed-7
+    // Both players' KNOWN hand CardIds (sorted) — for the mtg-799 seed-7
     // membership confirm: a hand-SIZE-only divergence with every public zone
     // byte-identical is either a lost card (these differ by exactly that card)
     // or a pure stamping skew (these are identical).
@@ -887,9 +887,9 @@ mod tests {
         );
     }
 
-    /// mtg-o99ow closing commit: the network VIEW hash now INCLUDES `action_count`
-    /// as a cross-replica invariant (reverting the interim mtg-mb668 class-A /
-    /// mtg-yexvc exclusion).
+    /// mtg-752 closing commit: the network VIEW hash now INCLUDES `action_count`
+    /// as a cross-replica invariant (reverting the interim mtg-728 class-A /
+    /// mtg-744 exclusion).
     ///
     /// The exclusion was a workaround for a pre-netarch defect: before the
     /// reveal-as-choice / consensus-undo-log unification, server and client did
@@ -901,7 +901,7 @@ mod tests {
     /// at the source — both replicas consume the SAME ordered per-choice buffer, so
     /// `action_count` is once again a true consensus value. This test pins the
     /// RE-INCLUSION: growing the undo log (a real position advance) MUST change the
-    /// view hash. Empirically verified safe by the mtg-o99ow probe (full
+    /// view hash. Empirically verified safe by the mtg-752 probe (full
     /// un-excluded desync canary + `make validate` green with action_count hashed).
     #[test]
     fn view_hash_includes_action_count_mtg_o99ow() {
@@ -933,7 +933,7 @@ mod tests {
             h_before, h_after,
             "compute_view_hash MUST include action_count — it is a cross-replica \
              consensus value again under the netarch consensus-undo-log model \
-             (mtg-o99ow closing commit; reverts the mtg-mb668 / mtg-yexvc exclusion)"
+             (mtg-752 closing commit; reverts the mtg-728 / mtg-744 exclusion)"
         );
     }
 }

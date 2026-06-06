@@ -191,7 +191,7 @@ async function runTest() {
             name: 'WebRandom',
             deck: webDeckName,
             controller: 'random',
-            // mtg-rxacr: web games start PAUSED now. This unattended AI-vs-AI
+            // mtg-780: web games start PAUSED now. This unattended AI-vs-AI
             // run must opt back into auto-advancing with ?auto_run=true.
             auto_run: 'true',
         }).toString();

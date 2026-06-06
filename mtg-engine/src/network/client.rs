@@ -65,7 +65,7 @@ pub enum NetworkMessage {
         owner: PlayerId,
         card: CardReveal,
         reason: RevealReason,
-        /// True game `action_count` the server stamped this reveal at (mtg-o99ow).
+        /// True game `action_count` the server stamped this reveal at (mtg-752).
         /// `None` for reveals outside a choice context (opening-hand), which the
         /// native reader never sees (those are consumed in `wait_for_game_start`).
         action_count: Option<u64>,
@@ -81,7 +81,7 @@ pub enum NetworkMessage {
         library_search_names: Option<Vec<String>>,
         /// Count of cards for each unique name (enables random instance selection)
         library_search_counts: Option<Vec<usize>>,
-        /// **Minimal lazy protocol buffer (mtg-o99ow).** The single ascending-`ac`
+        /// **Minimal lazy protocol buffer (mtg-752).** The single ascending-`ac`
         /// catch-up payload carrying every reveal-class + opponent-choice fact
         /// since this client's last choice, each at its TRUE game `action_count`.
         /// The buffer-aware native reader routes these into the state-sync +
@@ -121,11 +121,11 @@ pub enum NetworkMessage {
     LibraryReordered {
         player: PlayerId,
         new_order: Vec<CardId>,
-        /// Game `action_count` at which this reorder takes effect (mtg-o99ow).
+        /// Game `action_count` at which this reorder takes effect (mtg-752).
         /// 0 for game-start initial orders.
         action_count: u64,
     },
-    /// Library-search candidates revealed to the searcher (mtg-o99ow L2d).
+    /// Library-search candidates revealed to the searcher (mtg-752 L2d).
     /// The server now sends the N candidate identities as ONE
     /// `ServerMessage::SearchCandidates` (a single atomic-multi-delta at one
     /// game ac, required by the WASM shadow's ac-keyed log). The native client
@@ -135,7 +135,7 @@ pub enum NetworkMessage {
     SearchCandidates {
         searcher: PlayerId,
         cards: Vec<CardReveal>,
-        /// Game `action_count` of the search-resolution choice (mtg-o99ow).
+        /// Game `action_count` of the search-resolution choice (mtg-752).
         action_count: u64,
     },
 }
@@ -148,7 +148,7 @@ impl NetworkMessage {
                 owner,
                 card,
                 reason,
-                // mtg-o99ow native buffer shim: the native shadow now keys reveals
+                // mtg-752 native buffer shim: the native shadow now keys reveals
                 // by the TRUE server `action_count` (like WASM), so capture the
                 // stamp instead of dropping it. Pre-authoritative eager reveals use
                 // it directly; post-authoritative eager reveals are ignored.
@@ -326,7 +326,7 @@ pub struct PendingLibraryReorder {
 struct StateSyncBuffer {
     /// Append-only, **server-`action_count`-indexed** shadow LIBRARY-REORDER log.
     ///
-    /// mtg-o99ow native buffer shim: SPLIT from the reveal log (was one shared
+    /// mtg-752 native buffer shim: SPLIT from the reveal log (was one shared
     /// `ActionLog<StateSyncEntry>`). The split is load-bearing: a `LibraryReorder`
     /// and a `RevealCard` can legitimately carry the SAME game `action_count` — the
     /// server stamps a shuffle's reorder at the post-shuffle undo position
@@ -505,7 +505,7 @@ pub struct SharedNetworkState {
     /// Used as sync target to ensure client processes all reveals before choices
     server_action_count: std::sync::atomic::AtomicU64,
 
-    /// **Minimal lazy protocol authority flag (mtg-o99ow native buffer shim).**
+    /// **Minimal lazy protocol authority flag (mtg-752 native buffer shim).**
     /// Set `true` on the first `ChoiceRequest` the reader processes. Once set,
     /// the eager `CardRevealed` / `LibraryReordered` / `SearchCandidates` /
     /// `OpponentChoice` reader arms become no-ops: the single ascending-`ac`
@@ -517,7 +517,7 @@ pub struct SharedNetworkState {
     /// Mirrors the WASM `buffer_is_authoritative`.
     buffer_is_authoritative: std::sync::atomic::AtomicBool,
 
-    /// **Reveal-history-complete watermark (mtg-o99ow native buffer shim).**
+    /// **Reveal-history-complete watermark (mtg-752 native buffer shim).**
     /// Highest game `action_count` of any choice (ChoiceRequest / OpponentChoice)
     /// the reader has received. By wire ordering the server sends all of a
     /// choice's bundled facts BEFORE the choice itself, so once a choice at ac A
@@ -646,7 +646,7 @@ impl SharedNetworkState {
     /// Append a `StateSyncEntry` to the shadow state-sync log keyed by its
     /// TRUE game `action_count` (out-of-order-tolerant `insert_sorted`), then
     /// notify the frontier-wait Condvar. The native mirror of the WASM
-    /// `push_state_sync` (mtg-o99ow native buffer shim).
+    /// `push_state_sync` (mtg-752 native buffer shim).
     ///
     /// Two wire realities make this more than a plain append:
     /// 1. **Idempotent re-send.** During the Phase-1 dual-emit window the SAME
@@ -727,7 +727,7 @@ impl SharedNetworkState {
 
     /// Authoritative, **rewind-surviving** library-search result for an OPPONENT
     /// `searcher` resolving at game position `target_action` — the NATIVE analogue
-    /// of `WasmNetworkClient::searched_card_for` (mtg-mb668 / mtg-ho2r8 seed-7).
+    /// of `WasmNetworkClient::searched_card_for` (mtg-728 / mtg-799 seed-7).
     ///
     /// When the OPPONENT tutors a card from their (hidden) library, the server
     /// sends a single **dummy `Searched` reveal**: empty `name` (identity hidden)
@@ -737,7 +737,7 @@ impl SharedNetworkState {
     /// opponent's fetch (the observer's own `valid_cards` is only a partial,
     /// materialized subset of the opponent's library, so the server's index is not
     /// usable). The raced `OpponentChoice.library_search_result` is present on the
-    /// FORWARD pass but EMPTY on rewind/replay (mtg-mb668 sig-1); this buffer is
+    /// FORWARD pass but EMPTY on rewind/replay (mtg-728 sig-1); this buffer is
     /// append-only and game-`action_count`-keyed, so it returns the SAME
     /// `Some(card_id)` on the first forward resolution AND every replay. We pick the
     /// dummy `Searched` reveal owned by `searcher` with the GREATEST `action_count`
@@ -767,7 +767,7 @@ impl SharedNetworkState {
         best.map(|(_, card_id)| card_id)
     }
 
-    /// Route a minimal-lazy-protocol `ChoiceRequest` buffer (mtg-o99ow) into the
+    /// Route a minimal-lazy-protocol `ChoiceRequest` buffer (mtg-752) into the
     /// shadow's existing consumer logs — the native mirror of the WASM
     /// `apply_choice_buffer`. The buffer is ascending-`ac` and carries every
     /// reveal-class + opponent-choice fact since this client's last choice:
@@ -779,7 +779,7 @@ impl SharedNetworkState {
     /// `CardRevealed` / `LibraryReordered` / `SearchCandidates` / `OpponentChoice`
     /// reader arms (ignored once `buffer_is_authoritative`).
     ///
-    /// **ORDERING IS LOAD-BEARING (mtg-o99ow native race fix).** All reveal-class
+    /// **ORDERING IS LOAD-BEARING (mtg-752 native race fix).** All reveal-class
     /// facts (Reveal/LibraryReorder/SearchCandidates) are pushed into the
     /// state-sync log BEFORE any `Choice` fact is pushed into the opponent-choice
     /// log. Pushing a `Choice` fires `opponent_choices_notify`, which immediately
@@ -865,7 +865,7 @@ impl SharedNetworkState {
     }
 
     /// Advance the reveal-history-complete watermark to a received choice's game
-    /// `action_count` (mtg-o99ow). By wire ordering the server sends all of a
+    /// `action_count` (mtg-752). By wire ordering the server sends all of a
     /// choice's bundled facts BEFORE the choice itself, so once a choice at ac A
     /// has arrived every delta with ac ≤ A is present. `apply_state_sync` bounds
     /// its window by this to never advance the cursor past an in-flight reveal.
@@ -893,7 +893,7 @@ impl SharedNetworkState {
 
     /// Apply state-sync entries whose game `action_count` the shadow has reached
     /// AND whose reveal-history is complete, up to `target_action`, to the shadow
-    /// `game` (mtg-o99ow native buffer shim — the native mirror of the WASM
+    /// `game` (mtg-752 native buffer shim — the native mirror of the WASM
     /// `apply_state_sync_at`). **Non-destructive read** of the log — only the
     /// per-consumer cursor advances; the log is untouched, so a rewind/replay can
     /// re-apply from `reset_state_sync_cursor`.
@@ -911,7 +911,7 @@ impl SharedNetworkState {
     ///   choice's bundled facts before the choice itself, so once a choice at ac A
     ///   has arrived every reveal with ac ≤ A is present and safe to inject.
     ///
-    /// TWO INDEPENDENT CURSORS (the native B2 replay-driver, mtg-o99ow):
+    /// TWO INDEPENDENT CURSORS (the native B2 replay-driver, mtg-752):
     /// - REORDERS apply only up to `target_action` (the shadow's position) — a
     ///   shuffle's order must not overwrite the library before the shadow replays
     ///   earlier-ac actions that read it (e.g. a cycling fetch out of the
@@ -1105,7 +1105,7 @@ impl SharedNetworkState {
     /// by the server `choice_seq` (strictly unique/monotonic per choice;
     /// `action_count` is NOT unique — mtg-sfihb). Notifies the Condvar.
     ///
-    /// **Dedups the Phase-1 dual-emit duplicate (mtg-o99ow native buffer shim).**
+    /// **Dedups the Phase-1 dual-emit duplicate (mtg-752 native buffer shim).**
     /// During the additive-buffer window the SAME opponent choice can arrive
     /// BOTH eagerly (`OpponentChoice`, processed only while the buffer is not yet
     /// authoritative) AND in our next `ChoiceRequest` buffer
@@ -2284,7 +2284,7 @@ impl NetworkClient {
         let sync_state = shared_state.clone();
         let controller_state = shared_state.clone();
         let seed_state = shared_state.clone();
-        // mtg-ho2r8 seed-7: the rewind-surviving opponent-fetch lookup, mirroring
+        // mtg-799 seed-7: the rewind-surviving opponent-fetch lookup, mirroring
         // the WASM shadow path. Without it the native observer loses an opponent's
         // tutored card on replay (the raced take_library_search_result is empty).
         let search_state = shared_state.clone();
@@ -2321,7 +2321,7 @@ impl NetworkClient {
             // - Client shadow game runs deterministically, reaching the same game states
             // - Reveals only arrive when they're actually needed
             let sync_callback = move |game: &mut GameState, target_action: u64| {
-                // mtg-o99ow native buffer shim: non-destructively apply every
+                // mtg-752 native buffer shim: non-destructively apply every
                 // unapplied state-sync entry (reorders BEFORE reveals, mtg-589)
                 // bounded by target.min(frontier).min(max_received_choice_ac). We
                 // PASS target_action through (the shadow's own action_count) so a
@@ -2356,7 +2356,7 @@ impl NetworkClient {
                         reorder.player,
                         reorder.new_order.len()
                     );
-                    // mtg-o99ow native buffer shim: game-start orders are held
+                    // mtg-752 native buffer shim: game-start orders are held
                     // OUTSIDE the ac-keyed log (they'd collide at ac 0) and applied
                     // before the first draw by apply_state_sync_up_to_frontier.
                     seed_state.add_initial_library_order(reorder.player, reorder.new_order);
@@ -2373,7 +2373,7 @@ impl NetworkClient {
                 let mut game_loop = GameLoop::new(&mut game)
                     .with_sync_callback(sync_callback)
                     .with_reveal_validation(our_player_id, false) // Server is authoritative
-                    // mtg-ho2r8 seed-7: rewind-surviving opponent-fetch resolution
+                    // mtg-799 seed-7: rewind-surviving opponent-fetch resolution
                     // (native analogue of the WASM shadow's wiring). Reads the
                     // ac-keyed reveal_log so an opponent's library search resolves to
                     // the SAME CardId on the first forward pass AND every replay.
@@ -2480,13 +2480,13 @@ async fn run_ws_reader_shared(
                                 reason,
                                 action_count,
                             } => {
-                                // mtg-o99ow native buffer shim: once the buffer is
+                                // mtg-752 native buffer shim: once the buffer is
                                 // authoritative, mid-game reveals arrive via the
                                 // ChoiceRequest buffer at their TRUE ac. The server
                                 // STILL dual-emits the eager copy during the additive
                                 // phase, so we IGNORE it here (it is NOT a no-op site —
                                 // the arm IS reached). FALSE-POSITIVE GUARD: the
-                                // delete-eager task (mtg-o99ow) removes the eager send entirely; the buffer-driven
+                                // delete-eager task (mtg-752) removes the eager send entirely; the buffer-driven
                                 // gate then runs with ZERO eager copies, proving the
                                 // buffer is the sole source (a behavioural proof, not a
                                 // debug_assert — the eager copy legitimately arrives).
@@ -2554,7 +2554,7 @@ async fn run_ws_reader_shared(
                                 library_search_counts,
                                 buffer,
                             } => {
-                                // mtg-o99ow native buffer shim: route the single
+                                // mtg-752 native buffer shim: route the single
                                 // catch-up buffer into the state-sync + opponent-choice
                                 // logs. From here the buffer is the AUTHORITATIVE source
                                 // of mid-game facts; the still-sent eager copies are
@@ -2564,7 +2564,7 @@ async fn run_ws_reader_shared(
                                 // choice's ac BEFORE applying the buffer: a Choice fact
                                 // in the buffer wakes the RemoteController on the game
                                 // thread, which immediately syncs its reveals — the
-                                // watermark must already cover them (mtg-o99ow race fix).
+                                // watermark must already cover them (mtg-752 race fix).
                                 shared_state.note_received_choice_ac(action_count);
                                 shared_state.apply_choice_buffer(buffer);
                                 // Update tracked action count (for sync targeting)
@@ -2612,7 +2612,7 @@ async fn run_ws_reader_shared(
                                 library_search_result,
                                 target_card_ids,
                             } => {
-                                // mtg-o99ow native buffer shim: once authoritative,
+                                // mtg-752 native buffer shim: once authoritative,
                                 // the opponent's decision rides in our next
                                 // ChoiceRequest buffer as BufferedFact::Choice — ignore
                                 // the eager (dual-emit) copy.
@@ -2771,7 +2771,7 @@ async fn run_ws_reader(
                                 log::error!("WsReader: failed to lock pending_reveals");
                             }
                         } else if let NetworkMessage::SearchCandidates { searcher, cards, .. } = network_msg {
-                            // mtg-o99ow L2d: expand bundled candidates → N Searched reveals.
+                            // mtg-752 L2d: expand bundled candidates → N Searched reveals.
                             if let Ok(mut reveals) = pending_reveals.lock() {
                                 for card in cards {
                                     reveals.push(BufferedReveal {
@@ -2978,7 +2978,7 @@ mod tests {
     use super::*;
     use crate::loader::DeckEntry;
 
-    // ── mtg-o99ow native buffer shim: state-sync log collision invariants ──
+    // ── mtg-752 native buffer shim: state-sync log collision invariants ──
     //
     // CORRECTED INVARIANT (team-lead, audit 20260604): two SAME-CLASS deltas must
     // never share a game ac (reveal-reveal, reorder-reorder = FATAL); CROSS-class

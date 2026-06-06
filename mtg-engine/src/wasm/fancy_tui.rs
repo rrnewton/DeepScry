@@ -2892,7 +2892,7 @@ impl WasmFancyTuiState {
     }
 
     /// Build the authoritative library-search-result lookup for the AI shadow
-    /// path (mtg-mb668). On an OPPONENT's library search the shadow's own
+    /// path (mtg-728). On an OPPONENT's library search the shadow's own
     /// `valid_cards` is empty and the raced `OpponentChoice.library_search_result`
     /// does not survive rewind, so the FIRST forward resolution would record
     /// `LibrarySearch(None)` and replay it forever (fetch lost → library-count

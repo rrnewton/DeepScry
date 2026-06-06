@@ -48,7 +48,7 @@ impl NetworkState {
 ///
 /// Carry-on view returned by [`WasmNetworkClient::pop_opponent_choice`] and
 /// [`WasmNetworkClient::peek_opponent_choice`]. The underlying storage in
-/// netarch step 2 (mtg-o99ow) is now an `ActionLog<ChoiceEntry>` keyed by
+/// netarch step 2 (mtg-752) is now an `ActionLog<ChoiceEntry>` keyed by
 /// `action_count`; this struct materialises the index + payload back into
 /// the single shape `WasmRemoteController` and the SMART damage-assignment
 /// overrides already consume. Keeping the shape stable across the refactor
@@ -132,9 +132,9 @@ pub struct WasmNetworkClient {
     network_debug: bool,
 
     /// Append-only, **game-`action_count`-indexed** shadow LIBRARY-REORDER log
-    /// (mtg-o99ow L3 + the reorder/reveal SPLIT).
+    /// (mtg-752 L3 + the reorder/reveal SPLIT).
     ///
-    /// **SPLIT from the reveal log (mtg-o99ow, mirrors the native client).** A
+    /// **SPLIT from the reveal log (mtg-752, mirrors the native client).** A
     /// `LibraryReorder` and a `RevealCard` can legitimately carry the SAME game
     /// `action_count`: the server stamps a shuffle's reorder at the post-shuffle
     /// undo position (`state.rs` shuffle path, `undo_log.len()` after the
@@ -192,7 +192,7 @@ pub struct WasmNetworkClient {
     /// replay them (else "Entity not found"). Reveals are identity injections
     /// (library-order independent), so applying them early is safe.
     ///
-    /// **This eager bound FIXES the apply-frontier stall (mtg-o99ow B2):** the
+    /// **This eager bound FIXES the apply-frontier stall (mtg-752 B2):** the
     /// old single cursor bounded reveals by `target_action` too, so the shadow's
     /// forward replay stalled at the last reveal (e.g. server=55 / local=50,
     /// diff=5) instead of advancing to the `ChoiceRequest`'s `action_count` —
@@ -201,7 +201,7 @@ pub struct WasmNetworkClient {
     /// `last_applied_reveal_ac`.
     last_applied_reveal_ac: u64,
 
-    /// **Game-start library orders (mtg-o99ow L3).** The server syncs each
+    /// **Game-start library orders (mtg-752 L3).** The server syncs each
     /// player's initial (pre-game) shuffled library order via
     /// `ServerMessage::LibraryReordered { action_count: 0, .. }` — two per
     /// client (own + opponent). These predate the empty undo log, so they have
@@ -241,7 +241,7 @@ pub struct WasmNetworkClient {
     /// Append-only, `choice_seq`-indexed per-controller choice buffer for
     /// opponent (remote) choices.
     ///
-    /// Backs the netarch step 2 (mtg-o99ow) migration described in
+    /// Backs the netarch step 2 (mtg-752) migration described in
     /// `docs/NETWORK_ACTION_LOG.md` § 3.1 / `NETWORK_ACTION_LOG_MIGRATION.md`
     /// § 2.1. The WS receive handler pushes `ServerMessage::OpponentChoice`
     /// here keyed by the server-reported **`choice_seq`** (NOT `action_count`).
@@ -280,7 +280,7 @@ pub struct WasmNetworkClient {
     /// entry at a specific `action_count`, bypassing this cursor entirely.
     next_opponent_choice_cursor: u64,
 
-    /// **Minimal lazy protocol (mtg-o99ow), Phase 1.** Set true the first time a
+    /// **Minimal lazy protocol (mtg-752), Phase 1.** Set true the first time a
     /// `ChoiceRequest` arrives. Before the first choice the server's eager
     /// `CardRevealed` / `LibraryReordered` messages carry the opening hand +
     /// initial library orders, which are NOT part of any choice buffer — so we
@@ -828,7 +828,7 @@ impl WasmNetworkClient {
                 reason,
                 action_count,
             } => {
-                // Minimal lazy protocol (mtg-o99ow): once the buffer is
+                // Minimal lazy protocol (mtg-752): once the buffer is
                 // authoritative, mid-game reveals arrive via the ChoiceRequest
                 // buffer at their TRUE ac. Ignore the eager (dual-emit) copy —
                 // this is what removes the eager opponent-cast dual-stamp (the
@@ -844,7 +844,7 @@ impl WasmNetworkClient {
                     owner,
                     action_count
                 );
-                // mtg-o99ow L3: key the reveal DIRECTLY by the game `action_count`
+                // mtg-752 L3: key the reveal DIRECTLY by the game `action_count`
                 // the server stamped (the undo-log position of this RevealCard).
                 // Every reveal now carries a real ac; a missing stamp is a server
                 // desync (NETWORK_ARCHITECTURE.md "Desync is ALWAYS Fatal").
@@ -859,7 +859,7 @@ impl WasmNetworkClient {
                     ),
                     None => {
                         log::error!(
-                            "WasmNetworkClient: FATAL — CardRevealed for {:?} ({}) carried no action_count (mtg-o99ow L3 requires server-stamped game ac)",
+                            "WasmNetworkClient: FATAL — CardRevealed for {:?} ({}) carried no action_count (mtg-752 L3 requires server-stamped game ac)",
                             owner, card.name
                         );
                         self.state = NetworkState::Error;
@@ -886,14 +886,14 @@ impl WasmNetworkClient {
                     abilities.as_ref().map(|a| a.len()).unwrap_or(0),
                     buffer.len()
                 );
-                // Minimal lazy protocol (mtg-o99ow) Phase 1: route the single
+                // Minimal lazy protocol (mtg-752) Phase 1: route the single
                 // catch-up buffer into the state-sync + opponent-choice logs.
                 // From this point on the buffer is the AUTHORITATIVE source of
                 // mid-game facts; the still-sent eager copies are ignored (see
                 // `buffer_is_authoritative`).
                 self.buffer_is_authoritative = true;
                 self.apply_choice_buffer(buffer);
-                // mtg-o99ow L3: reveals/reorders are keyed by their OWN game ac,
+                // mtg-752 L3: reveals/reorders are keyed by their OWN game ac,
                 // so there is nothing to "stamp" at a choice. We still record the
                 // highest received choice ac as the reveal-history-complete
                 // watermark used by the rewind gate (all deltas with ac ≤ this
@@ -919,7 +919,7 @@ impl WasmNetworkClient {
                 target_card_ids,
                 ..
             } => {
-                // Minimal lazy protocol (mtg-o99ow): the opponent's decision now
+                // Minimal lazy protocol (mtg-752): the opponent's decision now
                 // rides in our next ChoiceRequest buffer as BufferedFact::Choice.
                 // Ignore the eager (dual-emit) copy — routing it too would
                 // double-push the same choice_seq into opponent_choices and panic
@@ -934,10 +934,10 @@ impl WasmNetworkClient {
                     action_count,
                     description
                 );
-                // mtg-o99ow L3: see ChoiceRequest — reveals are self-keyed by
+                // mtg-752 L3: see ChoiceRequest — reveals are self-keyed by
                 // game ac now; just advance the reveal-history watermark.
                 self.note_received_choice_ac(action_count);
-                // dual-emit (mtg-o99ow): record into the per-controller choice
+                // dual-emit (mtg-752): record into the per-controller choice
                 // buffer keyed by `choice_seq`, deduping the eager-vs-buffer
                 // duplicate (see `record_opponent_choice`). `choice_seq` (NOT
                 // `action_count`) is the log key: the server bumps it once per
@@ -995,15 +995,15 @@ impl WasmNetworkClient {
                 new_order,
                 action_count,
             } => {
-                // mtg-o99ow L3: key the reorder DIRECTLY by its game `action_count`
+                // mtg-752 L3: key the reorder DIRECTLY by its game `action_count`
                 // (the shuffle's `ShuffleLibrary` or scry/surveil's `ReorderLibrary`
                 // undo position), so the shadow adopts the new order BEFORE the
                 // post-reorder draws at the SAME position on every replay (fixes
-                // residual-#1, mtg-yexvc seed-2). `action_count == 0` is the
+                // residual-#1, mtg-744 seed-2). `action_count == 0` is the
                 // pre-game initial-order sync (two per client, would collide at ac 0
                 // in the strict-monotonic log) — held separately and applied at the
                 // first sync point before the GameLoop's opening-hand draws.
-                // Minimal lazy protocol (mtg-o99ow): mid-game reorders arrive via
+                // Minimal lazy protocol (mtg-752): mid-game reorders arrive via
                 // the ChoiceRequest buffer (BufferedFact::LibraryReorder) once the
                 // buffer is authoritative. Ignore the eager copy. (ac==0 initial
                 // orders always precede the first choice, so they are processed.)
@@ -1028,14 +1028,14 @@ impl WasmNetworkClient {
                 cards,
                 action_count,
             } => {
-                // mtg-o99ow L2d/L3: the N library-search candidates a searcher sees
+                // mtg-752 L2d/L3: the N library-search candidates a searcher sees
                 // are ONE atomic-multi-delta at the single search-resolution ac.
                 // Keyed directly by that game ac as a single Vec-carrying entry
                 // (N separate CardRevealed at one ac would collide on
                 // ActionLog::push). Applied by replaying process_card_reveal over
                 // each candidate so the shadow library learns the candidate
                 // identities (the searcher's controller filters by name).
-                // Minimal lazy protocol (mtg-o99ow): search candidates arrive via
+                // Minimal lazy protocol (mtg-752): search candidates arrive via
                 // the ChoiceRequest buffer (BufferedFact::SearchCandidates) once
                 // the buffer is authoritative. Ignore the eager copy.
                 if self.buffer_is_authoritative {
@@ -1173,7 +1173,7 @@ impl WasmNetworkClient {
 
     /// Check if at least one unconsumed `OpponentChoice` is buffered.
     ///
-    /// netarch step 2 (mtg-o99ow): this is the cursor-vs-frontier test on
+    /// netarch step 2 (mtg-752): this is the cursor-vs-frontier test on
     /// `opponent_choices` — equivalent to the legacy `!is_empty()` check
     /// against the old `VecDeque`, but it derives the answer from the
     /// non-destructive `ActionLog` + cursor pair. See the field-level
@@ -1266,7 +1266,7 @@ impl WasmNetworkClient {
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
-    // STATE-SYNC LOG (netarch step 1 (mtg-o99ow) — reveal/reorder via ActionLog<StateSyncEntry>)
+    // STATE-SYNC LOG (netarch step 1 (mtg-752) — reveal/reorder via ActionLog<StateSyncEntry>)
     // ═══════════════════════════════════════════════════════════════════════════
     //
     // See `docs/NETWORK_ACTION_LOG.md` § 3.2 for design and
@@ -1276,10 +1276,10 @@ impl WasmNetworkClient {
     // `pending_reveals` / `pending_library_reorders` VecDeques are gone.
 
     /// Append a `StateSyncEntry` to the shadow state-sync log at its server-
-    /// stamped game `action_count` (mtg-o99ow L3), keyed and consumed by game ac.
+    /// stamped game `action_count` (mtg-752 L3), keyed and consumed by game ac.
     ///
     /// Sole appender: the WS receive handler (`on_message`). Two wire realities
-    /// make this more than a plain append (mtg-o99ow WASM bug #2):
+    /// make this more than a plain append (mtg-752 WASM bug #2):
     ///
     /// 1. **Out-of-order arrival.** The server emits a choice window's deltas via
     ///    two uncoordinated paths — the coordinator's `LibraryReordered` broadcast
@@ -1310,7 +1310,7 @@ impl WasmNetworkClient {
     /// ALWAYS Fatal). The bound is `>=` (not `>`): the cursor starts at 0 and the
     /// first opening-hand reveal is legitimately stamped at game ac 0
     /// (`opening_reveal_ac(0) == 0`).
-    /// Route a minimal-lazy-protocol `ChoiceRequest` buffer (mtg-o99ow) into the
+    /// Route a minimal-lazy-protocol `ChoiceRequest` buffer (mtg-752) into the
     /// shadow's existing consumer logs. The buffer is ascending-`ac` and carries
     /// every reveal-class + opponent-choice fact since this client's last choice:
     /// reveal-class facts go into the game-`ac`-keyed `state_sync` log (applied
@@ -1375,7 +1375,7 @@ impl WasmNetworkClient {
     }
 
     /// Record an opponent choice into the `choice_seq`-keyed `opponent_choices`
-    /// log, deduping the dual-emit duplicate (mtg-o99ow).
+    /// log, deduping the dual-emit duplicate (mtg-752).
     ///
     /// During the additive-buffer window the SAME opponent choice can arrive
     /// BOTH eagerly (`ServerMessage::OpponentChoice`, processed only while the
@@ -1400,7 +1400,7 @@ impl WasmNetworkClient {
     /// monotonically; the only out-of-order arrival is the dual-emit duplicate,
     /// which we drop here before it reaches `push`.
     ///
-    /// TRANSITIONAL: once eager `OpponentChoice` is deleted (mtg-o99ow) only the buffer
+    /// TRANSITIONAL: once eager `OpponentChoice` is deleted (mtg-752) only the buffer
     /// feeds this, the dedup becomes a no-op, and this helper collapses back to a
     /// bare `push`.
     fn record_opponent_choice(&mut self, entry: ChoiceEntry) {
@@ -1483,7 +1483,7 @@ impl WasmNetworkClient {
     }
 
     /// Authoritative library-search result for an OPPONENT `searcher` resolving
-    /// at game position `target_action` (mtg-mb668).
+    /// at game position `target_action` (mtg-728).
     ///
     /// On P_viewer's shadow, when the OPPONENT (`searcher`) tutors a card, the
     /// server can't reveal WHICH card (hidden information), so it sends a single
@@ -1497,9 +1497,9 @@ impl WasmNetworkClient {
     ///
     /// This buffer is **rewind-surviving and action_count-keyed** (append-only),
     /// unlike the raced `OpponentChoice.library_search_result` (absent at the
-    /// FIRST resolution → `None` recorded and replayed forever = mtg-mb668 sig-1).
+    /// FIRST resolution → `None` recorded and replayed forever = mtg-728 sig-1).
     /// We pick the dummy `Searched` reveal owned by `searcher` with the GREATEST
-    /// game `action_count` that is `<= target_action` (mtg-o99ow L3: the log key
+    /// game `action_count` that is `<= target_action` (mtg-752 L3: the log key
     /// IS the game ac now — the dummy is stamped at the search-RESOLUTION ac and
     /// MUST stay there; re-stamping it at an earlier RevealCard position would
     /// break this "greatest ac ≤ target" selection and reintroduce the mtg-mb668
@@ -1555,7 +1555,7 @@ impl WasmNetworkClient {
 
     /// Apply every state-sync entry whose game `action_count` is `<= target_action`
     /// (and has arrived, i.e. `<= frontier()`) and is not yet applied, to `shadow`
-    /// (mtg-o99ow L3). **Non-destructive read** of `state_sync` — only the
+    /// (mtg-752 L3). **Non-destructive read** of `state_sync` — only the
     /// per-client cursor advances; the log itself is untouched.
     ///
     /// Consumption is keyed by GAME POSITION: a delta stamped at game ac K is
@@ -1594,7 +1594,7 @@ impl WasmNetworkClient {
         //   identity injections (library-order independent), so applying them
         //   early is safe.
         //
-        // The eager reveal bound is the apply-frontier STALL fix (mtg-o99ow B2):
+        // The eager reveal bound is the apply-frontier STALL fix (mtg-752 B2):
         // the prior single cursor bounded reveals by `target_action` too, so the
         // shadow forward-replay stalled at the last reveal (server=55/local=50)
         // instead of advancing to the choice's ac and consuming a buffered
@@ -1762,7 +1762,7 @@ impl WasmNetworkClient {
                 if card.name.is_empty() {
                     continue;
                 }
-                // mtg-o99ow L3: the log key IS the game ac.
+                // mtg-752 L3: the log key IS the game ac.
                 if ac <= retained_action {
                     retained_card_ids.insert(card.card_id);
                 } else {
@@ -1837,7 +1837,7 @@ impl WasmNetworkClient {
             }
         }
 
-        // Step 3 (mtg-o99ow): restore the position-R `tapped` state of every
+        // Step 3 (mtg-752): restore the position-R `tapped` state of every
         // re-materialised opponent permanent from the retained undo log.
         //
         // A revealed opponent permanent is materialised by a NON-undo-logged
@@ -1855,7 +1855,7 @@ impl WasmNetworkClient {
         // holds opponent reveal ids). Gated to battlefield permanents — tapped is
         // observable only there.
         let tapped_at_r = shadow.undo_log.reconstruct_tapped_states();
-        // mtg-f0w57: restore `controller` too — the OTHER hashed per-card field.
+        // mtg-797: restore `controller` too — the OTHER hashed per-card field.
         // A re-materialised opponent permanent defaults `controller = owner`; a
         // `ChangeController` (Control Magic / Old Man of the Sea / Steal Artifact)
         // at ac ≤ R is neither carried by the reveal nor re-executed by the
@@ -1879,7 +1879,7 @@ impl WasmNetworkClient {
         }
 
         // Reset the apply cursors so the forward replay re-consumes the log as it
-        // re-advances. The two cursors reset to DIFFERENT positions (mtg-o99ow):
+        // re-advances. The two cursors reset to DIFFERENT positions (mtg-752):
         //
         // - REVEALS reset to 0: reveals are idempotent identity injections and the
         //   forward replay must re-materialise every opponent instance the rewind
@@ -1907,7 +1907,7 @@ impl WasmNetworkClient {
     /// Consume all state-sync deltas whose game `action_count` the shadow has
     /// already reached (`<= shadow.action_count()`), in ac order.
     ///
-    /// mtg-o99ow L3: this is now exactly `apply_state_sync_at` with the target
+    /// mtg-752 L3: this is now exactly `apply_state_sync_at` with the target
     /// pinned to the shadow's current `action_count`. The interim version
     /// (mtg-610) skipped `LibraryReorder` entries and gated reveals by a separate
     /// effective-ac map; with the log keyed directly by game ac, reorders are
@@ -1975,7 +1975,7 @@ impl WasmNetworkClient {
 
     /// Queue a SubmitChoice response, including the chosen `SpellAbility` so the
     /// server's always-on CardId cross-check (controller.rs:644-687) protects the
-    /// deployed web path, not just native-vs-native (mtg-j4krs #2). The index stays
+    /// deployed web path, not just native-vs-native (mtg-789 #2). The index stays
     /// canonical; `spell_ability` is a redundant assert (fatal on disagreement),
     /// mirroring native `local_controller.rs:461-484`. Populated for Priority
     /// choices only (the only choice type carrying a SpellAbility).
@@ -2011,7 +2011,7 @@ impl WasmNetworkClient {
                 spell_ability,
                 target_card_ids,
             };
-            // mtg-mb668 class-A snapshot verification: log the DEFINITIVE wire
+            // mtg-728 class-A snapshot verification: log the DEFINITIVE wire
             // (seq, action_count, hash) at the actual submit point, so it can be
             // cross-checked against (a) the controller's WASM_CARD_DETAIL hash for
             // the same seq and (b) the server's rejected client_hash. If they all
@@ -2126,7 +2126,7 @@ pub fn new_shared_client() -> SharedNetworkClient {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// TESTS — state-sync log invariants (netarch step 1 (mtg-o99ow))
+// TESTS — state-sync log invariants (netarch step 1 (mtg-752))
 // ═══════════════════════════════════════════════════════════════════════════
 
 #[cfg(test)]
@@ -2170,7 +2170,7 @@ mod tests {
 
     #[test]
     fn searched_dummy_selected_by_greatest_ac_at_or_below_resolution() {
-        // mtg-o99ow L4 RED test — pins the load-bearing invariant that the
+        // mtg-752 L4 RED test — pins the load-bearing invariant that the
         // opponent-fetch dummy `Searched` reveal STAYS stamped at the
         // search-RESOLUTION ac and is selected by "greatest game ac ≤ target".
         //
@@ -2184,7 +2184,7 @@ mod tests {
         // searched_card_for(150) would pick the greatest ≤ 150 = ac 100 still —
         // but searched_card_for for the FIRST resolution would wrongly see TWO
         // candidates ≤ its target and the deterministic "this search's own
-        // result" mapping breaks (mtg-mb668 regression). We assert the dummies
+        // result" mapping breaks (mtg-728 regression). We assert the dummies
         // sit at their resolution acs and selection is exact.
         let opp = PlayerId::new(1);
         let mut c = WasmNetworkClient::new();
@@ -2218,7 +2218,7 @@ mod tests {
 
     #[test]
     fn push_state_sync_keys_by_game_action_count() {
-        // mtg-o99ow L3: the log key IS the server-stamped game action_count.
+        // mtg-752 L3: the log key IS the server-stamped game action_count.
         // Reveals route to `reveal_log`, reorders to `reorder_log` (the split).
         let mut c = WasmNetworkClient::new();
         c.push_state_sync(5, mk_reveal("a"));
@@ -2234,7 +2234,7 @@ mod tests {
 
     #[test]
     fn push_state_sync_tolerates_out_of_order_arrival() {
-        // mtg-o99ow WASM bug #2: the server emits a choice window's deltas via
+        // mtg-752 WASM bug #2: the server emits a choice window's deltas via
         // two uncoordinated paths so a reveal at a larger ac can ARRIVE before one
         // at a smaller ac. Each per-class log is keyed+consumed by game ac, so
         // insert-sorted restores canonical game-position order regardless of wire
@@ -2250,7 +2250,7 @@ mod tests {
 
     #[test]
     fn reorder_and_reveal_may_share_ac() {
-        // THE SPLIT INVARIANT (mtg-o99ow, mirrors the native client test): a
+        // THE SPLIT INVARIANT (mtg-752, mirrors the native client test): a
         // shuffle-then-draw resolution (Timetwister / Wheel of Fortune /
         // Windfall) legitimately stamps a LibraryReorder and a RevealCard at the
         // SAME game ac. With ONE shared log this tripped the "two distinct deltas
@@ -2272,7 +2272,7 @@ mod tests {
 
     #[test]
     fn reveal_idempotent_resend_is_dropped() {
-        // mtg-o99ow WASM bug #2: the server's shared_reveal_index immediate-pusher
+        // mtg-752 WASM bug #2: the server's shared_reveal_index immediate-pusher
         // and collect_reveals_since_last_choice both emit the same reveal, so an
         // IDENTICAL delta can arrive twice at the same game ac. Since distinct
         // SAME-CLASS deltas never share an ac, this is a benign re-send — the
@@ -2392,7 +2392,7 @@ mod tests {
         assert!(c.has_unapplied_state_sync());
     }
 
-    // ─── netarch step 2 (mtg-o99ow) — per-controller choice buffer ─────────────────
+    // ─── netarch step 2 (mtg-752) — per-controller choice buffer ─────────────────
 
     /// Drive the on_message OpponentChoice path. Bypasses JSON parsing by
     /// directly calling the private handler; verifies the message lands in

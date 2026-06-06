@@ -1,4 +1,4 @@
-//! mtg-mb668 CLASS-A / mtg-725 R1: reserved-id zone-COUNT lockstep.
+//! mtg-728 CLASS-A / mtg-725 R1: reserved-id zone-COUNT lockstep.
 //!
 //! `count_cards_matching_filter` filters a zone's cards with
 //! `self.cards.try_get(cid)` and returns `false` on `None`. On a SHADOW game the
@@ -77,7 +77,7 @@ fn assert_shadow_matches_golden(zone: Zone) {
     let shadow_count = shadow.count_cards_matching_filter(sp, "Card", zone);
     assert_eq!(
         shadow_count, golden_count,
-        "mtg-mb668 R1: shadow must count the {N} reserved (instance-less) opponent \
+        "mtg-728 R1: shadow must count the {N} reserved (instance-less) opponent \
          {zone:?} cards identically to the server — branch-on-absence (try_get=None) \
          must NOT silently drop them"
     );
@@ -94,7 +94,7 @@ fn shadow_counts_reserved_opponent_library_matches_golden_mb668_r1() {
 }
 
 // ===========================================================================
-// mtg-mb668 CLASS-A seed-2 (TIMETWISTER): full mass-shuffle + draw lockstep.
+// mtg-728 CLASS-A seed-2 (TIMETWISTER): full mass-shuffle + draw lockstep.
 //
 // Timetwister (card 55) resolves as
 //   `Effect::ChangeZoneAll { origins: [Hand, Graveyard], destination: Library,
@@ -233,23 +233,23 @@ fn shadow_timetwister_mass_shuffle_draw_matches_golden_mb668_seed2() {
 
     assert_eq!(
         s_lib0, g_lib0,
-        "mtg-mb668 seed-2: VIEWER library count after Timetwister mass-move must \
+        "mtg-728 seed-2: VIEWER library count after Timetwister mass-move must \
          match the server (viewer is real on both, sanity check)"
     );
     assert_eq!(
         s_lib1, g_lib1,
-        "mtg-mb668 seed-2: OPPONENT library count after Timetwister mass-move must \
+        "mtg-728 seed-2: OPPONENT library count after Timetwister mass-move must \
          match the server — the reserved opponent Hand+Graveyard cards MUST move \
          into the library; branch-on-absence (try_get=None) must NOT drop them"
     );
     assert_eq!(
         s_drawn, g_drawn,
-        "mtg-mb668 seed-2: the VIEWER's drawn cards must byte-match the server — a \
+        "mtg-728 seed-2: the VIEWER's drawn cards must byte-match the server — a \
          short opponent library desyncs the shuffle RNG and changes the draw order"
     );
     assert_eq!(
         s_rng, g_rng,
-        "mtg-mb668 seed-2: the RNG state after the mass shuffle+draw must match the \
+        "mtg-728 seed-2: the RNG state after the mass shuffle+draw must match the \
          server byte-for-byte (count-based shuffle consumes identical randomness \
          only if the reserved opponent cards all moved)"
     );

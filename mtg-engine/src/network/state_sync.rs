@@ -55,7 +55,7 @@ pub enum StateSyncEntry {
     LibraryReorder { player: PlayerId, new_order: Vec<CardId> },
     /// `ServerMessage::SearchCandidates` payload — the N candidate identities a
     /// searching player sees when resolving a `LibrarySearchByName` choice
-    /// (mtg-o99ow / mtg-253). A single atomic-multi-delta keyed at ONE game
+    /// (mtg-752 / mtg-253). A single atomic-multi-delta keyed at ONE game
     /// `action_count` (the search-resolution ac); carrying `Vec<CardReveal>`
     /// avoids the strict-monotonicity collision that N separate reveals at one
     /// ac would cause in the game-ac-keyed `ActionLog`. Applied by replaying

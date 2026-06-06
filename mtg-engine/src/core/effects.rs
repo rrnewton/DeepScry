@@ -730,7 +730,7 @@ impl TargetRestriction {
     /// identity cannot be inspected — but if the filter matches any card they
     /// must still be moved (otherwise the opponent's library ends up short and
     /// its subsequent shuffle consumes a different amount of RNG than the
-    /// server's, breaking deterministic-simulation lockstep — mtg-mb668 sig-2c).
+    /// server's, breaking deterministic-simulation lockstep — mtg-728 sig-2c).
     pub fn is_unrestricted(&self) -> bool {
         self.types.is_empty()
             && self.controller == ControllerRestriction::Any

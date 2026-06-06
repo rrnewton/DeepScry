@@ -237,7 +237,7 @@ async function main() {
         check(!!indexHtml, 'index.html served at fixed name (sole mutable URL)');
         if (!indexHtml) throw new Error('index.html did not serve');
 
-        // Lobby hero copy (mtg-uhovk): the hero logo already reads "DeepScry",
+        // Lobby hero copy (mtg-736): the hero logo already reads "DeepScry",
         // so the redundant yellow <h1>DeepScry</h1> is gone and the name is
         // worked into the teal tagline ("DeepScry is an experimental …").
         check(

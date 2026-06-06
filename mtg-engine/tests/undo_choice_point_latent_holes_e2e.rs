@@ -76,7 +76,7 @@ async fn undo_to_choice_point_reverts_shuffle_library() -> Result<()> {
     let order_after_undo: Vec<_> = game.get_player_zones(p1_id).unwrap().library.cards.to_vec();
     assert_eq!(
         order_before, order_after_undo,
-        "mtg-ey2vf: undo_to_previous_choice_point must revert ShuffleLibrary (previously silently skipped by the nested `_ => {{}}`)"
+        "mtg-732: undo_to_previous_choice_point must revert ShuffleLibrary (previously silently skipped by the nested `_ => {{}}`)"
     );
 
     Ok(())
@@ -136,11 +136,11 @@ async fn undo_to_choice_point_reverts_declare_attacker() -> Result<()> {
 
     assert!(
         !game.combat.is_attacking(creature_id),
-        "mtg-ey2vf: undo_to_previous_choice_point must revert DeclareAttacker (previously silently skipped by the nested `_ => {{}}`)"
+        "mtg-732: undo_to_previous_choice_point must revert DeclareAttacker (previously silently skipped by the nested `_ => {{}}`)"
     );
     assert!(
         !game.combat.combat_active,
-        "mtg-ey2vf: combat_active must be restored to its pre-declaration value (false) after undo"
+        "mtg-732: combat_active must be restored to its pre-declaration value (false) after undo"
     );
 
     Ok(())

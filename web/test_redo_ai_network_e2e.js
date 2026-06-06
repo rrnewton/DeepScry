@@ -162,7 +162,7 @@ async function launchBrowserClient(browser, httpPort, serverPort, mode, playerNa
         deck: displayName,
         controller: 'random',
         mode: 'network',
-        // mtg-rxacr: web games start PAUSED now; this unattended AI-vs-AI run
+        // mtg-780: web games start PAUSED now; this unattended AI-vs-AI run
         // opts back into auto-advancing with ?auto_run=true (matches the
         // "auto_run=true handles it automatically" note further below).
         auto_run: 'true',

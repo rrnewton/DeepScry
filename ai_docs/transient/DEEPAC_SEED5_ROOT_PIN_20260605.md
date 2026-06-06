@@ -1,7 +1,7 @@
 # Deep-AC in-stack/reveal desync — seed-5 root-cause pin (2026-06-05)
 
 Branch: `fix-deep-ac` (slot03-deepac), off integration @b242cbfb (has mtg-725 +
-mtg-677 + the 3 other tonight fixes). Class: mtg-559 / mtg-o99ow / mtg-677 tail.
+mtg-677 + the 3 other tonight fixes). Class: mtg-559 / mtg-752 / mtg-677 tail.
 This is the FINAL action_count-prize blocker.
 
 ## Repro (deterministic, mtime-fresh, isolated)
@@ -111,7 +111,7 @@ Principled (no band-aid, no verifier normalization that hides the divergence):
 make opponent-permanent materialization + derived tap/other per-instance state
 align with the action_count at which the replay executes the corresponding
 action, so a replayed `Tap`/`Untap`/state mutation lands on the correct live
-instance. Options to evaluate (the reveal-actionlog unification, mtg-o99ow):
+instance. Options to evaluate (the reveal-actionlog unification, mtg-752):
  - Do NOT apply a reveal eagerly when it materializes a permanent whose
    subsequent same-turn tap/state actions will be replayed; bound reveal apply by
    the shadow's replay position for the battlefield-permanent case (mirror the

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Regression test for mtg-j1ka3 — the FLICKERING opponent card.
+ * Regression test for mtg-750 — the FLICKERING opponent card.
  *
  * BUG: `renderBattlefield` rebuilds `container.innerHTML` on every processed
  * network message (updateUI is scheduled per-message), destroying + recreating
