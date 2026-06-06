@@ -1,0 +1,12 @@
+---
+title: 'Code-ref cleanup: stale hash issue IDs in code reference PRIOR-renumbered issues (mtg-ba6uq x69, mtg-mb668, mtg-tyvcn, ...)'
+status: open
+priority: 3
+issue_type: task
+created_at: 2026-06-06T00:52:48.988842819+00:00
+updated_at: 2026-06-06T00:52:48.988842819+00:00
+---
+
+# Description
+
+Beyond the current-batch renumber (90 hash->numeric, 2026-06-06), the CODE still references ~100+ hash IDs that were renumbered to numeric in PRIOR sessions but whose code comments were never updated (the renumber-code-ref protocol step was skipped repeatedly). Top offenders in *.rs: mtg-ba6uq (~69 refs), mtg-sfihb (~20), mtg-r9po1 (~14), mtg-640ot, mtg-m43mc, mtg-tyvcn, mtg-ofl2i, mtg-yulth, mtg-mb668, etc. These are NOT current .beads files. FIX (scripted): build the historical hash->numeric mapping from git history of .beads/issues renames (git log --find-renames -- .beads/issues), then word-boundary sed the code refs (same approach as the current batch), EXCLUDING false matches (mtg-engine, mtg-forge). Review the diff for false positives before landing. Prevents bare/dangling issue refs in code.
