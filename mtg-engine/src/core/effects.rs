@@ -4349,7 +4349,8 @@ mod tests {
             | CountExpression::CardsInHand { .. }
             | CountExpression::XPaid
             | CountExpression::SpellsCastThisTurn
-            | CountExpression::Compare { .. } => {
+            | CountExpression::Compare { .. }
+            | CountExpression::Kicked { .. } => {
                 panic!("Expected ValidGraveyard, got {:?}", &svars["CT"])
             }
         }
