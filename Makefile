@@ -1,7 +1,7 @@
 # MTG Forge Rust - Development Makefile
 #
 # Quick reference for common development tasks
-.PHONY: help build test validate validate-desync-canary clean run check fmt fmt-check clippy clippy-wasm doc docs examples full-benchmark bench-snapshot bench-logging coverage coverage-full validate-coverage-step profile callgrindprofile perfprofile heapprofile dhatprofile count setup-claude claude-github claude-beads happy code-dups bench wasm wasm-export wasm-serve wasm-dev play-web-local-dev wasm-test wasm-test-fancy wasm-test-fancy-dev wasm-test-human wasm-test-game-gui-rebuild wasm-test-game-gui-playtest wasm-e2e wasm-e2e-dev wasm-e2e-network wasm-e2e-network-human play-web play-web-pvp play-web-local build-network
+.PHONY: help build test validate validate-desync-canary fuzz-determinism fuzz-equivalence fuzz-network fuzz-native-wasm fuzz-snapshot fuzz-expedition clean run check fmt fmt-check clippy clippy-wasm doc docs examples full-benchmark bench-snapshot bench-logging coverage coverage-full validate-coverage-step profile callgrindprofile perfprofile heapprofile dhatprofile count setup-claude claude-github claude-beads happy code-dups bench wasm wasm-export wasm-serve wasm-dev play-web-local-dev wasm-test wasm-test-fancy wasm-test-fancy-dev wasm-test-human wasm-test-game-gui-rebuild wasm-test-game-gui-playtest wasm-e2e wasm-e2e-dev wasm-e2e-network wasm-e2e-network-human play-web play-web-pvp play-web-local build-network
 
 # Configuration variables
 # NODE: Node.js binary (Playwright requires Node 18+)
@@ -177,6 +177,34 @@ validate:
 # Pass ARGS for flags, e.g.:  make validate-desync-canary ARGS=--quick
 validate-desync-canary: build-network
 	@bash bug_finding/desync_canary.sh $(ARGS)
+
+# ---------------------------------------------------------------------------
+# Bug-finding EXPEDITIONS (NOT part of `make validate` / CI).
+# Each target is a common flag-combo of the ONE unified driver,
+# bug_finding/fuzz.py (see docs/FUZZ_AND_STRESS_TESTING_STRATEGY.md). They sweep
+# MANY random seeds/decks to surface new desyncs — run periodically, not on
+# every commit. Pass extra flags via ARGS, e.g.:
+#   make fuzz-determinism ARGS='--seeds 40 --pair-mode all'
+#   make fuzz-equivalence ARGS='--client wasm --configs 30'
+# Keep concurrency low; clean up stuck processes with
+# scripts/kill_zombie_processes.py (never a global pkill).
+fuzz-determinism: build-network          ## expedition: native same-seed determinism sweep
+	@python3 bug_finding/fuzz.py determinism $(ARGS)
+
+fuzz-equivalence: build-network          ## expedition: local==network gamelog identity sweep
+	@python3 bug_finding/fuzz.py equivalence $(ARGS)
+
+fuzz-network: build-network              ## expedition: network-only crash/error fuzz
+	@python3 bug_finding/fuzz.py network $(ARGS)
+
+fuzz-native-wasm: build-network          ## expedition: native==WASM strict equivalence sweep
+	@python3 bug_finding/fuzz.py native-wasm $(ARGS)
+
+fuzz-snapshot: build-network             ## expedition: snapshot/resume stress over decks x matchups
+	@python3 bug_finding/fuzz.py snapshot $(ARGS)
+
+fuzz-expedition: build-network           ## the mtg-813 prize: wall-clock bug hunt over old-school corpus
+	@python3 bug_finding/fuzz.py expedition $(ARGS)
 
 # Generate documentation and open in browser
 doc:

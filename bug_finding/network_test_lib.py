@@ -50,6 +50,30 @@ CLIENT_MODES = ["native", "wasm"]
 P1_NAME = "Ryan"
 P2_NAME = "Gabriel"
 
+# Per-player seed-derivation salts — the Python mirror of
+# bug_finding/lib/seed_salts.sh, itself the mirror of the canonical Rust source
+# mtg-engine/src/game/seed_derivation.rs:
+#   const P1_SALT: u64 = 0x1234_5678_9ABC_DEF0;
+#   const P2_SALT: u64 = 0xFEDC_BA98_7654_3210;
+#   derive_player_seed(master, slot) = master.wrapping_add(SALT)  # wraps at 2^64
+#
+# Local-vs-network equivalence depends on these matching Rust EXACTLY. A LOCAL
+# game (`mtg tui --seed-p1/--seed-p2`) takes the ALREADY-DERIVED per-player
+# seeds, whereas a NETWORK client (`mtg connect --seed-player`) takes the master
+# controller seed and derives internally. So run_local_game must pre-derive what
+# the network side derives, or the two RandomController RNG streams diverge.
+_U64_MASK = 0xFFFF_FFFF_FFFF_FFFF
+P1_SALT = 0x1234_5678_9ABC_DEF0
+P2_SALT = 0xFEDC_BA98_7654_3210
+
+
+def derive_p1_seed(master: int) -> int:
+    return (master + P1_SALT) & _U64_MASK
+
+
+def derive_p2_seed(master: int) -> int:
+    return (master + P2_SALT) & _U64_MASK
+
 # GAMELOG lines matching these patterns are filtered before comparison.
 # These are noisy lines where server/local may format slightly differently.
 GAMELOG_FILTER_PATTERNS = [
@@ -105,14 +129,23 @@ class TestResult:
     output_dir: Optional[str] = None
 
 
+# Word-boundary ERROR/PANIC matcher. A bare substring test (`'ERROR' in
+# line.upper()`) false-matches the card name "Terror" (-> "TERROR") and any word
+# containing "error", flagging perfectly-deterministic gamelogs as failures
+# (surfaced by the old_school2 corpus, which casts Terror). Matching ERROR/PANIC
+# only at word boundaries keeps real `[ERROR ...]` log lines + panics while
+# ignoring card text. (See CLAUDE.md "No Hacky String Operations On Structured
+# Data".)
+_ERROR_LINE_RE = re.compile(r'\b(?:ERROR|PANIC)', re.IGNORECASE)
+
+
 def extract_error_lines(log_path: str) -> List[str]:
-    """Extract last few ERROR/PANIC lines from a log file."""
+    """Extract last few ERROR/PANIC log lines from a log file."""
     errors = []
     if os.path.exists(log_path):
         with open(log_path, 'r') as f:
             for line in f:
-                upper = line.upper()
-                if 'ERROR' in upper or 'PANIC' in upper:
+                if _ERROR_LINE_RE.search(line):
                     clean = re.sub(r'\x1b\[[0-9;]*m', '', line)
                     clean = re.sub(r'[^\x20-\x7e]', '', clean)  # ASCII only
                     clean = re.sub(r'^\[.*?\] ', '', clean)
@@ -587,8 +620,12 @@ def run_local_game(config: TestConfig, output_dir: str,
          "--p1-name", P1_NAME,
          "--p2-name", P2_NAME,
          "--seed", str(config.seed),
-         "--seed-p1", str(config.seed_p1),
-         "--seed-p2", str(config.seed_p2),
+         # LOCAL takes pre-derived per-player seeds; the NETWORK side derives the
+         # same values internally from --seed-player. Pre-derive here so the two
+         # RandomController RNG streams match (matches
+         # tests/network_vs_local_equivalence_e2e.sh's $P{1,2}_DERIVED_SEED).
+         "--seed-p1", str(derive_p1_seed(config.seed_p1)),
+         "--seed-p2", str(derive_p2_seed(config.seed_p2)),
          "--tag-gamelogs",
          "--verbosity", "normal"],
         stdout=open(log_path, 'w'),
@@ -703,33 +740,46 @@ def run_network_game(config: TestConfig, output_dir: str,
         client2_log, config.client_p2,
     )
 
-    try:
-        server_proc.wait(timeout=timeout)
+    # The server is a LONG-LIVED multi-game lobby: it intentionally outlives any
+    # single game and will NOT exit on its own (see the note in
+    # tests/network_vs_local_equivalence_e2e.sh). So we wait for the CLIENTS to
+    # finish the game, then shut the server down — NOT the other way round
+    # (waiting for the server to exit would always time out on a clean game).
+    deadline = time.time() + timeout
 
-        # Wait for native clients to finish
-        for proc in [proc1, proc2]:
-            if proc is not None:
-                try:
-                    proc.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    proc.kill()
-                    proc.wait(timeout=2)
+    def _remaining() -> int:
+        return max(1, int(deadline - time.time()))
 
-        # Wait for WASM threads to finish.
-        # WASM browser (Playwright) needs time to detect server disconnect,
-        # close cleanly, and write its log file. Use a generous timeout (45s)
-        # so client2.log is always written before we try to read it.
-        for t in [t1, t2]:
-            if t is not None:
-                t.join(timeout=45)
+    # Wait for native clients to finish the game.
+    for proc in [proc1, proc2]:
+        if proc is not None:
+            try:
+                proc.wait(timeout=_remaining())
+            except subprocess.TimeoutExpired:
+                _kill_procs(server_proc, proc1, proc2)
+                for t in [t1, t2]:
+                    if t is not None:
+                        t.join(timeout=5)
+                return None
 
-        return server_proc.returncode
-    except subprocess.TimeoutExpired:
-        _kill_procs(server_proc, proc1, proc2)
-        for t in [t1, t2]:
-            if t is not None:
-                t.join(timeout=5)
-        return None
+    # Wait for WASM threads to finish.
+    # WASM browser (Playwright) needs time to detect server disconnect, close
+    # cleanly, and write its log file. Bound by the remaining game budget (min
+    # 45s) so client2.log is always written before we try to read it.
+    for t in [t1, t2]:
+        if t is not None:
+            t.join(timeout=max(45, _remaining()))
+
+    # Clients are done. If the server already exited on its own (e.g. it crashed
+    # or hit a fatal desync) surface its exit code; otherwise it is still the
+    # idle lobby — shut it down and report success. Game correctness is judged by
+    # the gamelog comparison + the error-log scan in the callers, NOT by this
+    # exit code.
+    server_rc = server_proc.poll()
+    if server_rc is None:
+        _kill_procs(server_proc)
+        return 0
+    return server_rc
 
 
 def run_network_test(config: TestConfig, timeout: int = 120) -> TestResult:
@@ -928,4 +978,76 @@ def run_equivalence_test(config: TestConfig, timeout: int = 180) -> TestResult:
         gamelog_diff_lines=diff_count,
         gamelog_diff_sample=diff_sample,
         output_dir=output_dir
+    )
+
+
+def run_determinism_test(config: TestConfig, timeout: int = 180) -> TestResult:
+    """Run the SAME local game twice and assert byte-identical gamelogs.
+
+    The native-determinism invariant: `mtg tui D1 D2 --seed K --tag-gamelogs`
+    run twice yields identical [GAMELOG ...] streams. This is the Python
+    counterpart of the determinism leg in
+    bug_finding/fuzz_determinism_netequiv.sh (which uses the bash shared
+    gamelog filter); here we reuse run_local_game + extract_gamelog so the one
+    Python CLI can run determinism as a mode without shelling out.
+
+    Both runs use the SAME TestConfig (same seed/decks/controllers); any
+    divergence is a real native nondeterminism bug.
+    """
+    start_time = time.time()
+    output_dir = tempfile.mkdtemp(prefix="determinism_fuzz_")
+    run_a = os.path.join(output_dir, "run_a")
+    run_b = os.path.join(output_dir, "run_b")
+    os.makedirs(run_a, exist_ok=True)
+    os.makedirs(run_b, exist_ok=True)
+
+    try:
+        exit_a = run_local_game(config, run_a, timeout=timeout)
+        exit_b = run_local_game(config, run_b, timeout=timeout)
+    except Exception as e:
+        return TestResult(
+            config=config, passed=False,
+            duration=time.time() - start_time,
+            error_signature=f"determinism_exception:{str(e)[:30]}",
+            output_dir=output_dir,
+        )
+
+    duration = time.time() - start_time
+
+    if exit_a is None or exit_b is None:
+        return TestResult(
+            config=config, passed=False, duration=duration,
+            error_signature="determinism_timeout", output_dir=output_dir,
+        )
+
+    errors_a = extract_error_lines(os.path.join(run_a, "local.log"))
+    errors_b = extract_error_lines(os.path.join(run_b, "local.log"))
+    gamelog_a = extract_gamelog(os.path.join(run_a, "local.log"))
+    gamelog_b = extract_gamelog(os.path.join(run_b, "local.log"))
+
+    diff_count, diff_sample = compare_gamelogs(gamelog_a, gamelog_b)
+
+    passed = (exit_a == 0 and exit_b == 0
+              and not errors_a and not errors_b
+              and diff_count == 0
+              and len(gamelog_a) > 0)
+
+    if passed:
+        error_sig = None
+    elif diff_count > 0:
+        error_sig = f"determinism_divergence({diff_count}_lines)"
+    elif exit_a != 0 or exit_b != 0:
+        error_sig = f"local_exit_{exit_a}_{exit_b}"
+    elif len(gamelog_a) == 0:
+        error_sig = "no_gamelog"
+    else:
+        error_sig = classify_errors([], errors_a, errors_b)
+
+    return TestResult(
+        config=config, passed=passed, duration=duration,
+        error_signature=error_sig,
+        local_errors=errors_a + errors_b,
+        gamelog_diff_lines=diff_count,
+        gamelog_diff_sample=diff_sample,
+        output_dir=output_dir,
     )
