@@ -8631,7 +8631,7 @@ impl GameState {
                 // handled via execute_effect (which skips them with a warning). Instead,
                 // auto-pick the first mode and execute its effect — this is a simplification
                 // that satisfies AI-vs-AI play. Full player-choice integration requires the
-                // priority loop and is tracked as TODO (mtg-ooqbh).
+                // priority loop and is tracked as TODO (mtg-821).
                 if let Effect::ModalChoice { ref modes, .. } = resolved_effect {
                     if let Some(first_mode) = modes.first() {
                         let mode_effect = resolve_effect_placeholder(&first_mode.effect, &ctx);
@@ -10444,7 +10444,7 @@ impl GameState {
                 kicked_value: _,
                 unkicked_value,
             } => {
-                // Kicker state is not yet tracked at resolution time (mtg-cedrg).
+                // Kicker state is not yet tracked at resolution time (mtg-820).
                 // Conservatively evaluate as unkicked (the lower/safer damage value).
                 // TODO: Once kicker tracking is implemented, resolve the actual state.
                 Ok(*unkicked_value)

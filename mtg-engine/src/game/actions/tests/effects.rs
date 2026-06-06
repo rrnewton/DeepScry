@@ -7206,7 +7206,7 @@ mod tests {
         }
     }
 
-    /// Parser-shape regression for restricted counterspells (mtg-h0jqf):
+    /// Parser-shape regression for restricted counterspells (mtg-856):
     /// Annul, Essence Scatter, Negate, and Disdainful Stroke each carry a
     /// `ValidTgts$` restriction that must limit which spells on the stack are
     /// legal targets.
