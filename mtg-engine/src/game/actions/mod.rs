@@ -9080,7 +9080,11 @@ impl GameState {
             }
 
             // CR 120.3c: Damage dealt to a planeswalker causes that many loyalty counters to be removed from it.
-            self.remove_counters(target_id, crate::core::CounterType::Loyalty, final_amount as u8)?;
+            self.remove_counters(
+                target_id,
+                crate::core::CounterType::Loyalty,
+                final_amount.min(255) as u8,
+            )?;
 
             let new_loyalty = self
                 .cards
