@@ -129,6 +129,16 @@ impl PlayerController for RichInputController {
         // If there are no available abilities, just pass - no point trying to match commands
         // This can happen in network mode when server asks for priority with 0 abilities
         if available.is_empty() {
+            if let Some(command_str) = self.peek_command() {
+                let command = command_str.to_string();
+                if is_explicit_pass(&command) {
+                    self.next_command();
+                } else if self.wildcard_mode {
+                    // Do nothing
+                } else {
+                    self.next_command();
+                }
+            }
             return ChoiceResult::Ok(None);
         }
 
@@ -211,7 +221,10 @@ impl PlayerController for RichInputController {
         // Try to match next command if present
         if let Some(cmd) = self.peek_command() {
             let cmd_clean = cmd.trim().to_lowercase();
-            eprintln!("DEBUG: choose_targets: cmd_clean='{}', valid_targets={:?}", cmd_clean, valid_targets);
+            eprintln!(
+                "DEBUG: choose_targets: cmd_clean='{}', valid_targets={:?}",
+                cmd_clean, valid_targets
+            );
             let matched_targets: SmallVec<[CardId; 4]> = valid_targets
                 .iter()
                 .filter(|&&tid| {

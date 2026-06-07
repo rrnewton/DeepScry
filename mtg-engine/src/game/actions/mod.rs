@@ -3843,7 +3843,9 @@ impl GameState {
                     .iter()
                     .filter_map(|&card_id| {
                         if let Some(card) = self.cards.try_get(card_id) {
-                            if card.is_creature() && restriction.matches_with_controller(card, *controller, card.controller) {
+                            if card.is_creature()
+                                && restriction.matches_with_controller(card, *controller, card.controller)
+                            {
                                 Some(card_id)
                             } else {
                                 None

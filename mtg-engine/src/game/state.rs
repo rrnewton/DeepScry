@@ -2643,13 +2643,14 @@ impl GameState {
         use crate::core::StaticAbility;
         self.battlefield.cards.iter().any(|&id| {
             self.cards.try_get(id).is_some_and(|src| {
-                src.controller == player_id && src.static_abilities.iter().any(|sa| {
-                    if let StaticAbility::CastWithFlash { valid_card, .. } = sa {
-                        valid_card.matches(card)
-                    } else {
-                        false
-                    }
-                })
+                src.controller == player_id
+                    && src.static_abilities.iter().any(|sa| {
+                        if let StaticAbility::CastWithFlash { valid_card, .. } = sa {
+                            valid_card.matches(card)
+                        } else {
+                            false
+                        }
+                    })
             })
         })
     }
