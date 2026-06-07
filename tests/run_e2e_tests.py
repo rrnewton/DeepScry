@@ -393,7 +393,7 @@ p1library=Plains; Plains; Plains; Plains; Plains
             pzl="""[metadata]
 Name: Valley Floodcaller Flash Creatures
 Goal: Win
-Turns: 5
+Turns: 1
 Difficulty: Easy
 [state]
 turn=1

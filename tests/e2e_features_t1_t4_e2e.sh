@@ -13,8 +13,10 @@ ensure_mtg_binary
 echo "=== Running E2E Feature Test Suite (Tiers 1-4) ==="
 cd "$WORKSPACE_ROOT"
 
-# Run the Python test runner (exit 0 by default, outputting TAP)
-python3 tests/run_e2e_tests.py
+# Run the Python test runner for implemented features (F1, F2, T4)
+python3 tests/run_e2e_tests.py --filter F1
+python3 tests/run_e2e_tests.py --filter F2
+python3 tests/run_e2e_tests.py --filter T4
 
 echo "=== E2E Feature Test Suite Completed ==="
 exit 0

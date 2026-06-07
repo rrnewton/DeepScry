@@ -38,7 +38,7 @@ if run_mtg_with_timeout 30 tui \
     --p1=fixed --p2=zero \
     --p1-fixed-inputs="cast Lightning Bolt;P2" \
     --p2-fixed-inputs="" \
-    --stop-on-choice=3 --seed 42 --verbosity 3 \
+    --seed 42 --verbosity 3 \
     > "$LOG" 2>&1; then
     echo -e "${GREEN}✓ Game completed${NC}"
 else
