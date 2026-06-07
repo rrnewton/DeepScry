@@ -1540,8 +1540,8 @@ impl GameState {
                         // State-trigger sweep (City in a Bottle). Doesn't affect
                         // P/T; applied as an SBA in check_set_origin_sacrifice().
                     }
-                    StaticAbility::CantBeCast { .. } | StaticAbility::CantPlayLand { .. } => {
-                        // Cast/play-prohibition statics don't affect P/T; they
+                    StaticAbility::CantBeCast { .. } | StaticAbility::CantPlayLand { .. } | StaticAbility::CastWithFlash { .. } => {
+                        // Cast/play-prohibition statics and cast-with-flash don't affect P/T; they
                         // gate the available-plays enumeration instead.
                     }
                     StaticAbility::CantBlockMatching { .. } => {

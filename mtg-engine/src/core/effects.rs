@@ -734,6 +734,11 @@ impl TargetRestriction {
             return false;
         }
 
+        // Check noncreature restriction (e.g. Card.nonCreature)
+        if self.requires_noncreature && card.is_creature() {
+            return false;
+        }
+
         // Check color restriction (e.g. Red Elemental Blast's `Permanent.Blue`
         // destroy mode may only hit BLUE permanents). A basic Mountain is a
         // *colorless* land, so `Permanent.Red` does NOT match it (CR 105.2a:
@@ -773,9 +778,26 @@ impl TargetRestriction {
         }
 
         // Check subtype restriction (e.g. Flashfires `Plains`, Tsunami `Island`).
-        // A card matches only if its subtype list contains the required subtype.
+        // A card matches only if its subtype list contains at least one of the required subtypes (which may be comma-separated).
         if let Some(subtype) = &self.required_subtype {
-            if !card.subtypes.contains(subtype) {
+            let sub_str = subtype.as_str();
+            let matches_any = sub_str.split(',').any(|s| {
+                let s_subtype = crate::core::Subtype::new(s.trim());
+                card.subtypes.contains(&s_subtype)
+            });
+            if !matches_any {
+                return false;
+            }
+        }
+
+        // Check noncreature restriction (Negate: Card.nonCreature)
+        if self.requires_noncreature && card.is_creature() {
+            return false;
+        }
+
+        // Check minimum CMC restriction (Disdainful Stroke: Card.cmcGE4)
+        if let Some(min) = self.min_cmc {
+            if card.mana_cost.cmc() < min {
                 return false;
             }
         }
@@ -895,7 +917,7 @@ impl TargetRestriction {
         let mut required_color = None;
         let mut required_set = None;
         let mut requires_other = false;
-        let mut required_subtype = None;
+        let mut required_subtype: Option<crate::core::Subtype> = None;
         let mut power_le_source = false;
 
         for part in valid_tgts.split(',') {
@@ -968,7 +990,16 @@ impl TargetRestriction {
                 // Tsunami), `ValidTgts$ Goblin`, etc. Previously these fell through
                 // to "match any", so e.g. `DestroyAll | ValidCards$ Plains` wiped
                 // EVERY permanent. Match against the card's subtypes instead.
-                other => required_subtype = Some(crate::core::Subtype::new(other)),
+                other => {
+                    if let Some(ref mut existing) = required_subtype {
+                        let mut new_str = existing.as_str().to_string();
+                        new_str.push(',');
+                        new_str.push_str(other);
+                        required_subtype = Some(crate::core::Subtype::new(&new_str));
+                    } else {
+                        required_subtype = Some(crate::core::Subtype::new(other));
+                    }
+                }
             }
         }
 
@@ -2979,6 +3010,16 @@ pub enum StaticAbility {
         /// (e.g. `Creature.powerGE2`). Evaluated against the attacker card.
         attacker_filter: TargetRestriction,
         /// Description for logging.
+        description: String,
+    },
+
+    /// Allows casting spells as though they had flash
+    ///
+    /// Corresponds to: `S:Mode$ CastWithFlash | ValidCard$ <filter>`
+    CastWithFlash {
+        /// Which cards are affected (e.g. Card.nonCreature)
+        valid_card: TargetRestriction,
+        /// Description for logging
         description: String,
     },
 }

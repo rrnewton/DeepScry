@@ -247,8 +247,9 @@ fn parse_counter_type(s: &str) -> Result<CounterType> {
         "STASH" => Ok(CounterType::Stash),
         "DEF" | "DEFENSE" => Ok(CounterType::Defense),
         "REV" => Ok(CounterType::Rev),
+        "LEVEL" => Ok(CounterType::Level),
         _ => Err(MtgError::ParseError(format!(
-            "Unknown counter type: {}. Supported types: P1P1, M1M1, LOYALTY, POISON, ENERGY, CHARGE, AGE, STORAGE, REPR, LORE, OIL, STASH",
+            "Unknown counter type: {}. Supported types: P1P1, M1M1, LOYALTY, POISON, ENERGY, CHARGE, AGE, STORAGE, REPR, LORE, OIL, STASH, LEVEL",
             s
         ))),
     }

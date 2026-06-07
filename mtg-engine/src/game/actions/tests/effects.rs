@@ -3059,7 +3059,8 @@ mod tests {
                 | StaticAbility::GainControl { .. }
                 | StaticAbility::SacrificeMatchingPresent { .. }
                 | StaticAbility::CantBeCast { .. }
-                | StaticAbility::CantPlayLand { .. } => None,
+                | StaticAbility::CantPlayLand { .. }
+                | StaticAbility::CastWithFlash { .. } => None,
             })
             .expect("Ironclaw Orcs must produce a CantBlockMatching static ability");
 

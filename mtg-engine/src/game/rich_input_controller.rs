@@ -208,6 +208,33 @@ impl PlayerController for RichInputController {
             return ChoiceResult::Ok(SmallVec::new());
         }
 
+        // Try to match next command if present
+        if let Some(cmd) = self.peek_command() {
+            let cmd_clean = cmd.trim().to_lowercase();
+            eprintln!("DEBUG: choose_targets: cmd_clean='{}', valid_targets={:?}", cmd_clean, valid_targets);
+            let matched_targets: SmallVec<[CardId; 4]> = valid_targets
+                .iter()
+                .filter(|&&tid| {
+                    let name = _view.card_name(tid).unwrap_or_default();
+                    eprintln!("DEBUG: target CardId={:?}, name='{}'", tid, name);
+                    if let Some(pid) = crate::core::player_target_from_sentinel(tid) {
+                        let pid_idx = pid.as_u32();
+                        cmd_clean == format!("p{}", pid_idx + 1)
+                            || cmd_clean == format!("p{}", pid_idx)
+                            || cmd_clean == name.to_lowercase()
+                    } else {
+                        name.to_lowercase() == cmd_clean
+                    }
+                })
+                .copied()
+                .collect();
+            eprintln!("DEBUG: matched_targets={:?}", matched_targets);
+            if !matched_targets.is_empty() {
+                self.next_command();
+                return ChoiceResult::Ok(matched_targets);
+            }
+        }
+
         // Best-effort: rich text target syntax for variable-count spells is a
         // deferred follow-up (mtg-tyvcn). For now take the first `min_targets`
         // (at least 1, capped at max) valid targets deterministically.

@@ -4489,9 +4489,10 @@ impl CardDefinition {
             let is_continuous = ability.contains("Mode$ Continuous");
             let is_reduce_cost = ability.contains("Mode$ ReduceCost");
             let is_raise_cost = ability.contains("Mode$ RaiseCost");
+            let is_cast_with_flash = ability.contains("Mode$ CastWithFlash");
 
-            // Parse S:Mode$ Continuous, S:Mode$ ReduceCost, or S:Mode$ RaiseCost lines
-            if !is_continuous && !is_reduce_cost && !is_raise_cost {
+            // Parse S:Mode$ Continuous, S:Mode$ ReduceCost, S:Mode$ RaiseCost, or S:Mode$ CastWithFlash lines
+            if !is_continuous && !is_reduce_cost && !is_raise_cost && !is_cast_with_flash {
                 continue;
             }
 
@@ -4515,6 +4516,9 @@ impl CardDefinition {
 
             // GrantAbility-specific parameters
             let mut add_ability_svar: Option<String> = None;
+
+            // CastWithFlash-specific parameters
+            let mut flash_valid_card: Option<crate::core::TargetRestriction> = None;
 
             // GainControl-specific parameter: `GainControl$ You` on a control-stealing
             // Aura (Control Magic, Mind Control, ...). Models CR 613.2 layer-2 control.
@@ -4644,23 +4648,27 @@ impl CardDefinition {
                         }
                         // ReduceCost-specific parameters
                         "ValidCard" => {
-                            // Parse ValidCard$ for ReduceCost
-                            // Examples: "Card.nonCreature", "Card.Self", "Creature", "Dragon"
-                            use crate::core::CostReductionTarget;
-                            valid_card = Some(match value {
-                                "Card.nonCreature" => CostReductionTarget::NonCreature,
-                                "Card" | "Card.Self" => CostReductionTarget::AllSpells,
-                                "Creature" => CostReductionTarget::Creature,
-                                "Card.White" => CostReductionTarget::Color(crate::core::Color::White),
-                                "Card.Blue" => CostReductionTarget::Color(crate::core::Color::Blue),
-                                "Card.Black" => CostReductionTarget::Color(crate::core::Color::Black),
-                                "Card.Red" => CostReductionTarget::Color(crate::core::Color::Red),
-                                "Card.Green" => CostReductionTarget::Color(crate::core::Color::Green),
-                                _ => {
-                                    // Try to parse as a subtype (e.g., "Dragon", "Spirit")
-                                    CostReductionTarget::Subtype(Subtype::new(value))
-                                }
-                            });
+                            if is_cast_with_flash {
+                                flash_valid_card = Some(crate::core::TargetRestriction::parse(value));
+                            } else {
+                                // Parse ValidCard$ for ReduceCost
+                                // Examples: "Card.nonCreature", "Card.Self", "Creature", "Dragon"
+                                use crate::core::CostReductionTarget;
+                                valid_card = Some(match value {
+                                    "Card.nonCreature" => CostReductionTarget::NonCreature,
+                                    "Card" | "Card.Self" => CostReductionTarget::AllSpells,
+                                    "Creature" => CostReductionTarget::Creature,
+                                    "Card.White" => CostReductionTarget::Color(crate::core::Color::White),
+                                    "Card.Blue" => CostReductionTarget::Color(crate::core::Color::Blue),
+                                    "Card.Black" => CostReductionTarget::Color(crate::core::Color::Black),
+                                    "Card.Red" => CostReductionTarget::Color(crate::core::Color::Red),
+                                    "Card.Green" => CostReductionTarget::Color(crate::core::Color::Green),
+                                    _ => {
+                                        // Try to parse as a subtype (e.g., "Dragon", "Spirit")
+                                        CostReductionTarget::Subtype(Subtype::new(value))
+                                    }
+                                });
+                            }
                         }
                         "Amount" => {
                             // Parse Amount$ for cost reduction/increase (e.g., "1", "2")
@@ -4843,6 +4851,16 @@ impl CardDefinition {
                     affected: affected.clone(),
                     description: description.clone(),
                 });
+            }
+
+            // CastWithFlash ability
+            if is_cast_with_flash {
+                if let Some(target) = flash_valid_card {
+                    abilities.push(StaticAbility::CastWithFlash {
+                        valid_card: target,
+                        description: description.clone(),
+                    });
+                }
             }
         }
 

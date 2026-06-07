@@ -541,7 +541,7 @@ impl<'a> GameLoop<'a> {
                     if !card.is_land() {
                         // Check timing restrictions
                         // CR 702.8a: Flash allows a permanent to be cast anytime you could cast an instant
-                        let has_flash = card.has_keyword(crate::core::Keyword::Flash);
+                        let has_flash = card.has_keyword(crate::core::Keyword::Flash) || self.game.player_has_cast_with_flash(player_id, card);
                         let can_cast_now = if card.is_instant() || has_flash {
                             // Instants and cards with Flash can be cast anytime with priority
                             true
@@ -879,7 +879,7 @@ impl<'a> GameLoop<'a> {
                 if let Some(card) = self.game.cards.try_get(card_id) {
                     // Check timing restrictions
                     // Commander follows normal casting timing rules
-                    let has_flash = card.has_keyword(crate::core::Keyword::Flash);
+                    let has_flash = card.has_keyword(crate::core::Keyword::Flash) || self.game.player_has_cast_with_flash(player_id, card);
                     let can_cast_now = if card.is_instant() || has_flash {
                         true
                     } else {

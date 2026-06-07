@@ -506,7 +506,8 @@ impl GameStateEvaluator {
                 StaticAbility::SacrificeMatchingPresent { .. }
                 | StaticAbility::CantBeCast { .. }
                 | StaticAbility::CantPlayLand { .. }
-                | StaticAbility::CantBlockMatching { .. } => {
+                | StaticAbility::CantBlockMatching { .. }
+                | StaticAbility::CastWithFlash { .. } => {
                     // Set/color-hoser statics (City in a Bottle, etc.) and the
                     // self block-restriction (Ironclaw Orcs) live on the
                     // creature/artifact itself, not an aura attached to a

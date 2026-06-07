@@ -1831,6 +1831,7 @@ async fn run_tui(
     };
 
     let snapshot_turn_number: Option<u32> = loaded_snapshot.as_ref().map(|s| s.turn_number);
+    let mut puzzle_turns = None;
 
     let mut game = if let Some(ref snapshot) = loaded_snapshot {
         // Load game from snapshot
@@ -1851,6 +1852,7 @@ async fn run_tui(
         }
         let puzzle_contents = std::fs::read_to_string(&puzzle_file)?;
         let puzzle = PuzzleFile::parse(&puzzle_contents)?;
+        puzzle_turns = Some(puzzle.metadata.turns);
         if !suppress_output {
             log::info!("  Puzzle: {}", puzzle.metadata.name);
             log::info!("  Goal: {:?}", puzzle.metadata.goal);
@@ -2407,6 +2409,9 @@ async fn run_tui(
         .with_verbosity(verbosity)
         .with_snapshot_format(snapshot_format)
         .skip_opening_hands();
+    if let Some(turns) = puzzle_turns {
+        game_loop = game_loop.with_max_turns(turns);
+    }
 
     // If loading from snapshot, restore the turn counter
     // Note: snapshot.turn_number represents the turn we're STARTING,

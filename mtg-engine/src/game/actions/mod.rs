@@ -3836,25 +3836,18 @@ impl GameState {
             } => {
                 // Mass pump: "Creatures you control get +X/+Y until end of turn"
                 // Find all creatures matching the filter and pump them
+                let restriction = crate::core::TargetRestriction::parse(filter);
                 let targets: Vec<CardId> = self
                     .battlefield
                     .cards
                     .iter()
                     .filter_map(|&card_id| {
                         if let Some(card) = self.cards.try_get(card_id) {
-                            // Check if it's a creature
-                            if !card.is_creature() {
-                                return None;
+                            if card.is_creature() && restriction.matches_with_controller(card, *controller, card.controller) {
+                                Some(card_id)
+                            } else {
+                                None
                             }
-                            // Check filter: "Creature.YouCtrl" means controller's creatures
-                            if filter.contains("YouCtrl") && card.controller != *controller {
-                                return None;
-                            }
-                            // Check filter: "Creature.OppCtrl" means opponent's creatures
-                            if filter.contains("OppCtrl") && card.controller == *controller {
-                                return None;
-                            }
-                            Some(card_id)
                         } else {
                             None
                         }
@@ -3873,6 +3866,10 @@ impl GameState {
                             power_bonus,
                             toughness_bonus
                         );
+                        self.logger.normal(&format!(
+                            "{} gets +{}/+{} until end of turn",
+                            card.name, power_bonus, toughness_bonus
+                        ));
                     }
                     self.undo_log.log(
                         crate::undo::GameAction::PumpCreature {
@@ -7986,10 +7983,13 @@ impl GameState {
                     }
 
                     // Find SpellCast triggers on this permanent
+                    eprintln!("DEBUG: card='{}', triggers={:?}", card.name, card.triggers);
                     let matching_triggers: Vec<&Trigger> = card
                         .triggers
                         .iter()
                         .filter(|trigger| {
+                            eprintln!("DEBUG: testing trigger event={:?}, requires_noncreature={}, is_creature_spell={}, requires_instant_or_sorcery={}, is_instant_or_sorcery={}", 
+                                trigger.event, trigger.requires_noncreature, is_creature_spell, trigger.requires_instant_or_sorcery, is_instant_or_sorcery);
                             if trigger.event != TriggerEvent::SpellCast {
                                 return false;
                             }

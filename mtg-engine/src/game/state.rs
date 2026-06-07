@@ -2636,6 +2636,24 @@ impl GameState {
         })
     }
 
+    /// True if some permanent on the battlefield has a `CastWithFlash` static
+    /// controlled by `player_id` whose filter matches `card`. Used to allow
+    /// casting noncreature spells as though they had flash (e.g. Valley Floodcaller).
+    pub fn player_has_cast_with_flash(&self, player_id: PlayerId, card: &crate::core::Card) -> bool {
+        use crate::core::StaticAbility;
+        self.battlefield.cards.iter().any(|&id| {
+            self.cards.try_get(id).is_some_and(|src| {
+                src.controller == player_id && src.static_abilities.iter().any(|sa| {
+                    if let StaticAbility::CastWithFlash { valid_card, .. } = sa {
+                        valid_card.matches(card)
+                    } else {
+                        false
+                    }
+                })
+            })
+        })
+    }
+
     /// True if some permanent on the battlefield has a `CantPlayLand` static
     /// whose filter matches `card`. Gates land plays (and, per Forge's
     /// CantPlayLand semantics, spell casts) for prohibited cards. City in a
