@@ -45,3 +45,7 @@ deepscry/
 # --- local deploy config (holds VM host/user; the TEMPLATE is tracked at --
 # deepscry/scripts/deepscry-deploy.env.example) ----------------------
 .deepscry-deploy.env
+
+# --- agents directory used by harness ------------------------------------
+.agents/
+
