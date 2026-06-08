@@ -29,8 +29,8 @@ if [[ -n "${remote_sha:-}" && "$remote_sha" != "00000000000000000000000000000000
     fi
 fi
 
-echo "pre-push: running cargo clippy --all-targets --all-features --features network -- -D warnings"
-if ! cargo clippy --all-targets --all-features --features network -- -D warnings; then
+echo "pre-push: running cargo clippy -p mtg-engine --all-targets --all-features --features network -- -D warnings"
+if ! cargo clippy -p mtg-engine --all-targets --all-features --features network -- -D warnings; then
     cat >&2 <<'EOF'
 
 ✗ pre-push: clippy check failed.
