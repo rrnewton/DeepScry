@@ -76,10 +76,6 @@ impl PlayerController for FixedScriptController {
         view: &GameStateView,
         available: &[SpellAbility],
     ) -> ChoiceResult<Option<SpellAbility>> {
-        if available.is_empty() {
-            return ChoiceResult::Ok(None);
-        }
-
         let choice_index = self.next_choice();
 
         // INVARIANT: Choice indices match menu display

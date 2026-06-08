@@ -42,6 +42,11 @@ echo ""
 # Count examples
 TOTAL=$(echo "$EXAMPLES" | wc -l)
 
+# Create temp directory for results
+RESULTS_DIR=$(mktemp -d)
+echo "Redirecting output to temporary results directory: $RESULTS_DIR"
+trap "rm -rf $RESULTS_DIR" EXIT
+
 echo "=== Running $TOTAL examples in parallel ==="
 echo ""
 
@@ -109,10 +114,7 @@ fi
 # --tagstring: Prefix output with example name
 # --results /tmp/example_results: Store results for analysis
 
-# Create temp directory for results
-RESULTS_DIR=$(mktemp -d)
-echo "Redirecting output to temporary results directory: $RESULTS_DIR"
-trap "rm -rf $RESULTS_DIR" EXIT
+
 
 # Run function for each example
 run_example() {

@@ -743,8 +743,7 @@ impl<'a> GameLoop<'a> {
                         let ctrl_type = controller.get_controller_type();
                         let is_network_controlled =
                             matches!(ctrl_type, ControllerType::Remote | ControllerType::Network);
-                        let is_scripted = matches!(ctrl_type, ControllerType::Tui | ControllerType::Fixed);
-                        if available_count == 0 && !is_network_controlled && !is_scripted {
+                        if available_count == 0 && !is_network_controlled {
                             // No available actions - automatically pass priority
                             break None;
                         }
