@@ -4,7 +4,7 @@ status: open
 priority: 2
 issue_type: task
 created_at: 2026-06-09T21:47:08.267689746+00:00
-updated_at: 2026-06-09T21:47:29.506279487+00:00
+updated_at: 2026-06-09T22:50:01.565199501+00:00
 ---
 
 # Description
@@ -63,3 +63,13 @@ TESTS (all wired into make validate browser suite):
 Commits: 4bf17463 (fixes 1/2/3), 6229c948 (flicker + tests). Presentation layer
 only; no Rust, no engine/protocol/determinism change. Related (closed): mtg-270
 (network console spam behind debug flag), mtg-378 (replay verifier in native_game).
+
+FOLLOW-UP (commit 7cdc602f): gating the [Network] Received log broke the network
+e2e completion detection (tests scraped that log for "type":"game_ended"), and
+the onclose escalation raised a spurious 'connection lost' red banner on the
+normal post-game 1006 socket close. Fixed: network.js sets a gameEnded flag +
+emits ONE clean '[Network] Game ended' notice on the game_ended message;
+onclose/onerror skip escalation/reconnect once gameEnded; tests detect
+completion via that notice + view-model game_over. Bisection: clean integration
+3/3 PASS, pre-fix 3/3 FAIL, post-fix 3/3 PASS. Commits now: 4bf17463, 6229c948,
+8d24320a (data-nonimg sig), 7cdc602f (net e2e + banner fix).
