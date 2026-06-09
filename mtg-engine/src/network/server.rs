@@ -127,7 +127,7 @@ impl Default for ServerConfig {
 /// Passed EXPLICITLY via `gh ... -R <repo>` on every repo-scoped command so the
 /// server never relies on `GH_REPO` being present in the systemd unit env or on
 /// `gh`'s cwd-based repo auto-detection (mtg-587).
-const BUG_REPORT_GITHUB_REPO: &str = "rrnewton/DeepScry";
+const BUG_REPORT_GITHUB_REPO: &str = "DeepScryAI/DeepScry";
 
 #[derive(Debug, Clone)]
 struct BugReportRequest {
@@ -4491,7 +4491,7 @@ mod tests {
             } else if args.get(1).map(String::as_str) == Some("gist") {
                 Ok(make_output("https://gist.github.com/example/logs\n", ""))
             } else if args.get(1).map(String::as_str) == Some("issue") {
-                Ok(make_output("https://github.com/rrnewton/DeepScry/issues/123\n", ""))
+                Ok(make_output("https://github.com/DeepScryAI/DeepScry/issues/123\n", ""))
             } else {
                 panic!("unexpected command: {args:?}");
             }
@@ -4503,7 +4503,7 @@ mod tests {
         assert_eq!(
             outcome,
             GitHubIssueOutcome {
-                issue_url: "https://github.com/rrnewton/DeepScry/issues/123".to_string(),
+                issue_url: "https://github.com/DeepScryAI/DeepScry/issues/123".to_string(),
                 warning: None,
             }
         );
@@ -4518,7 +4518,7 @@ mod tests {
         assert_eq!(calls[0][2], "status");
         // 1: label list -- repo-scoped via explicit -R
         assert_eq!(calls[1][1], "label");
-        assert!(calls[1].windows(2).any(|w| w[0] == "-R" && w[1] == "rrnewton/DeepScry"));
+        assert!(calls[1].windows(2).any(|w| w[0] == "-R" && w[1] == "DeepScryAI/DeepScry"));
         // 2: gist create -- NOT repo-scoped (gists are user-scoped). File-path
         // args MUST be ABSOLUTE so gh can open them regardless of its cwd
         // (mtg-758: a relative path resolved under the wrong cwd → "no such file").
@@ -4532,7 +4532,7 @@ mod tests {
         assert!(!calls[2].iter().any(|arg| arg == "-R"));
         // 3: issue create -- repo-scoped via explicit -R
         assert_eq!(calls[3][1], "issue");
-        assert!(calls[3].windows(2).any(|w| w[0] == "-R" && w[1] == "rrnewton/DeepScry"));
+        assert!(calls[3].windows(2).any(|w| w[0] == "-R" && w[1] == "DeepScryAI/DeepScry"));
         assert!(calls[3].windows(2).any(|w| w[0] == "--label" && w[1] == "bug"));
         assert!(calls[3].windows(2).any(|w| w[0] == "--label" && w[1] == "triage"));
         // --body-file MUST be an ABSOLUTE path (mtg-758).
@@ -4756,7 +4756,7 @@ mod tests {
     fn test_launch_claude_autofix_with_spawner_builds_expected_command() {
         let repo_root = PathBuf::from("/tmp/mtg-repo");
         let request = AutoFixLaunchRequest {
-            issue_url: "https://github.com/rrnewton/DeepScry/issues/123".to_string(),
+            issue_url: "https://github.com/DeepScryAI/DeepScry/issues/123".to_string(),
             prompt: "Fix the bug".to_string(),
         };
         let seen_args = Arc::new(StdMutex::new(Vec::<String>::new()));
@@ -4806,7 +4806,7 @@ mod tests {
             Arc::new(spawner),
             PathBuf::from("/tmp/mtg-repo"),
             AutoFixLaunchRequest {
-                issue_url: "https://github.com/rrnewton/DeepScry/issues/9".to_string(),
+                issue_url: "https://github.com/DeepScryAI/DeepScry/issues/9".to_string(),
                 prompt: "Prompt".to_string(),
             },
         );
@@ -4836,7 +4836,7 @@ mod tests {
                 report_dir: PathBuf::from("/tmp/report"),
                 trusted: false,
             },
-            Some("https://github.com/rrnewton/DeepScry/issues/1"),
+            Some("https://github.com/DeepScryAI/DeepScry/issues/1"),
         );
         maybe_schedule_claude_autofix(
             &report,

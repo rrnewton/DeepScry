@@ -16,7 +16,7 @@ Run from the **primary checkout** (`parent/mtg-forge-rs/`), as the coordinator.
 
 ## Preconditions
 
-1. `integration` is **green on CI** (`gh -R rrnewton/DeepScry run list --branch
+1. `integration` is **green on CI** (`gh -R DeepScryAI/DeepScry run list --branch
    integration --limit 1` → `completed success`). NEVER promote a red/in-progress
    integration to main.
 2. Primary checkout `git status` is clean.
