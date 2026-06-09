@@ -107,7 +107,7 @@ This maintains high performance even during tree search with millions of game st
 - Deterministic and predictable
 - Used for testing
 
-### 3. HeuristicController (`heuristic_controller.rs`)
+### 3. HeuristicController (`heuristic_controller/` module dir)
 - Evaluation-based AI ported from Java Forge
 - Considers creature quality, removal priority, combat outcomes
 - Most sophisticated AI currently available

@@ -69,8 +69,11 @@ This module contains the game engine that implements MTG rules and manages game 
 - Fully deterministic with same seed
 - Used for testing and baseline performance
 
-##### [`heuristic_controller.rs`](heuristic_controller.rs)
-- Evaluation-based AI ported from Java Forge (8600+ lines)
+##### [`heuristic_controller/`](heuristic_controller/) (module dir; see its `README.md`)
+- Evaluation-based AI ported from Java Forge, split by decision shape into
+  `creature_eval` / `mana_lands` / `spell_selection` / `combat` / `spell_eval`
+  / `abilities` submodules, with the `PlayerController` trait entrypoints in
+  `mod.rs`
 - Creature quality evaluation with keyword/ability scoring
 - Smart attack/block decisions with aggression levels
 - Spell casting evaluation: removal timing, board wipes, counters, fight
