@@ -1095,6 +1095,30 @@ impl GameState {
             self.attach_aura(aura_id, target_id)?;
         }
 
+        // Step 4: register the leave-the-battlefield drawback (Animate Dead's
+        // DBDelay). "When Animate Dead leaves the battlefield, that creature's
+        // controller sacrifices it." Model it as a delayed trigger WATCHING the
+        // Aura (tracked_card = aura_id) for a Battlefield -> anywhere zone change,
+        // whose effect SACRIFICES the reanimated creature (SacrificeOther). This
+        // covers all the cases the drawback must: the Aura destroyed/bounced
+        // (creature is sacrificed), and the creature dying first (the Aura falls
+        // off as an SBA, the trigger fires, and SacrificeOther no-ops because the
+        // creature already left). mtg-400.
+        use crate::core::{DelayedEffect, DelayedTrigger, DelayedTriggerCondition, DelayedTriggerId};
+        use smallvec::smallvec;
+        let leave_trigger = DelayedTrigger::new(
+            DelayedTriggerId::new(0),
+            aura_id, // tracked: fire when the AURA leaves the battlefield
+            aura_id, // source: the Aura
+            aura_controller,
+            DelayedTriggerCondition::ZoneChange {
+                from_zones: smallvec![Zone::Battlefield],
+                to_zones: smallvec![], // any destination (graveyard, exile, hand, ...)
+            },
+            DelayedEffect::SacrificeOther { target: target_id },
+        );
+        self.delayed_triggers.add(leave_trigger);
+
         Ok(())
     }
 

@@ -5795,9 +5795,9 @@ mod tests {
         use crate::core::{CardId, Effect, TriggerEvent};
         let etb_taps_enchanted = card.triggers.iter().any(|t| {
             t.event == TriggerEvent::EntersBattlefield
-                && t.effects.iter().any(|e| {
-                    matches!(e, Effect::TapPermanent { target } if target.is_enchanted_target())
-                })
+                && t.effects
+                    .iter()
+                    .any(|e| matches!(e, Effect::TapPermanent { target } if target.is_enchanted_target()))
         });
         assert!(
             etb_taps_enchanted,

@@ -275,6 +275,20 @@ pub enum DelayedEffect {
     /// Used by: "Sacrifice at end of turn" effects
     Sacrifice,
 
+    /// Sacrifice a DIFFERENT card than the one the trigger watches.
+    ///
+    /// Used by Animate Dead: the trigger WATCHES the Aura leaving the
+    /// battlefield (`tracked_card` = the Aura, `ZoneChange { from: Battlefield }`)
+    /// but the effect SACRIFICES the reanimated creature
+    /// (`target`) — "When Animate Dead leaves the battlefield, that creature's
+    /// controller sacrifices it" (CR 603.6e leaves-the-battlefield + the
+    /// reanimation Aura's drawback). Distinct from `Sacrifice`, which sacrifices
+    /// the tracked card itself.
+    SacrificeOther {
+        /// The card to sacrifice when the trigger fires (the reanimated creature).
+        target: CardId,
+    },
+
     /// Exile the tracked card
     /// Used by: Delayed exile effects
     ExileCard,

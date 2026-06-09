@@ -3779,6 +3779,27 @@ impl GameState {
                 }
             }
 
+            DelayedEffect::SacrificeOther { target } => {
+                // Sacrifice a DIFFERENT card than the one watched (Animate Dead:
+                // the trigger watches the Aura leaving, but sacrifices the
+                // reanimated creature). No-op if the creature already left the
+                // battlefield (e.g. it died first, dragging the Aura off as an
+                // SBA — then there is nothing to sacrifice).
+                if self.find_card_zone(target) == Some(Zone::Battlefield) {
+                    let owner = self.cards.try_get(target).map_or(controller, |c| c.owner);
+                    let name = self.cards.try_get(target).map(|c| c.name.to_string());
+                    let dest = self.death_destination_for_card(target);
+                    self.move_card(target, Zone::Battlefield, dest, owner)?;
+                    if let Some(name) = name {
+                        self.logger.gamelog(&format!(
+                            "{} ({}) is sacrificed (Animate Dead left)",
+                            name,
+                            target.as_u32()
+                        ));
+                    }
+                }
+            }
+
             DelayedEffect::ExileCard => {
                 // Exile the card from wherever it is
                 if let Some(zone) = self.find_card_zone(card_id) {

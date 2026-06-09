@@ -1,0 +1,24 @@
+[metadata]
+Name:Animate Dead leaves -> reanimated creature is sacrificed
+Goal:Win
+Turns:5
+Difficulty:Medium
+Description:P0 casts Animate Dead on Sengir Vampire (in P0's graveyard), reanimating it. Then P0 casts Disenchant destroying its own Animate Dead. Per the card, when Animate Dead leaves the battlefield the reanimated creature's controller sacrifices it: Sengir Vampire must go to the graveyard.
+
+[state]
+turn=2
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Animate Dead; Disenchant
+p0library=Swamp; Swamp; Swamp; Swamp; Swamp; Swamp
+p0graveyard=Sengir Vampire
+p0battlefield=Swamp; Swamp; Plains; Plains
+p0exile=
+
+p1life=20
+p1hand=
+p1library=Plains; Plains; Plains; Plains; Plains
+p1graveyard=
+p1battlefield=
+p1exile=
