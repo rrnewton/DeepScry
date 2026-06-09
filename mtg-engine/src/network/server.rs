@@ -4518,7 +4518,9 @@ mod tests {
         assert_eq!(calls[0][2], "status");
         // 1: label list -- repo-scoped via explicit -R
         assert_eq!(calls[1][1], "label");
-        assert!(calls[1].windows(2).any(|w| w[0] == "-R" && w[1] == "DeepScryAI/DeepScry"));
+        assert!(calls[1]
+            .windows(2)
+            .any(|w| w[0] == "-R" && w[1] == "DeepScryAI/DeepScry"));
         // 2: gist create -- NOT repo-scoped (gists are user-scoped). File-path
         // args MUST be ABSOLUTE so gh can open them regardless of its cwd
         // (mtg-758: a relative path resolved under the wrong cwd → "no such file").
@@ -4532,7 +4534,9 @@ mod tests {
         assert!(!calls[2].iter().any(|arg| arg == "-R"));
         // 3: issue create -- repo-scoped via explicit -R
         assert_eq!(calls[3][1], "issue");
-        assert!(calls[3].windows(2).any(|w| w[0] == "-R" && w[1] == "DeepScryAI/DeepScry"));
+        assert!(calls[3]
+            .windows(2)
+            .any(|w| w[0] == "-R" && w[1] == "DeepScryAI/DeepScry"));
         assert!(calls[3].windows(2).any(|w| w[0] == "--label" && w[1] == "bug"));
         assert!(calls[3].windows(2).any(|w| w[0] == "--label" && w[1] == "triage"));
         // --body-file MUST be an ABSOLUTE path (mtg-758).

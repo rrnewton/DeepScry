@@ -2291,10 +2291,26 @@ impl SelfCounterCondition {
 /// Corresponds to the `Defined$` parameter in DB$ CopySpellAbility
 #[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub enum CopySpellSource {
+    /// Copy a SEPARATELY-TARGETED spell or ability on the stack (the
+    /// "copy target instant/sorcery/activated/triggered ability" class —
+    /// Twincast, Reverberate, Fork, Strionic Resonator, Return the Favor, ...).
+    /// These scripts have NO `Defined$`; they carry `TargetType$`/`ValidTgts$`
+    /// naming the OTHER spell/ability to copy. This mechanic (clone an arbitrary
+    /// targeted stack object) is NOT yet implemented, so it resolves as a SAFE
+    /// NO-OP.
+    ///
+    /// This is the DEFAULT for a bare `CopySpellAbility`. It must NEVER fall back
+    /// to `Parent`: a `Parent` self-copy of one of these cards copies ITSELF, and
+    /// because the copy carries the same self-copy mode it copies itself again —
+    /// an INFINITE self-replication loop (the commander-format hang, where
+    /// Return the Favor span forever). Only an explicit `Defined$ Parent`
+    /// (Chain Lightning) is a real parent self-copy, and that one terminates via
+    /// its `{R}{R}` UnlessCost gate.
+    #[default]
+    TargetedSpell,
     /// Copy the parent spell (the current spell on the stack that has this as SubAbility)
     /// Used by Chain Lightning: "copy this spell"
     /// Corresponds to: Defined$ Parent
-    #[default]
     Parent,
     /// Copy the spell that triggered this effect
     /// Used by Jeong Jeong: "copy it" (the triggering spell)

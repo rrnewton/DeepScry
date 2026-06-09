@@ -6216,6 +6216,21 @@ impl GameState {
                 // reuse the shared `copy_spell_onto_stack` helper (CR 707.10).
                 use crate::core::effects::CopySpellSource;
                 match defined_source {
+                    CopySpellSource::TargetedSpell => {
+                        // "Copy a separately-TARGETED spell/ability" (Twincast,
+                        // Reverberate, Fork, Return the Favor, ...): cloning an
+                        // arbitrary targeted stack object is NOT yet implemented,
+                        // so this is a SAFE NO-OP. Critically it must NOT fall
+                        // through to the Parent self-copy below — that would copy
+                        // the card itself forever (the commander-format infinite
+                        // loop). env_logger only; no player-facing gamelog.
+                        log::info!(
+                            target: "copy_spell",
+                            "CopySpellAbility(TargetedSpell): copy-target-spell not implemented — no-op \
+                             (may_choose_targets={})",
+                            may_choose_targets
+                        );
+                    }
                     CopySpellSource::Parent => {
                         // The copy's controller — resolved to a concrete numeric
                         // PlayerId in resolve_effect_target (UnlessCostWrapper arm)

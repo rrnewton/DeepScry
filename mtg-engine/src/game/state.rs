@@ -884,6 +884,13 @@ impl GameState {
         self.next_id()
     }
 
+    /// Hard deterministic cap on how many spell-copies (token objects created by
+    /// [`copy_spell_onto_stack`]) may coexist on the stack. A self-replicating
+    /// copy effect would otherwise allocate copies without bound and OOM the
+    /// process. Set far above any legitimate copy chain so it only ever fires on
+    /// a runaway loop. Purely a function of stack state → desync-safe.
+    pub const MAX_SPELL_COPIES_ON_STACK: usize = 100;
+
     /// Put a copy of a spell already on the stack onto the stack (CR 707.10).
     ///
     /// This is the single shared implementation behind every "copy this/that
@@ -927,6 +934,35 @@ impl GameState {
                 target: "copy_spell",
                 "copy_spell_onto_stack: spell {} no longer on stack, copy fizzles",
                 original_id.as_u32()
+            );
+            return Ok(None);
+        }
+
+        // DETERMINISTIC SAFETY BOUND (anti-OOM): refuse to create a new copy once
+        // the stack already holds [`MAX_SPELL_COPIES_ON_STACK`] spell-copies
+        // (token objects created by this helper). A self-replicating copy
+        // (e.g. a mis-scripted "copy this spell" with no terminating cost) would
+        // otherwise allocate copies unbounded and OOM the whole box (the
+        // commander-format Return-the-Favor incident: ~419k copies → 40 GB).
+        // The bound is a pure function of the current stack contents — identical
+        // on server and every client/WASM shadow — so it never causes a desync.
+        // It is set far above any legitimate copy chain (Chain Lightning is
+        // bounded by {R}{R} mana long before this; real multi-copy effects copy
+        // a handful of times), so it only ever fires on a runaway loop.
+        let live_copies = self
+            .stack
+            .cards
+            .iter()
+            .filter(|&&cid| self.cards.try_get(cid).is_some_and(|c| c.is_token))
+            .count();
+        if live_copies >= Self::MAX_SPELL_COPIES_ON_STACK {
+            log::warn!(
+                target: "copy_spell",
+                "copy_spell_onto_stack: refusing to copy {} — {} spell-copies already on the stack \
+                 (cap {}); breaking a probable infinite copy loop (anti-OOM safety bound).",
+                original_id.as_u32(),
+                live_copies,
+                Self::MAX_SPELL_COPIES_ON_STACK
             );
             return Ok(None);
         }
@@ -4096,6 +4132,50 @@ impl Clone for GameState {
 mod tests {
     use super::*;
     use crate::game::Step;
+
+    /// Anti-OOM safety bound: `copy_spell_onto_stack` must refuse to keep
+    /// creating copies once the stack already holds MAX_SPELL_COPIES_ON_STACK
+    /// spell-copies. This is the deterministic backstop that prevents a
+    /// self-replicating copy effect from allocating unbounded copies and OOMing
+    /// the process (the commander Return-the-Favor incident: ~419k copies →
+    /// 40 GB). The original fix (bare CopySpellAbility → no-op TargetedSpell)
+    /// stops THAT card from looping; this bound stops ANY future copy loop.
+    #[test]
+    fn test_copy_spell_onto_stack_is_bounded_against_runaway_loop() {
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1 = game.players.first().unwrap().id;
+
+        // Put an original spell on the stack.
+        let orig = game.next_entity_id();
+        game.cards.insert(orig, Card::new(orig, "Loopy Spell".to_string(), p1));
+        game.stack.add(orig);
+
+        // Try to create FAR more copies than the cap allows. Every call keeps
+        // the original on the stack, so without the bound this would create one
+        // copy per call forever.
+        let attempts = GameState::MAX_SPELL_COPIES_ON_STACK + 50;
+        let mut created = 0usize;
+        for _ in 0..attempts {
+            if game.copy_spell_onto_stack(orig, p1, None).unwrap().is_some() {
+                created += 1;
+            }
+        }
+
+        // The helper stops creating copies at the cap (the original is not a
+        // token, so only copies count toward the limit).
+        assert_eq!(
+            created,
+            GameState::MAX_SPELL_COPIES_ON_STACK,
+            "copy_spell_onto_stack must stop at the MAX_SPELL_COPIES_ON_STACK cap, not loop unbounded"
+        );
+        let copies_on_stack = game
+            .stack
+            .cards
+            .iter()
+            .filter(|&&c| game.cards.try_get(c).is_some_and(|card| card.is_token))
+            .count();
+        assert_eq!(copies_on_stack, GameState::MAX_SPELL_COPIES_ON_STACK);
+    }
 
     #[test]
     fn test_game_creation() {

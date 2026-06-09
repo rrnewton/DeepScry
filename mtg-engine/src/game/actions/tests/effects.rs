@@ -4172,6 +4172,54 @@ mod tests {
         );
     }
 
+    /// Regression: a BARE `CopySpellAbility` (no `Defined$`, the "copy a
+    /// separately-TARGETED spell/ability" class — Twincast/Reverberate/Fork/
+    /// Return the Favor) must lower to `CopySpellSource::TargetedSpell`, NOT
+    /// `Parent`. Defaulting to Parent made these cards copy THEMSELVES forever
+    /// (the commander-format infinite loop: Return the Favor self-copied without
+    /// bound). Return the Favor is a Spree Charm whose `DBCopy` mode is exactly
+    /// such a bare CopySpellAbility.
+    #[test]
+    fn test_bare_copyspellability_is_targeted_spell_not_parent() {
+        use crate::core::effects::CopySpellSource;
+        use crate::core::Effect;
+        use crate::loader::ability_parser::AbilityParams;
+        use crate::loader::effect_converter::params_to_effect;
+
+        // Return the Favor's DBCopy SVar body (bare CopySpellAbility — has
+        // TargetType$/ValidTgts$ naming ANOTHER spell, but NO Defined$).
+        let params = AbilityParams::parse(
+            "A:DB$ CopySpellAbility | TargetType$ Activated,Triggered,Instant,Sorcery | ValidTgts$ Card,Emblem | MayChooseTarget$ True",
+        )
+        .expect("bare CopySpellAbility must parse");
+        let effect = params_to_effect(&params).expect("must convert");
+        let Effect::CopySpellAbility { defined_source, .. } = &effect else {
+            panic!("expected CopySpellAbility, got {:?}", effect);
+        };
+        assert_eq!(
+            *defined_source,
+            CopySpellSource::TargetedSpell,
+            "a bare CopySpellAbility (no Defined$) must be TargetedSpell (a safe no-op), NOT Parent \
+             (which self-copies forever — the commander hang)"
+        );
+
+        // And the explicit Defined$ Parent (Chain Lightning) must STILL be Parent.
+        let cl = AbilityParams::parse("A:DB$ CopySpellAbility | Defined$ Parent | MayChooseTarget$ True")
+            .expect("Defined$ Parent must parse");
+        let cl_effect = params_to_effect(&cl).expect("must convert");
+        assert!(
+            matches!(
+                cl_effect,
+                Effect::CopySpellAbility {
+                    defined_source: CopySpellSource::Parent,
+                    ..
+                }
+            ),
+            "explicit Defined$ Parent (Chain Lightning) must remain Parent. Got: {:?}",
+            cl_effect
+        );
+    }
+
     /// Card compat: Drain Life (cardsfolder/d/drain_life.txt) — mtg-501 / mtg-624
     ///
     /// Script: ManaCost:X 1 B / Types:Sorcery

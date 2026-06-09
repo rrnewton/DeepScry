@@ -1366,9 +1366,15 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
             let may_choose_targets = params.get("MayChooseTarget") == Some("True");
             let defined_source = match params.get("Defined") {
                 Some("TriggeredSpellAbility") => CopySpellSource::TriggeredSpellAbility,
+                // ONLY an explicit `Defined$ Parent` is a real "copy this spell"
+                // self-copy (Chain Lightning, which terminates via its {R}{R}
+                // gate). A bare / absent / any-other Defined$ is the "copy a
+                // separately-TARGETED spell" class (Twincast, Reverberate, Fork,
+                // Return the Favor, ...): defaulting THOSE to Parent makes them
+                // copy themselves forever (commander-format infinite loop). Route
+                // them to the no-op TargetedSpell instead.
                 Some("Parent") => CopySpellSource::Parent,
-                // Default to Parent for SubAbility chaining
-                _ => CopySpellSource::Parent,
+                _ => CopySpellSource::TargetedSpell,
             };
             let controller = params.get("Controller").map(String::from);
 
