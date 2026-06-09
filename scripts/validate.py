@@ -94,11 +94,12 @@ NPM = os.environ.get("NPM") or "npm"
 #     Observed ~22 GiB on the 16-core dev box (2026-06-09).
 #   * Per-step peaks read from each step's child-cgroup `memory.peak` at step
 #     teardown (printed in the per-step detail + the VALIDATE STATS block).
-# CAVEAT (mtg-5jn7z item 3): a baseline measured while the commander runaway
-# (Return-the-Favor loop) is live is GARBAGE. determ.commander is therefore
-# EXCLUDED from the characterized per-step table below (PER_STEP_RSS_BASELINE)
-# and must be re-measured AFTER slot01's fix lands, then added with its real cap.
-# Until then determ.commander runs under the OUTER cap only (still protected).
+# CAVEAT (mtg-5jn7z item 3) — RESOLVED 2026-06-09: a baseline measured while the
+# commander runaway (Return-the-Favor self-copy loop) was live would be GARBAGE.
+# That loop is now FIXED on integration (slot01 @2c9d1808 — the chandra_tokens/
+# seed-42 game that spawned 419,145 copies completes with ZERO copy events), so
+# determ.commander has been re-measured CLEAN (~31 MB, not the ~40 GB runaway)
+# and is now in PER_STEP_RSS_BASELINE with its real cap.
 MEM_CAP_FACTOR = float(os.environ.get("VALIDATE_MEM_CAP_FACTOR", "1.25"))  # 1.25x; relax to 1.5 only if too tight
 # Characterized typical whole-run peak RSS (bytes). Override via env for a
 # differently-sized box. 24 GiB ~= the observed ~22 GiB rounded up a touch.
@@ -112,18 +113,26 @@ MEM_CAP_FLOOR_BYTES = int(os.environ.get("VALIDATE_MEM_CAP_FLOOR_BYTES", str(8 *
 # excluded (determ.commander, until slot01's runaway fix lands). Conservative
 # values from the 2026-06-09 -j16 run; bump per the actionable-OOM message.
 PER_STEP_RSS_BASELINE = {
-    # the heavy compilers / test binaries
-    "build.mtg-release": 6 * 1024**3,
-    "unit.nextest":      6 * 1024**3,
-    "wasm.bundle":       5 * 1024**3,
-    "lint.clippy":       5 * 1024**3,
-    "lint.clippy-wasm":  4 * 1024**3,
-    "examples.run":      4 * 1024**3,
-    # browser/network steps (chromium + server + AI peer)
-    "wasm.browser":      4 * 1024**3,
-    "network.multideck": 4 * 1024**3,
-    "network.gui":       3 * 1024**3,
-    # NOTE: determ.commander deliberately OMITTED — see CAVEAT above (slot01 fix pending).
+    # MEASURED typical peaks from the 2026-06-09 -j16 run @d6dc7897 (the FIRST
+    # run with real inner cgroups + the commander loop fixed) — each step's
+    # cgroup memory.peak, printed into its detail. Rounded UP for headroom (the
+    # heavy compile steps vary with build-cache state, so they keep a bit more).
+    # the heavy compilers / test binaries  (measured: build 4.1G, nextest 6.8G,
+    #   wasm.bundle 3.1G, clippy 2.7G, clippy-wasm 1.2G, examples 4.5G)
+    "build.mtg-release": 5 * 1024**3,   # peak 4.1G
+    "unit.nextest":      8 * 1024**3,   # peak 6.8G (the hungriest; extra headroom)
+    "wasm.bundle":       4 * 1024**3,   # peak 3.1G
+    "lint.clippy":       4 * 1024**3,   # peak 2.7G
+    "lint.clippy-wasm":  2 * 1024**3,   # peak 1.2G
+    "examples.run":      5 * 1024**3,   # peak 4.5G
+    # commander: REAL baseline now the Return-the-Favor loop is fixed (slot01
+    #   @2c9d1808) — the clean game peaks at ~31 MB, NOT the ~40 GB runaway.
+    "determ.commander":  512 * 1024**2,  # peak 31.2M (generous floor for a tiny step)
+    # browser/network steps (chromium + server + AI peer)  (measured: browser
+    #   0.7G, multideck 3.2G, gui 0.9G, equiv sweeps ~0.6-1.2G)
+    "wasm.browser":      2 * 1024**3,   # peak 694M
+    "network.multideck": 4 * 1024**3,   # peak 3.2G
+    "network.gui":       2 * 1024**3,   # peak 901M
 }
 
 
