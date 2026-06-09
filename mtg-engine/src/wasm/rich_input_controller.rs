@@ -31,7 +31,7 @@
 //! ```
 
 use crate::core::{CardId, ManaCost, PlayerId, SpellAbility};
-use crate::game::command_parsing::{is_explicit_pass, parse_spell_ability_choice};
+use crate::game::command_parsing::{card_matches, is_explicit_pass, parse_spell_ability_choice};
 use crate::game::controller::{ChoiceContext, ChoiceResult, GameStateView, PlayerController};
 use crate::game::snapshot::ControllerType;
 use smallvec::SmallVec;
@@ -201,10 +201,47 @@ impl PlayerController for WasmRichInputController {
         if let Some(command) = self.peek_command() {
             let command = command.to_string();
 
+            let mut matched_res = None;
+            let mut consumed_extra = false;
+
+            if let Some(card_pattern) = command.strip_prefix("activate ") {
+                let next_idx = self.current_index + 1;
+                let next_cmd_is_num = if next_idx < self.commands.len() {
+                    self.commands[next_idx].trim().parse::<usize>().ok()
+                } else {
+                    None
+                };
+
+                if let Some(choice_idx) = next_cmd_is_num {
+                    // Find all matching ActivateAbility
+                    let mut matches = Vec::new();
+                    for ability in available {
+                        if let SpellAbility::ActivateAbility { card_id, .. } = ability {
+                            if let Some(card_name) = view.card_name(*card_id) {
+                                if card_matches(&card_name, card_pattern) {
+                                    matches.push(ability);
+                                }
+                            }
+                        }
+                    }
+                    if choice_idx < matches.len() {
+                        matched_res = Some(Some(matches[choice_idx].clone()));
+                        consumed_extra = true;
+                    }
+                }
+            }
+
+            if matched_res.is_none() {
+                matched_res = self.try_match_command(&command, view, available);
+            }
+
             // Try to match the command against available actions
-            if let Some(result) = self.try_match_command(&command, view, available) {
+            if let Some(result) = matched_res {
                 // Match found! Consume the command and return the result
                 self.consume_command();
+                if consumed_extra {
+                    self.consume_command();
+                }
                 self.wildcard_mode = false;
                 self.input_requested = false;
                 return ChoiceResult::Ok(result);

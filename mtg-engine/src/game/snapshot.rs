@@ -240,14 +240,16 @@ impl GameSnapshot {
         match format {
             SnapshotFormat::Json => {
                 let json = std::fs::read_to_string(path.as_ref()).map_err(|e| SnapshotError::Io(e.to_string()))?;
-                let snapshot =
+                let mut snapshot: GameSnapshot =
                     serde_json::from_str(&json).map_err(|e| SnapshotError::Deserialization(e.to_string()))?;
+                snapshot.rebuild_parsed_svars();
                 Ok(snapshot)
             }
             SnapshotFormat::Bincode => {
                 let encoded = std::fs::read(path.as_ref()).map_err(|e| SnapshotError::Io(e.to_string()))?;
-                let decoded: GameSnapshot =
+                let mut decoded: GameSnapshot =
                     bincode::deserialize(&encoded[..]).map_err(|e| SnapshotError::Deserialization(e.to_string()))?;
+                decoded.rebuild_parsed_svars();
                 Ok(decoded)
             }
         }
@@ -277,7 +279,10 @@ impl GameSnapshot {
     ///
     /// Returns `SnapshotError::Deserialization` if JSON parsing fails.
     pub fn from_json(json: &str) -> Result<Self, SnapshotError> {
-        serde_json::from_str(json).map_err(|e| SnapshotError::Deserialization(e.to_string()))
+        let mut snapshot: GameSnapshot =
+            serde_json::from_str(json).map_err(|e| SnapshotError::Deserialization(e.to_string()))?;
+        snapshot.rebuild_parsed_svars();
+        Ok(snapshot)
     }
 
     /// Deserialize from bincode bytes (platform-independent)
@@ -286,7 +291,10 @@ impl GameSnapshot {
     ///
     /// Returns `SnapshotError::Deserialization` if bincode parsing fails.
     pub fn from_bincode(bytes: &[u8]) -> Result<Self, SnapshotError> {
-        bincode::deserialize(bytes).map_err(|e| SnapshotError::Deserialization(e.to_string()))
+        let mut decoded: GameSnapshot =
+            bincode::deserialize(bytes).map_err(|e| SnapshotError::Deserialization(e.to_string()))?;
+        decoded.rebuild_parsed_svars();
+        Ok(decoded)
     }
 
     /// Get the number of intra-turn choices in this snapshot
@@ -343,6 +351,19 @@ impl GameSnapshot {
                 }
             })
             .collect()
+    }
+
+    /// Rebuild parsed_svars in card definitions after deserialization
+    pub fn rebuild_parsed_svars(&mut self) {
+        for card in self.game_state.cards.values_mut() {
+            card.definition.rebuild_parsed_svars();
+        }
+        self.game_state.undo_log.rebuild_parsed_svars();
+        for action in &mut self.intra_turn_choices {
+            if let GameAction::RestoreCardState { snapshot, .. } = action {
+                snapshot.definition.rebuild_parsed_svars();
+            }
+        }
     }
 }
 

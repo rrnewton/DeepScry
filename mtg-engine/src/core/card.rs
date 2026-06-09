@@ -1,8 +1,8 @@
 //! Card types and definitions
 
 use crate::core::{
-    CardId, CardName, Color, CounterType, Effect, GameEntity, Keyword, KeywordSet, ManaCost, ManaProduction, PlayerId,
-    Subtype, Trigger,
+    CardId, CardName, Color, CounterType, Effect, GameEntity, Keyword, KeywordArgs, KeywordSet, ManaCost,
+    ManaProduction, PlayerId, Subtype, Trigger,
 };
 use crate::loader::CardDefinition;
 use serde::{Deserialize, Serialize};
@@ -662,6 +662,10 @@ pub struct Card {
     /// Card name (e.g., "Lightning Bolt")
     pub name: CardName,
 
+    /// Printed name (e.g., "Lightning Bolt"), does not change when cloned
+    #[serde(default)]
+    pub printed_name: CardName,
+
     /// Mana cost
     pub mana_cost: ManaCost,
 
@@ -948,6 +952,52 @@ pub struct CardCopiableState {
     pub definition: CardDefinition,
 }
 
+/// Snapshot of all transient and copiable fields of a Card
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CardStateSnapshot {
+    pub name: CardName,
+    pub mana_cost: ManaCost,
+    pub types: SmallVec<[CardType; 2]>,
+    pub subtypes: SmallVec<[Subtype; 3]>,
+    pub colors: SmallVec<[Color; 2]>,
+    pub base_power: Option<i8>,
+    pub base_toughness: Option<i8>,
+    pub power_bonus: i32,
+    pub toughness_bonus: i32,
+    pub temp_base_power: Option<i8>,
+    pub temp_base_toughness: Option<i8>,
+    pub temp_animate_types: SmallVec<[CardType; 2]>,
+    pub temp_animate_subtypes: SmallVec<[Subtype; 2]>,
+    pub temp_removed_subtypes: SmallVec<[Subtype; 2]>,
+    pub temp_keywords_until_eot: KeywordSet,
+    pub damage: i32,
+    pub damaged_by_this_turn: SmallVec<[CardId; 2]>,
+    pub text: String,
+    pub tapped: bool,
+    pub turn_entered_battlefield: Option<u32>,
+    pub counters: SmallVec<[(CounterType, u8); 2]>,
+    pub keywords: KeywordSet,
+    pub effects: Vec<Effect>,
+    pub triggers: Vec<Trigger>,
+    pub activated_abilities: Vec<crate::core::ActivatedAbility>,
+    pub static_abilities: Vec<crate::core::StaticAbility>,
+    pub attached_to: Option<CardId>,
+    pub control_from_aura: Option<CardId>,
+    pub control_grant: Option<(CardId, PlayerId)>,
+    pub chosen_color: Option<Color>,
+    pub chosen_player: Option<PlayerId>,
+    pub svars: std::collections::HashMap<String, String>,
+    pub is_legendary: bool,
+    pub loyalty_activated_this_turn: bool,
+    pub regeneration_shields: u8,
+    pub damage_prevention: i32,
+    pub x_paid: u8,
+    pub exile_if_would_die_this_turn: bool,
+    pub prevent_all_combat_damage_this_turn: bool,
+    pub exhausted_abilities: SmallVec<[usize; 1]>,
+    pub definition: CardDefinition,
+}
+
 impl Card {
     pub fn new(id: CardId, name: impl Into<CardName>, owner: PlayerId) -> Self {
         let name: CardName = name.into();
@@ -968,6 +1018,7 @@ impl Card {
 
         Card {
             id,
+            printed_name: name.clone(),
             name,
             mana_cost: ManaCost::new(),
             types: SmallVec::new(),
@@ -1015,6 +1066,278 @@ impl Card {
             exhausted_abilities: SmallVec::new(),
             definition,
         }
+    }
+
+    /// Capture a snapshot of all transient and copiable fields
+    pub fn capture_state_snapshot(&self) -> CardStateSnapshot {
+        CardStateSnapshot {
+            name: self.name.clone(),
+            mana_cost: self.mana_cost,
+            types: self.types.clone(),
+            subtypes: self.subtypes.clone(),
+            colors: self.colors.clone(),
+            base_power: self.base_power,
+            base_toughness: self.base_toughness,
+            power_bonus: self.power_bonus,
+            toughness_bonus: self.toughness_bonus,
+            temp_base_power: self.temp_base_power,
+            temp_base_toughness: self.temp_base_toughness,
+            temp_animate_types: self.temp_animate_types.clone(),
+            temp_animate_subtypes: self.temp_animate_subtypes.clone(),
+            temp_removed_subtypes: self.temp_removed_subtypes.clone(),
+            temp_keywords_until_eot: self.temp_keywords_until_eot.clone(),
+            damage: self.damage,
+            damaged_by_this_turn: self.damaged_by_this_turn.clone(),
+            text: self.text.clone(),
+            tapped: self.tapped,
+            turn_entered_battlefield: self.turn_entered_battlefield,
+            counters: self.counters.clone(),
+            keywords: self.keywords.clone(),
+            effects: self.effects.clone(),
+            triggers: self.triggers.clone(),
+            activated_abilities: self.activated_abilities.clone(),
+            static_abilities: self.static_abilities.clone(),
+            attached_to: self.attached_to,
+            control_from_aura: self.control_from_aura,
+            control_grant: self.control_grant,
+            chosen_color: self.chosen_color,
+            chosen_player: self.chosen_player,
+            svars: self.svars.clone(),
+            is_legendary: self.is_legendary,
+            loyalty_activated_this_turn: self.loyalty_activated_this_turn,
+            regeneration_shields: self.regeneration_shields,
+            damage_prevention: self.damage_prevention,
+            x_paid: self.x_paid,
+            exile_if_would_die_this_turn: self.exile_if_would_die_this_turn,
+            prevent_all_combat_damage_this_turn: self.prevent_all_combat_damage_this_turn,
+            exhausted_abilities: self.exhausted_abilities.clone(),
+            definition: self.definition.clone(),
+        }
+    }
+
+    /// Restore the card state from a snapshot
+    pub fn restore_state_snapshot(&mut self, snapshot: CardStateSnapshot) {
+        self.name = snapshot.name;
+        self.mana_cost = snapshot.mana_cost;
+        self.types = snapshot.types;
+        self.subtypes = snapshot.subtypes;
+        self.colors = snapshot.colors;
+        self.base_power = snapshot.base_power;
+        self.base_toughness = snapshot.base_toughness;
+        self.power_bonus = snapshot.power_bonus;
+        self.toughness_bonus = snapshot.toughness_bonus;
+        self.temp_base_power = snapshot.temp_base_power;
+        self.temp_base_toughness = snapshot.temp_base_toughness;
+        self.temp_animate_types = snapshot.temp_animate_types;
+        self.temp_animate_subtypes = snapshot.temp_animate_subtypes;
+        self.temp_removed_subtypes = snapshot.temp_removed_subtypes;
+        self.temp_keywords_until_eot = snapshot.temp_keywords_until_eot;
+        self.damage = snapshot.damage;
+        self.damaged_by_this_turn = snapshot.damaged_by_this_turn;
+        self.text = snapshot.text;
+        self.tapped = snapshot.tapped;
+        self.turn_entered_battlefield = snapshot.turn_entered_battlefield;
+        self.counters = snapshot.counters;
+        self.keywords = snapshot.keywords;
+        self.effects = snapshot.effects;
+        self.triggers = snapshot.triggers;
+        self.activated_abilities = snapshot.activated_abilities;
+        self.static_abilities = snapshot.static_abilities;
+        self.attached_to = snapshot.attached_to;
+        self.control_from_aura = snapshot.control_from_aura;
+        self.control_grant = snapshot.control_grant;
+        self.chosen_color = snapshot.chosen_color;
+        self.chosen_player = snapshot.chosen_player;
+        self.svars = snapshot.svars;
+        self.is_legendary = snapshot.is_legendary;
+        self.loyalty_activated_this_turn = snapshot.loyalty_activated_this_turn;
+        self.regeneration_shields = snapshot.regeneration_shields;
+        self.damage_prevention = snapshot.damage_prevention;
+        self.x_paid = snapshot.x_paid;
+        self.exile_if_would_die_this_turn = snapshot.exile_if_would_die_this_turn;
+        self.prevent_all_combat_damage_this_turn = snapshot.prevent_all_combat_damage_this_turn;
+        self.exhausted_abilities = snapshot.exhausted_abilities;
+        self.definition = snapshot.definition;
+    }
+
+    /// Reset transient state when a card leaves the battlefield
+    pub fn reset_transient_state(&mut self, original_def: Option<&CardDefinition>) {
+        if let Some(def) = original_def {
+            self.name = def.name.clone();
+            self.mana_cost = def.mana_cost;
+            self.types = SmallVec::from_slice(&def.types);
+            self.subtypes = def.subtypes.iter().cloned().collect();
+            self.colors = SmallVec::from_slice(&def.colors);
+            self.base_power = def.power;
+            self.base_toughness = def.toughness;
+            self.text = def.oracle.clone();
+            self.is_legendary = def.is_legendary;
+            self.definition = def.clone();
+
+            // Rebuild cache
+            self.definition.cache = crate::core::CardCache::new(&self.text, self.name.as_str());
+            self.definition.cache.update_from_types(&self.types);
+            self.definition
+                .cache
+                .update_from_subtypes(&self.subtypes, self.name.as_str());
+            self.definition.cache.enters_tapped = def.enters_tapped;
+            self.definition.cache.skips_untap_step = def.skips_untap_step();
+            self.definition.cache.etb_choose_color = def.etb_choose_color;
+            self.definition.cache.etb_exclude_colors = SmallVec::from_slice(&def.etb_exclude_colors);
+            self.definition.cache.etb_choose_player = def.etb_choose_player;
+            self.definition.cache.spell_relative_target_cost = def.has_relative_self_target_cost();
+        } else {
+            self.name = self.printed_name.clone();
+        }
+
+        self.power_bonus = 0;
+        self.toughness_bonus = 0;
+        self.temp_base_power = None;
+        self.temp_base_toughness = None;
+        self.temp_animate_types = SmallVec::new();
+        self.temp_animate_subtypes = SmallVec::new();
+        self.temp_removed_subtypes = SmallVec::new();
+        self.temp_keywords_until_eot = KeywordSet::new();
+        self.damage = 0;
+        self.damaged_by_this_turn = SmallVec::new();
+        self.tapped = false;
+        self.turn_entered_battlefield = None;
+        self.counters = SmallVec::new();
+
+        if let Some(def) = original_def {
+            self.keywords = def.parse_keywords();
+            self.effects = def.parse_effects();
+            self.triggers = def.parse_triggers();
+            self.activated_abilities = def.parse_activated_abilities();
+            self.static_abilities = def.parse_static_abilities();
+            self.svars = def.svars.clone();
+        } else {
+            self.keywords = self.definition.parse_keywords();
+            self.effects = self.definition.parse_effects();
+            self.triggers = self.definition.parse_triggers();
+            self.activated_abilities = self.definition.parse_activated_abilities();
+            self.static_abilities = self.definition.parse_static_abilities();
+            self.svars = self.definition.svars.clone();
+        }
+
+        // Implicit mana abilities for land cards
+        if self.is_land() && !self.activated_abilities.iter().any(|ab| ab.is_mana_ability) {
+            use crate::core::{ActivatedAbility, Cost, Effect, PlayerId};
+
+            let has_plains = self.subtypes.iter().any(|st| st.as_str() == "Plains");
+            let has_island = self.subtypes.iter().any(|st| st.as_str() == "Island");
+            let has_swamp = self.subtypes.iter().any(|st| st.as_str() == "Swamp");
+            let has_mountain = self.subtypes.iter().any(|st| st.as_str() == "Mountain");
+            let has_forest = self.subtypes.iter().any(|st| st.as_str() == "Forest");
+
+            if has_plains {
+                let mana = ManaCost::from_string("W");
+                let ability = ActivatedAbility::new(
+                    Cost::Tap,
+                    vec![Effect::AddMana {
+                        player: PlayerId::new(0),
+                        mana,
+                        produces_chosen_color: false,
+                        amount_var: None,
+                    }],
+                    "Add {W}".to_string(),
+                    true,
+                );
+                self.activated_abilities.push(ability);
+            }
+            if has_island {
+                let mana = ManaCost::from_string("U");
+                let ability = ActivatedAbility::new(
+                    Cost::Tap,
+                    vec![Effect::AddMana {
+                        player: PlayerId::new(0),
+                        mana,
+                        produces_chosen_color: false,
+                        amount_var: None,
+                    }],
+                    "Add {U}".to_string(),
+                    true,
+                );
+                self.activated_abilities.push(ability);
+            }
+            if has_swamp {
+                let mana = ManaCost::from_string("B");
+                let ability = ActivatedAbility::new(
+                    Cost::Tap,
+                    vec![Effect::AddMana {
+                        player: PlayerId::new(0),
+                        mana,
+                        produces_chosen_color: false,
+                        amount_var: None,
+                    }],
+                    "Add {B}".to_string(),
+                    true,
+                );
+                self.activated_abilities.push(ability);
+            }
+            if has_mountain {
+                let mana = ManaCost::from_string("R");
+                let ability = ActivatedAbility::new(
+                    Cost::Tap,
+                    vec![Effect::AddMana {
+                        player: PlayerId::new(0),
+                        mana,
+                        produces_chosen_color: false,
+                        amount_var: None,
+                    }],
+                    "Add {R}".to_string(),
+                    true,
+                );
+                self.activated_abilities.push(ability);
+            }
+            if has_forest {
+                let mana = ManaCost::from_string("G");
+                let ability = ActivatedAbility::new(
+                    Cost::Tap,
+                    vec![Effect::AddMana {
+                        player: PlayerId::new(0),
+                        mana,
+                        produces_chosen_color: false,
+                        amount_var: None,
+                    }],
+                    "Add {G}".to_string(),
+                    true,
+                );
+                self.activated_abilities.push(ability);
+            }
+        }
+
+        // Implicit Equip ability for equipment
+        if self.is_artifact() && self.subtypes.iter().any(|st| st.as_str() == "Equipment") {
+            if let Some(KeywordArgs::Equip { cost }) = self.keywords.get_args(Keyword::Equip) {
+                use crate::core::{ActivatedAbility, Cost, Effect};
+                let ability_cost = Cost::Mana(*cost);
+                let effects = vec![Effect::AttachEquipment {
+                    source_equipment: self.id,
+                    target_creature: CardId::new(0),
+                }];
+                let description = format!("Equip {}", cost);
+                self.activated_abilities
+                    .push(ActivatedAbility::new_sorcery_speed(ability_cost, effects, description));
+            }
+        }
+
+        self.definition
+            .cache
+            .update_from_abilities_with_name(&self.activated_abilities, self.name.as_str());
+
+        self.attached_to = None;
+        self.control_from_aura = None;
+        self.control_grant = None;
+        self.chosen_color = None;
+        self.chosen_player = None;
+        self.loyalty_activated_this_turn = false;
+        self.regeneration_shields = 0;
+        self.damage_prevention = 0;
+        self.x_paid = 0;
+        self.exile_if_would_die_this_turn = false;
+        self.prevent_all_combat_damage_this_turn = false;
+        self.exhausted_abilities = SmallVec::new();
     }
 
     pub fn is_type(&self, card_type: &CardType) -> bool {

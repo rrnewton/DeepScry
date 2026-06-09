@@ -3,7 +3,7 @@
 //! This module provides a transaction log of game actions that can be
 //! rewound to efficiently explore the game tree without expensive deep copies.
 
-use crate::core::{CardId, CounterType, Keyword, PlayerId};
+use crate::core::{CardId, CardStateSnapshot, CounterType, Keyword, PlayerId};
 use crate::zones::Zone;
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
@@ -586,6 +586,13 @@ pub enum GameAction {
     /// value. `get_mut` tolerates a missing card, matching the other card-field
     /// undos.
     SetXPaid { card_id: CardId, prev: u8 },
+
+    /// Restore the full state snapshot of a card (e.g. when leaving battlefield
+    /// the transient state is reset, and undoing it restores the snapshotted state).
+    RestoreCardState {
+        card_id: CardId,
+        snapshot: Box<CardStateSnapshot>,
+    },
 }
 
 impl fmt::Display for GameAction {
@@ -897,6 +904,9 @@ impl fmt::Display for GameAction {
                     player_id.as_u32(),
                     if prev.is_some() { "Some" } else { "None" }
                 )
+            }
+            GameAction::RestoreCardState { card_id, .. } => {
+                write!(f, "RestoreCardState(card={})", card_id.as_u32())
             }
         }
     }
@@ -1657,6 +1667,14 @@ impl GameAction {
                     player.combat_mana_pool = *prev;
                 }
             }
+            GameAction::RestoreCardState { card_id, snapshot } => {
+                // Restore the full state snapshot of a card (leaves battlefield).
+                if let Ok(card) = game.cards.get_mut(*card_id) {
+                    card.restore_state_snapshot((**snapshot).clone());
+                } else {
+                    return Err(format!("Card {} not found for RestoreCardState undo", card_id.as_u32()));
+                }
+            }
         }
 
         Ok(())
@@ -2110,6 +2128,15 @@ impl UndoLog {
     /// Get all actions (for debugging/serialization)
     pub fn actions(&self) -> &[GameAction] {
         &self.actions
+    }
+
+    /// Rebuild parsed_svars in RestoreCardState snapshots after deserialization
+    pub fn rebuild_parsed_svars(&mut self) {
+        for action in &mut self.actions {
+            if let GameAction::RestoreCardState { snapshot, .. } = action {
+                snapshot.definition.rebuild_parsed_svars();
+            }
+        }
     }
 
     /// Format the last N actions as a multi-line string for debugging

@@ -14,7 +14,7 @@ pub mod prevention;
 pub mod spell_ability;
 pub mod types;
 
-pub use card::{Card, CardCache, CardCopiableState, CardType};
+pub use card::{Card, CardCache, CardCopiableState, CardStateSnapshot, CardType};
 pub use costs::Cost;
 pub use delayed_trigger::{
     DelayedEffect, DelayedTrigger, DelayedTriggerCondition, DelayedTriggerExpiry, DelayedTriggerId,

@@ -1042,17 +1042,17 @@ Turns: 5
 Difficulty: Easy
 [state]
 turn=1
-activeplayer=p1
+activeplayer=p0
 activephase=MAIN1
 p0life=20
+p0hand=Lightning Bolt
+p0battlefield=Mountain
 p0library=Mountain; Mountain; Mountain; Mountain; Mountain
-p0battlefield=Ral, Crackling Wit|Counters:LOYALTY=4
 p1life=20
 p1library=Plains; Plains; Plains; Plains; Plains
-p1hand=Lightning Bolt
-p1battlefield=Mountain
+p1battlefield=Ral, Crackling Wit|Counters:LOYALTY=4
 """,
-            inputs="cast Lightning Bolt;P1",
+            inputs="cast Lightning Bolt;P2",
             unexpected=["Ral, Crackling Wit gets loyalty counter"]
         )
         self.add_test(

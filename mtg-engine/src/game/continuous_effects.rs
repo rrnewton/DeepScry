@@ -482,6 +482,8 @@ impl GameState {
             }
             // New selectors - many are not directly applicable to creature P/T modification
             // but need placeholder matches to avoid exhaustiveness errors
+            AffectedSelector::InstantYouControl => false,
+            AffectedSelector::SorceryYouControl => false,
             AffectedSelector::CardExiledWithSource => false, // Not applicable to creature P/T
             AffectedSelector::TopOfLibrary => false,         // Library cards, not battlefield
             AffectedSelector::LandTopOfLibrary => false,     // Library cards
@@ -733,17 +735,27 @@ impl GameState {
         let mut power_bonus = 0;
         let mut toughness_bonus = 0;
 
-        // Check all permanents on the battlefield for static abilities
+        // Check all permanents on the battlefield and cards in command zones for static abilities
         // This includes Equipment, enchantments, creatures (like Spider-Ham), etc.
-        for &source_id in &self.battlefield.cards {
-            let source = self.cards.get(source_id).unwrap_or_else(|_| {
-                panic!(
-                    "FATAL: calculate_modifypt_effects found unrevealed card {:?} on battlefield. \
-                    All battlefield permanents must be revealed via CardRevealed messages. \
-                    This indicates a missing reveal when the card entered the battlefield.",
-                    source_id
-                );
-            });
+        let command_zone_cards = self
+            .player_zones
+            .iter()
+            .flat_map(|(_, zones)| zones.command.cards.iter().copied());
+        for source_id in self.battlefield.cards.iter().copied().chain(command_zone_cards) {
+            let source = match self.cards.get(source_id) {
+                Ok(s) => s,
+                Err(_) => {
+                    if self.battlefield.cards.contains(&source_id) {
+                        panic!(
+                            "FATAL: calculate_modifypt_effects found unrevealed card {:?} on battlefield. \
+                            All battlefield permanents must be revealed via CardRevealed messages. \
+                            This indicates a missing reveal when the card entered the battlefield.",
+                            source_id
+                        );
+                    }
+                    continue;
+                }
+            };
 
             // Process all static abilities on this permanent
             for ability in &source.static_abilities {
@@ -1507,6 +1519,8 @@ impl GameState {
                             | AffectedSelector::NonLegendaryArtifactsYouControl
                             | AffectedSelector::CardsYouControlCastFromExile
                             | AffectedSelector::CommanderYouOwn
+                            | AffectedSelector::InstantYouControl
+                            | AffectedSelector::SorceryYouControl
                             | AffectedSelector::SubtypeOther { .. } => {
                                 // Use the unified selector_applies_to_creature helper
                                 if self.selector_applies_to_creature(affected, creature_id, source_id) {
@@ -1643,8 +1657,12 @@ impl GameState {
             Err(_) => return granted,
         };
 
-        // Check all permanents on the battlefield for GrantKeyword abilities
-        for &source_id in &self.battlefield.cards {
+        // Check all permanents on the battlefield and cards in command zones for GrantKeyword abilities
+        let command_zone_cards = self
+            .player_zones
+            .iter()
+            .flat_map(|(_, zones)| zones.command.cards.iter().copied());
+        for source_id in self.battlefield.cards.iter().copied().chain(command_zone_cards) {
             let source = match self.cards.get(source_id) {
                 Ok(s) => s,
                 Err(_) => continue,
@@ -1786,8 +1804,12 @@ impl GameState {
             Err(_) => return granted,
         };
 
-        // Check all permanents on the battlefield for GrantAbility abilities
-        for &source_id in &self.battlefield.cards {
+        // Check all permanents on the battlefield and cards in command zones for GrantAbility abilities
+        let command_zone_cards = self
+            .player_zones
+            .iter()
+            .flat_map(|(_, zones)| zones.command.cards.iter().copied());
+        for source_id in self.battlefield.cards.iter().copied().chain(command_zone_cards) {
             let source = match self.cards.get(source_id) {
                 Ok(s) => s,
                 Err(_) => continue,

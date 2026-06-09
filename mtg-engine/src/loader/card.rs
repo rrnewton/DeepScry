@@ -920,7 +920,7 @@ impl CardDefinition {
     }
 
     /// Parse raw keywords into KeywordSet
-    fn parse_keywords(&self) -> KeywordSet {
+    pub(crate) fn parse_keywords(&self) -> KeywordSet {
         let mut keyword_set = KeywordSet::new();
 
         for keyword_str in &self.raw_keywords {
@@ -1783,7 +1783,7 @@ impl CardDefinition {
     /// Uses tokenized parsing (ability_parser) for safety and correctness.
     /// Replaces unsafe substring matching with proper parameter extraction.
     /// Follows SubAbility$ chains to resolve all effects in a spell.
-    fn parse_effects(&self) -> Vec<crate::core::Effect> {
+    pub(crate) fn parse_effects(&self) -> Vec<crate::core::Effect> {
         use super::ability_parser::{AbilityParams, ApiType};
         use super::effect_converter::{
             params_to_charm_effect_with_svars, params_to_delayed_trigger_with_svars, params_to_effect_with_svars,
@@ -3404,7 +3404,7 @@ impl CardDefinition {
     ///
     /// Uses tokenized parsing with params_to_effect() for all effect types.
     /// Eliminates unsafe substring matching.
-    fn parse_activated_abilities(&self) -> Vec<crate::core::ActivatedAbility> {
+    pub(crate) fn parse_activated_abilities(&self) -> Vec<crate::core::ActivatedAbility> {
         use super::ability_parser::{AbilityParams, AbilityRecordType};
         use crate::core::{ActivatedAbility, Cost};
 
@@ -3515,7 +3515,7 @@ impl CardDefinition {
 
             // Only add if we have effects
             if !effects.is_empty() {
-                let mut ability = if is_sorcery_speed {
+                let mut ability = if is_sorcery_speed || is_planeswalker_ability {
                     ActivatedAbility::new_sorcery_speed(cost, effects, description)
                 } else if is_your_turn_only {
                     ActivatedAbility::new_your_turn_only(cost, effects, description, is_mana_ability)
@@ -4265,6 +4265,8 @@ impl CardDefinition {
                 "You" => AffectedSelector::You,
                 "Player" => AffectedSelector::Player,
                 "Land.YouCtrl" => AffectedSelector::LandsYouControl,
+                "Instant.YouCtrl" => AffectedSelector::InstantYouControl,
+                "Sorcery.YouCtrl" => AffectedSelector::SorceryYouControl,
                 "Creature.OppCtrl" => AffectedSelector::CreaturesOpponentControls,
                 "Card.TopLibrary+YouCtrl" => AffectedSelector::TopCardOfLibrary,
                 "Creature.AttachedBy" => AffectedSelector::CreatureAttachedBy,
@@ -4950,7 +4952,7 @@ impl CardDefinition {
     /// matching on the whole line, per the "No Hacky String Operations" rule.
     /// The cast path uses the resulting cache flag to add `(num_targets - 1)`
     /// generic mana once targets are chosen.
-    fn has_relative_self_target_cost(&self) -> bool {
+    pub(crate) fn has_relative_self_target_cost(&self) -> bool {
         for ability in &self.raw_abilities {
             // Static lines are stored as "S:<body>" in raw_abilities.
             let Some(body) = ability.strip_prefix("S:") else {
@@ -4983,7 +4985,7 @@ impl CardDefinition {
     /// structurally (tokenize on `|` then `$`), never via substring matching.
     /// While such a permanent is on the battlefield the untap step is skipped
     /// for every player (CR 502 / 614 "skip" replacement on the untap step).
-    fn skips_untap_step(&self) -> bool {
+    pub(crate) fn skips_untap_step(&self) -> bool {
         for ability in &self.raw_abilities {
             // Replacement lines are stored as "R:<body>" in raw_abilities.
             let Some(body) = ability.strip_prefix("R:") else {

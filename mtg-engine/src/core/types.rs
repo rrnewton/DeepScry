@@ -817,7 +817,7 @@ impl fmt::Display for CounterType {
 }
 
 /// Card name (distinct from other string types)
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
 pub struct CardName(std::sync::Arc<str>);
 
 impl PartialOrd for CardName {

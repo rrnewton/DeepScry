@@ -3458,6 +3458,14 @@ pub enum AffectedSelector {
     /// Used by cards like Chromatic Lantern that grant abilities to your lands
     LandsYouControl,
 
+    /// Instants you control
+    /// Corresponds to: `Affected$ Instant.YouCtrl`
+    InstantYouControl,
+
+    /// Sorceries you control
+    /// Corresponds to: `Affected$ Sorcery.YouCtrl`
+    SorceryYouControl,
+
     /// Opponent's creatures
     /// Corresponds to: `Affected$ Creature.OppCtrl`
     /// Used by cards that debuff or affect enemy creatures

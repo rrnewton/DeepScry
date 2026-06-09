@@ -386,6 +386,7 @@ impl Keyword {
             "Absorb" => Some(Keyword::Absorb),
             "Bushido" => Some(Keyword::Bushido),
             "Soulbond" => Some(Keyword::Soulbond),
+            "Storm" => Some(Keyword::Storm),
 
             _ => None, // Unknown keyword
         }

@@ -1757,13 +1757,25 @@ impl GameState {
         }
 
         // A card leaving the battlefield becomes a new object on return (CR 400.7);
-        // drop any source-duration control grant so it is not re-applied to the
-        // returned object by `recompute_source_control` (Aladdin).
+        // reset its transient state (counters, temporary P/T modifications, damage,
+        // cloned characteristics, etc.) and log the restore action for undo.
         if from == Zone::Battlefield {
             if let Ok(card) = self.cards.get_mut(card_id) {
-                card.control_grant = None;
-                card.exile_if_would_die_this_turn = false;
-                card.prevent_all_combat_damage_this_turn = false;
+                let original_def = self.card_definitions.get(&card.printed_name).or_else(|| {
+                    self.token_definitions
+                        .get(card.printed_name.as_str())
+                        .map(|arc| arc.as_ref())
+                });
+                let snapshot = card.capture_state_snapshot();
+                let prior_log_size = self.logger.log_count();
+                self.undo_log.log(
+                    crate::undo::GameAction::RestoreCardState {
+                        card_id,
+                        snapshot: Box::new(snapshot),
+                    },
+                    prior_log_size,
+                );
+                card.reset_transient_state(original_def);
             }
         }
 

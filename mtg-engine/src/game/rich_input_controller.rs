@@ -156,7 +156,39 @@ impl PlayerController for RichInputController {
             }
 
             // Try to parse it
-            let result = parse_spell_ability_choice(&command, view, available);
+            let mut result = None;
+            let mut consumed_extra = false;
+
+            if let Some(card_pattern) = command.strip_prefix("activate ") {
+                let next_idx = self.current_index + 1;
+                let next_cmd_is_num = if next_idx < self.commands.len() {
+                    self.commands[next_idx].trim().parse::<usize>().ok()
+                } else {
+                    None
+                };
+
+                if let Some(choice_idx) = next_cmd_is_num {
+                    // Find all matching ActivateAbility
+                    let mut matches = Vec::new();
+                    for ability in available {
+                        if let SpellAbility::ActivateAbility { card_id, .. } = ability {
+                            if let Some(card_name) = view.card_name(*card_id) {
+                                if card_matches(&card_name, card_pattern) {
+                                    matches.push(ability);
+                                }
+                            }
+                        }
+                    }
+                    if choice_idx < matches.len() {
+                        result = Some(matches[choice_idx].clone());
+                        consumed_extra = true;
+                    }
+                }
+            }
+
+            if result.is_none() {
+                result = parse_spell_ability_choice(&command, view, available);
+            }
 
             // Check if this is an explicit pass command
             let explicit_pass = is_explicit_pass(&command);
@@ -172,6 +204,9 @@ impl PlayerController for RichInputController {
                     // Found a match or explicit pass! Exit wildcard mode first, then consume
                     self.wildcard_mode = false;
                     self.next_command();
+                    if consumed_extra {
+                        self.next_command();
+                    }
                     ChoiceResult::Ok(result)
                 } else {
                     // No match - pass priority and stay in wildcard mode
@@ -182,6 +217,9 @@ impl PlayerController for RichInputController {
                 if result.is_some() || explicit_pass {
                     // Valid command or explicit pass - consume and execute
                     self.next_command();
+                    if consumed_extra {
+                        self.next_command();
+                    }
                     ChoiceResult::Ok(result)
                 } else if is_combat_command {
                     // Combat command (attack/block) during priority - don't consume, pass priority
