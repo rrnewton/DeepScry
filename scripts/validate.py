@@ -1241,6 +1241,11 @@ def _install_scope_teardown():
             sys.stderr.flush()
         except Exception:
             pass
+        # Release our lock NOW: the run_with_harness `finally` that normally does
+        # this won't run once stop_scope SIGKILLs us. (The next run's stale-PID
+        # check would also reap it, but removing it here avoids the confusing
+        # "lock remains" window.)
+        _release_lock()
         validate_cgroup.stop_scope(unit)
         # If the stop somehow didn't kill us, exit non-zero with the signal code.
         os._exit(128 + signum)
