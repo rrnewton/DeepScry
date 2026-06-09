@@ -77,6 +77,76 @@ NODE = os.environ.get("NODE") or "node"
 NPM = os.environ.get("NPM") or "npm"
 
 
+# ===========================================================================
+# MEMORY-CAP BASELINES  (THE single source of truth — mtg-5jn7z)
+# ===========================================================================
+# `make validate` runs under cgroup memory caps BY DEFAULT so a runaway test
+# (e.g. the 2026-06-09 Return-the-Favor infinite self-copy that ballooned one
+# `mtg` to ~40 GB and wedged the box) is cgroup-OOM-killed at its cap instead of
+# taking the host down. Caps are set at FACTOR x a characterized baseline. THESE
+# CONSTANTS are the one place those baselines live; the actionable-OOM message
+# points agents HERE (file + symbol) to confirm-and-bump after proving genuine
+# growth (NOT an unbounded leak).
+#
+# HOW THE BASELINES WERE MEASURED:
+#   * Total (whole-run scope) peak RSS read from the outer-scope cgroup
+#     `memory.peak` after a full `make validate -j16` (validate.py prints it).
+#     Observed ~22 GiB on the 16-core dev box (2026-06-09).
+#   * Per-step peaks read from each step's child-cgroup `memory.peak` at step
+#     teardown (printed in the per-step detail + the VALIDATE STATS block).
+# CAVEAT (mtg-5jn7z item 3): a baseline measured while the commander runaway
+# (Return-the-Favor loop) is live is GARBAGE. determ.commander is therefore
+# EXCLUDED from the characterized per-step table below (PER_STEP_RSS_BASELINE)
+# and must be re-measured AFTER slot01's fix lands, then added with its real cap.
+# Until then determ.commander runs under the OUTER cap only (still protected).
+MEM_CAP_FACTOR = float(os.environ.get("VALIDATE_MEM_CAP_FACTOR", "1.25"))  # 1.25x; relax to 1.5 only if too tight
+# Characterized typical whole-run peak RSS (bytes). Override via env for a
+# differently-sized box. 24 GiB ~= the observed ~22 GiB rounded up a touch.
+VALIDATE_TOTAL_RSS_BASELINE_BYTES = int(
+    os.environ.get("VALIDATE_TOTAL_RSS_BASELINE_BYTES", str(24 * 1024**3)))
+# Never cap below this — a tiny cap would false-OOM a legitimate run on a small box.
+MEM_CAP_FLOOR_BYTES = int(os.environ.get("VALIDATE_MEM_CAP_FLOOR_BYTES", str(8 * 1024**3)))
+# Per-step characterized typical peak RSS (bytes), keyed by step tag. Each step's
+# INNER cgroup MemoryMax = FACTOR x this. A step ABSENT here gets NO inner cap
+# (outer cap still applies) — used for steps not yet characterized OR deliberately
+# excluded (determ.commander, until slot01's runaway fix lands). Conservative
+# values from the 2026-06-09 -j16 run; bump per the actionable-OOM message.
+PER_STEP_RSS_BASELINE = {
+    # the heavy compilers / test binaries
+    "build.mtg-release": 6 * 1024**3,
+    "unit.nextest":      6 * 1024**3,
+    "wasm.bundle":       5 * 1024**3,
+    "lint.clippy":       5 * 1024**3,
+    "lint.clippy-wasm":  4 * 1024**3,
+    "examples.run":      4 * 1024**3,
+    # browser/network steps (chromium + server + AI peer)
+    "wasm.browser":      4 * 1024**3,
+    "network.multideck": 4 * 1024**3,
+    "network.gui":       3 * 1024**3,
+    # NOTE: determ.commander deliberately OMITTED — see CAVEAT above (slot01 fix pending).
+}
+
+
+def _total_ram_bytes():
+    """Total physical RAM (bytes) from /proc/meminfo MemTotal. None if unreadable."""
+    try:
+        for line in Path("/proc/meminfo").read_text().splitlines():
+            if line.startswith("MemTotal:"):
+                return int(line.split()[1]) * 1024
+    except (OSError, ValueError, IndexError):
+        pass
+    return None
+
+
+def step_mem_cap_bytes(tag):
+    """Inner-cgroup MemoryMax (bytes) for a step, or None if the step is not
+    characterized / deliberately excluded (then only the outer cap protects it).
+    FACTOR x the per-step baseline from PER_STEP_RSS_BASELINE (the single source
+    of truth, above)."""
+    base = PER_STEP_RSS_BASELINE.get(tag)
+    return int(base * MEM_CAP_FACTOR) if base else None
+
+
 # ---------------------------------------------------------------------------
 # Memory helpers (for memory-aware parallelism + the outer-scope MemoryMax)
 # ---------------------------------------------------------------------------
@@ -507,7 +577,11 @@ class Runner:
         # cgroup.kill later reaps the whole tree incl. setsid escapees.
         run_cmd = step.cmd
         if self.cgroups is not None:
-            run_cmd = self.cgroups.prepare_command(step.tag, step.cmd)
+            # Per-step INNER cgroup MemoryMax from the characterized baseline (or
+            # None for an un-characterized / deliberately-excluded step like
+            # determ.commander — then only the OUTER cap protects it). mtg-5jn7z.
+            run_cmd = self.cgroups.prepare_command(
+                step.tag, step.cmd, mem_max=step_mem_cap_bytes(step.tag))
         proc = subprocess.Popen(["bash", "-c", run_cmd], cwd=PROJECT_DIR, env=env,
                                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                 start_new_session=True)
@@ -562,7 +636,12 @@ class Runner:
         # above) — never the runner's group. This also lets the abandoned reader
         # thread finally see EOF.
         self._reap(step_pgid, step.tag)
+        # Capture OOM + peak from the step's cgroup BEFORE cleanup() rmdirs it.
+        step_oom = 0
+        step_peak = None
         if self.cgroups is not None:
+            step_oom = self.cgroups.oom_kills(step.tag)
+            step_peak = self.cgroups.peak_bytes(step.tag)
             self.cgroups.cleanup(step.tag)  # rmdir the now-empty child cgroup
         try:
             fh.close()
@@ -570,6 +649,16 @@ class Runner:
             pass
         dur = round(time.time() - start)
         ok = (proc.returncode == 0) and not timed_out
+        if step_peak is not None:
+            # Record per-step peak RSS into the detail (baseline characterization
+            # — compare against PER_STEP_RSS_BASELINE to retune caps; mtg-5jn7z).
+            try:
+                with open(detail, "ab") as f2:
+                    cap = step_mem_cap_bytes(step.tag)
+                    capnote = f" (inner cap {_fmt_bytes(cap)})" if cap else " (no inner cap)"
+                    f2.write(f"\n[validate_run] step peak RSS: {_fmt_bytes(step_peak)}{capnote}\n".encode())
+            except OSError:
+                pass
         if timed_out:
             with open(detail, "ab") as f2:
                 f2.write(f"\n[validate_run] STEP TIMED OUT after {step.timeout}s — SIGKILLed process group\n".encode())
@@ -597,8 +686,28 @@ class Runner:
             extra = f"  [{summary}]" if (summary and self.verbosity >= 1) else ""
             self._emit(f"[{step.tag}] ✓ PASS   {step.desc} ({dur}s){extra}")
         else:
-            why = f"TIMEOUT >{step.timeout}s" if timed_out else f"exit {proc.returncode}"
+            oomed = step_oom > 0
+            if oomed:
+                why = f"OOM-KILLED (hit inner MemoryMax; {step_oom} oom_kill event(s))"
+            elif timed_out:
+                why = f"TIMEOUT >{step.timeout}s"
+            else:
+                why = f"exit {proc.returncode}"
             self._emit(f"[{step.tag}] ✗ FAIL   {step.desc} ({dur}s, {why})")
+            if oomed:
+                # ACTIONABLE OOM message (mtg-5jn7z item 4): (a) which step, (b)
+                # WHERE the baseline lives, (c) how to SAFELY raise it.
+                cap = step_mem_cap_bytes(step.tag)
+                peak = _fmt_bytes(step_peak) if step_peak else "?"
+                self._emit(f"[{step.tag}] ▲ MEMORY CAP HIT: step '{step.tag}' was OOM-killed at its "
+                           f"inner cgroup MemoryMax (cap≈{_fmt_bytes(cap)}, peak≈{peak}).")
+                self._emit(f"[{step.tag}] ▲   BASELINE: scripts/validate.py → PER_STEP_RSS_BASELINE['{step.tag}'] "
+                           f"(x MEM_CAP_FACTOR={MEM_CAP_FACTOR}).")
+                self._emit(f"[{step.tag}] ▲   BEFORE RAISING IT: confirm this is GENUINE growth, not an "
+                           f"UNBOUNDED LEAK/loop (re-run; check peak grows with input size, not without "
+                           f"bound). A cap bump without that check just re-arms the OOM gun. Then bump "
+                           f"PER_STEP_RSS_BASELINE['{step.tag}'] to the new typical peak (keep the 1.25x "
+                           f"factor) — or set VALIDATE_MEM_CAP_FACTOR=1.5 if the 1.25x is too tight.")
             # self-contained failure: dump tagged detail into the log
             self._emit(f"[{step.tag}] ----- detail ({detail}) -----")
             try:
@@ -658,7 +767,10 @@ class Runner:
 
 def _resolve_jobs(args):
     """Resolve args.jobs in place. Precedence: --sequential (1) > explicit -j >
-    memory-budget auto-scale (when --max-mem set and -j omitted) > nproc."""
+    memory-budget auto-scale > nproc. The memory budget is the outer-scope cap
+    (DEFAULT-applied now, mtg-5jn7z), so -j is auto-capped to fit memory on a
+    small-RAM box even without an explicit --max-mem; on an ample box (budget /
+    --mem-per-job >= nproc) it leaves -j at nproc."""
     if args.sequential:
         args.jobs = 1
         return
@@ -755,13 +867,17 @@ def main():
                          "(per-step cgroup.kill is setsid-proof where killpg is not). Falls back "
                          "to the killpg-only reaper. No-op when the outer scope is unavailable.")
     ap.add_argument("--max-mem", metavar="SPEC",
-                    help="cap the whole validate run's memory via the outer scope's "
-                         "MemoryHigh/MemoryMax AND scale -j down so concurrent cross-slot "
-                         "validates coexist without OOM-thrashing. SPEC is either an absolute "
-                         "size (e.g. 8G, 4096M) applied as MemoryMax (MemoryHigh=90%% of it), or "
-                         "'auto' to budget from /proc/meminfo MemAvailable. With --max-mem set, "
-                         "-j is also capped to floor(budget / --mem-per-job) unless -j was given "
-                         "explicitly.")
+                    help="OVERRIDE the DEFAULT memory cap on the whole validate run (the outer "
+                         "scope's MemoryHigh/MemoryMax). A cap is applied BY DEFAULT (1.25x the "
+                         "characterized whole-run peak; see VALIDATE_TOTAL_RSS_BASELINE_BYTES) so a "
+                         "runaway can never OOM the box; use this only to raise/lower it. SPEC is an "
+                         "absolute size (e.g. 8G, 4096M) applied as MemoryMax (MemoryHigh=90%% of it), "
+                         "or 'auto' to budget from /proc/meminfo MemAvailable. Also caps -j to "
+                         "floor(budget / --mem-per-job) unless -j was given explicitly.")
+    ap.add_argument("--no-max-mem", action="store_true",
+                    help="DANGEROUS opt-out: run with NO outer memory cap. A runaway test can then "
+                         "OOM the whole host (this is exactly the 2026-06-09 box-wedge). Only for "
+                         "deliberate memory profiling where the cap distorts the measurement.")
     ap.add_argument("--mem-per-job", metavar="SIZE", default="1500M",
                     help="assumed peak RSS of one parallel step, for --max-mem job auto-scaling "
                          "(default 1500M — a release rustc/nextest compile unit). Lower it if your "
@@ -1145,18 +1261,37 @@ def _systemd_scope_available():
 
 
 def _resolve_mem_budget(args):
-    """Resolve --max-mem to an absolute byte cap for the outer scope's
-    MemoryMax, or None if no cap requested. 'auto' budgets 80% of current
-    MemAvailable (leaving headroom for the OS + other slots)."""
-    spec = getattr(args, "max_mem", None)
-    if not spec:
+    """Resolve the outer-scope MemoryMax (bytes). A cap is applied BY DEFAULT —
+    a runaway (e.g. the Return-the-Favor infinite self-copy loop that ballooned
+    one `mtg` to ~40 GB and wedged the box, 2026-06-09) must NEVER be able to
+    OOM the host; the cgroup OOM-kills it at the cap instead. Resolution order:
+
+      * explicit `--max-mem SPEC`  -> that (absolute size, or 'auto' = 80% of
+        current MemAvailable);
+      * `--no-max-mem`             -> None (uncapped — DANGEROUS, opt-out only);
+      * DEFAULT (no flag)          -> VALIDATE_TOTAL_RSS_BASELINE_BYTES * 1.25
+        (the characterized typical whole-run peak RSS x the 1.25 safety factor),
+        but never less than a floor and never more than 85% of total RAM (so a
+        small-RAM box still gets a workable cap and a big-RAM box still leaves
+        headroom for the OS + concurrent cross-slot validates).
+
+    The baseline is defined in ONE place (VALIDATE_TOTAL_RSS_BASELINE_BYTES,
+    below) so the actionable-OOM message can point an agent at exactly where to
+    confirm-and-bump it."""
+    if getattr(args, "no_max_mem", False):
         return None
-    if str(spec).lower() == "auto":
-        avail = mem_available_bytes()
-        if avail is None:
-            return None
-        return int(avail * 0.8)
-    return parse_size(spec)
+    spec = getattr(args, "max_mem", None)
+    if spec:
+        if str(spec).lower() == "auto":
+            avail = mem_available_bytes()
+            return int(avail * 0.8) if avail else None
+        return parse_size(spec)
+    # DEFAULT cap: 1.25x the characterized whole-run peak, clamped to [floor, 85% RAM].
+    default_cap = int(VALIDATE_TOTAL_RSS_BASELINE_BYTES * MEM_CAP_FACTOR)
+    total = _total_ram_bytes()
+    if total:
+        default_cap = min(default_cap, int(total * 0.85))
+    return max(default_cap, MEM_CAP_FLOOR_BYTES)
 
 
 def _maybe_reexec_in_scope(args):
@@ -1193,10 +1328,19 @@ def _maybe_reexec_in_scope(args):
         # MemoryMax = hard cap (cgroup OOM-kills the run if exceeded — contains a
         # runaway validate); MemoryHigh = soft throttle at 90% (reclaim pressure
         # before the hard kill). Together they keep concurrent cross-slot
-        # validates from OOM-thrashing the host.
-        props += ["-p", f"MemoryMax={mem_max}", "-p", f"MemoryHigh={int(mem_max * 0.9)}"]
+        # validates from OOM-thrashing the host. APPLIED BY DEFAULT (mtg-5jn7z).
+        # MemorySwapMax=0: OOM-KILL a runaway at the cap, do NOT let it swap (a
+        # 40 GB runaway swapping into 18 GB still thrashes the host — the exact
+        # wedge this guards against).
+        props += ["-p", f"MemoryMax={mem_max}", "-p", f"MemoryHigh={int(mem_max * 0.9)}",
+                  "-p", "MemorySwapMax=0"]
+        src = "explicit --max-mem" if getattr(args, "max_mem", None) else \
+              "DEFAULT (1.25x VALIDATE_TOTAL_RSS_BASELINE_BYTES in scripts/validate.py)"
         print(f"[validate] outer scope memory cap: MemoryMax={_fmt_bytes(mem_max)} "
-              f"(MemoryHigh={_fmt_bytes(int(mem_max * 0.9))}).")
+              f"(MemoryHigh={_fmt_bytes(int(mem_max * 0.9))}, swap=0) — {src}.")
+    elif getattr(args, "no_max_mem", False):
+        print("[validate] ⚠ --no-max-mem: outer scope is UNCAPPED — a runaway test can OOM the "
+              "HOST (the 2026-06-09 box-wedge). Use only for deliberate memory profiling.")
     cmd = ["systemd-run", "--user", "--scope", "--collect", "--quiet",
            f"--unit={unit}", *props, "--setenv=MTG_VALIDATE_IN_SCOPE=1",
            f"--setenv=MTG_VALIDATE_SCOPE_UNIT={unit}.scope",

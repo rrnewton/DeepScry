@@ -4,7 +4,7 @@ status: open
 priority: 2
 issue_type: task
 created_at: 2026-06-09T19:45:13.019238463+00:00
-updated_at: 2026-06-09T19:45:13.019238463+00:00
+updated_at: 2026-06-09T19:54:36.778257447+00:00
 ---
 
 # Description
@@ -26,3 +26,10 @@ web/test_human_input.js + test_font_size_layout.js + test_game_gui.js moved off 
 SAFETY: NEVER run an uncapped validate while the commander loop is live in integration (until slot01 lands). Land caps once slot01 greens integration.
 
 (Re-filed with a fresh hash ID after the mtg-882 numeric-ID collided with slot03's heuristic_controller refactor issue.)
+
+== IMPLEMENTED 2026-06-09_#3073(badd088e) ==
+DONE: (1) DEFAULT outer-scope memory cap — every full `make validate` now caps MemoryMax=1.25x VALIDATE_TOTAL_RSS_BASELINE_BYTES (=30G on this 70G/16-core box; clamped to 0.85*RAM, floor 8G) + MemorySwapMax=0 so a runaway is OOM-KILLED at the cap, not swapped. --no-max-mem opts out (DANGEROUS). (2) Per-step INNER cgroup memory.max=1.25x PER_STEP_RSS_BASELINE[tag] + memory.swap.max=0; determ.commander EXCLUDED (slot01 runaway-fix pending). (3) Baselines in ONE place: scripts/validate.py PER_STEP_RSS_BASELINE + VALIDATE_TOTAL_RSS_BASELINE_BYTES + MEM_CAP_FACTOR. Per-step peak RSS now recorded to each step's detail for re-tuning. (4) Actionable OOM message: states which step, the baseline location (file+symbol), and the confirm-genuine-growth-not-a-leak-before-bumping procedure.
+
+EMPIRICALLY VERIFIED: a 2 GiB memory-hog step under a 200 MiB inner cap is OOM-killed (exit -9, oom_kills=1, peak capped at exactly 200 MiB) while the outer scope + supervisor stay ALIVE — the two-level model kills only the runaway step. Default-cap resolution + per-step-cap table unit-tested. Ephemeral-ports fix landed (badd088e): 2 concurrent test_human_input.js → both exit 0, ZERO port collisions.
+
+REMAINING: characterize REAL per-step baselines after slot01's commander fix greens integration (current PER_STEP_RSS_BASELINE values are conservative estimates from the 2026-06-09 -j16 run, commander excluded). NEVER run uncapped while commander loop is live.

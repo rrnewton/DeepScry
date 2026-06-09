@@ -134,11 +134,18 @@ class StepCgroups:
         self.root = scope_cg
         self.enabled = True
 
-    def prepare_command(self, tag: str, cmd: str) -> str:
+    def prepare_command(self, tag: str, cmd: str, mem_max: int | None = None) -> str:
         """Return the step command wrapped so its bash leader joins the step's
         child cgroup FIRST (before forking grandchildren). No-op string-wrap
         when disabled. The self-move is best-effort (`|| true`): if it fails the
-        step still runs and the outer-scope reaper remains the backstop."""
+        step still runs and the outer-scope reaper remains the backstop.
+
+        `mem_max` (bytes), if given, is written to the step cgroup's `memory.max`
+        — an INNER per-step cap so a single runaway step is OOM-killed at its own
+        characterized limit (the two-level model), leaving the rest of the run +
+        the host alive. Requires the `memory` controller to be delegated to the
+        scope's children (enabled in __init__ via subtree_control); if that write
+        fails the step still runs under the OUTER cap only."""
         if not self.enabled or self.root is None:
             return cmd
         child = self.root / _sanitize(tag)
@@ -147,11 +154,50 @@ class StepCgroups:
             self._made.add(tag)
         except OSError:
             return cmd
+        if mem_max:
+            try:
+                (child / "memory.max").write_text(str(int(mem_max)))
+                # MemoryHigh-equivalent soft throttle at 90% (reclaim before the
+                # hard OOM-kill), mirroring the outer scope.
+                (child / "memory.high").write_text(str(int(mem_max * 0.9)))
+                # memory.swap.max=0: a runaway must be OOM-KILLED at the cap, NOT
+                # silently pushed to swap. Without this, a step that exceeds
+                # memory.max just swaps (the box still thrashes — exactly the
+                # 40 GB→18 GB-swap wedge we're preventing) and never OOM-kills,
+                # so oom_kills stays 0 and the actionable message never fires.
+                (child / "memory.swap.max").write_text("0")
+            except OSError:
+                pass  # memory controller not delegated → outer cap still protects
         procs = child / "cgroup.procs"
         # $$ is the bash leader's own pid. Writing it migrates the leader; every
         # subsequently-forked child/grandchild inherits this cgroup at fork.
         # Redirect errors so a delegation hiccup can't corrupt the step's stdout.
         return f'echo $$ > {procs} 2>/dev/null || true\n{cmd}'
+
+    def oom_kills(self, tag: str) -> int:
+        """How many times the kernel OOM-killer fired inside the step's cgroup
+        (from cgroup-v2 `memory.events` `oom_kill` line). >0 means the step (or a
+        descendant) hit its INNER MemoryMax and was killed — the actionable-OOM
+        signal. 0 if absent/unreadable. Read BEFORE cleanup() rmdirs the dir."""
+        if not self.enabled or self.root is None or tag not in self._made:
+            return 0
+        try:
+            for line in (self.root / _sanitize(tag) / "memory.events").read_text().splitlines():
+                if line.startswith("oom_kill "):
+                    return int(line.split()[1])
+        except (OSError, ValueError, IndexError):
+            pass
+        return 0
+
+    def peak_bytes(self, tag: str) -> int | None:
+        """Peak RSS (bytes) of the step's cgroup (`memory.peak`), for the stats /
+        baseline characterization. None if unreadable. Read BEFORE cleanup()."""
+        if not self.enabled or self.root is None or tag not in self._made:
+            return None
+        try:
+            return int((self.root / _sanitize(tag) / "memory.peak").read_text().strip())
+        except (OSError, ValueError):
+            return None
 
     def kill(self, tag: str) -> bool:
         """SIGKILL the step's entire cgroup subtree (setsid escapees included).
