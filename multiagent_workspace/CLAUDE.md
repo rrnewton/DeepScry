@@ -467,15 +467,15 @@ Two systems coexist and do not auto-sync:
 
 - **`mb` (minibeads)** — the PRIMARY, version-controlled task store
   inside `<RepoRoot>/.beads/`. Issues are durable project state.
-  Run `mb` from inside the project / a worktree. Read `bd quickstart`
-  (the upstream `bd` CLI is the underlying tool) for the workflow.
+  Run `mb` from inside the project / a worktree. Read `mb quickstart`
+  for the workflow.
   Conventions (mirrored from `<RepoRoot>/CLAUDE.md`):
   - Issues labelled "human" are user-created (priority 0).
   - Tracking issues sit at priority 1; `mtg-1` is the overall tracker.
   - Granular issues are priority 3-4; bumped to 2 for critical bugs.
   - TODOs in code reference issues: `// TODO(mtg-13): summary`.
   - All content goes in the `description` field — never use `--notes`.
-  - Always `bd update` existing issues; never duplicate via `bd create`.
+  - Always `mb update` existing issues; never duplicate via `mb create`.
 - **`tg` (task-graph)** — ephemeral, per-session orchestration state on
   the local machine. Used by the orchestrator to track in-flight
   agents and short-lived subtasks. NOT durable; significant outcomes
