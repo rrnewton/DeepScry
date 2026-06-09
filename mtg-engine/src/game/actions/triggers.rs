@@ -120,6 +120,12 @@ pub struct TriggerContext {
     /// amount of damage the event source just dealt this combat/resolution.
     /// `None` for triggers that carry no damage amount.
     pub damage_amount: Option<i32>,
+
+    /// For Aura/Equipment triggers using `Defined$ Enchanted` (Paralyze's
+    /// ETB-tap and pay-{4}-to-untap upkeep escape): the permanent the trigger
+    /// source is attached to (`Card::attached_to`). `None` when the source is
+    /// not attached to anything (the effect then resolves against nothing).
+    pub enchanted: Option<CardId>,
 }
 
 impl TriggerContext {
@@ -135,7 +141,15 @@ impl TriggerContext {
             sacrificed_power: 0,
             drawing_player: None,
             damage_amount: None,
+            enchanted: None,
         }
+    }
+
+    /// Builder method to set the enchanted/attached permanent (for `Defined$
+    /// Enchanted` Aura/Equipment triggers). Pass `None` to leave it unset.
+    pub fn with_enchanted(mut self, enchanted: Option<CardId>) -> Self {
+        self.enchanted = enchanted;
+        self
     }
 
     /// Builder method to set the damage amount (for damage-dealt triggers)
@@ -205,6 +219,22 @@ impl TriggerContext {
 #[allow(clippy::missing_panics_doc)]
 pub fn resolve_effect_placeholder(effect: &Effect, ctx: &TriggerContext) -> Effect {
     match effect {
+        // =========================================================================
+        // Defined$ Enchanted Tap/Untap (Paralyze): resolve to the permanent the
+        // trigger source (the Aura) is attached to. Paralyze's ETB fires
+        // `DB$ Tap | Defined$ Enchanted` (tap the enchanted creature), and its
+        // upkeep escape fires `DB$ Untap | Defined$ Enchanted`. The attached
+        // permanent is threaded in via `ctx.enchanted` (Card::attached_to). If
+        // the source is not attached to anything the sentinel is left in place
+        // and the effect resolves against no permanent (a safe no-op).
+        // =========================================================================
+        Effect::TapPermanent { target } if target.is_enchanted_target() => Effect::TapPermanent {
+            target: ctx.enchanted.unwrap_or(*target),
+        },
+        Effect::UntapPermanent { target } if target.is_enchanted_target() => Effect::UntapPermanent {
+            target: ctx.enchanted.unwrap_or(*target),
+        },
+
         // =========================================================================
         // Player-targeting effects: PlayerId::new(0) → controller
         // =========================================================================

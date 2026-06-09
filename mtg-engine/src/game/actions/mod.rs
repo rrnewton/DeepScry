@@ -3725,10 +3725,21 @@ impl GameState {
                 ));
             }
             Effect::TapPermanent { target } => {
-                // Skip if target is still placeholder (0) or unresolved sentinel
-                if target.is_placeholder() || target.is_reuse_previous() {
-                    // Spell fizzles - no valid targets
+                // Skip if target is still a placeholder / unresolved sentinel. An
+                // `enchanted_target` left unresolved means the source Aura is not
+                // attached to anything (Paralyze with no host) — no-op.
+                if target.is_placeholder() || target.is_reuse_previous() || target.is_enchanted_target() {
                     return Ok(());
+                }
+                // Surface the tap in the gamelog (e.g. Paralyze's ETB "tap
+                // enchanted creature") before tapping, so the action is visible.
+                let already_tapped = self.cards.try_get(*target).is_some_and(|c| c.tapped);
+                if !already_tapped {
+                    if let Ok(c) = self.cards.get(*target) {
+                        let name = c.name.to_string();
+                        self.logger
+                            .gamelog(&format!("{} ({}) becomes tapped", name, target.as_u32()));
+                    }
                 }
                 // Use helper that handles tap + undo log + mana version
                 self.tap_permanent(*target)?;
@@ -3736,8 +3747,9 @@ impl GameState {
                 self.check_triggers(TriggerEvent::Taps, *target)?;
             }
             Effect::UntapPermanent { target } => {
-                // Skip if target is placeholder (0) or unresolved sentinel
-                if target.is_placeholder() || target.is_reuse_previous() {
+                // Skip if target is placeholder / unresolved sentinel (incl. an
+                // unattached-Aura `enchanted_target`).
+                if target.is_placeholder() || target.is_reuse_previous() || target.is_enchanted_target() {
                     return Ok(());
                 }
                 // Use helper that handles untap + undo log + mana version
@@ -7471,9 +7483,13 @@ impl GameState {
             let trigger_card = self.cards.get(trigger_source)?;
             let controller = trigger_card.controller;
             let trigger_source_colors: smallvec::SmallVec<[crate::core::Color; 2]> = trigger_card.colors.clone();
+            // The permanent this Aura/Equipment enchants, for `Defined$ Enchanted`
+            // effects (Paralyze's ETB `DB$ Tap | Defined$ Enchanted`).
+            let enchanted = trigger_card.attached_to;
             let opponent = self.players.iter().find(|p| p.id != controller).map(|p| p.id);
             let ctx = TriggerContext::new(trigger_source, controller)
                 .with_event_source(source_card_id)
+                .with_enchanted(enchanted)
                 .with_sacrificed_power(sacrificed_power);
             let ctx = if let Some(opp) = opponent {
                 ctx.with_opponent(opp)

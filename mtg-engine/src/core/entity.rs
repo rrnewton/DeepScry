@@ -102,6 +102,16 @@ pub const TARGET_CONTROLLER_ID: u32 = u32::MAX - 6;
 /// Howling Mine's controller. Distinct from `PLACEHOLDER_ID` (= controller).
 pub const TRIGGERED_PLAYER_ID: u32 = u32::MAX - 7;
 
+/// Sentinel `CardId` value indicating "the permanent this Aura/Equipment is
+/// attached to" (Forge `Defined$ Enchanted`). Resolved at effect-resolution
+/// time to the trigger source's `Card::attached_to` (via
+/// `TriggerContext::enchanted`). Used by Paralyze — `DB$ Tap | Defined$
+/// Enchanted` (ETB-tap the enchanted creature) and `DB$ Untap | Defined$
+/// Enchanted` (the pay-{4}-to-untap upkeep escape). Distinct from
+/// `SELF_TARGET_ID` (= the Aura itself) and `PLACEHOLDER_ID` (= an
+/// independently-chosen target).
+pub const ENCHANTED_TARGET_ID: u32 = u32::MAX - 8;
+
 /// Sentinel range for encoding a Player as a CardId inside the
 /// `valid_targets` slice returned to `Controller::choose_targets`. We do
 /// this so controllers can offer Players as targets for `ValidTgts$ Any`
@@ -245,6 +255,20 @@ impl<T> EntityId<T> {
     #[inline]
     pub fn triggered_player() -> Self {
         EntityId::new(TRIGGERED_PLAYER_ID)
+    }
+
+    /// Check if this `CardId` is the "enchanted/attached permanent" sentinel
+    /// (Forge `Defined$ Enchanted`).
+    #[inline]
+    pub fn is_enchanted_target(&self) -> bool {
+        self.id == ENCHANTED_TARGET_ID
+    }
+
+    /// Create the "enchanted/attached permanent" sentinel (the permanent this
+    /// Aura/Equipment is attached to — resolved from `Card::attached_to`).
+    #[inline]
+    pub fn enchanted_target() -> Self {
+        EntityId::new(ENCHANTED_TARGET_ID)
     }
 }
 

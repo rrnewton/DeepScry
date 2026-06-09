@@ -336,22 +336,26 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
                 // already targeted, if it survived the damage) → reuse_previous
                 // sentinel so the resolver taps the parent ability's target
                 // instead of consuming a fresh chosen target. Mirrors the Untap
-                // arm below.
-                let target = if params.get("Defined") == Some("Targeted") {
-                    CardId::reuse_previous()
-                } else {
-                    CardId::new(0) // Placeholder for independent targeting
+                // arm below. `Defined$ Enchanted` (Paralyze's ETB-tap) → the
+                // enchanted-permanent sentinel (resolved from the Aura's
+                // attached_to at trigger resolution).
+                let target = match params.get("Defined") {
+                    Some("Targeted") => CardId::reuse_previous(),
+                    Some("Enchanted") => CardId::enchanted_target(),
+                    _ => CardId::new(0), // Placeholder for independent targeting
                 };
                 Some(Effect::TapPermanent { target })
             }
         }
 
         ApiType::Untap => {
-            // Check for Defined$ Targeted - use reuse_previous sentinel to share target with parent ability
-            let target = if params.get("Defined") == Some("Targeted") {
-                CardId::reuse_previous()
-            } else {
-                CardId::new(0) // Placeholder for independent targeting
+            // `Defined$ Targeted` → reuse_previous sentinel to share the target
+            // with the parent ability. `Defined$ Enchanted` (Paralyze's
+            // pay-{4}-to-untap upkeep escape) → the enchanted-permanent sentinel.
+            let target = match params.get("Defined") {
+                Some("Targeted") => CardId::reuse_previous(),
+                Some("Enchanted") => CardId::enchanted_target(),
+                _ => CardId::new(0), // Placeholder for independent targeting
             };
             Some(Effect::UntapPermanent { target })
         }

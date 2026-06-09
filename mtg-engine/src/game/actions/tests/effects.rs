@@ -5786,6 +5786,30 @@ mod tests {
              (R:Event$ Untap | Layer$ CantHappen). Statics: {:?}",
             card.static_abilities
         );
+
+        // The ETB trigger (T:Mode$ ChangesZone | ValidCard$ Card.Self |
+        // Execute$ TrigTap; SVar:TrigTap:DB$ Tap | Defined$ Enchanted) must lower
+        // to an EntersBattlefield trigger whose effect is a TapPermanent aimed at
+        // the `enchanted_target` sentinel (resolved to the Aura's attached_to at
+        // trigger time). mtg-529: this is "tap enchanted creature" on entry.
+        use crate::core::{CardId, Effect, TriggerEvent};
+        let etb_taps_enchanted = card.triggers.iter().any(|t| {
+            t.event == TriggerEvent::EntersBattlefield
+                && t.effects.iter().any(|e| {
+                    matches!(e, Effect::TapPermanent { target } if target.is_enchanted_target())
+                })
+        });
+        assert!(
+            etb_taps_enchanted,
+            "Paralyze's ETB trigger must Tap the enchanted permanent (Defined$ Enchanted -> \
+             TapPermanent{{ enchanted_target }}). Triggers: {:?}",
+            card.triggers
+        );
+        // Sanity: the sentinel is the dedicated enchanted-target id, distinct
+        // from the placeholder / reuse-previous sentinels.
+        assert!(CardId::enchanted_target().is_enchanted_target());
+        assert!(!CardId::enchanted_target().is_placeholder());
+        assert!(!CardId::enchanted_target().is_reuse_previous());
     }
 
     /// Card compat: Juzám Djinn (cardsfolder/j/juzam_djinn.txt) — mtg-515

@@ -1,0 +1,19 @@
+[metadata]
+Name:Paralyze ETB taps the enchanted creature
+Goal:Win
+Difficulty:Easy
+
+# P0 casts Paralyze ({B}) on P1's UNTAPPED Grizzly Bears. Paralyze's ETB
+# trigger "When Paralyze enters, tap enchanted creature" must tap the Bears.
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Paralyze
+p0battlefield=Swamp; Swamp
+p0library=Swamp; Swamp; Swamp
+
+p1life=20
+p1battlefield=Grizzly Bears
+p1library=Forest; Forest; Forest
