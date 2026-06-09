@@ -5972,11 +5972,29 @@ impl GameState {
 
                             self.move_card(card_id, Zone::Library, *destination, digger)?;
 
+                            // mtg-212: the DISPLAYED name depends on async reveal
+                            // timing on a network shadow (the dug card's public
+                            // `RevealCard` may not have arrived on the shadow's
+                            // first forward pass — `card_name` falls back to
+                            // `card#<id>` — but is present on a rewind replay).
+                            // Supply the rewind/replay verifier a reveal-timing-
+                            // INDEPENDENT id form so the presentation asymmetry is
+                            // not flagged as a fatal desync (the card is in the
+                            // destination zone either way — the turn-start hash
+                            // proves the STATE). Same mechanism as the
+                            // discard-into-graveyard line (mtg-677).
                             let action = if *reveal { "reveals and puts" } else { "puts" };
-                            self.logger.gamelog(&format!(
-                                "{} {} {} into {:?}",
-                                digger_name, action, card_name, destination
-                            ));
+                            let stable = format!(
+                                "{} {} card#{} into {:?}",
+                                digger_name,
+                                action,
+                                card_id.as_u32(),
+                                destination
+                            );
+                            self.logger.gamelog_reveal_stable(
+                                &format!("{} {} {} into {:?}", digger_name, action, card_name, destination),
+                                &stable,
+                            );
                             moved_cards.push(card_id);
                         }
 
@@ -6037,8 +6055,14 @@ impl GameState {
                                             "another zone"
                                         }
                                     };
-                                    self.logger
-                                        .gamelog(&format!("{} puts {} into {}", digger_name, card_name, dest_name));
+                                    // mtg-212: reveal-timing-independent verifier
+                                    // key (see the selected-cards branch above).
+                                    let stable =
+                                        format!("{} puts card#{} into {}", digger_name, card_id.as_u32(), dest_name);
+                                    self.logger.gamelog_reveal_stable(
+                                        &format!("{} puts {} into {}", digger_name, card_name, dest_name),
+                                        &stable,
+                                    );
                                 }
                             }
                         }

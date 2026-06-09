@@ -533,6 +533,91 @@ mod tests {
     }
 
     #[test]
+    fn test_verify_replay_dig_into_hand_reveal_timing_is_stable() {
+        // mtg-212: reproduces the LIVE deepscry.net FATAL. An `Effect::Dig`
+        // putting a card into a player's hand logs
+        // `"playrrr2 puts <card> into Hand"`. On a network shadow's FIRST
+        // forward pass the dug card's reveal has not arrived, so the display
+        // renders the id fallback `"playrrr2 puts card#106 into Hand"`; on a
+        // rewind+replay the reveal has since landed (the instance persists),
+        // so the display renders the real name
+        // `"playrrr2 puts Monument to Endurance into Hand"`. Before the fix
+        // these two strings diverged → fatal LogMismatch:
+        //   expected: "playrrr2 puts card#106 into Hand"
+        //   actual:   "playrrr2 puts Monument to Endurance into Hand"
+        // With the `verifier_stable` id form attached (the same mechanism the
+        // discard line uses), the verifier compares the stable id key on both
+        // sides and accepts the run — the card is in the hand either way.
+        let verification = RewindVerification {
+            turn_number: 6,
+            pre_rewind_state_hash: 0xAA,
+            pre_rewind_action_count: 3,
+            pre_rewind_log_count: 2,
+            // Captured FORWARD pass: instance absent → display is the id form,
+            // and the stable id key matches it exactly.
+            pre_rewind_log_tail: vec![make_discard_entry(
+                "playrrr2 puts card#106 into Hand",
+                "playrrr2 puts card#106 into Hand",
+            )],
+            log_size_at_turn: 1,
+            post_rewind_turn_start_hash: 0xBB,
+            post_rewind_state_snapshot: None,
+        };
+
+        // REPLAY pass: instance present → display is the real card name, but the
+        // SAME reveal-timing-stable id key (`card#106`) is attached.
+        let replayed = fresh_game_with_logs(&["turn header"]);
+        replayed.logger.gamelog_reveal_stable(
+            "playrrr2 puts Monument to Endurance into Hand",
+            "playrrr2 puts card#106 into Hand",
+        );
+
+        let outcome = verify_replay(&verification, &replayed, Some(0xBB));
+        assert_eq!(
+            outcome,
+            ReplayCheckOutcome::Ok,
+            "dig-into-hand reveal-timing-only display difference must not be a fatal desync \
+             (this is the live deepscry.net FATAL — mtg-212)"
+        );
+    }
+
+    #[test]
+    fn test_verify_replay_dig_stable_key_still_catches_real_divergence() {
+        // The dig carve-out must NOT blind the verifier: if the stable id form
+        // ITSELF diverges (a genuinely different card dug into hand), it is
+        // still a fatal LogMismatch.
+        let verification = RewindVerification {
+            turn_number: 6,
+            pre_rewind_state_hash: 0xAA,
+            pre_rewind_action_count: 3,
+            pre_rewind_log_count: 2,
+            pre_rewind_log_tail: vec![make_discard_entry(
+                "playrrr2 puts card#106 into Hand",
+                "playrrr2 puts card#106 into Hand",
+            )],
+            log_size_at_turn: 1,
+            post_rewind_turn_start_hash: 0xBB,
+            post_rewind_state_snapshot: None,
+        };
+
+        let replayed = fresh_game_with_logs(&["turn header"]);
+        // Different underlying card id (#999) → stable forms diverge → fatal.
+        replayed.logger.gamelog_reveal_stable(
+            "playrrr2 puts Monument to Endurance into Hand",
+            "playrrr2 puts card#999 into Hand",
+        );
+
+        let outcome = verify_replay(&verification, &replayed, Some(0xBB));
+        match outcome {
+            ReplayCheckOutcome::LogMismatch { expected, actual, .. } => {
+                assert_eq!(expected, "playrrr2 puts card#106 into Hand");
+                assert_eq!(actual, "playrrr2 puts card#999 into Hand");
+            }
+            other => panic!("expected LogMismatch on diverging dig stable key, got {:?}", other),
+        }
+    }
+
+    #[test]
     fn test_verify_replay_discard_stable_key_still_catches_real_divergence() {
         // The carve-out must NOT blind the verifier: if the reveal-timing-stable
         // id form ITSELF diverges (a genuinely different card discarded), it is
