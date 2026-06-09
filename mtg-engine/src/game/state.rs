@@ -911,6 +911,11 @@ impl GameState {
     ///
     /// `original_id` must be a card on the stack. Returns the new copy's id, or
     /// `None` if the original is no longer on the stack (the copy "fizzles").
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the original card or the copy's new controller cannot
+    /// be looked up in the entity store.
     pub fn copy_spell_onto_stack(
         &mut self,
         original_id: CardId,
@@ -3955,6 +3960,7 @@ impl GameState {
                     | crate::core::Effect::PreventAllCombatDamageThisTurn { .. }
                     | crate::core::Effect::ConditionalSelfCounter { .. }
                     | crate::core::Effect::Unimplemented { .. }
+                    | crate::core::Effect::NoOp { .. }
                     | crate::core::Effect::ClassLevelUp { .. }
                     | crate::core::Effect::DealDamageXPaid { .. }
                     | crate::core::Effect::DrawCardsXPaid { .. }

@@ -677,6 +677,7 @@ impl GameState {
                             | Effect::Clone { .. }
                             | Effect::Proliferate
                             | Effect::Unimplemented { .. }
+                            | Effect::NoOp { .. }
                             | Effect::ClassLevelUp { .. }
                             | Effect::UnlessCostWrapper { .. }
                             | Effect::GainControl { .. }
@@ -736,6 +737,7 @@ impl GameState {
                 | Effect::ChooseColor { .. }
                 | Effect::Clone { .. }
                 | Effect::Unimplemented { .. }
+                | Effect::NoOp { .. }
                 | Effect::ClassLevelUp { .. }
                 | Effect::Proliferate
                 // Phase-trigger damage: target player resolved at trigger time,
@@ -1337,6 +1339,7 @@ impl GameState {
                 | Effect::PutCounterAll { .. }
                 | Effect::UntapAll { .. }
                 | Effect::Unimplemented { .. }
+                | Effect::NoOp { .. }
                 | Effect::ClassLevelUp { .. }
                 | Effect::EachDamage { .. }
                 | Effect::ForceSacrifice { .. }
@@ -1660,6 +1663,7 @@ impl GameState {
             | Effect::AddTurn { .. }
             | Effect::AddPhase { .. }
             | Effect::Unimplemented { .. }
+            | Effect::NoOp { .. }
             | Effect::ClassLevelUp { .. }
             | Effect::EachDamage { .. }
             | Effect::UnlessCostWrapper { .. }

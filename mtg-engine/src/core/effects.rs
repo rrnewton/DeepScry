@@ -165,9 +165,30 @@ pub enum DynamicAmount {
     TargetManaValue,
 
     /// The amount of damage actually dealt earlier in this same effect
-    /// resolution (read from the spell's damage bookkeeping). Used by Drain
-    /// Life ("you gain life equal to the damage dealt").
+    /// resolution (read from the spell's damage bookkeeping). Used by Spirit
+    /// Link's triggered "you gain that much life".
     DamageDealt,
+
+    /// The damage dealt earlier in this same resolution, CAPPED by the damage
+    /// target's life / loyalty / toughness BEFORE the damage was dealt. Used by
+    /// Drain Life: "you gain life equal to the damage dealt, but not more than
+    /// the player's life total / the planeswalker's loyalty / the creature's
+    /// toughness before the damage was dealt."
+    ///
+    /// This is the semantic outcome of the card's `StoreSVar`/`LimitMax.Limit`
+    /// chain (`DrainedLifeCard = SVar$Y/LimitMax.Limit`, `Y =
+    /// Count$TotalDamageDoneByThisTurn`, `Limit` = the chosen target's
+    /// characteristic): rather than implement a generic SVar-store + per-target
+    /// condition selector, the engine reads the cap directly from the target.
+    /// The cap is captured from the pre-damage snapshot (CR 608.2g/2h —
+    /// last-known information; a player's life has already dropped by the time
+    /// the chained GainLife runs). Reads only public characteristics, so it is
+    /// information-independent (network determinism). Clamped to >= 0.
+    ///
+    /// `cap` is the pre-damage characteristic, locked from the target snapshot
+    /// during target resolution (`None` until locked; treated as "no cap" if it
+    /// somehow reaches resolution unlocked, degrading to plain `DamageDealt`).
+    DamageDealtCappedByTarget { cap: Option<i32> },
 
     /// A [`CountExpression`] evaluated against the recipient player at
     /// resolution time. Used for hand-size-driven life gain such as Ivory
@@ -207,6 +228,17 @@ impl DynamicAmount {
             // Spirit Link: SVar:X:TriggerCount$DamageAmount — the amount of
             // damage the trigger event just reported.
             ("TriggerCount", "DamageAmount") => Some(DynamicAmount::DamageDealt),
+            // Drain Life: SVar:DrainedLifeCard:SVar$Y/LimitMax.Limit, where
+            // Y = Count$TotalDamageDoneByThisTurn and Limit = the target's
+            // toughness / loyalty / life captured by the StoreSVar chain. The
+            // "<damage>/LimitMax.Limit" shape means "damage dealt, capped by the
+            // stored Limit" — i.e. gain = min(damage dealt, target life/loyalty/
+            // toughness before damage). We recognise the `SVar$ <var>/LimitMax.…`
+            // form (tokenized: a `/LimitMax.` segment) rather than the generic
+            // SVar-store machinery.
+            ("SVar", rest) if rest.contains("/LimitMax.") => {
+                Some(DynamicAmount::DamageDealtCappedByTarget { cap: None })
+            }
             // Count$… bodies (hand size, permanent counts, …) drive a dynamic
             // life amount evaluated against the recipient at resolution time.
             // Ivory Tower: SVar:X:Count$ValidHand Card.YouOwn/Minus.4. Delegate
@@ -2190,6 +2222,22 @@ pub enum Effect {
         /// The API type name that was not implemented
         api_type: String,
     },
+
+    /// A recognized effect that INTENTIONALLY does nothing in this engine,
+    /// because its game-relevant outcome is modeled elsewhere. Distinct from
+    /// `Unimplemented` (which signals a real gap and logs a warning) — `NoOp`
+    /// is silent and expected.
+    ///
+    /// Used for Forge's `DB$ StoreSVar`: a pseudo-API that stashes a computed
+    /// value into a card SVar for a later effect to read. Drain Life uses it to
+    /// compute its life-gain cap (`Limit` = target toughness/loyalty/life), but
+    /// this engine reads that cap directly from the target snapshot
+    /// (DynamicAmount::DamageDealtCappedByTarget) rather than maintaining a
+    /// runtime SVar store, so the StoreSVar nodes themselves do nothing.
+    NoOp {
+        /// The API type name, for debug logging only.
+        api_type: String,
+    },
 }
 
 /// Condition for ImmediateTrigger effect
@@ -2340,7 +2388,8 @@ impl Effect {
             // cast-time target — the class_card_id is baked in at ability creation.
             | Effect::ClassLevelUp { .. }
             | Effect::ReturnGraveyardCardToHand { .. }
-            | Effect::Unimplemented { .. } => EffectTargetCategory::NoTargetNeeded,
+            | Effect::Unimplemented { .. }
+            | Effect::NoOp { .. } => EffectTargetCategory::NoTargetNeeded,
 
             // Effects using filters (affect multiple permanents)
             Effect::PumpAllCreatures { .. }

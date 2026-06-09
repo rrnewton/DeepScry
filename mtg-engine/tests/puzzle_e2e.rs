@@ -5262,6 +5262,139 @@ async fn test_chain_lightning_copy_chain_when_opponent_has_red() -> Result<()> {
     Ok(())
 }
 
+/// Drain Life cap at a PLAYER (mtg-501 / mtg-624): "deals X damage to any
+/// target. You gain life equal to the damage dealt, but not more than the
+/// player's life total before the damage was dealt." P0 overkills a 3-life
+/// Player 2 with X=6: Drain Life deals 6 (lethal), but P0 gains only min(6, 3)
+/// = 3 life (the cap). Also guards that the StoreSVar chain is a SILENT no-op
+/// (no "unimplemented effect" warning leaks).
+#[tokio::test]
+async fn test_drain_life_caps_lifegain_at_player_life() -> Result<()> {
+    let cardsfolder = require_cardsfolder();
+
+    let puzzle_path = PathBuf::from("../test_puzzles/drain_life_cap.pzl");
+    let puzzle_contents = std::fs::read_to_string(&puzzle_path)?;
+    let puzzle = PuzzleFile::parse(&puzzle_contents)?;
+
+    let card_db = CardDatabase::new(cardsfolder);
+    let mut game = load_puzzle_into_game(&puzzle, &card_db).await?;
+    game.seed_rng(42);
+
+    let players: Vec<_> = game.players.iter().map(|p| p.id).collect();
+    let p0_id = players[0];
+    let p1_id = players[1];
+
+    let p0_life_before = game.get_player(p0_id)?.life;
+    game.logger.enable_capture();
+
+    // Cast Drain Life (1); X is auto-maxed from available black mana; choose
+    // target index 0 (Player 2 — opponent offered first).
+    let mut controller0 = FixedScriptController::new(p0_id, vec![1, 0]);
+    let mut controller1 = ZeroController::new(p1_id);
+
+    let mut game_loop = GameLoop::new(&mut game).with_verbosity(VerbosityLevel::Verbose);
+    let _result = game_loop.run_turns(&mut controller0, &mut controller1, 1)?;
+
+    let logs = game_loop.game.logger.logs();
+    println!("\n=== Drain Life (player cap) logs ===");
+    for log in logs.iter() {
+        if log.message.contains("Drain Life") || log.message.contains("gains") || log.message.contains("StoreSVar") {
+            println!("{}", log.message);
+        }
+    }
+    println!("=== end logs ===\n");
+
+    // The StoreSVar chain must be a silent no-op (modeled via the snapshot cap).
+    assert!(
+        !logs.iter().any(|e| e.message.contains("StoreSVar")),
+        "Drain Life's StoreSVar chain must NOT surface an 'unimplemented effect' warning. Logs: {:?}",
+        logs.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+    // Life gain is capped at Player 2's pre-damage life (3), NOT the 6 damage dealt.
+    assert!(
+        logs.iter().any(|e| e.message.contains("gains 3 life")),
+        "Drain Life must gain exactly 3 (capped at the 3-life target), not the 6 damage dealt. Logs: {:?}",
+        logs.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+    // P0 is at +3 from its pre-cast life (mana payment does not change life).
+    assert_eq!(
+        game_loop.game.get_player(p0_id)?.life,
+        p0_life_before + 3,
+        "Caster must end at +3 life (the capped drain)"
+    );
+
+    Ok(())
+}
+
+/// Drain Life cap at a CREATURE (mtg-501 / mtg-624): the cap is the creature's
+/// toughness before damage. P0 overkills a 2/2 Grizzly Bears with X=4: the Bears
+/// die, but P0 gains only min(4, toughness 2) = 2.
+#[tokio::test]
+async fn test_drain_life_caps_lifegain_at_creature_toughness() -> Result<()> {
+    let cardsfolder = require_cardsfolder();
+
+    let puzzle_path = PathBuf::from("../test_puzzles/drain_life_creature_cap.pzl");
+    let puzzle_contents = std::fs::read_to_string(&puzzle_path)?;
+    let puzzle = PuzzleFile::parse(&puzzle_contents)?;
+
+    let card_db = CardDatabase::new(cardsfolder);
+    let mut game = load_puzzle_into_game(&puzzle, &card_db).await?;
+    game.seed_rng(42);
+
+    let players: Vec<_> = game.players.iter().map(|p| p.id).collect();
+    let p0_id = players[0];
+    let p1_id = players[1];
+
+    let p0_life_before = game.get_player(p0_id)?.life;
+    game.logger.enable_capture();
+
+    // Cast Drain Life (1); the only legal target is the Grizzly Bears (index 0).
+    let mut controller0 = FixedScriptController::new(p0_id, vec![1, 0]);
+    let mut controller1 = ZeroController::new(p1_id);
+
+    let mut game_loop = GameLoop::new(&mut game).with_verbosity(VerbosityLevel::Verbose);
+    let _result = game_loop.run_turns(&mut controller0, &mut controller1, 1)?;
+
+    let logs = game_loop.game.logger.logs();
+    println!("\n=== Drain Life (creature cap) logs ===");
+    for log in logs.iter() {
+        if log.message.contains("Drain Life")
+            || log.message.contains("gains")
+            || log.message.contains("Grizzly")
+            || log.message.contains("StoreSVar")
+        {
+            println!("{}", log.message);
+        }
+    }
+    println!("=== end logs ===\n");
+
+    assert!(
+        !logs.iter().any(|e| e.message.contains("StoreSVar")),
+        "Drain Life's StoreSVar chain must be a silent no-op. Logs: {:?}",
+        logs.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+    // The Bears die (4 >= 2 toughness).
+    assert!(
+        logs.iter()
+            .any(|e| e.message.contains("Grizzly Bears") && e.message.contains("graveyard")),
+        "Grizzly Bears must die to the 4 damage. Logs: {:?}",
+        logs.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+    // Gain is capped at the Bears' toughness (2), NOT the 4 damage dealt.
+    assert!(
+        logs.iter().any(|e| e.message.contains("gains 2 life")),
+        "Drain Life must gain exactly 2 (capped at toughness 2), not the 4 damage dealt. Logs: {:?}",
+        logs.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+    assert_eq!(
+        game_loop.game.get_player(p0_id)?.life,
+        p0_life_before + 2,
+        "Caster must end at +2 life (the capped drain)"
+    );
+
+    Ok(())
+}
+
 /// Black Vise (mtg-cuf0e): at the beginning of the CHOSEN player's upkeep,
 /// deals max(0, hand-4) damage to that player; nothing on the non-chosen
 /// player's upkeep.

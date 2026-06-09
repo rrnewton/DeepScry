@@ -1120,6 +1120,9 @@ impl<'a> GameLoop<'a> {
                 let message = format!("{source_name} ({source_id}) has unimplemented effect '{api_type}'");
                 self.game.logger.gamelog(&message);
             }
+            // NoOp is an INTENTIONAL no-op (e.g. StoreSVar): no gamelog line, in
+            // contrast to Unimplemented which surfaces the gap.
+            Effect::NoOp { .. } => {}
             // ClassLevelUp logging is handled inside execute_class_level_up
             // (the level advance is logged there with full context).
             Effect::ClassLevelUp { .. } => {}

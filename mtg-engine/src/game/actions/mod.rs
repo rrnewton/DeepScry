@@ -10,6 +10,20 @@ use crate::game::GameState;
 use crate::zones::Zone;
 use crate::{MtgError, Result};
 
+/// Pre-resolution snapshot of a chosen target's characteristics, captured BEFORE
+/// any effect in a spell's resolution runs (CR 608.2g/2h — last-known
+/// information). Used to lock dynamic-amount life-gain to the target's state as
+/// it existed before the spell modified it:
+/// - `power` / `mana_value` — Swords to Plowshares / Divine Offering.
+/// - `drain_cap` — Drain Life's cap: the target's toughness (creature) /
+///   loyalty (planeswalker) / life (player) before the damage was dealt.
+#[derive(Debug, Clone, Copy)]
+struct TargetSnapshot {
+    power: i32,
+    mana_value: i32,
+    drain_cap: i32,
+}
+
 /// Expand effects with `ALL_PLAYERS_ID` player target into one effect per player.
 /// For effects that don't use the all-players sentinel, returns the original effect unchanged.
 fn expand_all_players_effect(effect: &Effect, player_ids: &[PlayerId]) -> smallvec::SmallVec<[Effect; 4]> {
@@ -91,6 +105,7 @@ fn expand_all_players_effect(effect: &Effect, player_ids: &[PlayerId]) -> smallv
         | Effect::PreventAllCombatDamageThisTurn { .. }
         | Effect::ConditionalSelfCounter { .. }
         | Effect::Unimplemented { .. }
+        | Effect::NoOp { .. }
         | Effect::GainLifeDynamic { .. }
         | Effect::ClassLevelUp { .. }
         | Effect::UnlessCostWrapper { .. } => false,
@@ -214,6 +229,7 @@ fn expand_all_players_effect(effect: &Effect, player_ids: &[PlayerId]) -> smallv
             | Effect::PreventAllCombatDamageThisTurn { .. }
             | Effect::ConditionalSelfCounter { .. }
             | Effect::Unimplemented { .. }
+            | Effect::NoOp { .. }
             | Effect::GainLifeDynamic { .. }
             | Effect::ClassLevelUp { .. }
             | Effect::UnlessCostWrapper { .. } => unreachable!(),
@@ -6215,7 +6231,11 @@ impl GameState {
                                 return Ok(());
                             }
                         };
-                        let original_owner = self.cards.get(original_id).map(|c| c.owner).unwrap_or(PlayerId::new(0));
+                        let original_owner = self
+                            .cards
+                            .get(original_id)
+                            .map(|c| c.owner)
+                            .unwrap_or_else(|_| PlayerId::new(0));
                         let copy_controller = controller
                             .as_deref()
                             .and_then(|s| s.parse::<u32>().ok())
@@ -6336,10 +6356,7 @@ impl GameState {
                         // when the cache is unbuilt). Pool mana (floating rituals)
                         // is included via can_pay_with_pool. This is a pure read —
                         // no borrow conflict with `&mut self`.
-                        let pool = self
-                            .try_get_player(payer_id)
-                            .map(|p| p.mana_pool.clone())
-                            .unwrap_or_default();
+                        let pool = self.try_get_player(payer_id).map(|p| p.mana_pool).unwrap_or_default();
                         let mut mana_engine = crate::game::mana_engine::ManaEngine::new();
                         mana_engine.update(self, payer_id);
                         mana_engine.can_pay_with_pool(mana_cost, &pool)
@@ -6512,6 +6529,11 @@ impl GameState {
                     "WARNING: Effect '{}' is not yet implemented - resolving as no-op",
                     api_type
                 ));
+            }
+            Effect::NoOp { api_type } => {
+                // Intentional no-op (e.g. StoreSVar — the value it would stash is
+                // modeled directly elsewhere). Silent: no warning, no gamelog.
+                log::debug!(target: "actions", "NoOp effect '{}' (intentional)", api_type);
             }
 
             // XPaid variants should be resolved to concrete variants before execution
@@ -9873,7 +9895,7 @@ impl GameState {
                 return false;
             }
             // Tap each chosen source, accumulating mana into the pool.
-            let mut remaining_hint = cost.clone();
+            let mut remaining_hint = *cost;
             for source_id in tap_order {
                 if self
                     .tap_for_mana_and_update_hint(player_id, source_id, &mut remaining_hint)
@@ -9885,10 +9907,12 @@ impl GameState {
         }
 
         // Deduct the cost from the pool (snapshotting for undo via pay_ability_cost).
-        self.pay_ability_cost(player_id, CardId::new(0), &crate::core::Cost::Mana(cost.clone()))
+        self.pay_ability_cost(player_id, CardId::new(0), &crate::core::Cost::Mana(*cost))
             .is_ok()
     }
 
+    /// # Errors
+    ///
     /// Returns an error if the cost cannot be paid.
     pub fn pay_ability_cost(&mut self, player_id: PlayerId, card_id: CardId, cost: &crate::core::Cost) -> Result<()> {
         use crate::core::{Cost, ManaCost};
@@ -10482,9 +10506,26 @@ impl GameState {
     /// `GainLifeDynamic` reads the targeted permanent's power / mana value *as
     /// it existed on the battlefield with its continuous buffs applied*, before
     /// a preceding exile/destroy effect strips those buffs.
-    fn snapshot_target_amounts(&self, chosen_targets: &[CardId]) -> std::collections::HashMap<CardId, (i32, i32)> {
+    fn snapshot_target_amounts(&self, chosen_targets: &[CardId]) -> std::collections::HashMap<CardId, TargetSnapshot> {
+        use crate::core::CounterType;
         let mut snapshots = std::collections::HashMap::with_capacity(chosen_targets.len());
         for &target in chosen_targets {
+            // A player-target sentinel CardId is not a real card: its only
+            // relevant pre-damage characteristic is the player's LIFE total
+            // (Drain Life's cap when the target is a player).
+            if let Some(player_id) = crate::core::player_target_from_sentinel(target) {
+                if let Ok(p) = self.get_player(player_id) {
+                    snapshots.insert(
+                        target,
+                        TargetSnapshot {
+                            power: 0,
+                            mana_value: 0,
+                            drain_cap: p.life,
+                        },
+                    );
+                }
+                continue;
+            }
             if let Some(card) = self.cards.try_get(target) {
                 // Use the CR 613 layer system (effective power) so continuous
                 // static buffs that apply while on the battlefield are counted
@@ -10494,7 +10535,23 @@ impl GameState {
                     .get_effective_power(target)
                     .unwrap_or_else(|_| i32::from(card.current_power()));
                 let mana_value = i32::from(card.mana_cost.cmc());
-                snapshots.insert(target, (power, mana_value));
+                // Drain Life cap: the target's pre-damage toughness (creature) /
+                // loyalty (planeswalker). "before the damage was dealt" — read
+                // now, before any effect in this resolution runs (CR 608.2g/2h).
+                let drain_cap = if card.is_planeswalker() {
+                    i32::from(card.get_counter(CounterType::Loyalty))
+                } else {
+                    self.get_effective_toughness(target)
+                        .unwrap_or_else(|_| i32::from(card.current_toughness()))
+                };
+                snapshots.insert(
+                    target,
+                    TargetSnapshot {
+                        power,
+                        mana_value,
+                        drain_cap,
+                    },
+                );
             }
         }
         snapshots
@@ -10507,7 +10564,7 @@ impl GameState {
     #[allow(clippy::wildcard_enum_match_arm)]
     fn resolve_dynamic_gainlife_snapshot(
         effect: Effect,
-        snapshots: &std::collections::HashMap<CardId, (i32, i32)>,
+        snapshots: &std::collections::HashMap<CardId, TargetSnapshot>,
     ) -> Effect {
         use crate::core::DynamicAmount;
         match effect {
@@ -10517,10 +10574,20 @@ impl GameState {
                 reference,
             } => {
                 let locked = match (&amount, snapshots.get(&reference)) {
-                    (DynamicAmount::TargetPower, Some((power, _))) => DynamicAmount::Fixed((*power).max(0)),
-                    (DynamicAmount::TargetManaValue, Some((_, mana_value))) => DynamicAmount::Fixed(*mana_value),
-                    // No snapshot (reference not a chosen target) or DamageDealt:
-                    // keep the dynamic amount for execute-time resolution.
+                    (DynamicAmount::TargetPower, Some(snap)) => DynamicAmount::Fixed(snap.power.max(0)),
+                    (DynamicAmount::TargetManaValue, Some(snap)) => DynamicAmount::Fixed(snap.mana_value),
+                    // Drain Life: lock the cap to the target's PRE-damage
+                    // life/loyalty/toughness now; the damage-dealt term is read
+                    // at execute time (it isn't known until the chained
+                    // DealDamage has run). gain = min(damage dealt, cap).
+                    (DynamicAmount::DamageDealtCappedByTarget { .. }, Some(snap)) => {
+                        DynamicAmount::DamageDealtCappedByTarget {
+                            cap: Some(snap.drain_cap.max(0)),
+                        }
+                    }
+                    // No snapshot (reference not a chosen target) or plain
+                    // DamageDealt: keep the dynamic amount for execute-time
+                    // resolution.
                     _ => amount,
                 };
                 Effect::GainLifeDynamic {
@@ -10560,11 +10627,21 @@ impl GameState {
                 .map(|c| i32::from(c.mana_cost.cmc()))
                 .unwrap_or(0),
             DynamicAmount::DamageDealt => {
-                // Damage-dealt-driven life gain (Drain Life) is resolved by the
-                // damage effect path, which fills in a concrete amount before
-                // this effect runs; if it reaches here unresolved, gain 0.
-                log::debug!("resolve_dynamic_amount: DamageDealt reached with no concrete value; using 0");
-                0
+                // The damage dealt so far in THIS resolution (the running total
+                // accumulated by deal_damage; Some(..) during the effect loop,
+                // before the deals-damage trigger takes it). Clamp >= 0.
+                self.damage_dealt_by_source.unwrap_or(0).max(0)
+            }
+            DynamicAmount::DamageDealtCappedByTarget { cap } => {
+                // Drain Life: gain = min(damage dealt this resolution, cap),
+                // where cap = the target's pre-damage life/loyalty/toughness
+                // (locked into the snapshot during target resolution). An
+                // unlocked cap (None) degrades to plain damage-dealt.
+                let dealt = self.damage_dealt_by_source.unwrap_or(0).max(0);
+                match cap {
+                    Some(c) => dealt.min((*c).max(0)),
+                    None => dealt,
+                }
             }
             // Count$… expression evaluated against the recipient player (e.g.
             // Ivory Tower: cards in YOUR hand minus 4). Only public state (hand

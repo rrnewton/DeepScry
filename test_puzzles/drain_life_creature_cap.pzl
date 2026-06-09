@@ -1,0 +1,24 @@
+[metadata]
+Name:Drain Life cap (overkill a small creature)
+Goal:Win
+Turns:2
+Difficulty:Easy
+Description:P0 casts Drain Life ({X}{1}{B}) at a 2/2 Grizzly Bears. With 6 Swamps the engine spends {X}{1}{B} at X=4, so Drain Life deals 4 to the Bears (it dies to lethal) but P0 gains only min(4, toughness 2) = 2 life — the cap is the creature's toughness before damage (mtg-624). NO "unimplemented effect 'StoreSVar'" warning.
+
+[state]
+turn=2
+activeplayer=p0
+activephase=MAIN1
+p0life=10
+p0hand=Drain Life
+p0library=Swamp; Swamp
+p0graveyard=
+p0battlefield=Swamp; Swamp; Swamp; Swamp; Swamp; Swamp
+p0exile=
+
+p1life=20
+p1hand=
+p1library=Swamp; Swamp; Swamp
+p1graveyard=
+p1battlefield=Grizzly Bears
+p1exile=

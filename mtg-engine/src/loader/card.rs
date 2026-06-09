@@ -2062,6 +2062,7 @@ impl CardDefinition {
             dynamic @ (DynamicAmount::TargetPower
             | DynamicAmount::TargetManaValue
             | DynamicAmount::DamageDealt
+            | DynamicAmount::DamageDealtCappedByTarget { .. }
             | DynamicAmount::Count(_)) => dynamic,
         };
 

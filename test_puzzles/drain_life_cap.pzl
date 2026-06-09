@@ -1,0 +1,24 @@
+[metadata]
+Name:Drain Life cap (overkill a low-life player)
+Goal:Win
+Turns:2
+Difficulty:Easy
+Description:P0 casts Drain Life ({X}{1}{B}) at a 3-life Player 2. Drain Life "deals X damage to any target. You gain life equal to the damage dealt, but not more than the player's life total / the planeswalker's loyalty / the creature's toughness before the damage was dealt." With 8 Swamps the engine spends {X}{1}{B} at X=6, so Drain Life deals 6 to Player 2 (3 -> -3, lethal) but P0 gains only min(6, 3) = 3 life — the cap. The StoreSVar chain that computes the cap is modeled directly via DynamicAmount::DamageDealtCappedByTarget (mtg-624), so there is NO "unimplemented effect 'StoreSVar'" warning.
+
+[state]
+turn=2
+activeplayer=p0
+activephase=MAIN1
+p0life=10
+p0hand=Drain Life
+p0library=Swamp; Swamp
+p0graveyard=
+p0battlefield=Swamp; Swamp; Swamp; Swamp; Swamp; Swamp; Swamp; Swamp
+p0exile=
+
+p1life=3
+p1hand=
+p1library=Swamp; Swamp; Swamp
+p1graveyard=
+p1battlefield=
+p1exile=

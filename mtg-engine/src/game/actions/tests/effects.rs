@@ -4172,6 +4172,70 @@ mod tests {
         );
     }
 
+    /// Card compat: Drain Life (cardsfolder/d/drain_life.txt) — mtg-501 / mtg-624
+    ///
+    /// Script: ManaCost:X 1 B / Types:Sorcery
+    ///   A:SP$ StoreSVar | ... | SubAbility$ StoreTgtPW       (cap-computing chain)
+    ///   SVar:DBDamage:DB$ DealDamage | Defined$ Targeted | NumDmg$ X | SubAbility$ DBGainLife
+    ///   SVar:DBGainLife:DB$ GainLife | Defined$ You | LifeAmount$ DrainedLifeCard
+    ///   SVar:DrainedLifeCard:SVar$Y/LimitMax.Limit
+    ///
+    /// Parser shape: the StoreSVar head + chained StoreSVar nodes lower to silent
+    /// Effect::NoOp (the cap is modeled directly, not via a runtime SVar store);
+    /// the chain produces a DealDamage (X) and a GainLifeDynamic whose amount is
+    /// DynamicAmount::DamageDealtCappedByTarget — "gain = min(damage dealt,
+    /// target life/loyalty/toughness)". All queries are tokenized.
+    #[test]
+    fn test_card_compat_drain_life() {
+        use crate::core::{DynamicAmount, Effect};
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("../cardsfolder/d/drain_life.txt");
+        if !path.exists() {
+            eprintln!("Skipping: cardsfolder not present at {:?}", path);
+            return;
+        }
+        let def = crate::loader::CardLoader::load_from_file(&path).expect("Drain Life should load");
+        assert_eq!(def.name.as_str(), "Drain Life");
+        assert!(def.types.contains(&CardType::Sorcery), "Drain Life must be a Sorcery");
+
+        let card = def.instantiate(crate::core::CardId::new(1), crate::core::PlayerId::new(0));
+
+        // The StoreSVar chain lowers to silent NoOp nodes (NOT Unimplemented).
+        assert!(
+            card.effects.iter().any(|e| matches!(e, Effect::NoOp { .. })),
+            "Drain Life's StoreSVar chain must lower to Effect::NoOp (silent), not Unimplemented. Got: {:?}",
+            card.effects
+        );
+        assert!(
+            !card.effects.iter().any(|e| matches!(e, Effect::Unimplemented { .. })),
+            "Drain Life must NOT contain an Unimplemented effect (StoreSVar is a recognized no-op). Got: {:?}",
+            card.effects
+        );
+        // The damage half: `NumDmg$ X` lowers to DealDamageXPaid before casting
+        // (X is resolved to a concrete DealDamage amount at cast time).
+        assert!(
+            card.effects
+                .iter()
+                .any(|e| matches!(e, Effect::DealDamage { .. } | Effect::DealDamageXPaid { .. })),
+            "Drain Life must deal X damage (DealDamageXPaid). Got: {:?}",
+            card.effects
+        );
+        // The life-gain half: GainLifeDynamic capped by the target characteristic.
+        assert!(
+            card.effects.iter().any(|e| matches!(
+                e,
+                Effect::GainLifeDynamic {
+                    amount: DynamicAmount::DamageDealtCappedByTarget { .. },
+                    ..
+                }
+            )),
+            "Drain Life must gain life via DamageDealtCappedByTarget (min of damage dealt and target \
+             life/loyalty/toughness). Got: {:?}",
+            card.effects
+        );
+    }
+
     #[test]
     fn test_card_compat_disintegrate() {
         use crate::core::Effect;

@@ -1827,6 +1827,17 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
             }
         }
 
+        // `StoreSVar` (Forge pseudo-API: stash a computed value into a card SVar
+        // for a later effect to read) is an INTENTIONAL no-op in this engine.
+        // Drain Life uses a StoreSVar chain only to compute its life-gain cap
+        // (`Limit` = target toughness/loyalty/life); we read that cap directly
+        // from the pre-damage target snapshot (DamageDealtCappedByTarget) instead
+        // of maintaining a runtime SVar store, so the StoreSVar nodes do nothing.
+        // Emit NoOp (silent) rather than Unimplemented (which warns about a gap).
+        ApiType::Unknown(ref s) if s == "StoreSVar" => Some(Effect::NoOp {
+            api_type: "StoreSVar".to_string(),
+        }),
+
         // Recognized but not yet implemented API types produce an Unimplemented effect
         // so that spell resolution can warn instead of silently no-op'ing
         _ => {
