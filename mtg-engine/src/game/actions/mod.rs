@@ -712,6 +712,30 @@ impl GameState {
             return Ok(());
         }
 
+        // CR 707.10c / 111.7: a copy of a non-permanent spell (created by
+        // `copy_spell_onto_stack`, flagged `is_token`) is a game object that
+        // ceases to exist as a state-based action once it leaves the stack — it
+        // does NOT go to the GRAVEYARD as a phantom card (which would wrongly
+        // feed graveyard-count / flashback / threshold effects). Entities are
+        // never deleted from the store in this engine (see EntityStore::remove),
+        // so the closest faithful sink is Exile: the copy leaves the stack and
+        // is gone from play. (A copy of a PERMANENT spell resolves to the
+        // battlefield as a normal token, so we only intercept the
+        // would-go-to-graveyard case.)
+        let is_spell_copy =
+            destination == Zone::Graveyard && self.cards.get(card_id).map(|c| c.is_token).unwrap_or(false);
+        if is_spell_copy {
+            log::debug!(
+                target: "resolve_spell",
+                "resolve_spell_finalize: spell copy {} ceases to exist (CR 707.10c) -> Exile",
+                card_id.as_u32()
+            );
+            self.spell_targets.retain(|(id, _)| *id != card_id);
+            let owner = self.cards.get(card_id)?.owner;
+            self.move_card(card_id, Zone::Stack, Zone::Exile, owner)?;
+            return Ok(());
+        }
+
         // Move card from stack to destination
         let owner = self.cards.get(card_id)?.owner;
         self.move_card(card_id, Zone::Stack, destination, owner)?;
@@ -3017,20 +3041,20 @@ impl GameState {
                 // Resolve payer reference to concrete PlayerId
                 let resolved_payer = match unless_cost.payer.as_str() {
                     "You" => card_owner,
-                    "TargetedController" => {
-                        // Get controller of the targeted permanent/spell
-                        // Use last_resolved_target if available, otherwise fall back to opponent
-                        if let Some(target_id) = last_resolved_target {
-                            self.cards
-                                .get(*target_id)
-                                .map(|c| c.controller)
-                                .unwrap_or_else(|_| opponent_id.unwrap_or(card_owner))
-                        } else if let Some(opp) = opponent_id {
-                            opp
-                        } else {
-                            card_owner
-                        }
-                    }
+                    // "TargetedController" = the controller of the targeted
+                    // permanent/spell. "TargetedOrController" (Chain Lightning's
+                    // `UnlessPayer$ TargetedOrController`) means "if the target is
+                    // a player, that player; otherwise the target's controller" —
+                    // both resolve via the last-resolved target. A player target
+                    // is carried as a sentinel CardId, so decode that first; only
+                    // a real permanent target needs the cards lookup.
+                    "TargetedController" | "TargetedOrController" => last_resolved_target
+                        .and_then(|target_id| {
+                            crate::core::player_target_from_sentinel(target_id)
+                                .or_else(|| self.cards.get(target_id).map(|c| c.controller).ok())
+                        })
+                        .or(opponent_id)
+                        .unwrap_or(card_owner),
                     "Player" | "Opponent" => opponent_id.unwrap_or(card_owner),
                     _ => card_owner, // Default to spell controller
                 };
@@ -3040,6 +3064,24 @@ impl GameState {
                     cost: unless_cost.cost.clone(),
                     payer: resolved_payer.as_u32().to_string(), // Store as numeric ID string
                     switched: unless_cost.switched,
+                };
+
+                // If the inner effect copies the parent spell (Chain Lightning),
+                // its `Controller$ TargetedOrController` is the SAME player as the
+                // payer (the one paying {R}{R} controls the copy). The recursive
+                // resolve above can't resolve a player reference for
+                // CopySpellAbility, so pin it to the concrete payer id here.
+                let resolved_inner = match resolved_inner {
+                    Effect::CopySpellAbility {
+                        may_choose_targets,
+                        defined_source,
+                        ..
+                    } => Effect::CopySpellAbility {
+                        may_choose_targets,
+                        defined_source,
+                        controller: Some(resolved_payer.as_u32().to_string()),
+                    },
+                    other => other,
                 };
 
                 Effect::UnlessCostWrapper {
@@ -6144,31 +6186,60 @@ impl GameState {
                 controller,
             } => {
                 // CopySpellAbility is used in two contexts:
-                // 1. Inside a delayed trigger (handled by DelayedEffect::CopySpellAbility)
-                // 2. As a SubAbility of another effect (e.g., Chain Lightning)
+                // 1. Inside a delayed trigger (Jeong Jeong) — handled by
+                //    DelayedEffect::CopySpellAbility, NOT here.
+                // 2. As a SubAbility of a resolving spell (Chain Lightning:
+                //    "...may pay {R}{R}. If the player does, they may copy this
+                //    spell and may choose a new target for that copy").
                 //
-                // For SubAbility use (Defined$ Parent), we need to copy the current spell.
-                // This is complex because we need to:
-                // - Track the currently resolving spell
-                // - Clone its effects with potentially new targets
-                // - Put the copy on the stack under a different controller
-                //
-                // For now, log that copy would happen but don't actually create it.
-                // The opponent pays the cost but the copy is not created - this is
-                // a gameplay limitation noted in the tracking issue.
-                //
-                // TODO(mtg-152): Implement full CopySpellAbility for SubAbility context
+                // The Parent path copies the currently-resolving spell. By the
+                // time this SubAbility runs, the source spell is still on the
+                // stack (it leaves in resolve_spell_finalize, AFTER all its
+                // effects) and is recorded in `current_damage_source` (set for
+                // every resolving spell in resolve_spell_execute_effects). We
+                // reuse the shared `copy_spell_onto_stack` helper (CR 707.10).
                 use crate::core::effects::CopySpellSource;
                 match defined_source {
                     CopySpellSource::Parent => {
-                        log::info!(
-                            target: "actions",
-                            "CopySpellAbility: would copy parent spell (e.g., Chain Lightning). \
-                             may_choose_targets={}, controller={:?}. \
-                             Copy not yet implemented - see mtg-152",
-                            may_choose_targets,
-                            controller
-                        );
+                        // The copy's controller — resolved to a concrete numeric
+                        // PlayerId in resolve_effect_target (UnlessCostWrapper arm)
+                        // before we get here. Falls back to the resolving spell's
+                        // owner if unresolved.
+                        let original_id = match self.current_damage_source {
+                            Some(id) => id,
+                            None => {
+                                log::warn!(
+                                    target: "copy_spell",
+                                    "CopySpellAbility(Parent): no resolving spell tracked; cannot copy"
+                                );
+                                return Ok(());
+                            }
+                        };
+                        let original_owner = self.cards.get(original_id).map(|c| c.owner).unwrap_or(PlayerId::new(0));
+                        let copy_controller = controller
+                            .as_deref()
+                            .and_then(|s| s.parse::<u32>().ok())
+                            .map(PlayerId::new)
+                            .unwrap_or(original_owner);
+
+                        // MayChooseTarget$ True ("may choose a new target for that
+                        // copy"): the controller of the copy may retarget. The
+                        // canonical Chain Lightning play — and the only meaningful
+                        // retarget for a single-target burn copied by the OTHER
+                        // player — is to aim the copy back at the original caster
+                        // (a player target). This is a deterministic, information-
+                        // independent choice (uses only public stack/controller
+                        // facts), so it is identical on server and client. When
+                        // retargeting is not allowed the copy keeps the original
+                        // targets (CR 707.10a).
+                        let new_targets = if *may_choose_targets && copy_controller != original_owner {
+                            Some(smallvec::smallvec![crate::core::player_as_target_sentinel(
+                                original_owner
+                            )])
+                        } else {
+                            None
+                        };
+                        self.copy_spell_onto_stack(original_id, copy_controller, new_targets)?;
                     }
                     CopySpellSource::TriggeredSpellAbility => {
                         // This case should go through DelayedEffect, but log if we get here
@@ -6255,19 +6326,23 @@ impl GameState {
                             .unwrap_or(false)
                     }
                     UnlessCostType::Mana(mana_cost) => {
-                        // For mana costs, check total mana available
-                        // Simplified: just check if generic cost <= lands
-                        let lands_count = self
-                            .battlefield
-                            .cards
-                            .iter()
-                            .filter(|&&cid| {
-                                self.cards
-                                    .get(cid)
-                                    .is_ok_and(|c| c.is_land() && c.controller == payer_id && !c.tapped)
-                            })
-                            .count();
-                        lands_count >= mana_cost.generic as usize
+                        // Check the payer can actually produce this cost, honouring
+                        // COLORED requirements (Chain Lightning's `UnlessCost$ R R`
+                        // is {R}{R}, generic=0 — the old "generic <= untapped lands"
+                        // check ignored color and treated 0 generic as trivially
+                        // payable). Reuse the ManaEngine affordability resolver,
+                        // built read-only from the current state (it reads the
+                        // per-player mana cache, falling back to a battlefield scan
+                        // when the cache is unbuilt). Pool mana (floating rituals)
+                        // is included via can_pay_with_pool. This is a pure read —
+                        // no borrow conflict with `&mut self`.
+                        let pool = self
+                            .try_get_player(payer_id)
+                            .map(|p| p.mana_pool.clone())
+                            .unwrap_or_default();
+                        let mut mana_engine = crate::game::mana_engine::ManaEngine::new();
+                        mana_engine.update(self, payer_id);
+                        mana_engine.can_pay_with_pool(mana_cost, &pool)
                     }
                     UnlessCostType::Reveal { count, card_type: _ } => {
                         // Check if player has enough cards in hand to reveal
@@ -6337,11 +6412,14 @@ impl GameState {
                             log::debug!("UnlessCost: Sacrifice payment not yet implemented");
                             false
                         }
-                        UnlessCostType::Mana(_mana_cost) => {
-                            // TODO: Implement mana payment
-                            // For now, assume payment succeeds if can_pay was true
-                            log::debug!("UnlessCost: Mana payment simplified (auto-success)");
-                            true
+                        UnlessCostType::Mana(mana_cost) => {
+                            // Actually tap mana sources and deduct the cost. This
+                            // replaces the old auto-success (which neither tapped
+                            // nor deducted) — required for correctness AND for a
+                            // recursive copy chain (Chain Lightning, mtg-152) to
+                            // TERMINATE: each copy costs {R}{R} again, so the
+                            // chain stops once a player runs out of red sources.
+                            self.pay_mana_cost_by_tapping(payer_id, mana_cost)
                         }
                         UnlessCostType::Reveal { count: _, card_type: _ } => {
                             // Reveal doesn't consume cards, just show them
@@ -9755,6 +9833,62 @@ impl GameState {
     ///
     /// # Errors
     ///
+    /// Pay a mana cost for `player_id` by automatically tapping their mana
+    /// sources, then deducting the cost from their pool. Returns `true` if the
+    /// cost was fully paid, `false` (with no state change to the pool balance)
+    /// otherwise.
+    ///
+    /// This is the controller-free auto-payment used for OPTIONAL mana costs
+    /// that are decided during effect resolution rather than during casting —
+    /// notably the "may pay {R}{R}" gate on a `CopySpellAbility` SubAbility
+    /// (Chain Lightning, mtg-152). The casting path performs the same
+    /// compute-tap-order → tap-each-source → deduct-from-pool dance via the
+    /// controller's `choose_mana_sources_to_pay`; here we pick sources greedily
+    /// (the GreedyManaResolver tap order) since there is no priority window to
+    /// route the choice through. The source selection is a pure function of the
+    /// payer's own public mana sources, so it is identical on server and client
+    /// (no information leakage, deterministic — CLAUDE.md network invariant).
+    ///
+    /// Crucially this DEDUCTS real mana, so a recursive copy chain (Chain
+    /// Lightning copied back and forth) terminates when a player runs out of
+    /// red sources, exactly as it would in paper.
+    pub fn pay_mana_cost_by_tapping(&mut self, player_id: PlayerId, cost: &crate::core::ManaCost) -> bool {
+        use crate::game::mana_payment::{GreedyManaResolver, ManaPaymentResolver};
+
+        // If the pool already covers it, just deduct (no tapping needed).
+        let pool_covers = self
+            .try_get_player(player_id)
+            .map(|p| p.mana_pool.can_pay(cost))
+            .unwrap_or(false);
+        if !pool_covers {
+            // Compute which sources to tap. Build the resolver state read-only,
+            // then collect the tap order into an OWNED Vec so the immutable
+            // borrow of `self` is released before we start tapping.
+            let mut mana_engine = crate::game::mana_engine::ManaEngine::new();
+            mana_engine.update(self, player_id);
+            let mut tap_order: Vec<CardId> = Vec::new();
+            let resolver = GreedyManaResolver::new();
+            let ok = resolver.compute_tap_order(cost, mana_engine.all_sources(), &mut tap_order);
+            if !ok {
+                return false;
+            }
+            // Tap each chosen source, accumulating mana into the pool.
+            let mut remaining_hint = cost.clone();
+            for source_id in tap_order {
+                if self
+                    .tap_for_mana_and_update_hint(player_id, source_id, &mut remaining_hint)
+                    .is_err()
+                {
+                    return false;
+                }
+            }
+        }
+
+        // Deduct the cost from the pool (snapshotting for undo via pay_ability_cost).
+        self.pay_ability_cost(player_id, CardId::new(0), &crate::core::Cost::Mana(cost.clone()))
+            .is_ok()
+    }
+
     /// Returns an error if the cost cannot be paid.
     pub fn pay_ability_cost(&mut self, player_id: PlayerId, card_id: CardId, cost: &crate::core::Cost) -> Result<()> {
         use crate::core::{Cost, ManaCost};

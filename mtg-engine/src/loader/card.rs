@@ -2013,10 +2013,17 @@ impl CardDefinition {
             ApiType::ImmediateTrigger => params_to_immediate_trigger_with_svars(&sub_params, &self.svars),
             _ => params_to_effect_with_svars(&sub_params, &self.svars),
         };
+        // A SUB-ability can carry its own `UnlessCost$` gate (e.g. Chain
+        // Lightning's `SVar:DBCopy1:DB$ CopySpellAbility | ... | UnlessCost$ R R
+        // | UnlessPayer$ TargetedOrController | UnlessSwitched$ True`). The
+        // head-ability path applies this via `params_to_effect_with_unless`, but
+        // the SVar-aware sub-ability builders above do NOT, so without this wrap
+        // the optional "may pay {R}{R}" gate was silently dropped and the copy
+        // fired unconditionally (mtg-152). Wrap each sub-effect the same way.
         if let Some(effect) = self.gain_life_dynamic_from_params(&sub_params) {
-            effects.push(effect);
+            effects.push(super::effect_converter::wrap_with_unless_cost(effect, &sub_params));
         } else if let Some(effect) = sub_effect {
-            effects.push(effect);
+            effects.push(super::effect_converter::wrap_with_unless_cost(effect, &sub_params));
         }
 
         // Recursively follow further SubAbility chains

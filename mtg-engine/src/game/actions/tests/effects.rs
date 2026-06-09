@@ -4150,18 +4150,24 @@ mod tests {
             "Chain Lightning must produce a fixed 3-damage DealDamage. Got: {:?}",
             card.effects
         );
-        // The optional copy chain lowers to a Parent-source CopySpellAbility.
-        // (Copy itself is the documented engine gap mtg-152; the misleading
-        // "copies spell" gamelog is suppressed for the Parent path in logging.rs.)
-        assert!(
-            card.effects.iter().any(|e| matches!(
+        // The optional copy chain lowers to a Parent-source CopySpellAbility,
+        // WRAPPED in an UnlessCostWrapper carrying the "{R}{R}" gate (the card's
+        // `... | UnlessCost$ R R | UnlessPayer$ TargetedOrController |
+        // UnlessSwitched$ True`). mtg-152: the copy is now IMPLEMENTED — the
+        // wrap is what `follow_sub_ability_chain` applies so the optional payment
+        // gates the copy (previously the gate was dropped and a bare
+        // CopySpellAbility fired unconditionally).
+        let copy_inner_is_parent = card.effects.iter().any(|e| {
+            matches!(
                 e,
-                Effect::CopySpellAbility {
-                    defined_source: CopySpellSource::Parent,
-                    ..
-                }
-            )),
-            "Chain Lightning must chain a CopySpellAbility {{ defined_source: Parent }}. Got: {:?}",
+                Effect::UnlessCostWrapper { inner_effect, .. }
+                    if matches!(**inner_effect, Effect::CopySpellAbility { defined_source: CopySpellSource::Parent, .. })
+            )
+        });
+        assert!(
+            copy_inner_is_parent,
+            "Chain Lightning must chain an UnlessCostWrapper {{ inner: CopySpellAbility {{ defined_source: Parent }} }} \
+             carrying the {{R}}{{R}} gate. Got: {:?}",
             card.effects
         );
     }

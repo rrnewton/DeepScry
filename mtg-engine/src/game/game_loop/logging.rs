@@ -999,15 +999,21 @@ impl<'a> GameLoop<'a> {
                 );
                 self.game.logger.gamelog(&message);
             }
-            Effect::UnlessCostWrapper {
-                inner_effect,
-                unless_cost,
-            } => {
-                // Log the UnlessCost wrapper with inner effect
-                let switched = if unless_cost.switched { "if paid" } else { "unless paid" };
-                let inner_desc = format!("{:?}", inner_effect.target_category());
-                let message = format!("{source_name} ({source_id}) UnlessCost ({switched}): {inner_desc}");
-                self.game.logger.gamelog(&message);
+            Effect::UnlessCostWrapper { inner_effect, .. } => {
+                // The actual outcome of a paid CopySpellAbility (Chain Lightning's
+                // "may pay {R}{R} to copy this spell") is already logged by
+                // `copy_spell_onto_stack` as "<player> copies <spell>". Emitting
+                // an extra generic "UnlessCost (if paid): NoTargetNeeded" line
+                // here would be redundant AND leak the internal target-category
+                // enum into the player-facing log (compatibility_tracking SKILL
+                // §2.2). Suppress the wrapper line for the copy case; other
+                // UnlessCost inner effects keep their own outcome logging in
+                // execute_effect.
+                if !matches!(**inner_effect, Effect::CopySpellAbility { .. }) {
+                    let inner_desc = format!("{:?}", inner_effect.target_category());
+                    let message = format!("{source_name} ({source_id}) UnlessCost: {inner_desc}");
+                    self.game.logger.gamelog(&message);
+                }
             }
             Effect::LoseLife { player, amount } => {
                 let player_name = self.get_player_name(*player);

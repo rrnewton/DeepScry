@@ -5098,14 +5098,17 @@ async fn test_fireball_divides_x_among_two_targets() -> Result<()> {
 /// Chain Lightning ({R} Sorcery, mtg-489): PRIMARY mode "deals 3 damage to any
 /// target" (CR 601.2c). P0 casts it at Player 2 (20 -> 17). The optional "then
 /// that player may pay {R}{R} to copy this spell" chain (DB$ CopySpellAbility |
-/// Defined$ Parent) is the documented engine gap mtg-152 and creates no copy.
+/// Defined$ Parent) is now IMPLEMENTED (mtg-152), but in THIS puzzle Player 2
+/// has only Plains (no red), so it cannot pay {R}{R} and no copy is created —
+/// exactly the right behaviour. (The copy chain itself is exercised by
+/// test_chain_lightning_copy_chain_when_opponent_has_red below.)
 ///
-/// This test guards two things:
+/// This test guards:
 ///   1. The primary 3-damage burn resolves and the life total is correct
 ///      (regression for the post-resolution double-subtract that logged
 ///      "(life: 14)" instead of 17).
-///   2. NO misleading "copies spell" gamelog line is emitted for the
-///      unimplemented Parent-source copy (compatibility_tracking SKILL §2.2).
+///   2. NO "copies" gamelog line leaks when the opponent cannot afford {R}{R}
+///      (the optional gate is honoured, not auto-fired).
 #[tokio::test]
 async fn test_chain_lightning_deals_three_to_player() -> Result<()> {
     let cardsfolder = require_cardsfolder();
@@ -5154,17 +5157,107 @@ async fn test_chain_lightning_deals_three_to_player() -> Result<()> {
         "Chain Lightning must deal 3 to Player 2 leaving life 17 (20-3). Logs: {:?}",
         logs.iter().map(|e| &e.message).collect::<Vec<_>>()
     );
-    // The optional copy chain is unimplemented (mtg-152); NO copy line may leak.
+    // The optional copy is implemented (mtg-152) but Player 2 has only Plains
+    // here, so it CANNOT pay {R}{R): NO "copies" line may appear (the gate is
+    // honoured, not auto-fired). Also guards the old misleading "copies spell"
+    // sentinel never returns.
     assert!(
-        !logs.iter().any(|e| e.message.contains("copies spell")),
-        "Chain Lightning must NOT log a misleading 'copies spell' line for the \
-         unimplemented Defined$ Parent copy (mtg-152). Logs: {:?}",
+        !logs.iter().any(|e| e.message.contains("copies")),
+        "Chain Lightning must NOT copy when the opponent cannot afford {{R}}{{R}} \
+         (no red sources). Logs: {:?}",
         logs.iter().map(|e| &e.message).collect::<Vec<_>>()
     );
 
     // Player 2 ends at 17 life.
     let p1_life = game_loop.game.get_player(p1_id)?.life;
     assert_eq!(p1_life, 17, "Player 2 must be at 17 life after 3 damage");
+
+    Ok(())
+}
+
+/// Chain Lightning copy chain (mtg-152): when the target's controller CAN pay
+/// {R}{R}, they copy the spell and retarget the copy at the original caster (the
+/// canonical "chain"). Real mana is deducted, so the chain terminates when a
+/// player runs out of untapped red.
+///
+/// Setup: P0 (2 Mountains) casts Chain Lightning at Player 2 (2 Mountains).
+///   - Chain Lightning resolves: Player 2 takes 3 (20 -> 17).
+///   - Player 2 pays {R}{R} (both its Mountains), copies it, retargets at P0.
+///   - The copy resolves: Player 1 takes 3 (20 -> 17).
+///   - P0 had 1 Mountain left after casting (used 1 of 2 for {R}), so it CANNOT
+///     pay {R}{R} to copy again — the chain stops with both players at 17.
+///
+/// Guards: the copy is created (CR 707.10 "copies"), both players take exactly
+/// 3 damage, and the chain terminates (no runaway / hang).
+#[tokio::test]
+async fn test_chain_lightning_copy_chain_when_opponent_has_red() -> Result<()> {
+    let cardsfolder = require_cardsfolder();
+
+    let puzzle_path = PathBuf::from("../test_puzzles/chain_lightning_copy_chain.pzl");
+    let puzzle_contents = std::fs::read_to_string(&puzzle_path)?;
+    let puzzle = PuzzleFile::parse(&puzzle_contents)?;
+
+    let card_db = CardDatabase::new(cardsfolder);
+    let mut game = load_puzzle_into_game(&puzzle, &card_db).await?;
+    game.seed_rng(42);
+
+    let players: Vec<_> = game.players.iter().map(|p| p.id).collect();
+    let p0_id = players[0];
+    let p1_id = players[1];
+
+    game.logger.enable_capture();
+
+    // P0 casts Chain Lightning (1) at Player 2 (target index 0 — opponent offered
+    // first). P1 is a ZeroController; the {R}{R} copy payment and retarget are
+    // resolved automatically by the deterministic UnlessCost path, not by P1.
+    let mut controller0 = FixedScriptController::new(p0_id, vec![1, 0]);
+    let mut controller1 = ZeroController::new(p1_id);
+
+    let mut game_loop = GameLoop::new(&mut game).with_verbosity(VerbosityLevel::Verbose);
+    let _result = game_loop.run_turns(&mut controller0, &mut controller1, 1)?;
+
+    let logs = game_loop.game.logger.logs();
+    println!("\n=== Chain Lightning copy-chain logs ===");
+    for log in logs.iter() {
+        if log.message.contains("Chain Lightning") || log.message.contains("copies") || log.message.contains("damage") {
+            println!("{}", log.message);
+        }
+    }
+    println!("=== end logs ===\n");
+
+    // The copy was created (CR 707.10).
+    assert!(
+        logs.iter().any(|e| e.message.contains("copies Chain Lightning")),
+        "Player 2 must copy Chain Lightning after paying {{R}}{{R}}. Logs: {:?}",
+        logs.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+    // The original deals 3 to Player 2.
+    assert!(
+        logs.iter()
+            .any(|e| e.message.contains("deals 3 damage to Player 2 (life: 17)")),
+        "Chain Lightning must deal 3 to Player 2 (life 17). Logs: {:?}",
+        logs.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+    // The copy, retargeted at the original caster, deals 3 to Player 1.
+    assert!(
+        logs.iter()
+            .any(|e| e.message.contains("deals 3 damage to Player 1 (life: 17)")),
+        "The retargeted copy must deal 3 to Player 1 (life 17). Logs: {:?}",
+        logs.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+
+    // Both players end at 17 — the chain terminated after exactly one copy
+    // (mana-exhaustion), it did NOT run away.
+    assert_eq!(
+        game_loop.game.get_player(p0_id)?.life,
+        17,
+        "Player 1 at 17 (took the retargeted copy)"
+    );
+    assert_eq!(
+        game_loop.game.get_player(p1_id)?.life,
+        17,
+        "Player 2 at 17 (took the original)"
+    );
 
     Ok(())
 }

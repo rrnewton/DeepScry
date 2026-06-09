@@ -1,0 +1,24 @@
+[metadata]
+Name:Chain Lightning copy chain (opponent pays RR)
+Goal:Win
+Turns:2
+Difficulty:Easy
+Description:P0 casts Chain Lightning ({R}) at Player 2. Chain Lightning "deals 3 damage to any target. Then that player or that permanent's controller may pay {R}{R}. If the player does, they may copy this spell and may choose a new target for that copy" (CR 707.10 + 601.2c). Player 2 HAS red mana (Mountains), so it pays {R}{R}, copies Chain Lightning, and retargets it at the original caster (Player 1) — the canonical "chain". The copy deals 3 to Player 1. The chain TERMINATES when a player runs out of untapped red to pay {R}{R} again (mana is actually deducted — mtg-152). This puzzle asserts the copy is created (the "copies Chain Lightning" gamelog) and that BOTH players take 3 damage (20 -> 17 each).
+
+[state]
+turn=2
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Chain Lightning
+p0library=Mountain; Mountain; Mountain; Mountain; Mountain
+p0graveyard=
+p0battlefield=Mountain; Mountain
+p0exile=
+
+p1life=20
+p1hand=
+p1library=Mountain; Mountain; Mountain; Mountain; Mountain
+p1graveyard=
+p1battlefield=Mountain; Mountain
+p1exile=

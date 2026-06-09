@@ -884,6 +884,99 @@ impl GameState {
         self.next_id()
     }
 
+    /// Put a copy of a spell already on the stack onto the stack (CR 707.10).
+    ///
+    /// This is the single shared implementation behind every "copy this/that
+    /// spell" effect — both the delayed-trigger form (Jeong Jeong:
+    /// `Defined$ TriggeredSpellAbility`) and the SubAbility form (Chain
+    /// Lightning: `Defined$ Parent`, gated on the controller paying {R}{R}).
+    /// Centralising it (rather than re-implementing the clone-new-id-push dance
+    /// at each call site) keeps the two paths from silently diverging.
+    ///
+    /// MTG rules:
+    /// - CR 707.10: "To copy a spell ... means to put a copy of it onto the
+    ///   stack ... The copy is created using the copiable values of the
+    ///   characteristics of the spell". The copy is **not** cast (CR 707.10a),
+    ///   so no cast triggers fire — we push directly onto the stack rather than
+    ///   routing through `cast_spell`.
+    /// - CR 707.10a: the copy has the same targets unless the copying effect
+    ///   lets the controller choose new ones. `new_targets = None` keeps the
+    ///   original spell's targets (looked up from `spell_targets`); `Some(t)`
+    ///   installs retargeted targets (used when the effect says "you may choose
+    ///   a new target for that copy").
+    /// - CR 707.10c / 111.7: the copy is a token-like game object that ceases to
+    ///   exist as a state-based action once it leaves the stack, so it is
+    ///   flagged `is_token` and `resolve_spell_finalize` removes it instead of
+    ///   sending a phantom card to the graveyard.
+    ///
+    /// `original_id` must be a card on the stack. Returns the new copy's id, or
+    /// `None` if the original is no longer on the stack (the copy "fizzles").
+    pub fn copy_spell_onto_stack(
+        &mut self,
+        original_id: CardId,
+        new_controller: PlayerId,
+        new_targets: Option<SmallVec<[CardId; 2]>>,
+    ) -> Result<Option<CardId>> {
+        if !self.stack.contains(original_id) {
+            log::debug!(
+                target: "copy_spell",
+                "copy_spell_onto_stack: spell {} no longer on stack, copy fizzles",
+                original_id.as_u32()
+            );
+            return Ok(None);
+        }
+
+        // Clone the spell card to create a copy with the copiable values.
+        let mut spell_copy = self.cards.get(original_id)?.clone();
+        let spell_name = spell_copy.name.to_string();
+
+        let copy_id = self.next_card_id();
+        spell_copy.id = copy_id;
+        // The copy is owned/controlled by the player the effect specifies.
+        spell_copy.owner = new_controller;
+        spell_copy.controller = new_controller;
+        // A spell copy is a game-created object that ceases to exist outside the
+        // stack (CR 707.10c); reuse the token flag so it is cleaned up rather
+        // than persisting as a phantom card in the graveyard.
+        spell_copy.is_token = true;
+
+        self.cards.insert(copy_id, spell_copy);
+        // Put the copy on the stack ABOVE the original (LIFO): the priority loop
+        // resolves `stack.cards.last()`, and the original leaves the stack in
+        // `resolve_spell_finalize`, so the copy resolves next.
+        self.stack.add(copy_id);
+
+        // Register the copy's targets so `resolve_top_spell_from_stack` can find
+        // them. Default: the original spell's chosen targets (CR 707.10a). The
+        // existing per-call clone of `spell_targets` is unavoidable (we need an
+        // owned target list for the copy keyed by its new id).
+        let targets: SmallVec<[CardId; 2]> = match new_targets {
+            Some(t) => t,
+            None => self
+                .spell_targets
+                .iter()
+                .find(|(id, _)| *id == original_id)
+                .map(|(_, t)| t.clone())
+                .unwrap_or_default(),
+        };
+        self.spell_targets.push((copy_id, targets));
+
+        let controller_name = self.get_player(new_controller)?.name.clone();
+        self.logger.gamelog(&format!(
+            "{} copies {} (copy id={})",
+            controller_name,
+            spell_name,
+            copy_id.as_u32()
+        ));
+        log::info!(
+            target: "copy_spell",
+            "copy_spell_onto_stack: created copy of {} (original={}, copy={}, controller={})",
+            spell_name, original_id.as_u32(), copy_id.as_u32(), new_controller.as_u32()
+        );
+
+        Ok(Some(copy_id))
+    }
+
     /// Convenience method for getting next player ID
     pub fn next_player_id(&mut self) -> PlayerId {
         self.next_id()
@@ -3649,73 +3742,17 @@ impl GameState {
                 // Copy the spell that triggered this delayed trigger
                 // This is used by Jeong Jeong: "copy it and you may choose new targets"
                 //
-                // MTG Rules 707.10: To copy a spell means to put a copy of it onto the stack.
-                // A copy of a spell is not cast.
-                //
-                // Note: For SpellCast triggers, the triggering spell is passed via
-                // tracked_card (which is repurposed to hold the spell being copied).
+                // For SpellCast triggers, the triggering spell is passed via
+                // tracked_card (`card_id` here), and the copy is controlled by
+                // the trigger's controller. Target retargeting (may_choose_targets)
+                // is deferred to resolution; the copy keeps the original targets
+                // (CR 707.10a) via `copy_spell_onto_stack(.., None)`.
                 log::debug!(
                     target: "delayed_triggers",
                     "CopySpellAbility: copying spell {} (may_choose_targets={})",
                     card_id.as_u32(), may_choose_targets
                 );
-
-                // Get the spell to copy from the stack
-                if self.stack.contains(card_id) {
-                    // Clone the spell card to create a copy
-                    let original_spell = self.cards.get(card_id)?;
-                    let spell_name = original_spell.name.to_string();
-                    let mut spell_copy = original_spell.clone();
-
-                    // Give the copy a new ID
-                    let copy_id = self.next_card_id();
-                    spell_copy.id = copy_id;
-
-                    // The copy is controlled by the trigger's controller
-                    spell_copy.owner = controller;
-                    spell_copy.controller = controller;
-
-                    // Add the copy card to the entity store
-                    self.cards.insert(copy_id, spell_copy);
-
-                    // Put the copy on the stack (above the original)
-                    self.stack.add(copy_id);
-
-                    // Log the copy
-                    let controller_name = self.get_player(controller)?.name.clone();
-                    self.logger.gamelog(&format!(
-                        "{} copies {} (copy id={})",
-                        controller_name,
-                        spell_name,
-                        copy_id.as_u32()
-                    ));
-
-                    log::info!(
-                        target: "delayed_triggers",
-                        "CopySpellAbility: created copy of {} (original={}, copy={})",
-                        spell_name, card_id.as_u32(), copy_id.as_u32()
-                    );
-
-                    // Note: The copy has the same effects and targets as the original.
-                    // MTG Rules 707.10a: A copy has the same characteristics and targets
-                    // unless the copying effect specifies otherwise.
-                    //
-                    // If may_choose_targets is true, the player may choose new targets,
-                    // but this requires game loop interaction which is handled separately
-                    // when the copy resolves.
-                    if may_choose_targets {
-                        log::debug!(
-                            target: "delayed_triggers",
-                            "CopySpellAbility: may_choose_targets=true, target selection deferred to resolution"
-                        );
-                    }
-                } else {
-                    log::debug!(
-                        target: "delayed_triggers",
-                        "CopySpellAbility: spell {} no longer on stack, trigger fizzles",
-                        card_id.as_u32()
-                    );
-                }
+                self.copy_spell_onto_stack(card_id, controller, None)?;
             }
 
             DelayedEffect::ExecuteEffect { effect } => {
