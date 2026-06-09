@@ -344,3 +344,52 @@ fn test_multiple_earthbends_multiple_triggers() {
     assert!(tracked_cards.contains(&land1_id), "First land should have a trigger");
     assert!(tracked_cards.contains(&land2_id), "Second land should have a trigger");
 }
+
+#[test]
+fn test_badgermole_cub_taps_for_mana_trigger() {
+    // Test that when a creature is tapped for mana, the TapsForMana trigger
+    // adds an additional {G} to the player's mana pool.
+    let mut game = GameState::new_two_player("Player1".to_string(), "Player2".to_string(), 20);
+    let p1_id = game.players[0].id;
+
+    // 1. Create Badgermole Cub on the battlefield
+    let cub_id = game.next_card_id();
+    let path = std::path::PathBuf::from("cardsfolder/b/badgermole_cub.txt");
+    let def = mtg_engine::loader::CardLoader::load_from_file(&path).expect("Should load Badgermole Cub definition");
+    let mut cub = def.instantiate(cub_id, p1_id);
+    cub.controller = p1_id;
+    game.cards.insert(cub_id, cub);
+    game.battlefield.add(cub_id);
+
+    // 2. Create another creature that can tap for mana
+    let land_id = create_land(&mut game, "Forest", p1_id);
+    game.battlefield.add(land_id);
+
+    // Earthbend the Forest to turn it into a creature
+    game.execute_effect(&Effect::Earthbend {
+        target: land_id,
+        num_counters: 1,
+    })
+    .expect("Earthbend should succeed");
+
+    // Verify it is a creature
+    {
+        let land = game.cards.get(land_id).unwrap();
+        assert!(land.is_creature(), "Earthbent land must be a creature");
+    }
+
+    // Verify Player 1's mana pool starts empty
+    assert_eq!(game.players[0].mana_pool.green, 0);
+
+    // 3. Tap the earthbent creature-land for mana
+    // Tapping Forest produces {G}. Since it's a creature, Badgermole Cub should trigger
+    // and add an additional {G}, totaling 2 green mana.
+    game.tap_for_mana(p1_id, land_id)
+        .expect("Tapping land for mana should succeed");
+
+    // Verify Player 1's mana pool has 2 green mana (1 from Forest tap, 1 from Cub's TapsForMana bonus)
+    assert_eq!(
+        game.players[0].mana_pool.green, 2,
+        "Mana pool should have 2 green mana (1 base + 1 Badgermole Cub bonus)"
+    );
+}
