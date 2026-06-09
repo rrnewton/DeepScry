@@ -1259,10 +1259,14 @@
                 resetNetworkClient = networkJs.resetNetworkClient;
 
                 networkEnabled = true;
-                debugLog('[Network] Network features available in native_game.html');
+                // One-time load-time notice (NOT per-frame traffic spam). Kept
+                // as a plain log because this runs during initial module
+                // evaluation, BEFORE `bootConfig` (a `let`) is initialized, so
+                // debugLog()/isDebugMode() would hit the temporal-dead-zone.
+                console.log('[Network] Network features available in native_game.html');
             }
         } catch (e) {
-            debugLog('[Network] Network features not available in native_game.html:', e.message);
+            console.log('[Network] Network features not available in native_game.html:', e.message);
         }
 
         // ==================== IMAGE SOURCE ====================
@@ -1424,7 +1428,16 @@
         // onerror (battlefield tile path, which renders via innerHTML).
         // The onerror walks `data-fallbacks` (comma-joined remaining URLs)
         // exactly like attachImageCascade walks its array.
-        function cardImageHtml(urls, className, alt) {
+        //
+        // `eager` (slot05/web-ui-fixes Safari flicker): for the small, always-
+        // on-screen card tiles (battlefield + hand) we DROP `loading="lazy"` and
+        // add `decoding="sync"`. lazy/async decoding is a contributing factor to
+        // the Safari auto-run flicker — Safari blanks a freshly-created <img> to
+        // background while it async-decodes. (The REAL fix is node REUSE so the
+        // <img> isn't recreated at all; this is the cheap decode-timing
+        // narrowing the audit asked for, and it is harmless/beneficial for these
+        // tiny in-viewport tiles.) The Card-Details pane keeps lazy/auto.
+        function cardImageHtml(urls, className, alt, eager) {
             if (!Array.isArray(urls) || urls.length === 0) return '';
             // Start from the memoized known-good URL (if any) so a re-render of
             // this card paints from cache instead of restarting the cascade.
@@ -1438,7 +1451,8 @@
             // stable original first-choice URL in data-memokey) so subsequent
             // renders skip straight to it — settles the image to ONE state.
             const onload = "if(window.__recordImgResolved)window.__recordImgResolved(this.dataset.memokey,this.getAttribute('src'))";
-            return `<img class="${escapeAttr(className)}" src="${escapeAttr(ordered[0])}" alt="${escapeAttr(alt)}" loading="lazy" data-memokey="${escapeAttr(memo.key)}" data-fallbacks="${fallbacks}" onerror="${escapeAttr(onerr)}" onload="${escapeAttr(onload)}">`;
+            const loadAttrs = eager ? 'decoding="sync"' : 'loading="lazy" decoding="async"';
+            return `<img class="${escapeAttr(className)}" src="${escapeAttr(ordered[0])}" alt="${escapeAttr(alt)}" ${loadAttrs} data-memokey="${escapeAttr(memo.key)}" data-fallbacks="${fallbacks}" onerror="${escapeAttr(onerr)}" onload="${escapeAttr(onload)}">`;
         }
 
         // ==================== STATE ====================
@@ -2423,10 +2437,26 @@
         /// Each section comes pre-ordered and labelled by the view model
         /// (PWs/Creatures/Enchants/Artifacts/Lands for the local player;
         /// reversed for the opponent), so JS just maps them to DOM.
+        ///
+        /// NODE-REUSE (slot05/web-ui-fixes — Safari auto-run flicker): the old
+        /// implementation did `container.innerHTML = ''` every frame and
+        /// RECREATED every card <img>. Chrome repaints recreated <img>s from its
+        /// decoded cache, but Safari blanks each freshly-created element to its
+        /// background while it re-decodes → the flicker (and it churns the DOM on
+        /// every browser). We now RECONCILE: card tiles are kept in a per-
+        /// container pool keyed by `card_id` and REUSED across renders. An
+        /// unchanged card's <img> is never recreated (its decoded bitmap stays
+        /// live), so Safari has nothing to blank. Only cards that appeared,
+        /// disappeared, moved, or whose content changed touch the DOM.
         function renderBattlefield(player, containerId, paneSize) {
             const container = document.getElementById(containerId);
-            container.innerHTML = '';
+            // Persistent card-tile pool (card_id -> .card element) kept across
+            // renders so node identity survives an advance.
+            const pool = container._cardPool || (container._cardPool = new Map());
+
             if (!player || !player.battlefield_sections || player.battlefield_sections.length === 0) {
+                if (container.firstChild) container.textContent = '';
+                pool.clear();
                 return;
             }
             // Pick the image resolution to match the rendered card height
@@ -2437,19 +2467,30 @@
             const imgHeightPx = paneSize?.card_height_px
                 ? Math.round(paneSize.card_height_px)
                 : 106;
-            for (const section of player.battlefield_sections) {
-                if (!section.cards || section.cards.length === 0) continue;
 
-                const secEl = document.createElement('div');
-                secEl.className = `bf-section bf-${section.category}`;
+            // Reconcile section containers by index, reusing existing .bf-section
+            // wrappers so their child grids (and the pooled card tiles inside)
+            // are not torn down. Track which card_ids we (re)used this frame.
+            const seen = new Set();
+            const sections = player.battlefield_sections.filter(s => s.cards && s.cards.length > 0);
+            let secNode = container.firstElementChild;
 
-                const labelEl = document.createElement('div');
-                labelEl.className = 'bf-section-label';
-                labelEl.textContent = `${section.label} (${section.cards.length})`;
-                secEl.appendChild(labelEl);
+            for (const section of sections) {
+                // Reuse or create the .bf-section wrapper at this position.
+                if (!secNode) {
+                    secNode = document.createElement('div');
+                    secNode.innerHTML = '<div class="bf-section-label"></div><div class="bf-section-cards"></div>';
+                    container.appendChild(secNode);
+                }
+                const wantClass = `bf-section bf-${section.category}`;
+                if (secNode.className !== wantClass) secNode.className = wantClass;
+                const labelEl = secNode.firstElementChild;
+                const grid = secNode.lastElementChild;
+                const wantLabel = `${section.label} (${section.cards.length})`;
+                if (labelEl.textContent !== wantLabel) labelEl.textContent = wantLabel;
 
-                const grid = document.createElement('div');
-                grid.className = 'bf-section-cards';
+                // Reconcile the card tiles within this grid, in order.
+                let gridPos = grid.firstElementChild;
                 for (const card of section.cards) {
                     // Skip EQUIPMENT attached to its host — the host already
                     // shows it as a badge (mirroring the TUI's stacked
@@ -2460,23 +2501,43 @@
                     // swallowed attached auras → an empty "Enchantments"
                     // section when e.g. Friendly Neighborhood enchanted a land.)
                     if ((card.css_classes || []).includes('equipment') && card.attached_to != null) continue;
-                    const el = createCardElement(card, false, imgHeightPx);
-                    if (card.attachments && card.attachments.length > 0) {
-                        // Badge lists every attached card (equipment AND auras)
-                        // on the host so the relationship is visible even
-                        // without true visual stacking (tracked in mtg-i9bux).
-                        const attachNames = card.attachments.map(a => a.name).join(', ');
-                        const badge = document.createElement('div');
-                        badge.className = 'card-equip-badge';
-                        badge.textContent = attachNames;
-                        badge.title = attachNames;
-                        el.appendChild(badge);
-                        el.classList.add('equipped');
+
+                    let el = pool.get(card.card_id);
+                    if (el) {
+                        updateCardElement(el, card, false, imgHeightPx); // reuse <img>
+                    } else {
+                        el = createCardElement(card, false, imgHeightPx);
+                        pool.set(card.card_id, el);
                     }
-                    grid.appendChild(el);
+                    seen.add(card.card_id);
+
+                    // Place el at the current grid position (move only if needed
+                    // — moving a live node preserves its <img>'s decoded bitmap).
+                    if (gridPos === el) {
+                        gridPos = el.nextElementSibling;
+                    } else {
+                        grid.insertBefore(el, gridPos);
+                    }
                 }
-                secEl.appendChild(grid);
-                container.appendChild(secEl);
+                // Drop any leftover tiles in this grid beyond the rebuilt run.
+                while (gridPos) {
+                    const next = gridPos.nextElementSibling;
+                    gridPos.remove();
+                    gridPos = next;
+                }
+                secNode = secNode.nextElementSibling;
+            }
+
+            // Remove leftover section wrappers beyond what we need this frame.
+            while (secNode) {
+                const next = secNode.nextElementSibling;
+                secNode.remove();
+                secNode = next;
+            }
+
+            // Evict pooled tiles for cards no longer on this battlefield.
+            for (const id of pool.keys()) {
+                if (!seen.has(id)) pool.delete(id);
             }
         }
 
@@ -2613,39 +2674,123 @@
         /// Build a battlefield/hand card tile. CSS classes, formatted P/T,
         /// and the is_selected/is_valid_choice flags all come from the view
         /// model — we never re-derive them from the card name here.
-        function createCardElement(card, showMana, imgHeightPx) {
-            const div = document.createElement('div');
+        // The space-separated className for a card tile, derived purely from the
+        // view model (DRY: shared by create + in-place update). `.equipped` is
+        // added when the card hosts attachments (badge below).
+        function cardClassName(card) {
             const classes = (card.css_classes && card.css_classes.length > 0) ? card.css_classes.slice() : ['card'];
             if (card.is_selected) classes.push('selected-card');
             if (card.is_valid_choice) classes.push('valid-choice');
-            div.className = classes.join(' ');
+            if (card.attachments && card.attachments.length > 0) classes.push('equipped');
+            return classes.join(' ');
+        }
 
-            let imgHtml = '';
-            if (showImages) {
-                // Image lookup is keyed by card NAME (file naming convention,
-                // shared with the TUI's image overlay). The selection /
-                // identity key remains card_id. `imgHeightPx` is the
-                // rendered card height the engine picked (or 106 for
-                // hand-list cards) — `tui_get_image_urls` uses it to
-                // choose between 'small' (≤204) and 'normal' images so
-                // big battlefield cards aren't a blurry up-scaled small.
-                const heightPx = (typeof imgHeightPx === 'number' && imgHeightPx > 0)
-                    ? imgHeightPx
-                    : 106;
-                const urls = getCardImageFallbackUrls(card, heightPx);
-                imgHtml = cardImageHtml(urls, 'card-image', card.name);
-            }
+        // Normalize the height the engine picked for a tile (or 106 fallback).
+        function cardImgHeightPx(imgHeightPx) {
+            return (typeof imgHeightPx === 'number' && imgHeightPx > 0) ? imgHeightPx : 106;
+        }
 
+        // The IMAGE IDENTITY KEY for a card tile: the stable memo key of its
+        // image cascade (deterministic per card name + chosen resolution). When
+        // this is unchanged across renders the <img> need not be recreated — the
+        // crux of the Safari node-reuse flicker fix (slot05/web-ui-fixes). Empty
+        // string when images are off / unavailable.
+        function cardImageKey(card, imgHeightPx) {
+            if (!showImages) return '';
+            const urls = getCardImageFallbackUrls(card, cardImgHeightPx(imgHeightPx));
+            return applyImageMemo(urls).key || '';
+        }
+
+        // Build the inner non-image markup (name + P/T + mana + attachment
+        // badge). The <img>, when present, is a separate first child so it can be
+        // preserved across updates independently of these cheap text bits.
+        function cardInnerNonImageHtml(card, showMana) {
             const ptHtml = card.formatted_pt
                 ? `<div class="card-pt">${card.formatted_pt}</div>`
                 : '';
             const manaHtml = (showMana && card.mana_cost)
                 ? `<div class="card-mana">${escapeHtml(card.mana_cost)}</div>`
                 : '';
+            // Attachment badge: lists every attached card (equipment AND auras)
+            // on the host so the relationship is visible even without true visual
+            // stacking (mtg-i9bux). Part of the unified non-image content so the
+            // reconcile updates it in place without recreating the <img>.
+            let badgeHtml = '';
+            if (card.attachments && card.attachments.length > 0) {
+                const attachNames = card.attachments.map(a => a.name).join(', ');
+                badgeHtml = `<div class="card-equip-badge" title="${escapeAttr(attachNames)}">${escapeHtml(attachNames)}</div>`;
+            }
+            return `<div class="card-name">${escapeHtml(card.name)}</div>${ptHtml}${manaHtml}${badgeHtml}`;
+        }
 
+        function cardImgHtmlFor(card, imgHeightPx) {
+            if (!showImages) return '';
+            const urls = getCardImageFallbackUrls(card, cardImgHeightPx(imgHeightPx));
+            // eager=true: small on-screen tile → decode synchronously, no lazy
+            // (slot05 Safari flicker narrowing).
+            return cardImageHtml(urls, 'card-image', card.name, true);
+        }
+
+        function createCardElement(card, showMana, imgHeightPx) {
+            const div = document.createElement('div');
+            div.className = cardClassName(card);
             div.setAttribute('data-card-id', String(card.card_id));
             div.setAttribute('data-card-name', card.name); // diagnostic aid only
-            div.innerHTML = `${imgHtml}<div class="card-name">${escapeHtml(card.name)}</div>${ptHtml}${manaHtml}`;
+            // Stamp the image identity key so a later reconcile can tell whether
+            // the <img> may be reused as-is (Safari flicker fix).
+            div.setAttribute('data-img-key', cardImageKey(card, imgHeightPx));
+            div.innerHTML = `${cardImgHtmlFor(card, imgHeightPx)}${cardInnerNonImageHtml(card, showMana)}`;
+            return div;
+        }
+
+        // Patch an EXISTING card tile in place to match `card`, REUSING its
+        // <img> element whenever the image identity key is unchanged — so an
+        // unchanged card never recreates its <img> and Safari never re-decodes /
+        // blanks it (slot05/web-ui-fixes Safari auto-run flicker). Only the parts
+        // that actually changed are touched.
+        function updateCardElement(div, card, showMana, imgHeightPx) {
+            const newClass = cardClassName(card);
+            if (div.className !== newClass) div.className = newClass;
+            if (div.getAttribute('data-card-name') !== card.name) {
+                div.setAttribute('data-card-name', card.name);
+            }
+
+            const newImgKey = cardImageKey(card, imgHeightPx);
+            const imgKeyChanged = div.getAttribute('data-img-key') !== newImgKey;
+            if (imgKeyChanged) {
+                // Card/image actually changed → rebuild ONLY the <img>, leaving
+                // the rest (and, crucially, unchanged sibling tiles) untouched.
+                div.setAttribute('data-img-key', newImgKey);
+                const existingImg = div.querySelector('img.card-image');
+                const newImgHtml = cardImgHtmlFor(card, imgHeightPx);
+                if (newImgHtml) {
+                    const tmp = document.createElement('template');
+                    tmp.innerHTML = newImgHtml;
+                    const newImg = tmp.content.firstChild;
+                    if (existingImg) existingImg.replaceWith(newImg);
+                    else div.insertBefore(newImg, div.firstChild);
+                } else if (existingImg) {
+                    existingImg.remove();
+                }
+            }
+
+            // Patch the cheap non-image bits (name/P/T/mana) only when changed,
+            // without touching the <img>.
+            const img = div.querySelector('img.card-image');
+            const desiredNonImg = cardInnerNonImageHtml(card, showMana);
+            // Reconstruct the non-image portion currently in the DOM (everything
+            // after the <img>) and compare; rewrite only on difference.
+            const curNonImg = img
+                ? Array.from(div.childNodes).filter(n => n !== img).map(n => n.outerHTML || '').join('')
+                : div.innerHTML;
+            if (curNonImg !== desiredNonImg) {
+                // Remove the old non-image nodes, then append the new ones,
+                // keeping the live <img> node in place.
+                Array.from(div.childNodes).forEach(n => { if (n !== img) n.remove(); });
+                const tmp = document.createElement('template');
+                tmp.innerHTML = desiredNonImg;
+                div.append(...tmp.content.childNodes);
+            }
             return div;
         }
 
