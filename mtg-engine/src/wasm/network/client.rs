@@ -1094,6 +1094,17 @@ impl WasmNetworkClient {
                 );
             }
 
+            ServerMessage::PlayerList { players, total_count } => {
+                // Lobby-only message; the WASM game client connects to a named
+                // game and never renders the lobby players list (the web lobby
+                // page in index.html does). Log and ignore, like GameList.
+                log::info!(
+                    "WasmNetworkClient: PlayerList ({}/{} logged-in players)",
+                    players.len(),
+                    total_count
+                );
+            }
+
             ServerMessage::GameCreated {
                 game_name,
                 your_player_id,
