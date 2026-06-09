@@ -220,6 +220,19 @@ def _scope_cgroup_path(unit: str) -> Path | None:
     return (CGROUP_ROOT / cg.lstrip("/")) if cg else None
 
 
+def scope_memory_peak() -> int | None:
+    """Peak memory (bytes) of the WHOLE validate scope cgroup — the authoritative
+    peak RSS across every step, read from the scope's cgroup-v2 `memory.peak` (no
+    sampling). None when not in a scope / file absent. For the footprint report."""
+    scope = scope_cgroup_from_self()
+    if scope is None:
+        return None
+    try:
+        return int((scope / "memory.peak").read_text().strip())
+    except (OSError, ValueError):
+        return None
+
+
 def scope_cgroup_from_self() -> Path | None:
     """The OUTER scope's cgroup path, derived from THIS process's own cgroup —
     no systemctl shell-out (fast + contention-proof, for the signal handler).

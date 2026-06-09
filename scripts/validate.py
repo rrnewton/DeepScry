@@ -1339,6 +1339,14 @@ def run_with_harness(args):
             sys.stdout = sys.stderr = tee
             try:
                 rc = run_orchestrator(args)
+                # Footprint: peak RSS of the WHOLE validate scope cgroup (every
+                # step), read precisely from cgroup-v2 memory.peak — no sampling.
+                # In-scope only; printed into the tee'd log artifact.
+                if validate_cgroup is not None:
+                    peak = validate_cgroup.scope_memory_peak()
+                    if peak:
+                        print(f"[validate] peak memory (whole-run scope): "
+                              f"{_fmt_bytes(peak)}")
             finally:
                 _stop_utilization(mon)
                 sys.stdout, sys.stderr = old_out, old_err
