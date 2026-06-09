@@ -56,20 +56,28 @@ def stop_my_validate_scopes(current_dir):
             continue
         unit = parts[0]
         cg = _scope_cgroup_path(unit)
-        procs = cg / "cgroup.procs" if cg else None
-        if not procs or not procs.exists():
+        if not cg or not cg.exists():
             continue
+        # Scan procs RECURSIVELY: the validate scope now uses per-step CHILD
+        # cgroups (validate_cgroup.StepCgroups), and cgroup-v2 `cgroup.procs` is
+        # per-cgroup (NOT recursive). After a SIGKILL of the runner, the live
+        # orphan sits in a child `step-*/cgroup.procs` while the scope's own
+        # `cgroup.procs` is empty — so a top-level-only read would wrongly judge
+        # the scope "not mine" and leave the orphan. Walk the whole subtree.
         mine = False
-        try:
-            for pid in procs.read_text().split():
-                try:
-                    if os.readlink(f"/proc/{pid}/cwd").startswith(current_dir):
-                        mine = True
-                        break
-                except OSError:
-                    pass
-        except OSError:
-            continue
+        for procs in cg.rglob("cgroup.procs"):
+            try:
+                for pid in procs.read_text().split():
+                    try:
+                        if os.readlink(f"/proc/{pid}/cwd").startswith(current_dir):
+                            mine = True
+                            break
+                    except OSError:
+                        pass
+            except OSError:
+                continue
+            if mine:
+                break
         if not mine:
             continue  # cross-slot (or empty) scope — DO NOT touch
         # cgroup.kill FIRST: an instant atomic SIGKILL of the whole subtree
