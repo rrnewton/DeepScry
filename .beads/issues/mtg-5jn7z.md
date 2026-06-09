@@ -4,7 +4,7 @@ status: open
 priority: 2
 issue_type: task
 created_at: 2026-06-09T19:45:13.019238463+00:00
-updated_at: 2026-06-09T19:54:36.778257447+00:00
+updated_at: 2026-06-09T20:27:19.544389861+00:00
 ---
 
 # Description
@@ -33,3 +33,12 @@ DONE: (1) DEFAULT outer-scope memory cap — every full `make validate` now caps
 EMPIRICALLY VERIFIED: a 2 GiB memory-hog step under a 200 MiB inner cap is OOM-killed (exit -9, oom_kills=1, peak capped at exactly 200 MiB) while the outer scope + supervisor stay ALIVE — the two-level model kills only the runaway step. Default-cap resolution + per-step-cap table unit-tested. Ephemeral-ports fix landed (badd088e): 2 concurrent test_human_input.js → both exit 0, ZERO port collisions.
 
 REMAINING: characterize REAL per-step baselines after slot01's commander fix greens integration (current PER_STEP_RSS_BASELINE values are conservative estimates from the 2026-06-09 -j16 run, commander excluded). NEVER run uncapped while commander loop is live.
+
+== COMPLETE + GREEN 2026-06-09_#3077(56d7c988) ==
+All done. Full `make validate` GREEN on the final tree: 33 passed / 0 failed / 0 skipped, wall-clock 579s, whole-run scope peak 16.2G (< 30G default outer cap), ZERO OOM-kills. Artifact: validate_logs/validate_56d7c988d705a777b12138fc44de510741df678b.log. Ff-mergeable onto integration @2c9d1808.
+
+KEY FIX found this round: per-step inner caps were a SILENT NO-OP in real runs — the disowned utilization sampler sat in the scope ROOT, so enabling +memory on subtree_control hit the cgroup-v2 no-internal-processes rule (EBUSY, swallowed). Fixed by draining the WHOLE root into supervisor/ (d6dc7897). Verified: subtree_control now 'cpu memory pids', per-step memory.max/swap.max actually applied.
+
+REAL baselines characterized (commander loop now fixed @2c9d1808): determ.commander 31.7M (was the ~40GB runaway — NOW INCLUDED with a 640M cap), nextest 6.8-9.0G (cap 10G), build 3.8-4.1G (cap 6.25G), examples 4.5G, clippy 2.7G, multideck 3.2G, wasm.browser 0.69G. Every cap verified >= measured peak (1.39x-20x margin). PER_STEP_RSS_BASELINE retuned from these measurements (56d7c988).
+
+DELIVERED: (1) DEFAULT outer cap 30G + swap=0 (runaway OOM-killed, never wedges box). (2) Per-step inner caps from real baselines + swap=0 (one runaway step killed, run+host survive — empirically proven with a 2GB hog under 200MB cap). (3) Baselines in ONE place (scripts/validate.py). (4) Actionable OOM message (which step, baseline file+symbol, confirm-not-a-leak-before-bump). (5) mtg-882 collision fixed. (6) ephemeral ports (2 concurrent test_human_input.js → 0 collisions).
