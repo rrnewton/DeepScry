@@ -2333,6 +2333,13 @@
                 window.__showWasmEngineError(state.error_message);
             }
 
+            // mtg-grofw: once the game is over, tell the network client so the
+            // server's normal post-game socket close (a non-clean 1006) is NOT
+            // mistaken for a lost connection — no spurious red banner / reconnect.
+            if (state.game_over && networkClient) {
+                networkClient.gameEnded = true;
+            }
+
             // Rebuild the card index from this snapshot. Includes hand,
             // every battlefield section across both players, graveyards,
             // command zones, and the stack — every CardView the UI might
