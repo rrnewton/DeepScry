@@ -30,27 +30,18 @@ use super::exports::ensure_client;
 use super::game_init::init_game_reserve_only_wasm;
 use super::{WasmNetworkLocalController, WasmRemoteController};
 use crate::core::PlayerId;
+use crate::game::replay_controller::ReplayChoice;
 use crate::game::{
-    derive_player_seed, GameLoop, GameLoopState, GameState, HeuristicController, PlayerSlot, RandomController,
-    VerbosityLevel, ZeroController,
+    derive_player_seed, GameLoop, GameLoopState, GameState, HeuristicController, PlayerController, PlayerSlot,
+    RandomController, ReplayController, VerbosityLevel, ZeroController,
 };
+use crate::undo::GameAction;
 use std::cell::RefCell;
 use wasm_bindgen::prelude::*;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // HARNESS STATE
 // ═══════════════════════════════════════════════════════════════════════════
-
-/// Concrete AI controller variants stored in the harness.
-///
-/// We use enum dispatch to avoid `dyn` overhead and to preserve each
-/// controller's internal state (e.g., RNG seed for `RandomController`)
-/// across multiple calls to `run_network_ai_step`.
-enum WasmAiControllerEnum {
-    Random(WasmNetworkLocalController<RandomController>),
-    Heuristic(WasmNetworkLocalController<HeuristicController>),
-    Zero(WasmNetworkLocalController<ZeroController>),
-}
 
 /// Persistent state for the headless AI harness.
 ///
@@ -61,7 +52,32 @@ struct WasmAiHarness {
     our_id: PlayerId,
     opponent_id: PlayerId,
     we_are_p1: bool,
-    controller: WasmAiControllerEnum,
+    /// The PERSISTENT network controller for OUR player: a type-erased
+    /// `WasmNetworkLocalController<Inner>`. Created ONCE and reused across every
+    /// `run_network_ai_step` re-entry so the inner controller's RNG advances
+    /// monotonically — byte-identical to the server's single persistent
+    /// controller (mtg-610). Box-erased (rather than the old enum-dispatch)
+    /// so the genuinely-new frontier choice can be delegated through a
+    /// [`ReplayController`] on a mid-turn re-entry, exactly as the unified
+    /// `fancy_tui` network path does. The micro-cost of dyn dispatch is one
+    /// virtual call per real choice — negligible, and it is what lets the
+    /// rewind+replay resume model (the gfr2a fix) work here.
+    controller: Box<dyn PlayerController>,
+    /// The turn number whose forward run we have already started (mtg-610 /
+    /// mtg-gfr2a). When a `run_network_ai_step` entry finds the game on this
+    /// same turn, it is a mid-turn RE-ENTRY (the loop blocked awaiting a
+    /// choice and JS re-called us) → rewind to the turn start and replay. When
+    /// the turn number differs it is the FIRST forward run of a new turn → run
+    /// forward without rewinding. `None` until the first step.
+    ///
+    /// This replaces the old NO-REWIND resume model, where each re-entry called
+    /// `GameLoop::run_until_input` directly on the already-advanced game. That
+    /// model re-executed the CURRENT step from the top on resume; for a step
+    /// that logs an action BEFORE its priority round (`end_combat_step` logs
+    /// `ClearCombat`) the action was logged a SECOND time, advancing the
+    /// shadow's `action_count` by one with no state change — a fatal
+    /// `compute_view_hash` desync at the next state-hash check (mtg-gfr2a).
+    forward_run_turn: Option<u32>,
 }
 
 thread_local! {
@@ -149,21 +165,23 @@ fn init_harness(client: &SharedNetworkClient, controller_type: &str, seed: u32) 
     let our_slot = PlayerSlot::from_index(if we_are_p1 { 0 } else { 1 }).unwrap_or(PlayerSlot::P1);
     let derived_seed = derive_player_seed(seed as u64, our_slot);
 
-    // Create the controller for our player
-    let controller = match controller_type {
+    // Create the PERSISTENT network controller for our player (mtg-610),
+    // type-erased so the rewind+replay resume path can wrap it in a
+    // `ReplayController` for the frontier choice on a mid-turn re-entry.
+    let controller: Box<dyn PlayerController> = match controller_type {
         "random" | "rand" => {
             let inner = RandomController::with_seed(our_player_id, derived_seed);
-            WasmAiControllerEnum::Random(WasmNetworkLocalController::new(inner, client.clone()))
+            Box::new(WasmNetworkLocalController::new(inner, client.clone()))
         }
         "heuristic" | "heur" => {
             // HeuristicController is stateful (see `is_safe_to_hold_land_for_main2`),
             // so seed it with the same derived value so cross-mode determinism holds.
             let inner = HeuristicController::with_seed(our_player_id, derived_seed);
-            WasmAiControllerEnum::Heuristic(WasmNetworkLocalController::new(inner, client.clone()))
+            Box::new(WasmNetworkLocalController::new(inner, client.clone()))
         }
         "zero" | _ => {
             let inner = ZeroController::new(our_player_id);
-            WasmAiControllerEnum::Zero(WasmNetworkLocalController::new(inner, client.clone()))
+            Box::new(WasmNetworkLocalController::new(inner, client.clone()))
         }
     };
 
@@ -181,6 +199,7 @@ fn init_harness(client: &SharedNetworkClient, controller_type: &str, seed: u32) 
         opponent_id,
         we_are_p1,
         controller,
+        forward_run_turn: None,
     })
 }
 
@@ -188,66 +207,40 @@ fn init_harness(client: &SharedNetworkClient, controller_type: &str, seed: u32) 
 // GAME STEP
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Run a single step of the AI game loop.
+/// Run a single step of the AI game loop via the PRINCIPLED rewind+replay
+/// resume model (mtg-610 / mtg-gfr2a), unified with the `fancy_tui` network
+/// path's resume mechanism.
 ///
-/// Called from the harness state. Runs `GameLoop::run_until_input` until
-/// the game loop blocks waiting for network input, or until the game ends.
+/// On the FIRST forward run of a turn we run the game loop straight through.
+/// On every mid-turn RE-ENTRY (the loop blocked awaiting a choice and JS
+/// re-called us) we rewind to the turn start and replay both players'
+/// recorded choices, delegating ONLY the genuinely-new frontier choice to the
+/// persistent inner controller — so no begin-of-step / combat action is
+/// re-applied. The old NO-REWIND model re-executed the current step from the
+/// top on resume, double-logging `end_combat_step`'s `ClearCombat` and
+/// desyncing `action_count` (mtg-gfr2a).
+///
+/// Turn 1 now carries a clean post-setup `ChangeTurn` boundary marker
+/// (`GameState::ensure_turn_one_boundary`), so a turn-1 rewind stops there just
+/// like turn 2+ — no full-state baseline special case is needed (proven by the
+/// native rewind/replay oracle, which round-trips turn 1 through the SAME
+/// `rewind_to_turn_start` path).
 fn step_harness(harness: &mut WasmAiHarness, client: SharedNetworkClient) -> String {
-    let our_id = harness.our_id;
-    let we_are_p1 = harness.we_are_p1;
-    let opponent_id = harness.opponent_id;
+    let current_turn = harness.game.turn.turn_number;
 
-    // Create a remote controller for the opponent (cheap, just holds refs)
-    let mut remote = WasmRemoteController::new(opponent_id, client.clone());
+    // Re-entry detection: if we already started a forward run for this turn
+    // number, this entry is a mid-turn re-entry → rewind+replay. Otherwise it
+    // is the first forward run of a fresh turn → run straight through.
+    let is_reentry = harness.forward_run_turn == Some(current_turn);
 
-    // Build the sync callback that applies pending state-sync entries
-    // (reveals + library reorders) from the WS-fed ActionLog. This is the
-    // WASM equivalent of the native client's blocking sync mechanism, but
-    // non-destructive — see docs/NETWORK_ACTION_LOG.md § 3.2.
-    let client_for_sync = client.clone();
-    let sync_callback = move |game: &mut GameState, target_action: u64| {
-        // mtg-752 L3: apply deltas keyed by game ac, bounded by the position the
-        // GameLoop is syncing to (no longer a greedy up-to-frontier drain).
-        let applied = client_for_sync
-            .borrow_mut()
-            .apply_state_sync_at(game, Some(our_id), target_action);
-        if applied > 0 {
-            log::debug!("ai_harness sync_callback: applied {} state-sync entries", applied);
-        }
+    let result = if is_reentry {
+        step_replay(harness, client)
+    } else {
+        step_forward(harness, client)
     };
 
-    // Run the game loop until blocked or complete
-    let result = {
-        let mut game_loop = GameLoop::new(&mut harness.game)
-            .with_verbosity(VerbosityLevel::Normal)
-            .with_sync_callback(sync_callback)
-            .skip_opening_hands()
-            .with_deferred_game_end();
-
-        match &mut harness.controller {
-            WasmAiControllerEnum::Random(ctrl) => {
-                if we_are_p1 {
-                    game_loop.run_until_input(ctrl, &mut remote)
-                } else {
-                    game_loop.run_until_input(&mut remote, ctrl)
-                }
-            }
-            WasmAiControllerEnum::Heuristic(ctrl) => {
-                if we_are_p1 {
-                    game_loop.run_until_input(ctrl, &mut remote)
-                } else {
-                    game_loop.run_until_input(&mut remote, ctrl)
-                }
-            }
-            WasmAiControllerEnum::Zero(ctrl) => {
-                if we_are_p1 {
-                    game_loop.run_until_input(ctrl, &mut remote)
-                } else {
-                    game_loop.run_until_input(&mut remote, ctrl)
-                }
-            }
-        }
-    };
+    // Track the turn we last ran so the next entry can tell forward-vs-reentry.
+    harness.forward_run_turn = Some(harness.game.turn.turn_number);
 
     match result {
         Ok(GameLoopState::Complete(_)) => {
@@ -263,6 +256,178 @@ fn step_harness(harness: &mut WasmAiHarness, client: SharedNetworkClient) -> Str
             format!("error:{}", e)
         }
     }
+}
+
+/// Build the sync callback that applies pending state-sync entries (reveals +
+/// library reorders) from the WS-fed ActionLog. This is the WASM equivalent of
+/// the native client's blocking sync mechanism, but non-destructive — see
+/// docs/NETWORK_ACTION_LOG.md § 3.2.
+fn make_sync_callback(client: SharedNetworkClient, our_id: PlayerId) -> impl Fn(&mut GameState, u64) {
+    move |game: &mut GameState, target_action: u64| {
+        // mtg-752 L3: apply deltas keyed by game ac, bounded by the position the
+        // GameLoop is syncing to (no longer a greedy up-to-frontier drain).
+        let applied = client
+            .borrow_mut()
+            .apply_state_sync_at(game, Some(our_id), target_action);
+        if applied > 0 {
+            log::debug!("ai_harness sync_callback: applied {} state-sync entries", applied);
+        }
+    }
+}
+
+/// FIRST forward run of a turn. Drives the persistent inner controller and the
+/// live remote opponent straight through `run_until_input`.
+fn step_forward(harness: &mut WasmAiHarness, client: SharedNetworkClient) -> crate::Result<GameLoopState> {
+    let our_id = harness.our_id;
+    let we_are_p1 = harness.we_are_p1;
+    let opponent_id = harness.opponent_id;
+
+    let mut remote = WasmRemoteController::new(opponent_id, client.clone());
+    let sync_callback = make_sync_callback(client, our_id);
+
+    let mut game_loop = GameLoop::new(&mut harness.game)
+        .with_verbosity(VerbosityLevel::Normal)
+        .with_sync_callback(sync_callback)
+        .skip_opening_hands()
+        .with_deferred_game_end();
+
+    if we_are_p1 {
+        game_loop.run_until_input(harness.controller.as_mut(), &mut remote)
+    } else {
+        game_loop.run_until_input(&mut remote, harness.controller.as_mut())
+    }
+}
+
+/// Mid-turn re-entry: rewind to the turn start and replay both players'
+/// recorded choices, delegating ONLY the new frontier choice to the persistent
+/// inner controller (its RNG advances exactly once per real choice →
+/// byte-identical to the server's forward-only run). The opponent's choices
+/// can't be recomputed locally, so they are replayed from the recorded log and
+/// then delegated to a fresh remote controller for anything beyond the replay
+/// point. Mirrors `fancy_tui::run_network_ai_replay`.
+fn step_replay(harness: &mut WasmAiHarness, client: SharedNetworkClient) -> crate::Result<GameLoopState> {
+    let our_id = harness.our_id;
+    let we_are_p1 = harness.we_are_p1;
+    let opponent_id = harness.opponent_id;
+
+    // Rewind to the start of the current turn, extracting both players'
+    // recorded choices. Turn 1 has a post-setup ChangeTurn marker so this stops
+    // at the turn boundary, not the pre-game setup.
+    let (our_choices, opponent_choices) = rewind_and_partition(harness, our_id, client.clone());
+
+    // Clear transient game-loop state not tracked by the undo log so the replay
+    // starts clean (mirrors the fancy_tui replay branch).
+    harness.game.spell_targets.clear();
+    harness.game.pending_activation = None;
+    harness.game.pending_activation_effect_idx = None;
+    harness.game.pending_cycling_search = None;
+
+    log::debug!(
+        "ai_harness REPLAY: after rewind turn {}, undo_log={}, {} our + {} opponent choices",
+        harness.game.turn.turn_number,
+        harness.game.undo_log.len(),
+        our_choices.len(),
+        opponent_choices.len()
+    );
+
+    // Wrap the PERSISTENT inner controller in a fresh ReplayController carrying
+    // our accumulated choice history. The wrapper ECHOES every prior choice
+    // from cache (inner NOT invoked → RNG untouched) and delegates to the
+    // persistent inner ONLY for the new frontier choice.
+    let inner = std::mem::replace(&mut harness.controller, placeholder_controller(our_id));
+    let mut our_replay = ReplayController::new(our_id, inner, our_choices);
+
+    let fresh_remote = WasmRemoteController::new(opponent_id, client.clone());
+    let mut opponent_replay = ReplayController::new(opponent_id, Box::new(fresh_remote), opponent_choices);
+
+    let result = {
+        let sync_callback = make_sync_callback(client, our_id);
+        let mut game_loop = GameLoop::new(&mut harness.game)
+            .with_verbosity(VerbosityLevel::Normal)
+            .with_sync_callback(sync_callback)
+            .skip_opening_hands()
+            .with_deferred_game_end();
+
+        if we_are_p1 {
+            game_loop.run_until_input(&mut our_replay, &mut opponent_replay)
+        } else {
+            game_loop.run_until_input(&mut opponent_replay, &mut our_replay)
+        }
+    };
+
+    // Recover the persistent inner so its RNG carries forward to the next
+    // re-entry / turn.
+    harness.controller = our_replay.into_inner();
+    result
+}
+
+/// Rewind the shadow game to the current turn's start, returning
+/// `(our_choices, opponent_choices)` in forward chronological order. Undoes
+/// every action back to the turn's `ChangeTurn` boundary (which is also what
+/// removes any in-flight `ClearCombat` logged by a forward run that blocked at
+/// the EndCombat priority — the mtg-gfr2a fix) and unwinds the reveal-history
+/// buffer to the rewound position so the rewound `cards` set is deterministic.
+fn rewind_and_partition(
+    harness: &mut WasmAiHarness,
+    our_id: PlayerId,
+    client: SharedNetworkClient,
+) -> (Vec<ReplayChoice>, Vec<ReplayChoice>) {
+    let mut undo_log = std::mem::take(&mut harness.game.undo_log);
+    let rewind = undo_log.rewind_to_turn_start(&mut harness.game);
+    harness.game.undo_log = undo_log;
+
+    // SHADOW UNDO-COMPLETENESS (mtg-610): unwind the reveal-history buffer to
+    // the rewound action_count so any async opponent instance a reveal stamped
+    // past the boundary materialised is removed; the forward replay re-consumes
+    // reveals in lockstep (gated by effective action_count) as it re-advances.
+    let retained_action = harness.game.undo_log.len() as u64;
+    client
+        .borrow_mut()
+        .unwind_state_sync_to(&mut harness.game, retained_action);
+
+    let choice_actions = match rewind {
+        Some((_turn, choice_actions, _rewound, log_size_at_turn)) => {
+            // Truncate game logs to match the rewound state so the replay does
+            // not duplicate log entries generated after the turn started.
+            harness.game.logger.truncate_to(log_size_at_turn);
+            choice_actions
+        }
+        None => {
+            log::warn!("ai_harness REPLAY: rewind_to_turn_start returned None (undo log disabled?)");
+            Vec::new()
+        }
+    };
+
+    // Partition choices by player. `rewind_to_turn_start` already reverses its
+    // collected choices back to FORWARD chronological order before returning,
+    // so iterating as-is preserves replay order (identical to the fancy_tui
+    // partition at fancy_tui.rs:1864-1877).
+    let mut our_choices = Vec::new();
+    let mut opponent_choices = Vec::new();
+    for action in choice_actions {
+        if let GameAction::ChoicePoint {
+            player_id,
+            choice: Some(c),
+            ..
+        } = action
+        {
+            if player_id == our_id {
+                our_choices.push(c);
+            } else {
+                opponent_choices.push(c);
+            }
+        }
+    }
+    (our_choices, opponent_choices)
+}
+
+/// A throwaway controller used to temporarily fill `harness.controller` while
+/// the real persistent inner is moved into a `ReplayController`. Never invoked
+/// for a choice (the `ReplayController` holds the real inner for the whole
+/// replay run); it exists only so `std::mem::replace` can move the box out and
+/// back without an `Option` dance.
+fn placeholder_controller(our_id: PlayerId) -> Box<dyn PlayerController> {
+    Box::new(ZeroController::new(our_id))
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

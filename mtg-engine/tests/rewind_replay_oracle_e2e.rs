@@ -391,6 +391,16 @@ async fn rewind_replay_oracle_round_trips_at_every_decision_point() -> Result<()
 
         // Snapshot the hash at the pause point (this is what replay must reproduce).
         let hash_after_forward = compute_state_hash(&game);
+        // Also snapshot the undo-log length (== `action_count`). The NETWORK
+        // cross-replica hash (`compute_view_hash`) hashes `action_count` as a
+        // consensus value (mtg-752), but `compute_state_hash` deliberately
+        // EXCLUDES the undo log — so a divergence that touches ONLY the undo-log
+        // length (e.g. an extra no-op action) is invisible to the hash check
+        // above yet FATAL on the wire. mtg-gfr2a was exactly this: a no-rewind
+        // resume re-executed `end_combat_step` and double-logged a (state-no-op)
+        // `ClearCombat`, advancing `action_count` by one. Asserting the action
+        // count round-trips through rewind+replay guards that whole class.
+        let action_count_after_forward = game.undo_log.len();
         let forward_json = strip_for_diff(serde_json::to_value(&game).unwrap());
 
         // Track turn-1-ness (for the hole-(a) coverage assertion below) before
@@ -454,6 +464,20 @@ async fn rewind_replay_oracle_round_trips_at_every_decision_point() -> Result<()
              this decision point — some canonical state was mutated without a logged GameAction \
              (or the turn-1 baseline is not a faithful post-setup checkpoint). \
              See mtg-614 / mtg-610 / docs/NETWORK_ARCHITECTURE.md (desync is always fatal)."
+        );
+
+        // action_count (undo-log length) MUST also round-trip — the network
+        // view-hash invariant that `compute_state_hash` cannot see (mtg-gfr2a).
+        let action_count_after_replay = game.undo_log.len();
+        assert_eq!(
+            action_count_after_replay, action_count_after_forward,
+            "REWIND/REPLAY ORACLE FAILED at decision point K={k} ({path} path): the undo-log \
+             length (== network action_count) did not round-trip through rewind+replay \
+             ({action_count_after_replay} != {action_count_after_forward}). The full-state hash \
+             may match (compute_state_hash excludes the undo log) while the NETWORK \
+             compute_view_hash — which hashes action_count as a cross-replica consensus value \
+             (mtg-752) — diverges. This is the mtg-gfr2a class: an action logged twice (or not \
+             reversed) across the resume boundary. See docs/NETWORK_ARCHITECTURE.md."
         );
 
         verified_points += 1;

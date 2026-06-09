@@ -1,50 +1,56 @@
 ---
 title: 'Network desync: WASM P2 state-hash mismatch at Turn1 EndCombat ac=66 (post opening-hand-fix)'
-status: open
+status: closed
 priority: 2
 issue_type: task
 created_at: 2026-06-09T17:29:12.990873341+00:00
-updated_at: 2026-06-09T17:29:12.990873341+00:00
+updated_at: 2026-06-09T18:58:08.000369036+00:00
 ---
 
 # Description
 
 ## Summary
 
-WASM-vs-WASM network game (random controllers) hits a P2 state-hash mismatch at **Turn 1 "EndCombat", action_count=66, choice_seq=7**. This desync was previously MASKED by the opening-hand ac-0 reveal-drop bug (mtg-212, fixed e0c33784); once that fix let games run past the opening hand, this deeper divergence surfaced.
+WASM-vs-WASM network game (random controllers) hits a P2 state-hash mismatch at **Turn 1 "EndCombat"**. Server hash vs shadow hash diverge while every STRUCTURAL field (zones, life, hands, libraries, battlefield, stack, graveyards, step, active player) is byte-identical.
 
-## Repro
+## ROOT CAUSE (FOUND + deterministically reproduced 2026-06-09)
 
-```bash
-cargo build --release --features network && make wasm-network
-python3 bug_finding/fuzz.py network --client wasm --controllers random --seeds 4
-## deck pair from decks/old_school/*.dck,decks/old_school2/*.dck (chain pairing), server seed 1
+The divergent field is **`action_count`** (the undo-log length), which `compute_view_hash` hashes as a cross-replica consensus value (mtg-752, reverting the mtg-728/mtg-744 exclusion). The gating network hash on BOTH server and client is `compute_view_hash(view)` (network/controller.rs + native/wasm local_controller.rs), NOT `compute_network_state_hash` — so the gfr2a hypothesis list (TurnStructure/CombatState/RNG/layers) was a red herring; `compute_view_hash` hashes only turn/step/active/action_count + per-player life/hand-size/lib-size/graveyard + battlefield(id,tapped,ctrl) + stack.
+
+Captured (repro server seed 1): server ac=N, shadow ac=N+1 (diff −1 from the shadow's POV). The +1 is a **double `ClearCombat`** undo action at the CombatDamage→EndCombat boundary:
 ```
-Saved logs: `debug/netarch_fuzz/repro_p2_statehash_ac66/{server,client1,client2}.log` (gitignored).
-
-## Diagnostic (server mismatch box)
-
+[..] Step(CombatDamage -> EndCombat)
+[..] ClearCombat(restored 0 attacker(s))
+[..] ClearCombat(restored 0 attacker(s))   <-- DUPLICATE (the extra action)
+[..] Choice(P0 #1 = None)
 ```
-P2 choice_seq=7  action_count=66
-Server hash: 92c4ed0e9693354a  Client hash: 84c90bf66463727b
-Turn 1 "EndCombat" active=0
-Life: [20, 20]  Hands: [7, 7]  Libs: [53, 53]
-Battlefield: 0  Stack: 0  Graveyards: [0, 0]
-Hand CardIds(known): P0=[53..59] P1=[113..119]
-Library CardIds(sorted): P0=[0..52] P1=[60..112]
-```
+This is a state NO-OP (clearing already-empty combat twice leaves combat empty → `compute_state_hash`, which EXCLUDES undo_log, is unchanged → the native rewind/replay oracle stays green), but it advances `action_count` by one → the network view-hash diverges → fatal.
 
-## Analysis
+### Why it double-logs
 
-The structural state shown in the summary is BYTE-IDENTICAL between server and shadow (zones, life, hands, libraries all match). The full `compute_state_hash` nevertheless diverges, so the divergent field is one NOT printed in the summary box — candidates to bisect:
-- `TurnStructure` priority/consecutive_passes/priority_player state at the EndCombat step boundary
-- `CombatState` residue not cleared identically across the shadow's replay vs the server
-- a per-turn counter (`cards_drawn_this_turn`, lands-played) 
-- continuous-effects / layer state
-- RNG `word_pos` — but the rewind-verifier hash already excludes server-only rng (mtg-559/mtg-610); the FULL network hash may still include it and the shadow's random controller may have advanced its rng differently. NOTE: both sides are `random` controllers; a divergence in how many rng draws each side made by EndCombat would desync.
+The headless WASM AI network path is **`mtg-engine/src/wasm/network/ai_harness.rs::step_harness`** (`run_network_ai_step`, used by `web/wasm_ai_harness.html` and the fuzz `--client wasm`). It is a SEPARATE entrypoint from `fancy_tui.rs`'s network path, and it uses the OLD **no-rewind resume model**: every `run_network_ai_step` re-entry calls `GameLoop::run_until_input` directly on the persistent, already-advanced game.
 
-Recommended next step: add a field-level state-hash diff at the mismatch point (the rewind verifier already has `post_rewind_state_snapshot` JSON diffing — wire an analogous server-vs-client JSON field diff into the `--network-debug` mismatch path) to pinpoint the exact divergent field, rather than bisecting blind. The game reaches EndCombat of turn 1 with an empty board, so the divergence is in turn-structure/priority/rng bookkeeping at a combat-step transition, NOT in card mechanics.
+`end_combat_step` (game_loop/combat.rs:550) logs `ClearCombat` and THEN enters its priority round. The active player blocks (NeedInput) in that priority round; the stack unwinds with `current_step` still == EndCombat and the `ClearCombat` already in the log. On the next `run_network_ai_step` re-entry, `run_turn`'s step loop re-executes `execute_step(EndCombat)` → `end_combat_step` → a SECOND `ClearCombat`. Instrumentation confirmed TWO `end_combat_step` entries on the blocking side (undo_len 69 then 70, both `replaying=false`), exactly one extra action.
+
+This is the precise bug class the `fancy_tui.rs` network path was rearchitected away from (the "old no-rewind path that re-ran begin-of-step/combat actions and relied on the 9 TurnStructure guards", fancy_tui.rs:2462-2476). `ai_harness.rs` was never migrated to rewind/replay, so it is still the old path.
+
+## FIX
+
+Migrate `ai_harness.rs::step_harness` to the SAME rewind+replay resume model `fancy_tui.rs` uses (rewind_to_turn_start + ReplayController, persistent inner delegated only for the new frontier choice). On re-entry the rewind undoes the prior in-flight ClearCombat, and replay re-runs `end_combat_step` exactly once → ac matches the server. This is ALSO the Phase-4 unification: extract ONE shared rewind/replay driver and have both WASM network paths (and ultimately the local path) call it, so local-vs-network is just which opponent controller is plugged in + a conditional server-sync hook.
+
+NOT fixed by an idempotency guard in end_combat_step (that would be a cfg!/special-case divergence patch papering over the no-rewind re-execution; other pre-priority-action steps share the latent bug).
 
 ## Status
+ROOT-CAUSED. Distinct from mtg-212 (FIXED). Fix in progress on branch claude/netarch-local-unify.
+## FIXED 2026-06-09 (branch claude/netarch-local-unify)
 
-OPEN. Distinct from mtg-212 (opening-hand reveal, FIXED). Tracked under mtg-429 (network fuzz). This is likely the "known-hard WASM-rewind class" — the shadow advances via rewind+replay and a turn-structure/rng field drifts at the EndCombat boundary that the native oracle does not reproduce.
+ai_harness.rs::step_harness migrated to the rewind+replay resume model (see
+mtg-610 N3/N4 note). On a mid-turn re-entry it now rewinds to the turn start
+(undoing the in-flight ClearCombat + clearing CombatState) and replays, so
+end_combat_step runs exactly ONCE per turn -> action_count matches the server.
+
+VERIFIED end-to-end: the exact repro (WASM-vs-WASM, server seed 1, random
+controllers) now plays to Turn 19, GameEnded winner=Some(1), 0 state-hash
+mismatches (was dying at Turn-1 EndCombat choice_seq=7). Native regression guard
+added to rewind_replay_oracle_e2e (undo-log-length / action_count round-trip).
+make validate green.

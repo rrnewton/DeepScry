@@ -1,0 +1,32 @@
+---
+title: validate determ.commander OOM-kills (chandra_tokens random seed42, ~45GB) — pre-existing, blocks full validate
+status: closed
+priority: 2
+issue_type: bug
+created_at: 2026-06-09T19:21:52.533611449+00:00
+updated_at: 2026-06-09T20:55:16.759120839+00:00
+---
+
+# Description
+
+`make validate` step `determ.commander` (tests/commander_e2e.sh) OOM-kills (exit -9 / SIGKILL by the kernel OOM killer) on this box. The chandra_tokens random-vs-random commander game at seed 42 balloons memory to ~45GB and either hangs or is killed.
+
+## Repro
+```
+bash tests/commander_e2e.sh        # hangs/OOMs in "Test 1" (mtg tui chandra_tokens --p1=random --p2=random --seed=42 --stop-on-choice=50)
+## or: timeout 200 bash tests/commander_e2e.sh  -> 'Terminated' (still running at 200s)
+```
+Observed: a leftover `target/release/mtg tui .../chandra_tokens.dck --seed 42 --p1=random --p2=random --verbosity=verbose` process at 64% MEM (~45GB), ELAPSED 13:22, from a prior validate run whose determ.commander step was aborted but left the child running.
+
+## Notable
+- Test 1 passes `--stop-on-choice=50`, so it should halt after 50 choices, NOT run a full game. Either stop-on-choice is not honored on this path, or the random-controller commander game explodes state (token swarm: Arabella/Boros go-wide) before reaching 50 choices.
+- Heuristic-vs-heuristic chandra_tokens was previously GREEN (mtg-369, 2026-04-04, 10 seeds). The OOM is specific to the random-vs-random seed-42 config the e2e uses.
+
+## Scope / orthogonality
+PRE-EXISTING and unrelated to the netarch work on branch claude/netarch-local-unify: that branch only changes `mtg-engine/src/wasm/network/ai_harness.rs` (WASM-only, `#[cfg(feature="wasm")]` — NOT compiled into the native `mtg` binary that commander_e2e.sh runs) + a native test. The native binary is byte-identical to base for this test.
+
+## Recommended next step
+Reproduce on clean integration to confirm regression vs always-flaky; bisect against the commander-format / chandra_tokens commits (096b9a01 feat commander, 6a0dcb00 Arabella commander swap). Check whether --stop-on-choice is honored in the commander/token-swarm path. Likely a memory-growth bug in random-controller token-swarm play (unbounded token/trigger accumulation) rather than commander format per se. Relates to mtg-369.
+
+## RESOLVED 2026-06-09 — fixed on integration before this branch's full validate
+After rebasing onto integration 47f900e7 (which includes 56d7c988 'retune per-step memory baselines + add commander' and 47f900e7 'caps green'), the determ.commander step PASSES in 1s in a full make validate (validate_4c644f5e...log, 34/34 green). The chandra_tokens commander OOM was fixed upstream + per-step+outer cgroup memory caps now prevent any runaway from OOMing the box. Closing as fixed-by-integration.
