@@ -157,6 +157,60 @@ def step_mem_cap_bytes(tag):
 
 
 # ---------------------------------------------------------------------------
+# Memory FOOTPRINT model (single source of truth = the constants above).
+# "How much RAM does `validate -jN` need, worst case?" and its inverse
+# "what is the largest -jN whose footprint fits in budget M?". Both derive
+# straight from PER_STEP_RSS_BASELINE + the outer cap — NO flat per-job estimate.
+# ---------------------------------------------------------------------------
+def outer_cap_bytes():
+    """The outer-scope MemoryMax baseline = whole-run peak baseline x FACTOR.
+    This is the absolute ceiling on a run's footprint regardless of -j (the run
+    can never use more than the outer cgroup permits). NOT clamped to RAM here —
+    that clamp is a separate concern applied when the scope is actually created."""
+    return int(VALIDATE_TOTAL_RSS_BASELINE_BYTES * MEM_CAP_FACTOR)
+
+
+def _sorted_step_caps():
+    """Per-step inner caps (bytes), descending. Steps absent from
+    PER_STEP_RSS_BASELINE have no inner cap; they're conservatively excluded from
+    the worst-case sum (their RSS is, by characterization, small enough not to be
+    worth capping — the outer cap still bounds the total)."""
+    return sorted((step_mem_cap_bytes(t) for t in PER_STEP_RSS_BASELINE), reverse=True)
+
+
+def jobs_footprint_bytes(jobs):
+    """Worst-case memory footprint (bytes) of a run at the given -j parallelism,
+    from the per-step cap dict:
+      * -j1  -> the LARGEST single per-step inner cap (only one step runs at once);
+      * -jN  -> min( sum of the N largest per-step caps , outer cap ).
+    The outer-cap clamp reflects that the outer cgroup hard-limits the total no
+    matter how many steps overlap (and that the N largest caps rarely all run
+    concurrently — the browser-resource serialization alone prevents it)."""
+    caps = _sorted_step_caps()
+    if not caps:
+        return outer_cap_bytes()
+    n = max(1, int(jobs))
+    return min(sum(caps[:n]), outer_cap_bytes())
+
+
+def jobs_for_budget(budget):
+    """Inverse: the LARGEST -jN whose worst-case footprint (jobs_footprint_bytes)
+    fits within `budget` bytes. Always >= 1 (if even -j1's single largest step
+    cap exceeds the budget we still return 1 and let the caller surface it — a
+    box too small for one step is a WAIT/abort decision, not a -j0). Capped at
+    nproc (no point scheduling more parallel slots than cores). Returns
+    (jobs, footprint_at_that_jobs)."""
+    ncpu = os.cpu_count() or 4
+    best = 1
+    for n in range(1, ncpu + 1):
+        if jobs_footprint_bytes(n) <= budget:
+            best = n
+        else:
+            break  # footprint is monotonic non-decreasing in n
+    return best, jobs_footprint_bytes(best)
+
+
+# ---------------------------------------------------------------------------
 # Memory helpers (for memory-aware parallelism + the outer-scope MemoryMax)
 # ---------------------------------------------------------------------------
 def parse_size(spec):
@@ -775,28 +829,82 @@ class Runner:
         print("=" * 60)
 
 
+def _print_mem_footprint(args):
+    """--query-mem-footprint: report the memory model (does NOT run validate).
+    Everything derives from the constants in scripts/validate.py (single source
+    of truth): outer cap + the per-step cap dict."""
+    ncpu = os.cpu_count() or 4
+    j = args.jobs if args.jobs is not None else ncpu
+    avail = mem_available_bytes()
+    total = _total_ram_bytes()
+    print("=== validate memory footprint (from scripts/validate.py constants) ===")
+    print(f"  whole-run outer cap : {_fmt_bytes(outer_cap_bytes())} "
+          f"(VALIDATE_TOTAL_RSS_BASELINE_BYTES {_fmt_bytes(VALIDATE_TOTAL_RSS_BASELINE_BYTES)} "
+          f"× MEM_CAP_FACTOR {MEM_CAP_FACTOR})")
+    print(f"  per-step inner caps : {', '.join(_fmt_bytes(c) for c in _sorted_step_caps())} "
+          f"(descending; {len(PER_STEP_RSS_BASELINE)} characterized steps)")
+    print(f"  this host           : {_fmt_bytes(total)} RAM, {_fmt_bytes(avail)} available now, "
+          f"{ncpu} cores")
+    print(f"\n  footprint at -j{j} (current): {_fmt_bytes(jobs_footprint_bytes(j))}")
+    print("\n  footprint by -j (worst case = min(sum of N largest step caps, outer cap)):")
+    shown = sorted(set([1, 2, 3, 4, 5, 8, ncpu]))
+    for n in shown:
+        if n <= ncpu:
+            print(f"      -j{n:<3d} {_fmt_bytes(jobs_footprint_bytes(n))}")
+    print("\n  largest -j that fits a budget (what --max-mem M would pick):")
+    for spec in ("8G", "16G", "24G", "32G", "48G", "64G"):
+        b = parse_size(spec)
+        jb, fp = jobs_for_budget(b)
+        fits = "✓" if jobs_footprint_bytes(jb) <= b else "⚠ even -j1 over budget"
+        print(f"      --max-mem {spec:<4s} → -j{jb:<3d} (footprint {_fmt_bytes(fp)}) {fits}")
+    if avail:
+        rec_budget = int(avail * 0.8)
+        jb, fp = jobs_for_budget(rec_budget)
+        print(f"\n  greedy recommendation for THIS host (avail×0.8 = {_fmt_bytes(rec_budget)}):")
+        if jobs_footprint_bytes(1) > rec_budget:
+            print(f"      WAIT — even -j1 needs {_fmt_bytes(jobs_footprint_bytes(1))} > "
+                  f"{_fmt_bytes(rec_budget)}; let running validates finish first.")
+        elif jb >= ncpu:
+            print(f"      run FULL -j{ncpu} (ample headroom; no --max-mem needed).")
+        else:
+            print(f"      run with --max-mem {_fmt_bytes(rec_budget)} → -j{jb} "
+                  f"(footprint {_fmt_bytes(fp)} fits).")
+
+
 def _resolve_jobs(args):
     """Resolve args.jobs in place. Precedence: --sequential (1) > explicit -j >
-    memory-budget auto-scale > nproc. The memory budget is the outer-scope cap
-    (DEFAULT-applied now, mtg-5jn7z), so -j is auto-capped to fit memory on a
-    small-RAM box even without an explicit --max-mem; on an ample box (budget /
-    --mem-per-job >= nproc) it leaves -j at nproc."""
+    --max-mem-derived -j > nproc.
+
+    -j is derived BACKWARDS from the per-step cap dict (jobs_for_budget): the
+    largest -jN whose worst-case footprint fits the budget. This replaces the old
+    flat `budget / --mem-per-job` estimate (which ignored the real per-step
+    sizes). It only ever REDUCES below nproc when the budget is genuinely tight —
+    the DEFAULT outer cap clamps the footprint to itself, so jobs_for_budget
+    returns nproc there (no throttle on an ample box); only an explicit, tighter
+    --max-mem shrinks -j. If even -j1's footprint exceeds the budget we keep -j1
+    and WARN (the box is too small for one step — a WAIT/abort decision)."""
     if args.sequential:
         args.jobs = 1
         return
-    explicit = args.jobs is not None
-    ncpu = os.cpu_count() or 4
-    if explicit:
+    if args.jobs is not None:
         return  # an explicit -j always wins, even under --max-mem
-    jobs = ncpu
+    ncpu = os.cpu_count() or 4
     budget = _resolve_mem_budget(args)
-    if budget:
-        per = parse_size(args.mem_per_job) or (1500 * 1024**2)
-        cap = max(1, budget // per)
-        if cap < jobs:
-            print(f"[validate] memory-aware -j: capping {jobs} -> {cap} "
-                  f"(budget {_fmt_bytes(budget)} / {_fmt_bytes(per)} per job).")
-            jobs = cap
+    if not budget:
+        args.jobs = ncpu  # --no-max-mem: uncapped, full parallelism
+        return
+    jobs, fp = jobs_for_budget(budget)
+    explicit_budget = bool(getattr(args, "max_mem", None))
+    over_budget = jobs == 1 and jobs_footprint_bytes(1) > budget
+    if jobs < ncpu and explicit_budget and not over_budget:
+        print(f"[validate] --max-mem {_fmt_bytes(budget)} → -j{jobs}: worst-case footprint "
+              f"{_fmt_bytes(fp)} ≤ {_fmt_bytes(budget)} (largest -jN that fits, from the "
+              f"per-step cap dict).")
+    if over_budget:
+        print(f"[validate] ⚠ --max-mem {_fmt_bytes(budget)}: even -j1 needs "
+              f"{_fmt_bytes(jobs_footprint_bytes(1))} — the largest single step won't fit the "
+              f"budget. Running -j1 anyway; its inner cap may OOM-kill it. Consider WAITING for "
+              f"other validates to free RAM.")
     args.jobs = jobs
 
 
@@ -882,17 +990,25 @@ def main():
                          "characterized whole-run peak; see VALIDATE_TOTAL_RSS_BASELINE_BYTES) so a "
                          "runaway can never OOM the box; use this only to raise/lower it. SPEC is an "
                          "absolute size (e.g. 8G, 4096M) applied as MemoryMax (MemoryHigh=90%% of it), "
-                         "or 'auto' to budget from /proc/meminfo MemAvailable. Also caps -j to "
-                         "floor(budget / --mem-per-job) unless -j was given explicitly.")
+                         "or 'auto' to budget from /proc/meminfo MemAvailable. Unless -j was given "
+                         "explicitly, -j is then derived BACKWARDS from the per-step cap dict: the "
+                         "largest -jN whose worst-case footprint (sum of the N largest per-step caps, "
+                         "clamped at the outer cap) fits in SPEC. The computation is printed.")
     ap.add_argument("--no-max-mem", action="store_true",
                     help="DANGEROUS opt-out: run with NO outer memory cap. A runaway test can then "
                          "OOM the whole host (this is exactly the 2026-06-09 box-wedge). Only for "
                          "deliberate memory profiling where the cap distorts the measurement.")
-    ap.add_argument("--mem-per-job", metavar="SIZE", default="1500M",
-                    help="assumed peak RSS of one parallel step, for --max-mem job auto-scaling "
-                         "(default 1500M — a release rustc/nextest compile unit). Lower it if your "
-                         "steps are lighter to allow more concurrency under a memory budget.")
+    ap.add_argument("--query-mem-footprint", action="store_true",
+                    help="QUERY (does NOT run validate): print the worst-case memory footprint a run "
+                         "would use at the current -j (from the per-step cap dict — -j1 = the largest "
+                         "single per-step cap; -jN = min(sum of N largest caps, outer cap)), plus the "
+                         "footprint at every -jN and which budgets pick which -j, then exit. Use to "
+                         "decide a safe -j / --max-mem before launching.")
     args = ap.parse_args()
+
+    if args.query_mem_footprint:
+        _print_mem_footprint(args)
+        return 0
 
     _resolve_jobs(args)
     subset = bool(args.group or args.only or args.job)
