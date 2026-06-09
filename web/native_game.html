@@ -292,6 +292,51 @@
             border-bottom: 1px solid #2a3060;
         }
 
+        /* Action-pane affordance footer (slot05): persistent guidance for the
+           page's meta-controls (Space / A) during watch / waiting states.
+           Visually distinct from the gold semantic .prompt-text — this is
+           interaction guidance, not a game prompt — so it uses a muted teal
+           "info strip" treatment pinned to the bottom of the Actions pane. */
+        .actions-affordance {
+            padding: 6px 10px;
+            background: #11203a;
+            border-top: 1px solid #1e2d50;
+            color: #8aa0c0;
+            font-size: 12px;
+            line-height: 1.5;
+            flex: 0 0 auto;
+        }
+        .actions-affordance.auto-on {
+            background: #14302a;
+            border-top-color: #1f5a3a;
+            color: #7fd6a6;
+        }
+        /* A key-cap chip so "Space" / "A" read as pressable keys, mirroring
+           the status-bar hint vocabulary. */
+        .actions-affordance .key {
+            display: inline-block;
+            min-width: 14px;
+            padding: 1px 5px;
+            margin-right: 4px;
+            border-radius: 3px;
+            background: #233357;
+            border: 1px solid #35508a;
+            color: #cde0ff;
+            font-family: 'Consolas', 'Monaco', monospace;
+            font-weight: bold;
+            font-size: 11px;
+        }
+        .actions-affordance.auto-on .key {
+            background: #1c4a36;
+            border-color: #2f7a54;
+            color: #c8ffe2;
+        }
+        /* Separator dot between affordance items. */
+        .actions-affordance .sep { color: #44557a; margin: 0 6px; }
+        .actions-affordance.auto-on .sep { color: #2f7a54; }
+        /* The leading state glyph (▶ paused / ⏸ auto-running) + its label. */
+        .actions-affordance .aff-state { font-weight: bold; margin-right: 8px; }
+
         /* Card rendering */
         .card {
             display: inline-flex;
@@ -876,6 +921,18 @@
                 </div>
                 <div id="actions-prompt" class="prompt-text" style="display:none;"></div>
                 <div class="pane-body" id="actions-body"></div>
+                <!-- Affordance footer (slot05 / native-action-pane-hints):
+                     a persistent guidance line shown whenever the game is in a
+                     watch / auto-advance / waiting state (no manual human
+                     choice pending). It surfaces the page's meta-controls
+                     (Space to continue, A to toggle auto-run) so the action
+                     pane is NEVER silent during AI turns. It is deliberately a
+                     sibling of .pane-body (not inside the scroll container) so
+                     it pins to the bottom of the pane and never scrolls away.
+                     Its text is driven by renderActionAffordance() off real
+                     state (choices/game_over + the JS autoRunning flag), NOT by
+                     string-matching the engine prompt. -->
+                <div id="actions-affordance" class="actions-affordance" style="display:none;"></div>
             </div>
         </div>
 
@@ -1453,10 +1510,49 @@
             if (wasmAutoRunInitial !== desired && typeof tui_toggle_auto === 'function') {
                 tui_toggle_auto();
             }
-            autoRunning = desired;
-            gamePaused = !desired;
+            // syncInitialRunState owns the WASM-side toggle reconciliation
+            // (above); applyAutoRunState only mirrors that into JS state + UI.
+            // toggleWasm=false (already reconciled) and kickLoop=false (the
+            // per-mode launch code below owns the initial kick — do NOT add a
+            // second startAutoRun driver to the network path).
+            applyAutoRunState(desired, /* toggleWasm */ false, /* kickLoop */ false);
+        }
+
+        // Single source of truth for the auto-run flag (slot05). Previously the
+        // 'A' keydown handler, the #btn-auto click handler, and
+        // syncInitialRunState each duplicated the same four-line dance
+        // (set autoRunning, derive gamePaused, flip the WASM flag, relabel the
+        // button, kick startAutoRun, re-render). That drift risk is exactly what
+        // made the action-pane affordance hard to keep accurate. Centralize it
+        // here so the affordance, the button label, and the pause gate can never
+        // disagree. Parameters:
+        //   - `on`        : desired auto-run state (true = running).
+        //   - `toggleWasm`: whether to call the WASM `tui_toggle_auto()` export.
+        //                   true for user-driven toggles (A / button); false for
+        //                   syncInitialRunState, which already reconciled WASM.
+        //   - `kickLoop`  : whether to start the JS startAutoRun() polling loop
+        //                   when turning auto ON. true for user toggles (mirrors
+        //                   the original 'A'/button behaviour, both modes). FALSE
+        //                   for syncInitialRunState: the per-mode launch code
+        //                   (local: nothing extra; network: onMessageProcessed
+        //                   stepping) already owns the initial kick, and we must
+        //                   NOT add a second driver to the network path.
+        // Callers must NOT touch `autoRunning` / `gamePaused` / `#btn-auto`
+        // directly anymore — go through this function.
+        function applyAutoRunState(on, toggleWasm = true, kickLoop = true) {
+            autoRunning = !!on;
+            gamePaused = !autoRunning; // mtg-rxacr: un-pause when auto on
+            if (toggleWasm && typeof tui_toggle_auto === 'function') {
+                tui_toggle_auto();
+            }
             const btn = document.getElementById('btn-auto');
             if (btn) btn.textContent = autoRunning ? 'Stop Auto' : 'Auto Run';
+            if (autoRunning && kickLoop) startAutoRun();
+            // Re-render the action pane so the affordance footer reflects the
+            // new auto-run state immediately. updateUI() folds `autoRunning`
+            // into its render-skip key (mtg-6vzht), so this is the one signal
+            // that lets a toggle defeat the byte-identical-view-model skip.
+            if (typeof updateUI === 'function') updateUI();
         }
 
         // ==================== CONTROLLER TYPE MAP ====================
@@ -1933,8 +2029,9 @@
                     maybeEnableReplayVerifier();
                     // mtg-rxacr: local games already wait for the first
                     // Run-1-Turn / Space (no implicit tui_run_turn here), so they
-                    // are paused by default. Reconcile the control state and, when
-                    // ?auto_run=true was requested, start the auto-run loop.
+                    // are paused by default. Reconcile the control state, then
+                    // (LOCAL mode owns its own initial kick — slot05) start the
+                    // auto-run loop when ?auto_run=true was requested.
                     syncInitialRunState();
                     if (!gamePaused) startAutoRun();
 
@@ -2155,7 +2252,13 @@
             // tick; the ~2.3ms serialize is still paid — an O(1) wasm
             // view-revision getter to skip that too is the filed follow-up.)
             const cardSizes = computeBattlefieldCardSizes();
-            const renderKey = stateJson + '' + JSON.stringify(cardSizes);
+            // slot05: the action-pane affordance footer is a function of the
+            // view model AND the JS-local `autoRunning` flag (which is NOT in
+            // the view-model JSON). Fold it into the skip key so toggling
+            // auto-run (A / #btn-auto) re-renders the affordance even when the
+            // view model is byte-identical. applyAutoRunState() drives the
+            // updateUI() that observes the flipped flag here.
+            const renderKey = stateJson + (autoRunning ? '\x01af1' : '\x01af0') + '' + JSON.stringify(cardSizes);
             if (renderKey === _lastRenderKey) return;
             _lastRenderKey = renderKey;
 
@@ -2245,6 +2348,11 @@
             renderHandGraveyard(ourPlayer, state.selected_card?.card_id);
             renderStack(state.stack || []);
             renderActions(state.current_prompt, state.choices || [], state.selected_choice_idx || 0, state.choice_context);
+            // slot05: persistent meta-control affordance (Space / auto-run) in
+            // the Actions pane so it's never silent during AI-watch / waiting
+            // states. Driven off real state + the autoRunning flag (which is in
+            // the render-skip key below, so a toggle re-renders this).
+            renderActionAffordance(state.choices || [], state.game_over);
             renderLog(state.logs || []);
             renderStatusBar(state);
 
@@ -2614,6 +2722,77 @@
             }).join('');
         }
 
+        /// Render the action-pane affordance footer (slot05 /
+        /// native-action-pane-hints).
+        ///
+        /// PROBLEM this solves: when watching an AI-vs-AI (e.g. random/random)
+        /// game, the engine's semantic prompt is things like "Waiting for
+        /// server...", "Network AI game running...", or "Game ready. Press
+        /// Space to advance turn." with an EMPTY choice list — so the Actions
+        /// pane showed "No actions available" and nothing telling the user what
+        /// to do. The only hint lived in the tiny bottom status bar. This
+        /// footer makes the Actions pane ALWAYS tell the user the next move by
+        /// surfacing the page's meta-controls (Space / A).
+        ///
+        /// DESIGN: the affordance is a RENDERER concern, not an engine concern.
+        /// Space/A are native_game.html keybindings; embedding them in the
+        /// shared engine `current_prompt` (gui_view_model.rs / fancy_tui.rs)
+        /// would couple the engine view-model to one renderer's keys and
+        /// collide with concurrent engine work. So we keep the engine prompt
+        /// semantic and add the interaction hint here, driven off REAL state —
+        /// no `prompt.includes(...)` string-matching:
+        ///   - `game_over`            → no affordance (game is finished).
+        ///   - manual human choice pending (`choices.length > 0`) → no
+        ///     affordance; the choice list itself is the guidance, and Space/A
+        ///     would interfere.
+        ///   - otherwise (watch / auto-advance / waiting; choices empty) → show
+        ///     the affordance, with text driven by `autoRunning` (the single
+        ///     source of truth, owned by applyAutoRunState) and whether this is
+        ///     a network game (`bootConfig.isNetwork`):
+        ///       * auto-running        → "⏸ Auto-running — A: pause"
+        ///       * paused, network     → "⏳ Waiting for the other player —
+        ///         Space: continue · A: auto-run" (auto-run polls and advances
+        ///         the moment the server is ready; a lone Space mid-wait just
+        ///         re-checks because the server drives the next step)
+        ///       * paused, local       → "▶ Space: continue · A: auto-run"
+        function renderActionAffordance(choices, gameOver) {
+            const el = document.getElementById('actions-affordance');
+            if (!el) return;
+
+            // Hide while a human choice is pending or the game is over — the
+            // pane already has real guidance (or nothing left to do).
+            if (gameOver || (choices && choices.length > 0)) {
+                el.style.display = 'none';
+                el.classList.remove('auto-on');
+                return;
+            }
+
+            const keyCap = (k) => `<span class="key">${escapeHtml(k)}</span>`;
+            const sep = `<span class="sep">·</span>`;
+            let stateGlyph, stateLabel, controlsHtml;
+
+            if (autoRunning) {
+                stateGlyph = '⏸';
+                stateLabel = 'Auto-running';
+                controlsHtml = `${keyCap('A')}pause`;
+            } else if (bootConfig.isNetwork) {
+                stateGlyph = '⏳';
+                stateLabel = 'Waiting for the other player';
+                controlsHtml = `${keyCap('Space')}continue${sep}${keyCap('A')}auto-run`;
+            } else {
+                stateGlyph = '▶';
+                stateLabel = '';
+                controlsHtml = `${keyCap('Space')}continue${sep}${keyCap('A')}auto-run`;
+            }
+
+            const labelHtml = stateLabel
+                ? `<span class="aff-state">${stateGlyph} ${escapeHtml(stateLabel)}</span>`
+                : `<span class="aff-state">${stateGlyph}</span>`;
+            el.innerHTML = labelHtml + controlsHtml;
+            el.classList.toggle('auto-on', autoRunning);
+            el.style.display = 'block';
+        }
+
         function selectAction(idx) {
             debugLog('selectAction:', idx);
             tui_set_choice_idx(idx);
@@ -2716,12 +2895,11 @@
                 case 'a':
                 case 'A':
                     e.preventDefault();
-                    autoRunning = !autoRunning;
-                    gamePaused = !autoRunning; // mtg-rxacr: un-pause when auto on
-                    debugLog('key: A (auto toggle)', autoRunning ? 'ON' : 'OFF');
-                    tui_toggle_auto();
-                    document.getElementById('btn-auto').textContent = autoRunning ? 'Stop Auto' : 'Auto Run';
-                    if (autoRunning) startAutoRun();
+                    debugLog('key: A (auto toggle)', !autoRunning ? 'ON' : 'OFF');
+                    // Single source of truth (slot05): applyAutoRunState flips
+                    // the WASM flag, relabels #btn-auto, kicks startAutoRun, and
+                    // refreshes the action-pane affordance.
+                    applyAutoRunState(!autoRunning);
                     break;
                 case 'ArrowUp':
                     // decouple-step2: dispatch Up/Down/Enter to ratzilla-free
@@ -2860,8 +3038,13 @@
                     // Read game_over from the cached view model rather than
                     // making another WASM call — `updateUI` just refreshed it.
                     if (_viewModel && _viewModel.game_over) {
-                        autoRunning = false;
-                        document.getElementById('btn-auto').textContent = 'Auto Run';
+                        // Auto-run reached game over: stop the JS loop and
+                        // relabel the button, but do NOT flip the WASM flag
+                        // (toggleWasm=false) — the game is over so the engine
+                        // flag is moot, and toggling it would desync the
+                        // button label from the WASM state. applyAutoRunState
+                        // also refreshes the affordance (hidden at game over).
+                        applyAutoRunState(false, /* toggleWasm */ false);
                         return;
                     }
                     setTimeout(startAutoRun, 100);
@@ -2885,11 +3068,8 @@
             setTimeout(updateUI, 50);
         });
         document.getElementById('btn-auto').addEventListener('click', () => {
-            autoRunning = !autoRunning;
-            gamePaused = !autoRunning; // mtg-rxacr: un-pause when auto on
-            tui_toggle_auto();
-            document.getElementById('btn-auto').textContent = autoRunning ? 'Stop Auto' : 'Auto Run';
-            if (autoRunning) startAutoRun();
+            // Single source of truth (slot05): mirror the 'A' keydown path.
+            applyAutoRunState(!autoRunning);
         });
         function exitGame() {
             if (!tuiLaunched) return;

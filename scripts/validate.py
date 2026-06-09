@@ -184,7 +184,7 @@ def build_registry():
     # the summary). (NPM is exported into the env so the script honors it.)
     add(Step("wasm", "npm-install", "web/ node deps (offline-first, hard-fail if absent)",
              f"cd web && NPM={NPM} {NODE} ensure_node_deps.js"))
-    add(Step("wasm", "browser", "WASM browser e2e suite (16 playwright tests)",
+    add(Step("wasm", "browser", "WASM browser e2e suite (17 playwright tests)",
              "cd web && " + " && ".join(
                  f"{NODE} {t}" for t in [
                      "test_fancy_tui.js", "test_bug_report.js", "test_human_input.js",
@@ -194,7 +194,8 @@ def build_registry():
                      "test_decouple_step6_valid_choices.js", "test_tapped_rotation.js",
                      "test_graveyard_overlay.js", "test_deck_editor.js",
                      "test_cdn_image_table.js", "test_image_flicker_memo.js",
-                     "test_aura_render.js", "test_render_skip.js"]),
+                     "test_aura_render.js", "test_render_skip.js",
+                     "test_action_affordance.js"]),
              deps=["wasm.bundle", "wasm.npm-install"], resources=_BROWSER))
     for job, desc, args in [
         ("equiv-base", "native-vs-WASM STRICT sweep: old_school2/* (8 turns)",
