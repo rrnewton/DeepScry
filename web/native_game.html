@@ -2736,10 +2736,13 @@
             div.className = cardClassName(card);
             div.setAttribute('data-card-id', String(card.card_id));
             div.setAttribute('data-card-name', card.name); // diagnostic aid only
-            // Stamp the image identity key so a later reconcile can tell whether
-            // the <img> may be reused as-is (Safari flicker fix).
+            // Stamp the image identity key + non-image signature so a later
+            // reconcile can tell whether the <img> may be reused as-is and
+            // whether the cheap bits changed (Safari flicker fix).
             div.setAttribute('data-img-key', cardImageKey(card, imgHeightPx));
-            div.innerHTML = `${cardImgHtmlFor(card, imgHeightPx)}${cardInnerNonImageHtml(card, showMana)}`;
+            const nonImg = cardInnerNonImageHtml(card, showMana);
+            div.setAttribute('data-nonimg', nonImg);
+            div.innerHTML = `${cardImgHtmlFor(card, imgHeightPx)}${nonImg}`;
             return div;
         }
 
@@ -2774,18 +2777,17 @@
                 }
             }
 
-            // Patch the cheap non-image bits (name/P/T/mana) only when changed,
-            // without touching the <img>.
-            const img = div.querySelector('img.card-image');
+            // Patch the cheap non-image bits (name/P/T/mana/badge) only when they
+            // changed, WITHOUT touching the <img>. Compare against the exact HTML
+            // we last applied (stamped in data-nonimg) — cheaper and more
+            // reliable than reconstructing + comparing the live DOM's outerHTML
+            // (which can differ by attribute normalization even when unchanged).
             const desiredNonImg = cardInnerNonImageHtml(card, showMana);
-            // Reconstruct the non-image portion currently in the DOM (everything
-            // after the <img>) and compare; rewrite only on difference.
-            const curNonImg = img
-                ? Array.from(div.childNodes).filter(n => n !== img).map(n => n.outerHTML || '').join('')
-                : div.innerHTML;
-            if (curNonImg !== desiredNonImg) {
-                // Remove the old non-image nodes, then append the new ones,
-                // keeping the live <img> node in place.
+            if (div.getAttribute('data-nonimg') !== desiredNonImg) {
+                div.setAttribute('data-nonimg', desiredNonImg);
+                const img = div.querySelector('img.card-image');
+                // Remove the old non-image nodes, keep the live <img> in place,
+                // then append the rebuilt non-image content after it.
                 Array.from(div.childNodes).forEach(n => { if (n !== img) n.remove(); });
                 const tmp = document.createElement('template');
                 tmp.innerHTML = desiredNonImg;
