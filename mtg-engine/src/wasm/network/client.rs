@@ -201,6 +201,21 @@ pub struct WasmNetworkClient {
     /// `last_applied_reveal_ac`.
     last_applied_reveal_ac: u64,
 
+    /// Whether ANY reveal has been applied yet (mtg-212). `last_applied_reveal_ac`
+    /// is a `u64` that starts at 0, but a legitimate reveal can be stamped at game
+    /// `action_count == 0` — the VERY FIRST opening-hand draw (the top-of-library
+    /// card) logs its `RevealCard` at undo position 0 (server stamps it at
+    /// `opening_reveal_ac(0) = Some(0)`). With a bare `*ac > last_applied_reveal_ac`
+    /// filter, that ac-0 reveal was never applied (`0 > 0` is false), so the first
+    /// drawn card's NAME stayed unbound on the shadow (`RevealCard(59 = ??? ...)`).
+    /// If that card is a land, the shadow could not enumerate its `PlayLand`
+    /// option → a legal-action COUNT mismatch vs the server → FATAL DESYNC. This
+    /// flag distinguishes "applied nothing yet" (false → ac 0 is eligible) from
+    /// "applied through ac 0" (true → ac 0 already consumed), making the lower
+    /// bound of the apply window correctly half-open WITHOUT excluding ac 0 on the
+    /// first pass.
+    any_reveal_applied: bool,
+
     /// **Game-start library orders (mtg-752 L3).** The server syncs each
     /// player's initial (pre-game) shuffled library order via
     /// `ServerMessage::LibraryReordered { action_count: 0, .. }` — two per
@@ -393,6 +408,7 @@ impl WasmNetworkClient {
             reveal_log: ActionLog::new(),
             last_applied_reorder_ac: 0,
             last_applied_reveal_ac: 0,
+            any_reveal_applied: false,
             initial_library_orders: std::collections::BTreeMap::new(),
             initial_library_applied: false,
             max_received_choice_ac: 0,
@@ -1615,10 +1631,14 @@ impl WasmNetworkClient {
             .filter(|(ac, _)| *ac > self.last_applied_reorder_ac && *ac <= reorder_bound)
             .map(|(ac, entry)| (ac, entry.clone()))
             .collect();
+        // mtg-212: the lower bound is half-open EXCEPT on the very first apply,
+        // when ac 0 (the first opening-hand draw's RevealCard) must be included.
+        // `!any_reveal_applied` makes ac 0 eligible exactly once; thereafter the
+        // strict `*ac > last_applied_reveal_ac` keeps it from re-applying.
         let reveals: Vec<(u64, StateSyncEntry)> = self
             .reveal_log
             .iter()
-            .filter(|(ac, _)| *ac > self.last_applied_reveal_ac && *ac <= reveal_bound)
+            .filter(|(ac, _)| (!self.any_reveal_applied || *ac > self.last_applied_reveal_ac) && *ac <= reveal_bound)
             .map(|(ac, entry)| (ac, entry.clone()))
             .collect();
         if reorders.is_empty() && reveals.is_empty() {
@@ -1626,6 +1646,9 @@ impl WasmNetworkClient {
         }
         self.last_applied_reorder_ac = self.last_applied_reorder_ac.max(reorder_bound);
         self.last_applied_reveal_ac = self.last_applied_reveal_ac.max(reveal_bound);
+        if !reveals.is_empty() {
+            self.any_reveal_applied = true;
+        }
 
         // CRITICAL ORDERING (mtg-589): apply LibraryReorder entries BEFORE the
         // reveal-like entries — the server-authoritative library order must be in
@@ -1702,6 +1725,10 @@ impl WasmNetworkClient {
     pub fn reset_state_sync_cursor(&mut self) {
         self.last_applied_reorder_ac = 0;
         self.last_applied_reveal_ac = 0;
+        // mtg-212: re-arm the "ac 0 eligible" state so a rewind+replay re-applies
+        // the first opening-hand reveal (stamped at ac 0) just like the original
+        // forward pass did.
+        self.any_reveal_applied = false;
     }
 
     /// **Rebuild the reveal-history materialisation to game `action_count` R**
@@ -1930,6 +1957,11 @@ impl WasmNetworkClient {
         self.reorder_log
             .frontier()
             .is_some_and(|f| f > self.last_applied_reorder_ac)
+            // mtg-212: when nothing has been applied yet, a reveal at ac 0 (the
+            // first opening-hand draw) is still pending even though `f > 0` is
+            // false. Treat any non-empty reveal_log as unapplied in that state so
+            // the ac-0 reveal is not silently skipped.
+            || (!self.any_reveal_applied && !self.reveal_log.is_empty())
             || self
                 .reveal_log
                 .frontier()
@@ -2094,6 +2126,7 @@ impl WasmNetworkClient {
         self.reveal_log = ActionLog::new();
         self.last_applied_reorder_ac = 0;
         self.last_applied_reveal_ac = 0;
+        self.any_reveal_applied = false; // mtg-212: re-arm ac-0 eligibility
         self.initial_library_orders.clear();
         self.initial_library_applied = false;
         self.max_received_choice_ac = 0;
@@ -2334,6 +2367,57 @@ mod tests {
         c.push_state_sync(2, mk_reveal("b"));
         assert!(c.has_unapplied_state_sync());
         assert_eq!(c.last_applied_reveal_ac(), 0);
+    }
+
+    #[test]
+    fn reveal_at_ac_zero_is_pending_until_applied() {
+        // mtg-212 REGRESSION: the FIRST opening-hand draw's RevealCard is stamped
+        // at game action_count == 0 (the server's `opening_reveal_ac(0) = Some(0)`).
+        // The apply cursor `last_applied_reveal_ac` ALSO starts at 0, so a bare
+        // `frontier() > cursor` / `ac > cursor` test (0 > 0 == false) wrongly
+        // treated the ac-0 reveal as already-applied and SKIPPED it — leaving the
+        // first-drawn card's identity unbound on the shadow
+        // (`RevealCard(59 = ??? ...)`). If that card was a land, the shadow could
+        // not enumerate its PlayLand option, producing a legal-action COUNT
+        // mismatch vs the server (the live deepscry.net
+        // "Local abilities (4) != server abilities (5)" FATAL DESYNC).
+        //
+        // With the `any_reveal_applied` flag, a reveal at ac 0 is correctly
+        // reported as PENDING when nothing has been applied yet, so the apply pass
+        // does not silently skip it.
+        let mut c = WasmNetworkClient::new();
+        assert!(!c.any_reveal_applied, "fresh client: nothing applied yet");
+        assert!(!c.has_unapplied_state_sync(), "empty log: nothing pending");
+
+        // The very first opening-hand reveal lands at ac 0.
+        c.push_state_sync(0, mk_reveal("Strip Mine"));
+        assert_eq!(c.reveal_log.frontier(), Some(0), "reveal logged at ac 0");
+        assert!(
+            c.has_unapplied_state_sync(),
+            "an ac-0 reveal MUST be reported pending before any apply (mtg-212): \
+             frontier()==Some(0) with cursor 0 would otherwise look 'already applied'"
+        );
+    }
+
+    #[test]
+    fn reset_state_sync_cursor_re_arms_ac_zero_reveal() {
+        // mtg-212: a rewind+replay must re-apply the ac-0 opening-hand reveal, so
+        // resetting the cursor has to re-arm `any_reveal_applied` (else the ac-0
+        // reveal would be skipped on the replay just like the original bug).
+        let mut c = WasmNetworkClient::new();
+        c.push_state_sync(0, mk_reveal("Strip Mine"));
+        // Simulate that the forward pass already applied through ac 0.
+        c.last_applied_reveal_ac = 0;
+        c.any_reveal_applied = true;
+        assert!(!c.has_unapplied_state_sync(), "after apply: ac-0 reveal consumed");
+
+        c.reset_state_sync_cursor();
+        assert!(!c.any_reveal_applied, "reset must re-arm ac-0 eligibility");
+        assert!(
+            c.has_unapplied_state_sync(),
+            "after a rewind the ac-0 reveal is pending again for the replay"
+        );
+        assert_eq!(c.reveal_log.frontier(), Some(0), "log itself stays intact");
     }
 
     #[test]

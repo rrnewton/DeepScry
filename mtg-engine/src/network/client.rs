@@ -368,6 +368,14 @@ struct StateSyncBuffer {
     /// makes it race-free (the bug that target-bounding would otherwise fix is
     /// gone because the buffer delivers the window atomically).
     last_applied_reveal_ac: u64,
+    /// Whether ANY reveal has been applied yet (mtg-212). The first opening-hand
+    /// draw's `RevealCard` is stamped at game `action_count == 0`; a bare
+    /// `*ac > last_applied_reveal_ac` filter (cursor init 0) would skip it
+    /// (`0 > 0` is false), leaving the first-drawn card's identity unbound on the
+    /// shadow → a legal-action count mismatch if that card is a land → FATAL.
+    /// This flag makes ac 0 eligible on the first apply only. Mirrors the WASM
+    /// client's `any_reveal_applied`.
+    any_reveal_applied: bool,
     /// Pre-game (game-start) library orders, held OUTSIDE the ac-keyed `log`
     /// (mirrors the WASM `initial_library_orders` BTreeMap). Both players'
     /// initial orders land at game ac 0, which would collide in the
@@ -972,10 +980,13 @@ impl SharedNetworkState {
             .filter(|(ac, _)| *ac > reorder_cursor && *ac <= reorder_bound)
             .map(|(ac, entry)| (ac, entry.clone()))
             .collect();
+        // mtg-212: the lower bound is half-open EXCEPT on the very first apply,
+        // when ac 0 (the first opening-hand draw's RevealCard) must be included.
+        let reveal_any_applied = buf.any_reveal_applied;
         let reveals: Vec<(u64, StateSyncEntry)> = buf
             .reveal_log
             .iter()
-            .filter(|(ac, _)| *ac > reveal_cursor && *ac <= reveal_bound)
+            .filter(|(ac, _)| (!reveal_any_applied || *ac > reveal_cursor) && *ac <= reveal_bound)
             .map(|(ac, entry)| (ac, entry.clone()))
             .collect();
         if reorders.is_empty() && reveals.is_empty() {
@@ -983,6 +994,9 @@ impl SharedNetworkState {
         }
         buf.last_applied_reorder_ac = buf.last_applied_reorder_ac.max(reorder_bound);
         buf.last_applied_reveal_ac = buf.last_applied_reveal_ac.max(reveal_bound);
+        if !reveals.is_empty() {
+            buf.any_reveal_applied = true;
+        }
         drop(buf);
 
         // Pass 1: library reorders (positional). Protocol sends top-to-bottom;
@@ -1044,6 +1058,9 @@ impl SharedNetworkState {
         let mut buf = self.state_sync.lock().unwrap();
         buf.last_applied_reorder_ac = 0;
         buf.last_applied_reveal_ac = 0;
+        // mtg-212: re-arm ac-0 eligibility so the forward replay re-applies the
+        // first opening-hand reveal (stamped at ac 0).
+        buf.any_reveal_applied = false;
         // The initial library orders must be re-applied on the forward replay too.
         buf.initial_library_applied = false;
     }
