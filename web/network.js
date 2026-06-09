@@ -28,6 +28,17 @@ export class MTGNetworkClient {
         this.onBugReportStored = null;
         this.onBugReportIssueResult = null;
         this.gameReadyFired = false;  // Track if onGameReady was already called
+        // mtg web-ui-fixes: gate the chatty "[Network] Received/Sending/State/
+        // …" traffic logs behind the page's debug-tracing flag. Default OFF so a
+        // normal user's console is quiet; the page sets `client.debug =
+        // isDebugMode()`. Genuine errors (console.error) are NOT gated and are
+        // additionally surfaced to the UI via onError.
+        this.debug = false;
+    }
+
+    /** Gated informational log — only emitted when debug tracing is ON. */
+    _log(...args) {
+        if (this.debug) console.log(...args);
     }
 
     /**
@@ -50,12 +61,12 @@ export class MTGNetworkClient {
      */
     connect(serverUrl, password, playerName, deckJson, lobbyAction) {
         if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-            console.warn('[Network] Already connected, disconnecting first');
+            this._log('[Network] Already connected, disconnecting first');
             this.disconnect();
         }
 
         this.serverUrl = serverUrl;
-        console.log(`[Network] Connecting to ${serverUrl}...`);
+        this._log(`[Network] Connecting to ${serverUrl}...`);
 
         // Initialize WASM network state
         this.wasm.network_init(serverUrl, password, playerName, deckJson);
@@ -82,7 +93,7 @@ export class MTGNetworkClient {
         }
 
         this.ws.onopen = () => {
-            console.log('[Network] WebSocket connected');
+            this._log('[Network] WebSocket connected');
             this.wasm.network_on_open();
             this._notifyStateChange();
 
@@ -95,7 +106,7 @@ export class MTGNetworkClient {
 
         this.ws.onmessage = (event) => {
             const data = event.data;
-            console.log('[Network] Received:', data.substring(0, 200) + (data.length > 200 ? '...' : ''));
+            this._log('[Network] Received:', data.substring(0, 200) + (data.length > 200 ? '...' : ''));
 
             let msg = null;
             try {
@@ -143,19 +154,33 @@ export class MTGNetworkClient {
         };
 
         this.ws.onclose = (event) => {
-            console.log(`[Network] WebSocket closed: code=${event.code}, reason=${event.reason}`);
+            this._log(`[Network] WebSocket closed: code=${event.code}, reason=${event.reason}`);
             this.wasm.network_on_close();
             this._notifyStateChange();
             this._stopOutboundPoll();
 
-            // Attempt reconnect if game was in progress
-            if (!event.wasClean && !this.reconnecting) {
-                this._scheduleReconnect();
+            // A NON-clean close is a real disconnect ("connection lost"): the
+            // user must see it, not just the console (mtg web-ui-fixes fix #4).
+            // A clean close (code 1000, client-initiated disconnect) is normal
+            // and stays quiet.
+            if (!event.wasClean) {
+                const detail = event.reason ? `: ${event.reason}` : (event.code ? ` (code ${event.code})` : '');
+                const msg = `Connection to the game server was lost${detail}.`;
+                console.error(`[Network] ${msg}`);
+                if (this.onError) this.onError(msg);
+                if (!this.reconnecting) {
+                    this._scheduleReconnect();
+                }
             }
         };
 
         this.ws.onerror = (event) => {
-            const msg = 'WebSocket error occurred';
+            // The browser fires onerror on connection failure (e.g.
+            // "WebSocket connection to wss://…/lobby failed: The network
+            // connection was lost"). Surface it to the UI, not just the console
+            // (mtg web-ui-fixes fix #4). The Event itself carries no message, so
+            // give an actionable one.
+            const msg = 'Network error connecting to the game server.';
             console.error('[Network] WebSocket error:', event);
             this.wasm.network_on_error(msg);
             if (this.onError) this.onError(msg);
@@ -205,10 +230,10 @@ export class MTGNetworkClient {
      */
     send(json) {
         if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-            console.log('[Network] Sending:', json.substring(0, 200) + (json.length > 200 ? '...' : ''));
+            this._log('[Network] Sending:', json.substring(0, 200) + (json.length > 200 ? '...' : ''));
             this.ws.send(json);
         } else {
-            console.log('[Network] Queuing message (not connected)');
+            this._log('[Network] Queuing message (not connected)');
             this.messageQueue.push(json);
         }
     }
@@ -245,7 +270,7 @@ export class MTGNetworkClient {
         // Poll WASM for outbound messages
         let msg;
         while ((msg = this.wasm.network_get_outbound_message()) !== undefined && msg !== null) {
-            console.log('[Network] Sending queued:', msg.substring(0, 200) + (msg.length > 200 ? '...' : ''));
+            this._log('[Network] Sending queued:', msg.substring(0, 200) + (msg.length > 200 ? '...' : ''));
             this.ws.send(msg);
         }
     }
@@ -267,11 +292,11 @@ export class MTGNetworkClient {
         if (this.reconnecting) return;
 
         this.reconnecting = true;
-        console.log('[Network] Scheduling reconnect in 3 seconds...');
+        this._log('[Network] Scheduling reconnect in 3 seconds...');
 
         setTimeout(() => {
             if (this.reconnecting && this.serverUrl) {
-                console.log('[Network] Attempting reconnect...');
+                this._log('[Network] Attempting reconnect...');
                 // Re-fetch connection params from WASM or stored values
                 // For now, just notify error - user should manually reconnect
                 if (this.onError) {
