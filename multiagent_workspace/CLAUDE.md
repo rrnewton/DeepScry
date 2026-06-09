@@ -596,6 +596,38 @@ This section is for the *orchestrating* agent — the one that spawns
 child agents in worktrees. Per-agent execution rules live above; this
 section covers the dispatch / coordination layer.
 
+### What the coordinator must NOT do (STAY RESPONSIVE)
+
+The coordinator's value is staying available at all times to route
+messages — from subagents AND from the user — and to make dispatch
+decisions. A coordinator blocked for minutes inside a tool call is a
+failed coordinator: it can't react to a subagent that needs an answer
+or a user who changes direction. Therefore the coordinator does NOT do
+hands-on work; it DELEGATES:
+
+- **NO deploy ceremony.** The `deploy-cloud.sh` build+rsync+restart
+  blocks for minutes. Delegate it (see below).
+- **NO implementation / feature work**, in the primary checkout or
+  anywhere. No editing source, no writing the feature.
+- **NO rebases, ff-merges, integration-level git surgery, or long
+  builds/validates.** These block and belong to a delegate.
+- **NO long-running Bash** in general. Keep tool calls short; if work
+  takes more than a few seconds, delegate it or run it `run_in_background`.
+
+**Use a delegate agent in the PRIMARY checkout.** Spawn a dedicated
+agent that operates in `parent/deepscry/` (NOT a worktree) to perform
+the integration/release mechanics on the coordinator's behalf: rebases,
+`--ff-only` merges of green feature branches, the integration→main
+promotion, and the `deploy-cloud.sh` deploy ceremony (see the
+`deploy-release` skill and the `ci-integration-monitor` agent). The
+coordinator hands it an instruction ("ff-merge branch X, then deploy")
+and stays free. Feature work still goes to worker agents in worktrees.
+
+The coordinator itself only: dispatches/▸re-engages agents, makes
+routing + sequencing decisions, reads short status, relays between
+user and agents, and watches monitors. Everything that blocks is
+someone else's job.
+
 ### General orchestration
 
 - **One worktree per child agent.** Never co-locate two mutating
