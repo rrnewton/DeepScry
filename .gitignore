@@ -144,3 +144,7 @@ output.dck
 # Local, non-version-controlled deploy config (scripts/deploy-cloud.sh).
 # See scripts/deepscry-deploy.env.example for the template.
 .deepscry-deploy.env
+
+# Agent directories used by multiagent harness
+.agents/
+

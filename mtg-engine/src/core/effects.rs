@@ -822,11 +822,6 @@ impl TargetRestriction {
             }
         }
 
-        // Check noncreature restriction (Negate: Card.nonCreature)
-        if self.requires_noncreature && card.is_creature() {
-            return false;
-        }
-
         // Check minimum CMC restriction (Disdainful Stroke: Card.cmcGE4)
         if let Some(min) = self.min_cmc {
             if card.mana_cost.cmc() < min {
@@ -2556,6 +2551,10 @@ pub enum TriggerEvent {
     /// Example: "Whenever CARDNAME becomes tapped, draw a card, then discard a card."
     Taps,
 
+    /// When a permanent is tapped for mana
+    /// Corresponds to: T:Mode$ TapsForMana | ValidCard$ ...
+    TapsForMana,
+
     /// When one or more creatures attack (batch trigger, fires once per declare attackers step)
     /// Corresponds to: T:Mode$ AttackersDeclared | AttackingPlayer$ You | ValidAttackers$ Creature.withFlying
     /// Example: "Whenever one or more creatures you control with flying attack, draw a card."
@@ -2731,6 +2730,14 @@ pub struct Trigger {
     /// intervening-if check.
     #[serde(default)]
     pub present_self_condition: Option<SelfCounterCondition>,
+
+    /// For TapsForMana triggers: filter for the tapped permanent
+    #[serde(default)]
+    pub taps_for_mana_valid_card: Option<String>,
+
+    /// For TapsForMana triggers: activator restriction (You, Opponent, Player.NonActive, etc.)
+    #[serde(default)]
+    pub taps_for_mana_activator: Option<String>,
 }
 
 impl Trigger {
@@ -2758,6 +2765,8 @@ impl Trigger {
             valid_attackers_keyword: None,
             trigger_zones: smallvec::SmallVec::new(),
             present_self_condition: None,
+            taps_for_mana_valid_card: None,
+            taps_for_mana_activator: None,
         }
     }
 
@@ -2784,6 +2793,8 @@ impl Trigger {
             valid_attackers_keyword: None,
             trigger_zones: smallvec::SmallVec::new(),
             present_self_condition: None,
+            taps_for_mana_valid_card: None,
+            taps_for_mana_activator: None,
         }
     }
 
@@ -2816,6 +2827,8 @@ impl Trigger {
             valid_attackers_keyword: None,
             trigger_zones: smallvec::SmallVec::new(),
             present_self_condition: None,
+            taps_for_mana_valid_card: None,
+            taps_for_mana_activator: None,
         }
     }
 
@@ -2843,6 +2856,8 @@ impl Trigger {
             valid_attackers_keyword: None,
             trigger_zones: smallvec::SmallVec::new(),
             present_self_condition: None,
+            taps_for_mana_valid_card: None,
+            taps_for_mana_activator: None,
         }
     }
 }

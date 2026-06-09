@@ -3067,6 +3067,32 @@ impl CardDefinition {
                 triggers.push(trigger);
             }
 
+            // Parse TapsForMana triggers (Mode$ TapsForMana)
+            // Example: T:Mode$ TapsForMana | ValidCard$ Creature | Activator$ You | Execute$ TrigMana
+            if mode == Some("TapsForMana") {
+                let mut effects = Vec::new();
+
+                if let Some(exec_ref) = params.get("Execute") {
+                    if let Some(svar_params) = self.parsed_svars.get(exec_ref) {
+                        effects.extend(self.extract_effects_from_svar(svar_params));
+                    }
+                }
+
+                let valid_card = params.get("ValidCard").map(|s| s.to_string());
+                let activator = params.get("Activator").map(|s| s.to_string());
+
+                let description = params
+                    .get("TriggerDescription")
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| "Whenever a permanent is tapped for mana".to_string());
+
+                let mut trigger = Trigger::new_any(TriggerEvent::TapsForMana, effects, description);
+                trigger.taps_for_mana_valid_card = valid_card;
+                trigger.taps_for_mana_activator = activator;
+
+                triggers.push(trigger);
+            }
+
             // Parse AttackersDeclared triggers (Mode$ AttackersDeclared)
             // Example: T:Mode$ AttackersDeclared | AttackingPlayer$ You | ValidAttackers$ Creature.withFlying | Execute$ TrigDraw
             // This triggers once when attackers are declared, not per-creature

@@ -149,11 +149,12 @@ copy_if_absent() {
 echo "→ [1/3] installing symlinks"
 make_symlink "CLAUDE.md"                   "CLAUDE.md"
 make_symlink "GEMINI.md"                   "GEMINI.md"
-make_symlink "AGENTS.md"                   "AGENTS.md"
+make_symlink "AGENTS.md"                   "CLAUDE.md"
 make_symlink ".claude"                     ".claude"
 make_symlink ".gemini"                     ".gemini"
 make_symlink "scripts/new_worktree.sh"     "scripts/new_worktree.sh"
 make_symlink "scripts/archive_worktree.sh" "scripts/archive_worktree.sh"
+
 
 # ---------------------------------------------------------------------------
 # Step 3: Templates (copied, never overwritten)

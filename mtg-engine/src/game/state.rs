@@ -1762,6 +1762,8 @@ impl GameState {
         if from == Zone::Battlefield {
             if let Ok(card) = self.cards.get_mut(card_id) {
                 card.control_grant = None;
+                card.exile_if_would_die_this_turn = false;
+                card.prevent_all_combat_damage_this_turn = false;
             }
         }
 
