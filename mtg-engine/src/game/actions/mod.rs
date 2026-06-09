@@ -7666,6 +7666,368 @@ impl GameState {
         Ok(())
     }
 
+    pub fn check_taps_for_mana_triggers(&mut self, source_card_id: CardId, activator_player: PlayerId) -> Result<()> {
+        use crate::core::Trigger;
+
+        // Info needed to check trigger payability and execute costs
+        struct TriggerInfo {
+            card_id: CardId,
+            card_name: crate::core::types::CardName,
+            controller: PlayerId,
+            trigger: Trigger,
+        }
+
+        // Collected trigger with cost info for execution
+        struct TriggerToExecute {
+            source_card_id: CardId,
+            effects: Vec<Effect>,
+            sacrifice_target: Option<CardId>,
+            sacrificed_power: u8,
+        }
+
+        // Phase 1: Collect matching triggers with their metadata
+        let mut candidate_triggers = Vec::new();
+        let active_player = self.turn.active_player;
+
+        for &card_id in &self.battlefield.cards {
+            if let Some(card) = self.cards.try_get(card_id) {
+                let controller = card.controller;
+                for trigger in &card.triggers {
+                    if trigger.event != TriggerEvent::TapsForMana {
+                        continue;
+                    }
+
+                    // Check activator restriction
+                    if let Some(ref activator) = trigger.taps_for_mana_activator {
+                        match activator.as_str() {
+                            "You" => {
+                                if activator_player != controller {
+                                    continue;
+                                }
+                            }
+                            "Opponent" => {
+                                if activator_player == controller {
+                                    continue;
+                                }
+                            }
+                            "Player.NonActive" => {
+                                if activator_player == active_player {
+                                    continue;
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+
+                    // Check ValidCard filter
+                    if let Some(ref filter) = trigger.taps_for_mana_valid_card {
+                        if let Ok(source_card) = self.cards.get(source_card_id) {
+                            if !matches_taps_for_mana_filter(source_card, filter, card, controller) {
+                                continue;
+                            }
+                        } else {
+                            continue;
+                        }
+                    }
+
+                    candidate_triggers.push(TriggerInfo {
+                        card_id,
+                        card_name: card.name.clone(),
+                        controller,
+                        trigger: trigger.clone(),
+                    });
+                }
+            }
+        }
+
+        // Phase 2: Filter by cost payability, choose sacrifice targets, and collect effects
+        let mut triggered_effects = Vec::new();
+        for info in candidate_triggers {
+            let mut sacrifice_target: Option<CardId> = None;
+            let mut sacrificed_power: u8 = 0;
+
+            if info.trigger.optional {
+                if let Some(ref cost) = info.trigger.cost {
+                    if let Some((count, pattern)) = cost.get_sacrifice_pattern() {
+                        if !self.can_pay_sacrifice_pattern(pattern, count, info.card_id, info.controller) {
+                            continue;
+                        }
+                        sacrifice_target = self.choose_sacrifice_target(pattern, info.card_id, info.controller);
+                        if let Some(sac_id) = sacrifice_target {
+                            if let Ok(sac_card) = self.cards.get(sac_id) {
+                                sacrificed_power = sac_card.current_power().max(0) as u8;
+                            }
+                        }
+                    }
+                }
+            }
+
+            if !info.trigger.effects.is_empty() {
+                triggered_effects.push(TriggerToExecute {
+                    source_card_id: info.card_id,
+                    effects: info.trigger.effects,
+                    sacrifice_target,
+                    sacrificed_power,
+                });
+            }
+        }
+
+        // Phase 3: Execute sacrifices and triggered effects
+        for trigger_to_exec in triggered_effects {
+            let trigger_source = trigger_to_exec.source_card_id;
+            let sacrificed_power = trigger_to_exec.sacrificed_power;
+
+            if let Some(sac_target) = trigger_to_exec.sacrifice_target {
+                if let Ok(sac_card) = self.cards.get(sac_target) {
+                    let sac_owner = sac_card.owner;
+                    let sac_dest = self.death_destination_for_card(sac_target);
+                    self.move_card(sac_target, Zone::Battlefield, sac_dest, sac_owner)?;
+                    self.check_triggers(TriggerEvent::Sacrificed, sac_target)?;
+                }
+            }
+
+            let trigger_card = self.cards.get(trigger_source)?;
+            let controller = trigger_card.controller;
+            let trigger_source_colors: smallvec::SmallVec<[crate::core::Color; 2]> = trigger_card.colors.clone();
+            let opponent = self.players.iter().find(|p| p.id != controller).map(|p| p.id);
+            let ctx = TriggerContext::new(trigger_source, controller)
+                .with_event_source(source_card_id)
+                .with_sacrificed_power(sacrificed_power);
+            let ctx = if let Some(opp) = opponent {
+                ctx.with_opponent(opp)
+            } else {
+                ctx
+            };
+
+            let mut last_chosen_target: Option<CardId> = None;
+
+            for effect in trigger_to_exec.effects {
+                let mut effect = resolve_effect_placeholder(&effect, &ctx);
+
+                match &mut effect {
+                    Effect::DealDamage {
+                        target: ref mut target_ref,
+                        ..
+                    } => {
+                        if matches!(target_ref, TargetRef::None) {
+                            let mut candidates: smallvec::SmallVec<[CardId; 8]> = self
+                                .battlefield
+                                .cards
+                                .iter()
+                                .filter(|&card_id| {
+                                    if let Some(card) = self.cards.try_get(*card_id) {
+                                        card.is_creature()
+                                            && card.controller != controller
+                                            && targeting::is_legal_target(card, controller, &trigger_source_colors)
+                                    } else {
+                                        false
+                                    }
+                                })
+                                .copied()
+                                .collect();
+                            candidates.sort_by_key(|id| id.as_u32());
+                            if let Some(&target_id) = candidates.first() {
+                                *target_ref = TargetRef::Permanent(target_id);
+                            } else if let Some(opp) = opponent {
+                                *target_ref = TargetRef::Player(opp);
+                            }
+                        }
+                    }
+                    Effect::DestroyPermanent {
+                        target: ref mut target_id,
+                        restriction,
+                        ..
+                    } => {
+                        if target_id.is_placeholder() {
+                            if let Some(chosen_id) = self.choose_triggered_destroy_target(
+                                restriction,
+                                controller,
+                                controller,
+                                &trigger_source_colors,
+                            ) {
+                                *target_id = chosen_id;
+                            }
+                        }
+                    }
+                    Effect::AttachEquipment {
+                        target_creature: ref mut target_id,
+                        ..
+                    } => {
+                        if target_id.is_placeholder() {
+                            let mut candidates: smallvec::SmallVec<[CardId; 8]> = self
+                                .battlefield
+                                .cards
+                                .iter()
+                                .filter(|&card_id| {
+                                    if let Some(card) = self.cards.try_get(*card_id) {
+                                        card.is_creature()
+                                            && card.controller == controller
+                                            && targeting::is_legal_target(card, controller, &trigger_source_colors)
+                                    } else {
+                                        false
+                                    }
+                                })
+                                .copied()
+                                .collect();
+                            candidates.sort_by_key(|id| id.as_u32());
+                            if let Some(&chosen_id) = candidates.first() {
+                                *target_id = chosen_id;
+                                last_chosen_target = Some(chosen_id);
+                            } else {
+                                continue;
+                            }
+                        }
+                    }
+                    Effect::PumpCreature {
+                        target: ref mut target_id,
+                        ..
+                    } => {
+                        if target_id.is_placeholder() {
+                            if let Some(prior_target) = last_chosen_target {
+                                *target_id = prior_target;
+                            } else {
+                                let mut candidates: smallvec::SmallVec<[CardId; 8]> = self
+                                    .battlefield
+                                    .cards
+                                    .iter()
+                                    .filter(|&card_id| {
+                                        if let Some(card) = self.cards.try_get(*card_id) {
+                                            card.is_creature()
+                                                && targeting::is_legal_target(card, controller, &trigger_source_colors)
+                                        } else {
+                                            false
+                                        }
+                                    })
+                                    .copied()
+                                    .collect();
+                                candidates.sort_by_key(|id| id.as_u32());
+                                if let Some(&chosen_id) = candidates.first() {
+                                    *target_id = chosen_id;
+                                }
+                            }
+                        }
+                    }
+                    Effect::DebuffCreature {
+                        target: ref mut target_id,
+                        ..
+                    } => {
+                        if target_id.is_placeholder() {
+                            let mut candidates: smallvec::SmallVec<[CardId; 8]> = self
+                                .battlefield
+                                .cards
+                                .iter()
+                                .filter(|&card_id| {
+                                    if let Some(card) = self.cards.try_get(*card_id) {
+                                        card.is_creature()
+                                            && targeting::is_legal_target(card, controller, &trigger_source_colors)
+                                    } else {
+                                        false
+                                    }
+                                })
+                                .copied()
+                                .collect();
+                            candidates.sort_by_key(|id| id.as_u32());
+                            if let Some(&chosen_id) = candidates.first() {
+                                *target_id = chosen_id;
+                            }
+                        }
+                    }
+                    Effect::ExilePermanent {
+                        target: ref mut target_id,
+                    } => {
+                        if target_id.is_placeholder() {
+                            let mut candidates: smallvec::SmallVec<[CardId; 8]> = self
+                                .battlefield
+                                .cards
+                                .iter()
+                                .filter(|&card_id| {
+                                    if let Some(card) = self.cards.try_get(*card_id) {
+                                        !card.is_land()
+                                            && card.controller != controller
+                                            && targeting::is_legal_target(card, controller, &trigger_source_colors)
+                                    } else {
+                                        false
+                                    }
+                                })
+                                .copied()
+                                .collect();
+                            candidates.sort_by_key(|id| id.as_u32());
+                            if let Some(&chosen_id) = candidates.first() {
+                                *target_id = chosen_id;
+                            }
+                        }
+                    }
+                    Effect::Earthbend {
+                        target: ref mut target_id,
+                        ..
+                    } => {
+                        if target_id.is_placeholder() {
+                            let mut land_candidates: smallvec::SmallVec<[CardId; 8]> = self
+                                .battlefield
+                                .cards
+                                .iter()
+                                .filter_map(|cid| {
+                                    let card = self.cards.get(*cid).ok()?;
+                                    if card.controller == controller && card.is_land() {
+                                        Some(*cid)
+                                    } else {
+                                        None
+                                    }
+                                })
+                                .collect();
+                            land_candidates.sort_by_key(|id| id.as_u32());
+                            if let Some(&land_id) = land_candidates.first() {
+                                *target_id = land_id;
+                            } else {
+                                continue;
+                            }
+                        }
+                    }
+                    Effect::UntapPermanent {
+                        target: ref mut target_id,
+                    } => {
+                        if target_id.is_placeholder() {
+                            let chosen_id = self
+                                .battlefield
+                                .cards
+                                .iter()
+                                .filter_map(|cid| {
+                                    let card = self.cards.get(*cid).ok()?;
+                                    if !card.is_artifact() && !card.is_creature() {
+                                        return None;
+                                    }
+                                    if !card.tapped {
+                                        return None;
+                                    }
+                                    if *cid == trigger_source {
+                                        return None;
+                                    }
+                                    if !targeting::is_legal_target(card, controller, &trigger_source_colors) {
+                                        return None;
+                                    }
+                                    let score = if card.controller == controller { 100 } else { 0 };
+                                    Some((*cid, score))
+                                })
+                                .max_by_key(|(_, score)| *score)
+                                .map(|(id, _)| id);
+
+                            if let Some(chosen_id) = chosen_id {
+                                *target_id = chosen_id;
+                            } else {
+                                continue;
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+
+                self.execute_effect(&effect)?;
+            }
+        }
+
+        Ok(())
+    }
+
     /// Check and execute triggered abilities for a specific card only
     ///
     /// This is used by phase triggers where we've already determined which cards
@@ -9275,6 +9637,7 @@ impl GameState {
 
         // Check for Taps triggers (e.g., Gran-Gran: "Whenever ~ becomes tapped")
         self.check_triggers(TriggerEvent::Taps, card_id)?;
+        self.check_taps_for_mana_triggers(card_id, player_id)?;
 
         // Handle non-land mana sources with explicit mana abilities
         if let Some(mana_to_add) = explicit_mana {
@@ -10570,6 +10933,91 @@ impl GameState {
             })
             .count()
     }
+}
+
+fn matches_taps_for_mana_filter(
+    card: &crate::core::Card,
+    filter: &str,
+    trigger_card: &crate::core::Card,
+    controller: PlayerId,
+) -> bool {
+    let type_token = filter.split('.').next().unwrap_or(filter);
+    let type_matches = match type_token {
+        "Artifact" => card.is_artifact(),
+        "Creature" => card.is_creature(),
+        "Land" => card.is_land(),
+        "Enchantment" => card.is_enchantment(),
+        "Permanent" | "Card" => true,
+        "Swamp" => card.definition.cache.has_swamp_subtype,
+        "Plains" => card.definition.cache.has_plains_subtype,
+        "Island" => card.definition.cache.has_island_subtype,
+        "Mountain" => card.definition.cache.has_mountain_subtype,
+        "Forest" => card.definition.cache.has_forest_subtype,
+        _ => false,
+    };
+    if !type_matches {
+        if type_token == "Mountain,Forest,Plains" {
+            if !card.definition.cache.has_mountain_subtype
+                && !card.definition.cache.has_forest_subtype
+                && !card.definition.cache.has_plains_subtype
+            {
+                return false;
+            }
+        } else {
+            return false;
+        }
+    }
+
+    if filter.contains(".nonLand") {
+        if card.is_land() {
+            return false;
+        }
+    }
+    if filter.contains(".nonBasic") {
+        let is_basic = matches!(
+            card.name.as_str(),
+            "Plains" | "Island" | "Swamp" | "Mountain" | "Forest" | "Wastes"
+        );
+        if is_basic {
+            return false;
+        }
+    }
+    if filter.contains(".Basic") {
+        let is_basic = matches!(
+            card.name.as_str(),
+            "Plains" | "Island" | "Swamp" | "Mountain" | "Forest" | "Wastes"
+        );
+        if !is_basic {
+            return false;
+        }
+    }
+    if filter.contains(".token") {
+        if !card.is_token {
+            return false;
+        }
+    }
+    if filter.contains("OppCtrl") {
+        if card.controller == controller {
+            return false;
+        }
+    }
+    if filter.contains("YouCtrl") {
+        if card.controller != controller {
+            return false;
+        }
+    }
+    if filter.contains("AttachedBy") || filter.contains("EnchantedBy") || filter.contains("FortifiedBy") {
+        if trigger_card.attached_to != Some(card.id) {
+            return false;
+        }
+    }
+    if filter.contains("Self") {
+        if card.id != trigger_card.id {
+            return false;
+        }
+    }
+
+    true
 }
 
 // Submodules
