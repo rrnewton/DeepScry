@@ -1,0 +1,17 @@
+[metadata]
+Name:Psychic Purge self-discard at cleanup does not punish
+Goal:Win
+Difficulty:Easy
+Description:P0 (Player 1) holds 9 cards at its own MAIN2; the cleanup-step hand-size discard (CR 514.1, a turn-based action with NO spell/ability cause) discards down to 7. Psychic Purge's opponent-cause-gated Discarded trigger (mtg-648) must NOT fire on a self-discard - neither player loses life from P0 discarding its own Psychic Purge.
+
+[state]
+turn=2
+activeplayer=p0
+activephase=MAIN2
+p0life=20
+p0hand=Psychic Purge; Forest; Forest; Forest; Forest; Forest; Forest; Forest; Forest
+p0library=Island; Island; Island
+p0battlefield=
+p1life=20
+p1battlefield=
+p1library=Plains; Plains; Plains

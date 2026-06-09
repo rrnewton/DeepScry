@@ -3282,11 +3282,20 @@ impl CardDefinition {
                 triggers.push(trigger);
             }
 
-            // Parse Discarded triggers (Mode$ Discarded)
-            // Example: T:Mode$ Discarded | ValidCard$ Card.YouOwn | TriggerZones$ Battlefield | Execute$ TrigCharm
-            //   | TriggerDescription$ Whenever you discard a card, choose one...
-            // Fires when the trigger's controller discards a card.
-            // ValidCard$ Card.YouOwn = fires when the card's controller discards.
+            // Parse Discarded triggers (Mode$ Discarded). TWO distinct shapes,
+            // distinguished by the tokenized `ValidCard$` value:
+            //
+            //  (a) `ValidCard$ Card.Self` → `TriggerEvent::Discarded` — a
+            //      SELF-discard punisher carried on the card being discarded
+            //      (Psychic Purge: "When a spell or ability an opponent controls
+            //      causes you to discard CARDNAME, that player loses 5 life").
+            //      Fires from the discarded card's LKI as it moves
+            //      Hand→Graveyard; `ValidCause$ SpellAbility.OppCtrl` gates it to
+            //      opponent-forced discards.
+            //
+            //  (b) anything else (`ValidCard$ Card.YouOwn`, …) →
+            //      `TriggerEvent::CardDiscarded` — a battlefield permanent
+            //      watching its controller's discards (Monument to Endurance).
             if mode == Some("Discarded") {
                 let mut effects = Vec::new();
 
@@ -3296,16 +3305,33 @@ impl CardDefinition {
                     }
                 }
 
-                let description = params
-                    .get("TriggerDescription")
-                    .map(|s| s.to_string())
-                    .unwrap_or_else(|| "Whenever you discard a card".to_string());
+                let is_self = params.get("ValidCard").map(|s| s.as_str()) == Some("Card.Self");
 
-                // ValidCard$ Card.YouOwn means "when the trigger's controller discards"
-                // (the only currently-handled restriction; other ValidCard patterns
-                // are not yet distinguished — both fire on controller discard).
-                let trigger = Trigger::new_any(TriggerEvent::CardDiscarded, effects, description);
-                triggers.push(trigger);
+                if is_self {
+                    let description = params
+                        .get("TriggerDescription")
+                        .map(|s| s.replace("CARDNAME", self.name.as_str()))
+                        .unwrap_or_else(|| "When this card is discarded".to_string());
+
+                    // `ValidCause$ SpellAbility.OppCtrl`: fire only when an
+                    // OPPONENT's spell/ability caused the discard.
+                    let requires_opponent_cause =
+                        params.get("ValidCause").map(|s| s.as_str()) == Some("SpellAbility.OppCtrl");
+
+                    // Self-discard trigger: fires for the card itself (LKI), so
+                    // `new` (trigger_self_only = true) is correct.
+                    let mut trigger = Trigger::new(TriggerEvent::Discarded, effects, description);
+                    trigger.requires_opponent_cause = requires_opponent_cause;
+                    triggers.push(trigger);
+                } else {
+                    let description = params
+                        .get("TriggerDescription")
+                        .map(|s| s.to_string())
+                        .unwrap_or_else(|| "Whenever you discard a card".to_string());
+
+                    let trigger = Trigger::new_any(TriggerEvent::CardDiscarded, effects, description);
+                    triggers.push(trigger);
+                }
             }
         }
 

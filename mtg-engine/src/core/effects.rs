@@ -2546,6 +2546,22 @@ pub enum TriggerEvent {
     /// Fires from any permanent on the battlefield when its controller (or any
     /// player matching ValidCard$) discards a card.
     CardDiscarded,
+
+    /// When THIS card is discarded (a self-discard punisher), distinct from
+    /// `CardDiscarded` (a battlefield permanent watching its controller's
+    /// discards). The trigger source is the card BEING discarded; it fires from
+    /// that card's last-known-information as it moves Hand→Graveyard (CR 603.6d
+    /// / 603.10a — a leaves-the-hand trigger looks back at the game state just
+    /// before the discard).
+    ///
+    /// Corresponds to: `T:Mode$ Discarded | ValidCard$ Card.Self | ValidCause$
+    /// SpellAbility.OppCtrl`. Example: Psychic Purge — "When a spell or ability
+    /// an opponent controls causes you to discard CARDNAME, that player loses 5
+    /// life." The `requires_opponent_cause` flag gates it to opponent-forced
+    /// discards (not your own cleanup-step or Looting discards), and the
+    /// `Defined$ TriggeredCauseController` payload resolves to the controller of
+    /// the spell/ability that forced the discard.
+    Discarded,
 }
 
 /// A triggered ability that executes when an event occurs
@@ -2682,6 +2698,14 @@ pub struct Trigger {
     /// intervening-if check.
     #[serde(default)]
     pub present_self_condition: Option<SelfCounterCondition>,
+
+    /// For `Discarded` (self-discard punisher) triggers: when true, the trigger
+    /// fires ONLY when the discard was caused by a spell or ability an OPPONENT
+    /// of the discarding player controls (`ValidCause$ SpellAbility.OppCtrl`).
+    /// A player discarding their own card (cleanup-step hand-size discard, their
+    /// own Looting) does NOT fire it. Ignored for non-`Discarded` events.
+    #[serde(default)]
+    pub requires_opponent_cause: bool,
 }
 
 impl Trigger {
@@ -2709,6 +2733,7 @@ impl Trigger {
             valid_attackers_keyword: None,
             trigger_zones: smallvec::SmallVec::new(),
             present_self_condition: None,
+            requires_opponent_cause: false,
         }
     }
 
@@ -2735,6 +2760,7 @@ impl Trigger {
             valid_attackers_keyword: None,
             trigger_zones: smallvec::SmallVec::new(),
             present_self_condition: None,
+            requires_opponent_cause: false,
         }
     }
 
@@ -2767,6 +2793,7 @@ impl Trigger {
             valid_attackers_keyword: None,
             trigger_zones: smallvec::SmallVec::new(),
             present_self_condition: None,
+            requires_opponent_cause: false,
         }
     }
 
@@ -2794,6 +2821,7 @@ impl Trigger {
             valid_attackers_keyword: None,
             trigger_zones: smallvec::SmallVec::new(),
             present_self_condition: None,
+            requires_opponent_cause: false,
         }
     }
 }

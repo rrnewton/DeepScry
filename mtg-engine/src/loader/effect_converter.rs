@@ -1498,13 +1498,19 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
             // LoseLife: Target player or defined players lose life
             // Examples: "AB$ LoseLife | LifeAmount$ 2 | Defined$ Opponent"
             //           "AB$ LoseLife | LifeAmount$ 1 | ValidTgts$ Player"
+            //           "DB$ LoseLife | Defined$ TriggeredCauseController | LifeAmount$ 5"
             let amount = params.get_i32("LifeAmount").ok()?;
 
-            // Placeholder - resolved at cast time. Defined$ Opponent resolves to opponent.
-            Some(Effect::LoseLife {
-                player: PlayerId::new(0),
-                amount,
-            })
+            // `Defined$ TriggeredCauseController` (Psychic Purge): the controller
+            // of the spell/ability that caused the trigger event (the discard).
+            // Other Defined$ values currently fall back to the placeholder
+            // (resolved to the controller at execution time).
+            let player = match params.get("Defined") {
+                Some("TriggeredCauseController") => PlayerId::triggered_cause_controller(),
+                _ => PlayerId::new(0),
+            };
+
+            Some(Effect::LoseLife { player, amount })
         }
 
         ApiType::AddPhase => {

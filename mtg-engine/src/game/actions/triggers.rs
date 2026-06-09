@@ -120,6 +120,12 @@ pub struct TriggerContext {
     /// amount of damage the event source just dealt this combat/resolution.
     /// `None` for triggers that carry no damage amount.
     pub damage_amount: Option<i32>,
+
+    /// For `Discarded` triggers (Psychic Purge `Defined$
+    /// TriggeredCauseController`): the controller of the spell/ability that
+    /// caused the trigger event (the discard). `None` when the event had no
+    /// such cause (e.g. a cleanup-step hand-size discard).
+    pub cause_controller: Option<PlayerId>,
 }
 
 impl TriggerContext {
@@ -135,7 +141,14 @@ impl TriggerContext {
             sacrificed_power: 0,
             drawing_player: None,
             damage_amount: None,
+            cause_controller: None,
         }
+    }
+
+    /// Builder method to set the cause controller (for `Discarded` triggers).
+    pub fn with_cause_controller(mut self, player: PlayerId) -> Self {
+        self.cause_controller = Some(player);
+        self
     }
 
     /// Builder method to set the damage amount (for damage-dealt triggers)
@@ -257,6 +270,21 @@ pub fn resolve_effect_placeholder(effect: &Effect, ctx: &TriggerContext) -> Effe
         },
 
         Effect::GainLife { player, amount } if player.is_placeholder() => Effect::GainLife {
+            player: ctx.controller,
+            amount: *amount,
+        },
+
+        // `Defined$ TriggeredCauseController` LoseLife fired from a `Discarded`
+        // trigger (Psychic Purge: "that player loses 5 life"). Resolve to the
+        // controller of the spell/ability that forced the discard. Falls back to
+        // the controller if no cause is known (defensive; the firing site only
+        // populates `cause_controller` when a real opponent cause exists).
+        Effect::LoseLife { player, amount } if player.is_triggered_cause_controller() => Effect::LoseLife {
+            player: ctx.cause_controller.unwrap_or(ctx.controller),
+            amount: *amount,
+        },
+
+        Effect::LoseLife { player, amount } if player.is_placeholder() => Effect::LoseLife {
             player: ctx.controller,
             amount: *amount,
         },

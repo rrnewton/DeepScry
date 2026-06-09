@@ -1,0 +1,18 @@
+[metadata]
+Name:Psychic Purge discarded by opponent Mind Rot
+Goal:Win
+Difficulty:Easy
+Description:P1 (Player 2) casts Mind Rot targeting P0 (Player 1). P0 holds Psychic Purge + 1 Forest, both of which are discarded. Psychic Purge's "When a spell or ability an opponent controls causes you to discard CARDNAME, that player loses 5 life" (TriggerEvent::Discarded, mtg-648) must fire and make P1 (Mind Rot's controller, an opponent of P0) lose 5 life (20 -> 15).
+
+[state]
+turn=2
+activeplayer=p1
+activephase=MAIN1
+p0life=20
+p0hand=Psychic Purge; Forest
+p0library=Island; Island; Island
+p0battlefield=
+p1life=20
+p1hand=Mind Rot
+p1battlefield=Swamp; Swamp; Swamp
+p1library=Plains; Plains; Plains

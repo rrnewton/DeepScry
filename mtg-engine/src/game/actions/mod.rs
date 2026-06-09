@@ -7031,6 +7031,15 @@ impl GameState {
         // Called AFTER the card is in the graveyard so the trigger can "see" it there.
         self.check_card_discarded_triggers(player_id)?;
 
+        // Fire the self-discard punisher (TriggerEvent::Discarded, e.g. Psychic
+        // Purge). The trigger source is the card that was just discarded; it
+        // fires from its now-in-graveyard state (CR 603.6d/603.10a — looking back
+        // at the discard event). The CAUSE of the discard is the spell/ability
+        // currently resolving (`current_damage_source`, set during spell
+        // resolution); a cleanup-step / self Looting discard has no such source,
+        // so an opponent-cause-gated trigger correctly does not fire.
+        self.check_self_discarded_triggers(player_id, card_id)?;
+
         Ok(())
     }
 
@@ -8574,6 +8583,97 @@ impl GameState {
                 } else {
                     self.execute_effect(&resolved_effect)?;
                 }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Fire the self-discard punisher trigger (`TriggerEvent::Discarded`) carried
+    /// by the card that was just discarded (Psychic Purge — "When a spell or
+    /// ability an opponent controls causes you to discard CARDNAME, that player
+    /// loses 5 life").
+    ///
+    /// `discarding_player` is the card's owner (the player who discarded);
+    /// `discarded_card_id` is the card that just moved Hand→Graveyard.
+    ///
+    /// CR 603.6d / 603.10a: a leaves-the-hand triggered ability uses the game
+    /// state immediately before the discard to decide whether it triggers; here
+    /// the trigger still lives on the (now-in-graveyard) card object, so we read
+    /// it directly. The CAUSE of the discard is the spell/ability currently
+    /// resolving — `current_damage_source` (set during spell/ability resolution).
+    /// A discard with no resolving source (the cleanup-step hand-size discard, a
+    /// CR 514.1 turn-based action) has no cause, so an opponent-cause-gated
+    /// trigger does not fire (CR 701.8 only punishes opponent-FORCED discards).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if effect execution fails.
+    pub fn check_self_discarded_triggers(
+        &mut self,
+        discarding_player: PlayerId,
+        discarded_card_id: CardId,
+    ) -> Result<()> {
+        use smallvec::SmallVec;
+
+        // The cause of the discard is the controller of the spell/ability
+        // resolving when the discard happened. Public information (whose spell is
+        // on the stack), so this is identical on server, client shadow, and any
+        // rewind/replay — no hidden-information dependence.
+        let cause_controller = self
+            .current_damage_source
+            .and_then(|src| self.cards.try_get(src))
+            .map(|src| src.controller);
+
+        // Gather matching triggers on the discarded card (released borrow before
+        // executing effects, which mutate `self`).
+        struct TriggerInfo {
+            description: String,
+            effects: SmallVec<[Effect; 2]>,
+        }
+        let (controller, triggers_to_fire): (PlayerId, SmallVec<[TriggerInfo; 1]>) = {
+            let Ok(card) = self.cards.get(discarded_card_id) else {
+                return Ok(());
+            };
+            let controller = card.controller;
+            let mut fire: SmallVec<[TriggerInfo; 1]> = SmallVec::new();
+            for trigger in &card.triggers {
+                if trigger.event != TriggerEvent::Discarded {
+                    continue;
+                }
+                // `ValidCause$ SpellAbility.OppCtrl`: fire only when the discard
+                // was caused by an OPPONENT of the discarding player. No cause,
+                // or a cause controlled by the discarding player themselves,
+                // does not fire.
+                if trigger.requires_opponent_cause {
+                    match cause_controller {
+                        Some(cause) if cause != discarding_player => {}
+                        _ => continue,
+                    }
+                }
+                fire.push(TriggerInfo {
+                    description: trigger.description.clone(),
+                    effects: SmallVec::from_iter(trigger.effects.iter().cloned()),
+                });
+            }
+            (controller, fire)
+        };
+
+        if triggers_to_fire.is_empty() {
+            return Ok(());
+        }
+
+        for trigger_info in triggers_to_fire {
+            self.logger.gamelog(&format!("Trigger: {}", trigger_info.description));
+
+            let mut ctx = TriggerContext::new(discarded_card_id, controller);
+            if let Some(cause) = cause_controller {
+                ctx = ctx.with_cause_controller(cause);
+            }
+
+            for effect in trigger_info.effects {
+                let resolved_effect = resolve_effect_placeholder(&effect, &ctx);
+                self.execute_effect(&resolved_effect)?;
             }
         }
 

@@ -7481,4 +7481,96 @@ mod tests {
             "Essence Scatter must NOT target artifact spells (non-creature)"
         );
     }
+
+    /// Card compat: Psychic Purge (cardsfolder/p/psychic_purge.txt) — mtg-534,
+    /// engine gap mtg-648.
+    ///
+    /// Script:
+    ///   A:SP$ DealDamage | ValidTgts$ Any | NumDmg$ 1
+    ///   T:Mode$ Discarded | ValidCard$ Card.Self | ValidCause$ SpellAbility.OppCtrl | Execute$ TrigLoseLife
+    ///   SVar:TrigLoseLife:DB$ LoseLife | Defined$ TriggeredCauseController | LifeAmount$ 5
+    ///
+    /// Parser shape: a {U} Sorcery whose primary ability deals 1 damage to any
+    /// target, plus a SELF-discard punisher (`TriggerEvent::Discarded`) gated on
+    /// an opponent's spell/ability cause that makes the cause's controller lose
+    /// 5 life. A silent drop of the `Mode$ Discarded` trigger (the historical
+    /// bug — the loader only handled `Card.YouOwn` Discarded triggers and routed
+    /// everything to `CardDiscarded`) would remove the punisher entirely.
+    /// Runtime (opponent-forced discard fires it; self/cleanup discard does NOT)
+    /// is verified by tests/psychic_purge_discard_punisher_e2e.sh.
+    #[test]
+    fn test_card_compat_psychic_purge() {
+        use crate::core::{Effect, PlayerId, TriggerEvent};
+        use crate::loader::ability_parser::{AbilityParams, ApiType};
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("../cardsfolder/p/psychic_purge.txt");
+        if !path.exists() {
+            eprintln!("Skipping: cardsfolder not present at {:?}", path);
+            return;
+        }
+        let def = crate::loader::CardLoader::load_from_file(&path).expect("Psychic Purge should load");
+        assert_eq!(def.name.as_str(), "Psychic Purge");
+        assert_eq!(def.mana_cost.blue, 1, "Cost should require {{U}}");
+        assert!(
+            def.types.contains(&CardType::Sorcery),
+            "Psychic Purge must be a Sorcery"
+        );
+
+        // Primary mode: SP$ DealDamage | ValidTgts$ Any | NumDmg$ 1.
+        let damage = def
+            .raw_abilities
+            .iter()
+            .find_map(|raw| {
+                let p = AbilityParams::parse(raw).ok()?;
+                (p.api_type == ApiType::DealDamage).then_some(p)
+            })
+            .expect("Psychic Purge must have an SP$ DealDamage spell ability");
+        assert_eq!(
+            damage.get("ValidTgts"),
+            Some("Any"),
+            "Psychic Purge deals damage to any target"
+        );
+        assert_eq!(damage.get("NumDmg"), Some("1"), "Psychic Purge deals 1 damage");
+
+        // Secondary mode: the self-discard punisher must parse to a
+        // TriggerEvent::Discarded (NOT CardDiscarded, which is the
+        // "you discarded a card" battlefield watcher).
+        let card = def.instantiate(crate::core::CardId::new(100), PlayerId::new(0));
+        let discarded: Vec<_> = card
+            .triggers
+            .iter()
+            .filter(|t| t.event == TriggerEvent::Discarded)
+            .collect();
+        assert_eq!(
+            discarded.len(),
+            1,
+            "Psychic Purge must have exactly one self-discard (Discarded) trigger; \
+             a silent drop removes the opponent-punisher entirely"
+        );
+        let trigger = discarded[0];
+        assert!(
+            trigger.requires_opponent_cause,
+            "Psychic Purge's Discarded trigger must be gated on ValidCause$ SpellAbility.OppCtrl \
+             (only opponent-FORCED discards punish; a self/cleanup discard must not)"
+        );
+        // The payload must lose life from the cause's controller (the
+        // TriggeredCauseController sentinel), NOT a placeholder controller.
+        // `if let` (not a wildcard match) keeps clippy::wildcard_enum_match_arm
+        // happy under `-D warnings`.
+        let mut lose_life = None;
+        for effect in &trigger.effects {
+            if let Effect::LoseLife { player, amount } = effect {
+                lose_life = Some((*player, *amount));
+                break;
+            }
+        }
+        let (player, amount) = lose_life.expect("Discarded trigger must carry a LoseLife effect");
+        assert_eq!(amount, 5, "Psychic Purge punisher loses 5 life");
+        assert!(
+            player.is_triggered_cause_controller(),
+            "LoseLife must target the discard CAUSE's controller (Defined$ TriggeredCauseController), \
+             not the discarding player or the trigger source's owner"
+        );
+    }
 }

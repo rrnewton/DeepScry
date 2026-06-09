@@ -3136,6 +3136,15 @@ impl<'a> GameLoop<'a> {
         let effects = self.game.resolve_spell_collect_effects(spell_id, &targets)?;
 
         if let Some(effects) = effects {
+            // The resolving spell is the CAUSE of any discard it forces, so a
+            // self-discard punisher (Psychic Purge — TriggerEvent::Discarded with
+            // ValidCause$ SpellAbility.OppCtrl) can identify the opponent who
+            // forced the discard (CR 701.8). Mirrors `resolve_spell_execute_effects`,
+            // which sets the same field so source-filtered damage prevention can
+            // match the resolving spell. Cleared after the effects loop, before
+            // control returns to the game loop, so snapshots / shadow state stay
+            // identical (the field is `#[serde(skip)]` transient scratch).
+            self.game.current_damage_source = Some(spell_id);
             for effect in &effects {
                 match effect {
                     // Choice-based discard: route through controller
@@ -3906,6 +3915,9 @@ impl<'a> GameLoop<'a> {
                     }
                 }
             }
+            // Clear the discard-cause source now that the spell's effects have
+            // resolved (the finalize step below is not a "cause" of any discard).
+            self.game.current_damage_source = None;
         }
 
         // Finalize the spell (move from stack to destination, ETB, etc.)

@@ -102,6 +102,15 @@ pub const TARGET_CONTROLLER_ID: u32 = u32::MAX - 6;
 /// Howling Mine's controller. Distinct from `PLACEHOLDER_ID` (= controller).
 pub const TRIGGERED_PLAYER_ID: u32 = u32::MAX - 7;
 
+/// Sentinel value indicating "the controller of the spell/ability that caused
+/// the trigger event" (Forge `Defined$ TriggeredCauseController`). Resolved at
+/// effect-resolution time to `TriggerContext::cause_controller`. Used by the
+/// `TriggerEvent::Discarded` punisher (Psychic Purge — "When a spell or ability
+/// an opponent controls causes you to discard CARDNAME, that player loses 5
+/// life"): the life loss is dealt to the controller of the discard's CAUSE, not
+/// to the discarding player or the trigger source's owner.
+pub const TRIGGERED_CAUSE_CONTROLLER_ID: u32 = u32::MAX - 8;
+
 /// Sentinel range for encoding a Player as a CardId inside the
 /// `valid_targets` slice returned to `Controller::choose_targets`. We do
 /// this so controllers can offer Players as targets for `ValidTgts$ Any`
@@ -245,6 +254,21 @@ impl<T> EntityId<T> {
     #[inline]
     pub fn triggered_player() -> Self {
         EntityId::new(TRIGGERED_PLAYER_ID)
+    }
+
+    /// Check if this ID is the "triggered cause controller" sentinel
+    /// (Forge `Defined$ TriggeredCauseController`).
+    #[inline]
+    pub fn is_triggered_cause_controller(&self) -> bool {
+        self.id == TRIGGERED_CAUSE_CONTROLLER_ID
+    }
+
+    /// Create the "triggered cause controller" sentinel (the controller of the
+    /// spell/ability that caused the trigger event — e.g. the opponent whose
+    /// discard spell forced you to discard Psychic Purge).
+    #[inline]
+    pub fn triggered_cause_controller() -> Self {
+        EntityId::new(TRIGGERED_CAUSE_CONTROLLER_ID)
     }
 }
 
