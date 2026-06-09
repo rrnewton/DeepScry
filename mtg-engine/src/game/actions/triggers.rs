@@ -126,6 +126,12 @@ pub struct TriggerContext {
     /// caused the trigger event (the discard). `None` when the event had no
     /// such cause (e.g. a cleanup-step hand-size discard).
     pub cause_controller: Option<PlayerId>,
+
+    /// For Aura/Equipment triggers using `Defined$ Enchanted` (Paralyze's
+    /// ETB-tap and pay-{4}-to-untap): the permanent the trigger source is
+    /// attached to (`Card::attached_to`). `None` when the source is not
+    /// attached to anything (the effect then does nothing).
+    pub enchanted: Option<CardId>,
 }
 
 impl TriggerContext {
@@ -142,12 +148,20 @@ impl TriggerContext {
             drawing_player: None,
             damage_amount: None,
             cause_controller: None,
+            enchanted: None,
         }
     }
 
     /// Builder method to set the cause controller (for `Discarded` triggers).
     pub fn with_cause_controller(mut self, player: PlayerId) -> Self {
         self.cause_controller = Some(player);
+        self
+    }
+
+    /// Builder method to set the enchanted/attached permanent (for `Defined$
+    /// Enchanted` Aura/Equipment triggers). Pass `None` to leave it unset.
+    pub fn with_enchanted(mut self, enchanted: Option<CardId>) -> Self {
+        self.enchanted = enchanted;
         self
     }
 
@@ -428,6 +442,21 @@ pub fn resolve_effect_placeholder(effect: &Effect, ctx: &TriggerContext) -> Effe
         // - CardDrawn triggers: "this creature gets +X/+Y" → target is self
         // - ETB triggers: "target creature gets +X/+Y" → need to find a target
         // Let context-specific handlers deal with this ambiguity.
+
+        // =========================================================================
+        // Defined$ Enchanted Tap/Untap (Paralyze): resolve to the permanent the
+        // trigger source (the Aura) is attached to. If the source is not
+        // attached to anything (`ctx.enchanted == None`), leave the sentinel in
+        // place — `execute_effect` treats a non-existent target as a no-op, so
+        // the effect does nothing (CR 603.10: no legal object → no effect).
+        // =========================================================================
+        Effect::TapPermanent { target } if target.is_enchanted_target() => Effect::TapPermanent {
+            target: ctx.enchanted.unwrap_or(*target),
+        },
+
+        Effect::UntapPermanent { target } if target.is_enchanted_target() => Effect::UntapPermanent {
+            target: ctx.enchanted.unwrap_or(*target),
+        },
 
         // =========================================================================
         // AttachEquipment: source_equipment placeholder → trigger source (Card.Self)

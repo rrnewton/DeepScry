@@ -335,23 +335,27 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
                 // `Defined$ Targeted` (Falling Star: tap the creature this spell
                 // already targeted, if it survived the damage) → reuse_previous
                 // sentinel so the resolver taps the parent ability's target
-                // instead of consuming a fresh chosen target. Mirrors the Untap
-                // arm below.
-                let target = if params.get("Defined") == Some("Targeted") {
-                    CardId::reuse_previous()
-                } else {
-                    CardId::new(0) // Placeholder for independent targeting
+                // instead of consuming a fresh chosen target.
+                // `Defined$ Enchanted` (Paralyze ETB-tap: tap the creature this
+                // Aura enchants) → enchanted_target sentinel, resolved from the
+                // trigger source's attached_to. Mirrors the Untap arm below.
+                let target = match params.get("Defined") {
+                    Some("Targeted") => CardId::reuse_previous(),
+                    Some("Enchanted") => CardId::enchanted_target(),
+                    _ => CardId::new(0), // Placeholder for independent targeting
                 };
                 Some(Effect::TapPermanent { target })
             }
         }
 
         ApiType::Untap => {
-            // Check for Defined$ Targeted - use reuse_previous sentinel to share target with parent ability
-            let target = if params.get("Defined") == Some("Targeted") {
-                CardId::reuse_previous()
-            } else {
-                CardId::new(0) // Placeholder for independent targeting
+            // `Defined$ Targeted` shares the parent ability's target; `Defined$
+            // Enchanted` (Paralyze's pay-{4}-to-untap upkeep escape) targets the
+            // permanent this Aura enchants (resolved from attached_to).
+            let target = match params.get("Defined") {
+                Some("Targeted") => CardId::reuse_previous(),
+                Some("Enchanted") => CardId::enchanted_target(),
+                _ => CardId::new(0), // Placeholder for independent targeting
             };
             Some(Effect::UntapPermanent { target })
         }

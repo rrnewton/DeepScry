@@ -7341,9 +7341,13 @@ impl GameState {
             let trigger_card = self.cards.get(trigger_source)?;
             let controller = trigger_card.controller;
             let trigger_source_colors: smallvec::SmallVec<[crate::core::Color; 2]> = trigger_card.colors.clone();
+            // The permanent this Aura/Equipment enchants, for `Defined$ Enchanted`
+            // effects (Paralyze's ETB `DB$ Tap | Defined$ Enchanted`).
+            let enchanted = trigger_card.attached_to;
             let opponent = self.players.iter().find(|p| p.id != controller).map(|p| p.id);
             let ctx = TriggerContext::new(trigger_source, controller)
                 .with_event_source(source_card_id)
+                .with_enchanted(enchanted)
                 .with_sacrificed_power(sacrificed_power);
             let ctx = if let Some(opp) = opponent {
                 ctx.with_opponent(opp)
