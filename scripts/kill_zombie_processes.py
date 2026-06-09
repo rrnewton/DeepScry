@@ -72,6 +72,14 @@ def stop_my_validate_scopes(current_dir):
             continue
         if not mine:
             continue  # cross-slot (or empty) scope — DO NOT touch
+        # cgroup.kill FIRST: an instant atomic SIGKILL of the whole subtree
+        # (chromium ignores the SIGTERM `systemctl stop` sends first, which would
+        # otherwise stall in stop-sigterm for the scope's TimeoutStopSec). Then
+        # `systemctl stop` deactivates + GCs the now-empty unit.
+        try:
+            (cg / "cgroup.kill").write_text("1")
+        except OSError:
+            pass
         try:
             subprocess.run(["systemctl", "--user", "stop", unit],
                            capture_output=True, timeout=8)

@@ -53,6 +53,15 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
+# Two-level cgroup teardown (per-step child cgroups under the outer scope). Kept
+# in a sibling module to keep this file focused; degrades to None if unavailable
+# so the killpg reaper remains the sole backstop on hosts without it.
+try:
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import validate_cgroup
+except Exception:  # pragma: no cover - defensive: never let an import break validate
+    validate_cgroup = None
+
 # Per-step wall-clock cap. A step that exceeds it is SIGKILLed and marked FAIL —
 # so a hung step fails its shard FAST + visibly instead of dragging CI for hours
 # (the 40-min default let a single stuck step eat a whole run). Default is tight
@@ -66,6 +75,47 @@ BUILD_STEP_TIMEOUT = int(os.environ.get("VALIDATE_BUILD_TIMEOUT", "2400"))
 PROJECT_DIR = Path(__file__).resolve().parent.parent
 NODE = os.environ.get("NODE") or "node"
 NPM = os.environ.get("NPM") or "npm"
+
+
+# ---------------------------------------------------------------------------
+# Memory helpers (for memory-aware parallelism + the outer-scope MemoryMax)
+# ---------------------------------------------------------------------------
+def parse_size(spec):
+    """Parse a memory size like '8G', '4096M', '2048K', '12345' (bytes) into an
+    int number of bytes. Returns None on an unparseable spec (caller decides)."""
+    if not spec:
+        return None
+    m = re.fullmatch(r"\s*(\d+(?:\.\d+)?)\s*([KkMmGgTt]?)([Bb]?)\s*", str(spec))
+    if not m:
+        return None
+    val = float(m.group(1))
+    mult = {"": 1, "k": 1024, "m": 1024**2, "g": 1024**3, "t": 1024**4}[m.group(2).lower()]
+    return int(val * mult)
+
+
+def mem_available_bytes():
+    """Bytes of memory currently available (MemAvailable from /proc/meminfo —
+    the kernel's estimate of allocatable-without-swapping, the right basis for
+    "how many more concurrent jobs fit"). None if /proc/meminfo is unreadable."""
+    try:
+        for line in Path("/proc/meminfo").read_text().splitlines():
+            if line.startswith("MemAvailable:"):
+                return int(line.split()[1]) * 1024  # kB -> bytes
+    except (OSError, ValueError, IndexError):
+        pass
+    return None
+
+
+def _fmt_bytes(n):
+    """Human-readable size (e.g. 8.0G). Input is a byte count."""
+    if n is None:
+        return "?"
+    v = float(n)
+    for unit in ("B", "K", "M", "G"):
+        if v < 1024:
+            return f"{v:.0f}{unit}" if unit == "B" else f"{v:.1f}{unit}"
+        v /= 1024
+    return f"{v:.1f}T"
 
 # mtg-769 / mtg-752 native-first pivot: the WASM browser e2e steps that
 # EMPIRICALLY fail on the buffer-driven shadow-replay apply-frontier stall (B2;
@@ -287,7 +337,13 @@ def summarize(step, detail_path):
 # ---------------------------------------------------------------------------
 class Runner:
     def __init__(self, steps, jobs, verbosity, steps_dir, resource_caps, disabled=None,
-                 keep_going=False):
+                 keep_going=False, cgroups=None):
+        # Per-step cgroup manager (validate_cgroup.StepCgroups) or None. When
+        # enabled, each step runs in its OWN child cgroup under the outer scope
+        # and is torn down via cgroup.kill — which catches setsid/double-fork
+        # escapees that killpg cannot. killpg stays as the fallback + belt-and-
+        # suspenders (we do BOTH on teardown when cgroups are enabled).
+        self.cgroups = cgroups
         self.disabled = dict(disabled or {})  # tag -> flag reason (explicit opt-out)
         # EAGER-EXIT (default): on the FIRST step failure, kill the steps still
         # running in parallel (via their process groups) and stop immediately,
@@ -397,14 +453,21 @@ class Runner:
                         break
         return sk
 
-    def _reap(self, pgid):
-        """SIGKILL the step's entire process group (orphan grandchildren incl.).
-        Takes the pgid captured right after Popen — NOT os.getpgid(proc.pid),
-        which fails once proc.wait() has reaped the leader (the group still
-        exists while any grandchild lives, so the stored pgid stays valid).
-        Scoped to the step's own session via start_new_session; guarded so we
-        never signal the runner's own group (suicide / the historical
-        exit-144)."""
+    def _reap(self, pgid, tag=None):
+        """Tear down a step's whole process tree. When per-step cgroups are
+        enabled, `cgroup.kill` the step's child cgroup FIRST — that SIGKILLs the
+        ENTIRE subtree atomically, including setsid/double-fork escapees that a
+        process-group kill misses (an escapee changes session/pgid but NOT
+        cgroup membership). Then ALSO killpg as a belt-and-suspenders for the
+        no-cgroup path (and harmless when the cgroup already cleared it).
+
+        The pgid is captured right after Popen — NOT os.getpgid(proc.pid), which
+        fails once proc.wait() has reaped the leader (the group still exists
+        while any grandchild lives, so the stored pgid stays valid). Scoped to
+        the step's own session via start_new_session; guarded so we never signal
+        the runner's own group (suicide / the historical exit-144)."""
+        if self.cgroups is not None and tag is not None:
+            self.cgroups.kill(tag)
         if pgid is None or pgid <= 1 or pgid == os.getpgrp():
             return
         try:
@@ -438,7 +501,14 @@ class Runner:
         # historical exit-144 came from killpg WITHOUT start_new_session (the
         # child shared the runner's pgid, so killpg was suicide) — the new
         # session makes it safe; _reap() additionally guards against our pgrp.
-        proc = subprocess.Popen(["bash", "-c", step.cmd], cwd=PROJECT_DIR, env=env,
+        # When per-step cgroups are enabled, wrap the command so the step's bash
+        # leader self-moves into its own child cgroup as its FIRST action — every
+        # grandchild it then forks inherits that cgroup (cgroup v2 fork rule), so
+        # cgroup.kill later reaps the whole tree incl. setsid escapees.
+        run_cmd = step.cmd
+        if self.cgroups is not None:
+            run_cmd = self.cgroups.prepare_command(step.tag, step.cmd)
+        proc = subprocess.Popen(["bash", "-c", run_cmd], cwd=PROJECT_DIR, env=env,
                                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                 start_new_session=True)
         # Capture the group id NOW, while the leader is alive. start_new_session
@@ -474,7 +544,7 @@ class Runner:
             # against signalling the runner's own group. The unconditional
             # _reap() below also covers the non-timeout path.
             timed_out = True
-            self._reap(step_pgid)
+            self._reap(step_pgid, step.tag)
             try:
                 proc.wait(timeout=10)
             except Exception:
@@ -491,7 +561,9 @@ class Runner:
         # the stdout pipe. Scoped to the step's own session (start_new_session
         # above) — never the runner's group. This also lets the abandoned reader
         # thread finally see EOF.
-        self._reap(step_pgid)
+        self._reap(step_pgid, step.tag)
+        if self.cgroups is not None:
+            self.cgroups.cleanup(step.tag)  # rmdir the now-empty child cgroup
         try:
             fh.close()
         except Exception:
@@ -518,7 +590,7 @@ class Runner:
                 if not self.keep_going:
                     for other, pgid in list(self.running_pgids.items()):
                         self.aborted.add(other)   # so its thread labels itself ABORTED, not FAIL
-                        self._reap(pgid)           # SIGKILL its process group -> its proc.wait returns
+                        self._reap(pgid, other)    # cgroup.kill + killpg -> its proc.wait returns
         if was_aborted:
             self._emit(f"[{step.tag}] ⊘ ABORT  {step.desc} ({dur}s — eager-exit after another step failed; --keep-going to run all)")
         elif ok:
@@ -584,9 +656,33 @@ class Runner:
         print("=" * 60)
 
 
+def _resolve_jobs(args):
+    """Resolve args.jobs in place. Precedence: --sequential (1) > explicit -j >
+    memory-budget auto-scale (when --max-mem set and -j omitted) > nproc."""
+    if args.sequential:
+        args.jobs = 1
+        return
+    explicit = args.jobs is not None
+    ncpu = os.cpu_count() or 4
+    if explicit:
+        return  # an explicit -j always wins, even under --max-mem
+    jobs = ncpu
+    budget = _resolve_mem_budget(args)
+    if budget:
+        per = parse_size(args.mem_per_job) or (1500 * 1024**2)
+        cap = max(1, budget // per)
+        if cap < jobs:
+            print(f"[validate] memory-aware -j: capping {jobs} -> {cap} "
+                  f"(budget {_fmt_bytes(budget)} / {_fmt_bytes(per)} per job).")
+            jobs = cap
+    args.jobs = jobs
+
+
 def main():
     ap = argparse.ArgumentParser(description="make validate orchestrator (mtg-717)")
-    ap.add_argument("--jobs", "-j", type=int, default=os.cpu_count() or 4)
+    ap.add_argument("--jobs", "-j", type=int, default=None,
+                    help="max parallel steps (default: number of CPUs, or auto-capped by "
+                         "--max-mem). An explicit -j always wins over memory auto-scaling.")
     ap.add_argument("--group", help="comma-separated jobGroups to run (CI shard)")
     ap.add_argument("--only", help="comma-separated group.job to run (+their deps)")
     ap.add_argument("--job", help="comma-separated jobIds to run (any group)")
@@ -654,10 +750,25 @@ def main():
                     help="do NOT re-exec a full local validate inside a transient systemd --user "
                          "scope (the default self-isolation that reaps ALL descendants — incl. "
                          "setsid escapees — on exit). Use if systemd-run misbehaves.")
+    ap.add_argument("--no-step-cgroups", action="store_true",
+                    help="do NOT give each step its OWN child cgroup under the outer scope "
+                         "(per-step cgroup.kill is setsid-proof where killpg is not). Falls back "
+                         "to the killpg-only reaper. No-op when the outer scope is unavailable.")
+    ap.add_argument("--max-mem", metavar="SPEC",
+                    help="cap the whole validate run's memory via the outer scope's "
+                         "MemoryHigh/MemoryMax AND scale -j down so concurrent cross-slot "
+                         "validates coexist without OOM-thrashing. SPEC is either an absolute "
+                         "size (e.g. 8G, 4096M) applied as MemoryMax (MemoryHigh=90%% of it), or "
+                         "'auto' to budget from /proc/meminfo MemAvailable. With --max-mem set, "
+                         "-j is also capped to floor(budget / --mem-per-job) unless -j was given "
+                         "explicitly.")
+    ap.add_argument("--mem-per-job", metavar="SIZE", default="1500M",
+                    help="assumed peak RSS of one parallel step, for --max-mem job auto-scaling "
+                         "(default 1500M — a release rustc/nextest compile unit). Lower it if your "
+                         "steps are lighter to allow more concurrency under a memory budget.")
     args = ap.parse_args()
 
-    if args.sequential:
-        args.jobs = 1
+    _resolve_jobs(args)
     subset = bool(args.group or args.only or args.job)
     use_harness = (not subset) and (not args.list) and (not args.dot) \
         and (not args.no_harness) and (not args.use_prebuilt)
@@ -824,11 +935,23 @@ def run_orchestrator(args):
     sha = subprocess.run(["git", "rev-parse", "HEAD"], cwd=PROJECT_DIR,
                          capture_output=True, text=True).stdout.strip() or "nosha"
     steps_dir = PROJECT_DIR / "validate_logs" / f"steps_{sha}"
+    # Per-step cgroups: only when inside the delegated outer scope AND not opted
+    # out. StepCgroups self-reports enabled=False off a usable cgroup setup, so
+    # this is safe to construct unconditionally; the Runner then falls back to
+    # killpg. (Subset/CI runs are not in-scope, so this is a no-op there.)
+    cgroups = None
+    if validate_cgroup is not None and not getattr(args, "no_step_cgroups", False):
+        try:
+            cg = validate_cgroup.StepCgroups()
+            cgroups = cg if cg.enabled else None
+        except Exception:
+            cgroups = None
     runner = Runner(steps, args.jobs, verbosity, steps_dir,
                     resource_caps={"browser": args.browser_capacity, "net": args.net_capacity},
-                    disabled=disabled, keep_going=args.keep_going)
+                    disabled=disabled, keep_going=args.keep_going, cgroups=cgroups)
+    cg_note = " per-step-cgroups" if cgroups else ""
     print(f"=== validate.py: {len(steps)} steps, -j{args.jobs}, "
-          f"browser-capacity={args.browser_capacity}, detail -> {steps_dir} ===")
+          f"browser-capacity={args.browser_capacity}{cg_note}, detail -> {steps_dir} ===")
     if disabled:
         by_reason = {}
         for tag, reason in sorted(disabled.items()):
@@ -838,6 +961,15 @@ def run_orchestrator(args):
                   f"(explicit opt-out; NOT full coverage) ===")
     ok = runner.run()
     runner.print_stats()
+    # NORMAL-exit backstop: cgroup.kill any step cgroup that still has live procs
+    # (a setsid orphan a step left behind lives there — --collect won't reap the
+    # scope while it's alive). Does NOT stop the scope, so a green run stays
+    # green (exit code preserved). Signal-abort uses stop_scope instead.
+    if cgroups is not None:
+        leftover = cgroups.kill_all_remaining()
+        if leftover:
+            print(f"[validate] reaped {leftover} leftover step cgroup(s) on exit "
+                  f"(setsid orphans a step left behind).")
     return 0 if ok else 1
 
 
@@ -1012,6 +1144,21 @@ def _systemd_scope_available():
     return _SCOPE_PROBE
 
 
+def _resolve_mem_budget(args):
+    """Resolve --max-mem to an absolute byte cap for the outer scope's
+    MemoryMax, or None if no cap requested. 'auto' budgets 80% of current
+    MemAvailable (leaving headroom for the OS + other slots)."""
+    spec = getattr(args, "max_mem", None)
+    if not spec:
+        return None
+    if str(spec).lower() == "auto":
+        avail = mem_available_bytes()
+        if avail is None:
+            return None
+        return int(avail * 0.8)
+    return parse_size(spec)
+
+
 def _maybe_reexec_in_scope(args):
     """mtg-743: re-exec a FULL local validate inside a transient systemd
     --user SCOPE (a cgroup), so EVERY descendant — incl. setsid/double-forked
@@ -1036,11 +1183,26 @@ def _maybe_reexec_in_scope(args):
               "(per-step reaper only; pass --no-scope to silence).")
         return
     unit = f"validate-{os.getpid()}"
+    # Delegate=yes makes the scope a DELEGATED cgroup so the in-scope runner can
+    # carve per-step CHILD cgroups under it (validate_cgroup.StepCgroups) for
+    # setsid-proof per-step teardown via cgroup.kill. The outer-scope stop still
+    # flushes the whole subtree regardless. (Verified on systemd 255 / cgroup v2.)
+    props = ["-p", "Delegate=yes"]
+    mem_max = _resolve_mem_budget(args)
+    if mem_max:
+        # MemoryMax = hard cap (cgroup OOM-kills the run if exceeded — contains a
+        # runaway validate); MemoryHigh = soft throttle at 90% (reclaim pressure
+        # before the hard kill). Together they keep concurrent cross-slot
+        # validates from OOM-thrashing the host.
+        props += ["-p", f"MemoryMax={mem_max}", "-p", f"MemoryHigh={int(mem_max * 0.9)}"]
+        print(f"[validate] outer scope memory cap: MemoryMax={_fmt_bytes(mem_max)} "
+              f"(MemoryHigh={_fmt_bytes(int(mem_max * 0.9))}).")
     cmd = ["systemd-run", "--user", "--scope", "--collect", "--quiet",
-           f"--unit={unit}", "--setenv=MTG_VALIDATE_IN_SCOPE=1",
+           f"--unit={unit}", *props, "--setenv=MTG_VALIDATE_IN_SCOPE=1",
+           f"--setenv=MTG_VALIDATE_SCOPE_UNIT={unit}.scope",
            "--", sys.executable, sys.argv[0], *sys.argv[1:]]
     print(f"[validate] re-exec inside transient systemd scope {unit}.scope "
-          f"(full-descendant cleanup on exit)…")
+          f"(two-level cgroup; full-descendant cleanup on exit)…")
     sys.stdout.flush()
     try:
         os.execvp("systemd-run", cmd)  # replaces this process
@@ -1048,11 +1210,56 @@ def _maybe_reexec_in_scope(args):
         print(f"[validate] systemd-run exec failed ({e}) — continuing unscoped.")
 
 
+def _install_scope_teardown():
+    """Inside the scope, make Ctrl-C / `kill` of the runner tear down the WHOLE
+    cgroup — not just this PID. THE GAP THIS CLOSES: killing only the scoped
+    runner leaves setsid-escapee orphans (mtg server / chromium) alive in the
+    scope cgroup (verified empirically — killpg AND `--collect` both miss them).
+    The fix: on SIGINT/SIGTERM, `systemctl --user stop` our OWN scope — that
+    SIGKILLs every child step cgroup + every escapee atomically (the stop
+    cascades because the step cgroups are genuinely nested under the scope), and
+    kills us too (intended: an aborted run exits with the signal code).
+
+    The NORMAL-exit backstop is handled separately in run_orchestrator via
+    StepCgroups.kill_all_remaining() — which does NOT stop the scope, so a
+    SUCCESSFUL run's exit code is preserved (stopping our own scope from atexit
+    would SIGTERM us and turn a green run red).
+
+    No-op when not in-scope (subset/CI/--no-scope) or systemctl is absent."""
+    unit = os.environ.get("MTG_VALIDATE_SCOPE_UNIT")
+    if not unit or os.environ.get("MTG_VALIDATE_IN_SCOPE") != "1":
+        return
+    if validate_cgroup is None or not shutil.which("systemctl"):
+        return
+
+    def _on_signal(signum, _frame):
+        # Stopping our own scope kills us too — that is intended (atomic, SIGKILL-
+        # proof teardown of the whole tree). Print first so the reason is visible.
+        try:
+            sys.stderr.write(f"\n[validate] signal {signum} — stopping scope {unit} "
+                             f"(tears down all steps + orphans)…\n")
+            sys.stderr.flush()
+        except Exception:
+            pass
+        validate_cgroup.stop_scope(unit)
+        # If the stop somehow didn't kill us, exit non-zero with the signal code.
+        os._exit(128 + signum)
+
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        try:
+            signal.signal(sig, _on_signal)
+        except (ValueError, OSError):
+            pass
+
+
 def run_with_harness(args):
     # 0. self-isolate: re-exec inside a transient systemd --user scope so the
     #    whole descendant tree is reaped atomically on exit (mtg-743). No-op
     #    when already scoped / CI / --no-scope / systemd unavailable.
     _maybe_reexec_in_scope(args)
+    # 0b. Inside the scope now: install signal + exit teardown that stops the
+    #     whole scope cgroup (catches setsid escapees killpg/--collect miss).
+    _install_scope_teardown()
     # 1. clean-environment gate
     envcheck = SCRIPTS_DIR / "check_clean_environment.py"
     if envcheck.exists():
