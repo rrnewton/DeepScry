@@ -275,10 +275,40 @@ def _fmt_bytes(n):
 #
 # resource "browser": chromium-heavy steps (browser e2e, equiv sweeps, all
 # network e2e) share a capacity-limited resource so we never over-subscribe
-# chromium / starve the timing-sensitive networked games. Default capacity 1
-# reproduces the proven safe one-browser-at-a-time behaviour while CPU steps
-# (build/clippy/nextest/examples) run fully concurrently. Raise with
-# --browser-capacity N to characterize e2e parallel speedup.
+# chromium / starve the timing-sensitive networked games. Default capacity 2
+# (mtg-validate-perf-r2): two headless chromium e2e steps overlap safely — every
+# networked test allocates RANDOM ports (web/test_network_*.js getRandomPorts; the
+# multideck header explicitly notes "concurrent runs do not" collide) and the two
+# heaviest browser steps fit well inside the outer cap (multideck 4G + gui 2G ≪
+# 30G). This is the dominant validate-wall-clock lever: at capacity 1 the ~581s
+# browser chain runs strictly serial and IS the critical path (700s wall @-j16,
+# 45% util); capacity 2 overlaps it. Native determinism comparisons are NOT on
+# this resource (they use "net", still serial — the mtg-586/589 load-sensitivity
+# concern is about those, not the UI/sync browser asserts). Raise/lower with
+# --browser-capacity N.
+
+# LPT scheduling hint: when a capacity-limited resource (browser/net) frees, the
+# scheduler should dispatch the LONGEST-running contended step first (classic
+# longest-processing-time-first makespan heuristic) so a big step never waits
+# behind a pile of small ones and ends up exposed on the tail. These are typical
+# durations (seconds) from the d6dc7897/-j16 characterization run; they only
+# influence DISPATCH ORDER among ready steps, never correctness, so stale numbers
+# just mildly degrade packing — they are not a contract. Steps absent here sort
+# after the hinted ones (hint 0), which is fine for the cheap uncontended steps.
+STEP_DURATION_HINT = {
+    "network.multideck": 192,
+    "wasm.browser":      123,
+    "network.gui":        98,
+    "network.landing":    39,
+    "wasm.equiv-base":    34,
+    "network.redo-reload": 23,
+    "network.redo-lobby": 20,
+    "network.human-input": 19,
+    "network.click":      19,
+    "wasm.equiv-fireball": 3,
+    "wasm.equiv-blackvise": 3,
+    "wasm.equiv-spiritlink": 3,
+}
 
 
 @dataclass
@@ -487,7 +517,18 @@ class Runner:
         self.running_pgids = {}  # tag -> pgid of an in-flight step (for eager kill)
         self.aborted = set()     # tags killed by eager-exit (labelled, not FAIL)
         self.steps = {s.tag: s for s in steps}
-        self.order = [s.tag for s in steps]
+        # Dispatch order = LONGEST-contended-step-first (LPT makespan heuristic):
+        # sort by the static duration hint descending so that when a scarce
+        # resource (browser/net) frees, the heaviest ready step claims it instead
+        # of a short one — keeping the big steps off the critical-path tail. The
+        # sort is STABLE, so steps with equal/no hint keep registration order
+        # (deps are still enforced separately in run(); order only affects which
+        # READY step is picked first). See STEP_DURATION_HINT.
+        self.order = sorted(
+            (s.tag for s in steps),
+            key=lambda tag: STEP_DURATION_HINT.get(tag, 0),
+            reverse=True,
+        )
         self.jobs = jobs
         self.verbosity = verbosity  # 0 quiet, 1 default(+summary), 2 stream-framework, 3 stream-all
         self.steps_dir = steps_dir
@@ -930,8 +971,12 @@ def main():
                          "(mtg-752: the WASM reorder/reveal split + apply-frontier fix landed). "
                          "Flag retained so existing invocations do not error; use --no-wasm-e2e to "
                          "disable all browser/chromium steps on a host without a usable browser.")
-    ap.add_argument("--browser-capacity", type=int, default=1,
-                    help="how many chromium-heavy steps may run at once (default 1)")
+    ap.add_argument("--browser-capacity", type=int, default=2,
+                    help="how many chromium-heavy steps may run at once (default 2 — the ~581s "
+                         "browser e2e chain is the validate critical path at capacity 1; two "
+                         "headless chromium steps overlap safely on random ports, see the "
+                         "STEP_DURATION_HINT / 'resource browser' note. Set 1 for the old "
+                         "strictly-serial behaviour.)")
     ap.add_argument("--net-capacity", type=int, default=1,
                     help="how many native networked-game steps may run at once (default 1)")
     ap.add_argument("--use-prebuilt", action="store_true",
