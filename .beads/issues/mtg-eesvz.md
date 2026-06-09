@@ -1,0 +1,39 @@
+---
+title: 'Lobby: ListPlayers protocol + server registry-backed players list + two paginated web lists (players & games)'
+status: open
+priority: 3
+issue_type: task
+depends_on:
+  mtg-594: blocks
+created_at: 2026-06-09T21:32:55.759417624+00:00
+updated_at: 2026-06-09T21:33:04.772465139+00:00
+---
+
+# Description
+
+Implement the lobby's two-list view: a server-backed logged-in PLAYERS list alongside the existing open GAMES list, both paginated/limited in the web lobby. User-facing on deepscry.net; this is the concrete protocol+server+web implementation for the design tracked in mtg-595 (lobby layout: Logged-in Players + Open Games, same treatment) and builds on mtg-594 (eager username Register, already in protocol). A prior attempt did not land; this is the retry.
+
+## Server protocol (mtg-engine/src/network/protocol.rs)
+Mirror the existing ListGames/GameList machinery exactly:
+- ClientMessage::ListPlayers { password, query: Option<ListPlayersQuery> }
+- ServerMessage::PlayerList { players: Vec<LobbyPlayerEntry>, total_count }
+- struct LobbyPlayerEntry { name: String } (players have only a display name; no creator/password/memory fields)
+- struct ListPlayersQuery { filter: Option<String>, limit: u32, offset: u32 } mirroring ListGamesQuery (case-insensitive substring on name; limit clamped to MAX_LIST_PLAYERS_LIMIT, 0 => DEFAULT_LIST_PLAYERS_LIMIT)
+- const DEFAULT_LIST_PLAYERS_LIMIT = 20; MAX_LIST_PLAYERS_LIMIT = 100
+
+## Server tracking (mtg-engine/src/network/{lobby.rs,server.rs})
+- The registry already exists: LobbyState.registered_names (HashMap<String, RegisteredName>) populated by ClientMessage::Register (mtg-594). No new tracking store needed.
+- Add LobbyState::list_players_paged(query: Option<&ListPlayersQuery>) -> (Vec<LobbyPlayerEntry>, u32), mirroring list_waiting_paged: snapshot registered_names display names, stable sort (case-insensitive by name), optional substring filter, paginate, return (page, total_pre_pagination).
+- server.rs run_lobby_dispatch: add a ListPlayers match arm right after ListGames, gated by the same server-password check, replying PlayerList.
+- server.rs post-pairing handler (handle_player_websocket "already authenticated" reject arm): add ListPlayers alongside ListGames so the lobby refresh timer does not error after pairing (the mtg-474 class of bug).
+
+## Web client (web/index.html + web/lobby_launcher.js)
+- Render BOTH lists — Logged-in Players and Open Games — each PAGINATED/limited: a cap on rows shown, "Showing N of M" total, prev/next page controls, and (matching Open Games) a text filter. No unbounded dumps.
+- The lobby socket polls ListPlayers on the same refresh cadence as ListGames.
+
+## Tests
+- lobby.rs unit tests for list_players_paged (filter case-insensitive, limit/offset, clamp-to-max, none-query-returns-all) mirroring the list_waiting_paged tests.
+- If feasible, a lobby e2e (web/) wired into make validate + CI exercising Register x2 then ListPlayers shows both names, paginated.
+
+## Determinism / safety
+Pre-game lobby only; touches no in-game controller path, so network determinism (docs/NETWORK_ARCHITECTURE.md) is unaffected. Substring name filtering is free-text user input (not structured-data parsing), so the no-hacky-string-ops rule does not apply.

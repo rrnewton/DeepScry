@@ -297,6 +297,32 @@
                         </div>
                     </form>
                     <p id="create-status" class="status-line"></p>
+
+                    <!-- Logged-in players (same treatment as Open Games:
+                         text filter, "Showing N of M" count, paginated cap) -->
+                    <h3 style="margin-top: 18px;">Logged-in Players</h3>
+                    <div class="games-filter">
+                        <input type="text" id="players-filter" maxlength="40"
+                               placeholder="Filter by player name&hellip;"
+                               aria-label="Filter players">
+                    </div>
+                    <div class="games-scroll">
+                        <table id="players-table">
+                            <thead>
+                                <tr><th>Player</th></tr>
+                            </thead>
+                            <tbody id="players-tbody">
+                                <tr class="empty"><td>No players logged in.</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    <div class="games-pager">
+                        <span id="players-count">Showing 0 of 0</span>
+                        <span>
+                            <button type="button" id="players-prev" disabled>&lt; prev</button>
+                            <button type="button" id="players-next" disabled>next &gt;</button>
+                        </span>
+                    </div>
                 </div>
 
                 <!-- Open games -->
@@ -530,6 +556,9 @@
     var listPending = false;
     var lastListGames = [];   // most recent page (creator_name, name, has_password)
     var lastTotalCount = 0;   // server-reported total matches (pre-pagination)
+    var playersPending = false;
+    var lastListPlayers = [];     // most recent players page ({ name })
+    var lastPlayersTotalCount = 0; // server-reported total players (pre-pagination)
     var refreshTimer = null;
     var currentUsername = sessionStorage.getItem('mtg.username') || '';
     // True once the server confirms Register success.
@@ -540,6 +569,12 @@
     var gamesFilter = '';
     var gamesOffset = 0;
     var filterDebounceTimer = null;
+
+    // Pagination / filter state for the logged-in-players browser (mirrors games).
+    var PLAYERS_PAGE_SIZE = 20;
+    var playersFilter = '';
+    var playersOffset = 0;
+    var playersFilterDebounceTimer = null;
 
     // --- SVG icons for passcode show/hide toggle ----------------------------
     var ICON_EYE =
@@ -730,6 +765,24 @@
         listPending = send(msg);
     }
 
+    function requestPlayerList() {
+        if (playersPending) return;
+        var msg = { type: 'list_players', password: '' };
+        msg.query = {
+            filter: playersFilter || null,
+            limit: PLAYERS_PAGE_SIZE,
+            offset: playersOffset,
+        };
+        playersPending = send(msg);
+    }
+
+    // Refresh BOTH lobby lists (games + logged-in players) in one call so the
+    // refresh timer and post-register hooks stay symmetric.
+    function requestLobbyLists() {
+        requestGameList();
+        requestPlayerList();
+    }
+
     // -------------------------------------------------------------------------
     // Server message handler
     // -------------------------------------------------------------------------
@@ -741,6 +794,9 @@
         case 'game_list':
             handleGameList(msg);
             break;
+        case 'player_list':
+            handlePlayerList(msg);
+            break;
         case 'server_full':
             setCreateStatus((msg.reason || 'Server is full, try again later.'), 'err');
             break;
@@ -748,10 +804,10 @@
             console.warn('[Lobby] Server error:', msg.message);
             break;
         default:
-            // The lobby browse WS only ever does Register + ListGames now;
-            // CreateGame/JoinGame (and their GameCreated/WaitingRoomUpdate/
-            // GameStarted replies) happen on the GAME PAGE's WS, not here.
-            // Silently ignore any other message.
+            // The lobby browse WS only ever does Register + ListGames +
+            // ListPlayers now; CreateGame/JoinGame (and their GameCreated/
+            // WaitingRoomUpdate/GameStarted replies) happen on the GAME PAGE's
+            // WS, not here. Silently ignore any other message.
             break;
         }
     }
@@ -763,7 +819,7 @@
             sessionStorage.setItem('mtg.username', currentUsername);
             setNameStatus('', '');
             enterLobby(currentUsername);
-            requestGameList();
+            requestLobbyLists();
         } else {
             setNameStatus(msg.error || 'Name already taken or invalid.', 'err');
             document.getElementById('btn-name').disabled = false;
@@ -855,6 +911,61 @@
         }
         prevBtn.disabled = gamesOffset === 0;
         nextBtn.disabled = (gamesOffset + lastListGames.length) >= lastTotalCount;
+    }
+
+    // -------------------------------------------------------------------------
+    // Logged-in players list rendering (mirrors the games list above)
+    // -------------------------------------------------------------------------
+    function handlePlayerList(msg) {
+        playersPending = false;
+        lastListPlayers = msg.players || [];
+        lastPlayersTotalCount = (typeof msg.total_count === 'number')
+            ? msg.total_count
+            : lastListPlayers.length;
+        renderPlayers();
+    }
+
+    function renderPlayers() {
+        var tbody = document.getElementById('players-tbody');
+        if (!tbody) return;
+        tbody.innerHTML = '';
+        if (lastListPlayers.length === 0) {
+            var emptyMsg = (playersFilter || playersOffset > 0)
+                ? 'No players match the current filter.'
+                : 'No players logged in.';
+            tbody.innerHTML = '<tr class="empty"><td>' + emptyMsg + '</td></tr>';
+        } else {
+            lastListPlayers.forEach(function (p) {
+                var tr = document.createElement('tr');
+                var nameTd = document.createElement('td');
+                nameTd.textContent = p.name;
+                // Highlight the viewer's own row so they can spot themselves.
+                if (currentUsername && p.name.toLowerCase() === currentUsername.toLowerCase()) {
+                    nameTd.style.color = 'var(--accent-2)';
+                    nameTd.style.fontWeight = '600';
+                }
+                tr.appendChild(nameTd);
+                tbody.appendChild(tr);
+            });
+        }
+        renderPlayersPager();
+    }
+
+    function renderPlayersPager() {
+        var countEl = document.getElementById('players-count');
+        var prevBtn = document.getElementById('players-prev');
+        var nextBtn = document.getElementById('players-next');
+        if (!countEl || !prevBtn || !nextBtn) return;
+        var shownStart = lastListPlayers.length === 0 ? 0 : playersOffset + 1;
+        var shownEnd = playersOffset + lastListPlayers.length;
+        if (lastPlayersTotalCount === 0) {
+            countEl.textContent = 'Showing 0 of 0';
+        } else {
+            countEl.textContent =
+                'Showing ' + shownStart + '–' + shownEnd + ' of ' + lastPlayersTotalCount;
+        }
+        prevBtn.disabled = playersOffset === 0;
+        nextBtn.disabled = (playersOffset + lastListPlayers.length) >= lastPlayersTotalCount;
     }
 
     // -------------------------------------------------------------------------
@@ -955,9 +1066,9 @@
     function startRefreshTimer() {
         if (refreshTimer) return;
         refreshTimer = setInterval(function () {
-            // Only poll while browsing the lobby.
+            // Only poll while browsing the lobby. Refresh BOTH lists.
             if (isInLobby()) {
-                requestGameList();
+                requestLobbyLists();
             }
         }, 5000);
     }
@@ -1053,7 +1164,7 @@
 
     document.getElementById('btn-refresh').addEventListener('click', function (ev) {
         ev.preventDefault();
-        requestGameList();
+        requestLobbyLists();
     });
 
     document.getElementById('btn-logout').addEventListener('click', function (ev) {
@@ -1085,6 +1196,29 @@
         if ((gamesOffset + lastListGames.length) >= lastTotalCount) return;
         gamesOffset += GAMES_PAGE_SIZE;
         requestGameList();
+    });
+
+    // Players filter input: debounce 200ms, reset offset, re-fetch (mirrors games).
+    document.getElementById('players-filter').addEventListener('input', function (ev) {
+        var val = ev.target.value || '';
+        if (playersFilterDebounceTimer) clearTimeout(playersFilterDebounceTimer);
+        playersFilterDebounceTimer = setTimeout(function () {
+            playersFilter = val.trim();
+            playersOffset = 0;
+            requestPlayerList();
+        }, 200);
+    });
+
+    // Players pagination buttons.
+    document.getElementById('players-prev').addEventListener('click', function () {
+        if (playersOffset === 0) return;
+        playersOffset = Math.max(0, playersOffset - PLAYERS_PAGE_SIZE);
+        requestPlayerList();
+    });
+    document.getElementById('players-next').addEventListener('click', function () {
+        if ((playersOffset + lastListPlayers.length) >= lastPlayersTotalCount) return;
+        playersOffset += PLAYERS_PAGE_SIZE;
+        requestPlayerList();
     });
 
     // -------------------------------------------------------------------------

@@ -29,8 +29,9 @@
 //! game task aborts and removes itself from the registry.
 
 use crate::network::protocol::{
-    DeckSubmission, ListGamesQuery, LobbyGameEntry, ReconnectToken, ServerMessage, WaitingRoomPlayerState,
-    DEFAULT_LIST_GAMES_LIMIT, MAX_LIST_GAMES_LIMIT,
+    DeckSubmission, ListGamesQuery, ListPlayersQuery, LobbyGameEntry, LobbyPlayerEntry, ReconnectToken, ServerMessage,
+    WaitingRoomPlayerState, DEFAULT_LIST_GAMES_LIMIT, DEFAULT_LIST_PLAYERS_LIMIT, MAX_LIST_GAMES_LIMIT,
+    MAX_LIST_PLAYERS_LIMIT,
 };
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -432,6 +433,54 @@ impl LobbyState {
             DEFAULT_LIST_GAMES_LIMIT
         } else {
             q.limit.min(MAX_LIST_GAMES_LIMIT)
+        };
+        let offset = q.offset as usize;
+        let end = (offset + limit as usize).min(all.len());
+        let page = if offset >= all.len() {
+            Vec::new()
+        } else {
+            all[offset..end].to_vec()
+        };
+        (page, total)
+    }
+
+    /// Snapshot of registered (logged-in) players with optional
+    /// case-insensitive substring filter on the name and pagination.
+    ///
+    /// The players analogue of [`list_waiting_paged`](Self::list_waiting_paged):
+    /// returns `(page, total_matching)` where `page.len() <= limit` and
+    /// `total_matching` is the count after filtering but before paging. When
+    /// `query` is `None`, every registered player is returned with no clamp.
+    pub fn list_players_paged(&self, query: Option<&ListPlayersQuery>) -> (Vec<LobbyPlayerEntry>, u32) {
+        let mut all: Vec<LobbyPlayerEntry> = self
+            .registered_names
+            .values()
+            .map(|r| LobbyPlayerEntry {
+                name: r.display_name.clone(),
+            })
+            .collect();
+        // Stable order for tests / clients: case-insensitive by display name.
+        all.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+
+        let Some(q) = query else {
+            let total = all.len() as u32;
+            return (all, total);
+        };
+
+        // Filter (case-insensitive substring on player name). This is
+        // free-text user input, so substring matching is the right tool —
+        // NOT structured-data parsing.
+        if let Some(needle) = q.filter.as_deref().filter(|s| !s.is_empty()) {
+            let needle_lc = needle.to_lowercase();
+            all.retain(|e| e.name.to_lowercase().contains(&needle_lc));
+        }
+        let total = all.len() as u32;
+
+        // Paginate.
+        let limit = if q.limit == 0 {
+            DEFAULT_LIST_PLAYERS_LIMIT
+        } else {
+            q.limit.min(MAX_LIST_PLAYERS_LIMIT)
         };
         let offset = q.offset as usize;
         let end = (offset + limit as usize).min(all.len());
@@ -861,6 +910,92 @@ mod tests {
         let (page, total) = s.list_waiting_paged(None);
         assert_eq!(page.len(), 3);
         assert_eq!(total, 3);
+    }
+
+    /// Register `n` distinct names on distinct connection ids; returns the
+    /// lobby. Mirrors the `pending`-helper style used by the games tests.
+    fn lobby_with_players(names: &[&str]) -> LobbyState {
+        let mut s = LobbyState::new();
+        for (i, name) in names.iter().enumerate() {
+            s.try_register_name(name, i as u64 + 1)
+                .unwrap_or_else(|e| panic!("register {name} failed: {e}"));
+        }
+        s
+    }
+
+    #[test]
+    fn list_players_paged_filters_case_insensitive_on_name() {
+        let s = lobby_with_players(&["Alice", "BOB", "carol"]);
+
+        // Case-insensitive substring on the player name.
+        let q = ListPlayersQuery {
+            filter: Some("bo".into()),
+            limit: 0,
+            offset: 0,
+        };
+        let (page, total) = s.list_players_paged(Some(&q));
+        assert_eq!(total, 1);
+        assert_eq!(page.len(), 1);
+        assert_eq!(page[0].name, "BOB");
+
+        // Empty filter = no filter (matches all).
+        let q = ListPlayersQuery {
+            filter: Some(String::new()),
+            limit: 0,
+            offset: 0,
+        };
+        let (_, total) = s.list_players_paged(Some(&q));
+        assert_eq!(total, 3);
+    }
+
+    #[test]
+    fn list_players_paged_respects_limit_and_offset() {
+        // Names sort case-insensitively: p0, p1, p2, p3, p4.
+        let s = lobby_with_players(&["p0", "p1", "p2", "p3", "p4"]);
+        let q = ListPlayersQuery {
+            filter: None,
+            limit: 2,
+            offset: 1,
+        };
+        let (page, total) = s.list_players_paged(Some(&q));
+        assert_eq!(total, 5);
+        assert_eq!(page.len(), 2);
+        assert_eq!(page[0].name, "p1");
+        assert_eq!(page[1].name, "p2");
+    }
+
+    #[test]
+    fn list_players_paged_clamps_limit_to_max() {
+        let s = lobby_with_players(&["solo"]);
+        let q = ListPlayersQuery {
+            filter: None,
+            limit: 9999, // far above MAX_LIST_PLAYERS_LIMIT
+            offset: 0,
+        };
+        let (page, total) = s.list_players_paged(Some(&q));
+        assert_eq!(page.len(), 1);
+        assert_eq!(total, 1);
+    }
+
+    #[test]
+    fn list_players_paged_none_query_returns_all() {
+        let s = lobby_with_players(&["a", "b", "c"]);
+        let (page, total) = s.list_players_paged(None);
+        assert_eq!(page.len(), 3);
+        assert_eq!(total, 3);
+    }
+
+    #[test]
+    fn list_players_paged_offset_past_end_is_empty() {
+        let s = lobby_with_players(&["only"]);
+        let q = ListPlayersQuery {
+            filter: None,
+            limit: 10,
+            offset: 5,
+        };
+        let (page, total) = s.list_players_paged(Some(&q));
+        assert!(page.is_empty());
+        assert_eq!(total, 1);
     }
 
     #[test]
