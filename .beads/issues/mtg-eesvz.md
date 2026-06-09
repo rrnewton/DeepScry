@@ -1,12 +1,12 @@
 ---
 title: 'Lobby: ListPlayers protocol + server registry-backed players list + two paginated web lists (players & games)'
-status: open
+status: closed
 priority: 3
 issue_type: task
 depends_on:
   mtg-594: blocks
 created_at: 2026-06-09T21:32:55.759417624+00:00
-updated_at: 2026-06-09T21:33:04.772465139+00:00
+updated_at: 2026-06-09T22:04:01.083210124+00:00
 ---
 
 # Description
@@ -37,3 +37,9 @@ Mirror the existing ListGames/GameList machinery exactly:
 
 ## Determinism / safety
 Pre-game lobby only; touches no in-game controller path, so network determinism (docs/NETWORK_ARCHITECTURE.md) is unaffected. Substring name filtering is free-text user input (not structured-data parsing), so the no-hacky-string-ops rule does not apply.
+
+Dependencies:
+  mtg-594 (blocks)
+
+--- DONE (2026-06-09_#3082(b77ed0bc), branch claude/lobby-players-list, pushed) ---
+Implemented and validated green. Protocol: ListPlayers/PlayerList + LobbyPlayerEntry + ListPlayersQuery + DEFAULT/MAX_LIST_PLAYERS_LIMIT (protocol.rs). Server: LobbyState::list_players_paged reads the existing registered_names registry (lobby.rs); ListPlayers dispatch arm + post-pairing reject grouping (server.rs); native + wasm clients log/ignore PlayerList. Web: Logged-in Players table in the lobby left column with filter + 'Showing N of M' + prev/next pagination, refreshed alongside Open Games (index.html). Tests: 5 new list_players_paged unit tests (32 lobby tests pass) + new e2e web/test_lobby_players_list_e2e.js wired into make validate + CI as network.players-list. make validate: 35/0 PASS @b77ed0bc (validate_logs/validate_b77ed0bc...log). Note: the web list logic lives inline in index.html, not lobby_launcher.js (which is pure redirect plumbing).
