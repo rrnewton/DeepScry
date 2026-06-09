@@ -1231,6 +1231,11 @@ def _install_scope_teardown():
         return
     if validate_cgroup is None or not shutil.which("systemctl"):
         return
+    # Resolve the scope cgroup path NOW (from /proc/self/cgroup), not inside the
+    # handler — so the handler's cgroup.kill is a single fast file-write with no
+    # systemctl shell-out (which can stall under load and let the fallback
+    # `systemctl stop` wait ~10s on chromium's ignored SIGTERM).
+    scope_cg = validate_cgroup.scope_cgroup_from_self()
 
     def _on_signal(signum, _frame):
         # Stopping our own scope kills us too — that is intended (atomic, SIGKILL-
@@ -1246,7 +1251,7 @@ def _install_scope_teardown():
         # check would also reap it, but removing it here avoids the confusing
         # "lock remains" window.)
         _release_lock()
-        validate_cgroup.stop_scope(unit)
+        validate_cgroup.stop_scope(unit, scope_cg)
         # If the stop somehow didn't kill us, exit non-zero with the signal code.
         os._exit(128 + signum)
 

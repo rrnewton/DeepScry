@@ -220,7 +220,24 @@ def _scope_cgroup_path(unit: str) -> Path | None:
     return (CGROUP_ROOT / cg.lstrip("/")) if cg else None
 
 
-def stop_scope(unit: str) -> bool:
+def scope_cgroup_from_self() -> Path | None:
+    """The OUTER scope's cgroup path, derived from THIS process's own cgroup —
+    no systemctl shell-out (fast + contention-proof, for the signal handler).
+    Inside the scope the runner lives in `<scope>/supervisor`, so the scope is
+    the parent; if for some reason we're at the scope root, return it directly.
+    Returns None when not in a validate scope."""
+    mine = _my_cgroup_path()
+    if mine is None:
+        return None
+    if mine.name == _SUPERVISOR:
+        return mine.parent
+    # Fall back: if our leaf IS a *.scope dir, that's the scope.
+    if mine.name.endswith(".scope"):
+        return mine
+    return None
+
+
+def stop_scope(unit: str, scope_cg: Path | None = None) -> bool:
     """Tear down the whole outer scope. Two-step for SPEED + cleanliness:
 
       1. `cgroup.kill` the scope's cgroup directly — an INSTANT, atomic SIGKILL
@@ -230,10 +247,15 @@ def stop_scope(unit: str) -> bool:
       2. `systemctl --user stop` to deactivate + GC the (now-empty) unit.
 
     Either step alone flushes the descendants; doing both makes teardown both
-    immediate and tidy. SIGKILL-proof, setsid-proof. Best-effort throughout."""
+    immediate and tidy. SIGKILL-proof, setsid-proof. Best-effort throughout.
+
+    `scope_cg`, if given (from scope_cgroup_from_self()), skips the `systemctl
+    show` lookup for step 1 — important in a SIGNAL HANDLER where shelling out
+    under load can stall (observed: a systemctl-resolved path that arrived too
+    late let `systemctl stop` wait ~10s on chromium's ignored SIGTERM)."""
     if not unit:
         return False
-    cg = _scope_cgroup_path(unit)
+    cg = scope_cg or _scope_cgroup_path(unit)
     if cg is not None:
         try:
             (cg / "cgroup.kill").write_text("1")  # instant SIGKILL of whole tree
