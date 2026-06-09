@@ -367,11 +367,15 @@ async function runTest() {
                 if (m) p2Choices = Math.max(p2Choices, parseInt(m[1]));
             }
 
-            // Check game_ended messages
-            const p1GameEnded = p1Logs.some(e =>
+            // Check game_ended messages. The clean "[Network] Game ended" notice
+            // (mtg-grofw) is debug-INDEPENDENT; the `"type":"game_ended"` /
+            // `choice_seq` matches above only fire when the full per-message
+            // "[Network] Received:" dump is enabled (debug tracing on).
+            const endedIn = (logs) => logs.some(e =>
+                e.text.includes('[Network] Game ended') ||
                 e.text.includes('"type":"game_ended"') || e.text.includes('type":"game_ended'));
-            const p2GameEnded = p2Logs.some(e =>
-                e.text.includes('"type":"game_ended"') || e.text.includes('type":"game_ended'));
+            const p1GameEnded = endedIn(p1Logs);
+            const p2GameEnded = endedIn(p2Logs);
             if (p1GameEnded || p2GameEnded) {
                 log('game_ended message received!');
                 result.gameOver = true;
