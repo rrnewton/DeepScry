@@ -494,7 +494,13 @@ async function runRandomMode(page, browserLogs, serverErrors, screenshotDir, pre
         lastLogCount = browserLogs.length;
 
         for (const logEntry of newLogs) {
-            if (logEntry.text.includes('"type":"game_ended"') ||
+            // The clean terminal "[Network] Game ended" notice (mtg-grofw) is the
+            // reliable, debug-INDEPENDENT completion signal collected by the
+            // continuous console listener. The legacy `"type":"game_ended"` match
+            // still works when debug tracing is on (full "[Network] Received:"
+            // dump), but is no longer required.
+            if (logEntry.text.includes('[Network] Game ended') ||
+                logEntry.text.includes('"type":"game_ended"') ||
                 logEntry.text.includes('type":"game_ended')) {
                 gameOver = true;
                 log('Game completed (GameEnded message received)!');
@@ -508,6 +514,40 @@ async function runRandomMode(page, browserLogs, serverErrors, screenshotDir, pre
         }
 
         if (gameOver) break;
+
+        // Primary, log-INDEPENDENT detection: the structured view model. The
+        // "[Network] Received:" console log (which used to carry
+        // "type":"game_ended"/"choice_seq") is now gated behind debug tracing
+        // (web/network.js this.debug), so we must NOT depend on it. The view
+        // model exposes game_over + turn_number directly — the robust source of
+        // truth that works whether or not debug logging is on. (mtg-grofw)
+        const probe = await page.evaluate(() => {
+            try {
+                const vm = window.__mtg ? window.__mtg.getViewModel() : null;
+                // The network client records game end the instant the server's
+                // `game_ended` message arrives (mtg-grofw) — the authoritative,
+                // debug-log-independent completion signal (the browser's own
+                // view-model game_over can lag a losing seat's teardown).
+                const client = window.__mtg && window.__mtg.getNetworkClient
+                    ? window.__mtg.getNetworkClient() : null;
+                return {
+                    turn: vm && typeof vm.turn_number === 'number' ? vm.turn_number : null,
+                    vmGameOver: !!(vm && vm.game_over),
+                    clientGameEnded: !!(client && client.gameEnded),
+                };
+            } catch (e) { return null; }
+        }).catch(() => null);
+        if (probe) {
+            if (probe.turn !== null && probe.turn > turnCount) {
+                turnCount = probe.turn;
+                log(`Game progressing: Turn ${turnCount}`);
+            }
+            if (probe.vmGameOver || probe.clientGameEnded) {
+                gameOver = true;
+                log(`Game completed (${probe.vmGameOver ? 'view-model game_over' : 'network client game_ended'})!`);
+                break;
+            }
+        }
 
         // Check terminal for game over
         const termText = await extractTerminalText(page);
@@ -539,7 +579,10 @@ async function runRandomMode(page, browserLogs, serverErrors, screenshotDir, pre
     const elapsed = ((Date.now() - startWait) / 1000).toFixed(1);
     if (gameOver) {
         log(`Random game completed in ${elapsed}s (${choiceCount} choices, ${turnCount} turns)`);
-    } else if (choiceCount > 0) {
+    } else if (choiceCount > 0 || turnCount > 1) {
+        // Progress is proven by EITHER the (debug-gated) choice_seq logs OR the
+        // view-model turn advancing past turn 1 — so this gate no longer depends
+        // on the now-gated [Network] traffic logs. (mtg-grofw)
         log(`Random game progressed: ${choiceCount} choices, ${turnCount} turns in ${elapsed}s (partial success)`);
     } else {
         throw new Error('Random game did not progress');
