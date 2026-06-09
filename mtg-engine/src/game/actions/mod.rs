@@ -7790,13 +7790,18 @@ impl GameState {
         Ok(())
     }
 
+    /// Check triggers when a card taps for mana.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if any trigger effect fails to execute.
+    #[allow(clippy::wildcard_enum_match_arm)]
     pub fn check_taps_for_mana_triggers(&mut self, source_card_id: CardId, activator_player: PlayerId) -> Result<()> {
         use crate::core::Trigger;
 
         // Info needed to check trigger payability and execute costs
         struct TriggerInfo {
             card_id: CardId,
-            card_name: crate::core::types::CardName,
             controller: PlayerId,
             trigger: Trigger,
         }
@@ -7856,7 +7861,6 @@ impl GameState {
 
                     candidate_triggers.push(TriggerInfo {
                         card_id,
-                        card_name: card.name.clone(),
                         controller,
                         trigger: trigger.clone(),
                     });
@@ -11170,6 +11174,7 @@ impl GameState {
     }
 }
 
+#[allow(clippy::collapsible_if)]
 fn matches_taps_for_mana_filter(
     card: &crate::core::Card,
     filter: &str,
