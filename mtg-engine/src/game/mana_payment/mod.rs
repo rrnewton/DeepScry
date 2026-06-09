@@ -34,6 +34,12 @@
 use crate::core::{CardId, ManaColor, ManaCost, ManaProduction, ManaProductionKind};
 use smallvec::SmallVec;
 
+// Mana-payment EXECUTION on the live `GameState` (tap-for-mana, pay-ability-cost).
+// Split out of `game/actions/mod.rs`; see `README.md` for the resolver-vs-execution
+// split. The methods are inherent `impl GameState` methods, so there is nothing to
+// re-export here — they attach to `GameState` directly.
+mod payment_execution;
+
 /// Result of checking whether a mana cost can be paid
 ///
 /// This three-valued logic allows us to distinguish between:
