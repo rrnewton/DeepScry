@@ -16,6 +16,7 @@ const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const { firstBuiltinDeck, localGameUrl } = require('./game_boot_params');
+const { getRandomPorts } = require('./test_network_utils');
 
 function log(message) {
     const timestamp = new Date().toISOString();
@@ -25,7 +26,11 @@ function log(message) {
 async function runTest() {
     let server;
     let browser;
-    const PORT = 8767;
+    // EPHEMERAL port (not hardcoded): a fixed port collides with a concurrent
+    // cross-worktree validate running the same browser test (ECONNREFUSED/
+    // EADDRINUSE flakes). getRandomPorts() picks an available port below the
+    // Linux ephemeral range (see test_network_utils).
+    const { httpPort: PORT } = await getRandomPorts();
     const testResults = {
         startTime: new Date().toISOString(),
         steps: [],

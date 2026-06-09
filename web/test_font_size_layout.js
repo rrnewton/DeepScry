@@ -6,6 +6,7 @@ const { chromium } = require('playwright');
 const { spawn } = require('child_process');
 const path = require('path');
 const { firstBuiltinDeck, localGameUrl } = require('./game_boot_params');
+const { getRandomPorts } = require('./test_network_utils');
 
 function log(m) {
     console.log(`[${new Date().toISOString()}] ${m}`);
@@ -43,14 +44,13 @@ async function measure(page) {
     });
 }
 
-async function checkViewport(browser, w, h) {
+async function checkViewport(browser, base, w, h) {
     const ctx = await browser.newContext({ viewport: { width: w, height: h } });
     const page = await ctx.newPage();
     page.on('pageerror', e => log(`Page ERROR @${w}x${h}: ${e.message}`));
     try {
         // mtg-35z3s page 3: tui_game.html is a PURE renderer — boot a local
         // heuristic-vs-heuristic game from URL params (no launcher form).
-        const base = 'http://localhost:8767';
         const firstDeck = await firstBuiltinDeck(base);
         await page.goto(localGameUrl(base, 'tui_game.html', {
             deck: firstDeck, p1: 'heuristic', p2: 'heuristic',
@@ -75,7 +75,13 @@ async function checkViewport(browser, w, h) {
 async function runTest() {
     let server, browser;
     try {
-        server = spawn('python3', ['-m', 'http.server', '8767'], {
+        // EPHEMERAL port (not hardcoded): a fixed port collides with a concurrent
+        // cross-worktree validate running the same browser test (ECONNREFUSED/
+        // EADDRINUSE flakes). getRandomPorts() picks an available port below the
+        // Linux ephemeral range (see test_network_utils).
+        const { httpPort: HTTP_PORT } = await getRandomPorts();
+        const base = `http://localhost:${HTTP_PORT}`;
+        server = spawn('python3', ['-m', 'http.server', String(HTTP_PORT)], {
             cwd: path.join(__dirname),
             stdio: ['ignore', 'pipe', 'pipe']
         });
@@ -92,7 +98,7 @@ async function runTest() {
         ];
         let allPass = true;
         for (const s of sizes) {
-            const ok = await checkViewport(browser, s.w, s.h);
+            const ok = await checkViewport(browser, base, s.w, s.h);
             if (!ok) allPass = false;
         }
         log(allPass ? 'OVERALL PASS' : 'OVERALL FAIL');

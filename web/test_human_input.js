@@ -10,7 +10,7 @@ const { chromium } = require('playwright');
 const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
-const { enableReplayVerifier } = require('./test_network_utils');
+const { enableReplayVerifier, getRandomPorts } = require('./test_network_utils');
 const { firstBuiltinDeck, localGameUrl } = require('./game_boot_params');
 
 function log(message) {
@@ -219,9 +219,13 @@ async function runTest() {
     };
 
     try {
-        // Start HTTP server
-        log('Starting HTTP server on port 8767...');
-        server = spawn('python3', ['-m', 'http.server', '8767'], {
+        // Start HTTP server on an EPHEMERAL port (not a hardcoded one): a fixed
+        // port collides with a concurrent cross-worktree validate running the
+        // same browser test, yielding ECONNREFUSED/EADDRINUSE flakes. getRandomPorts()
+        // picks an available port < the Linux ephemeral range (see test_network_utils).
+        const { httpPort: HTTP_PORT } = await getRandomPorts();
+        log(`Starting HTTP server on port ${HTTP_PORT}...`);
+        server = spawn('python3', ['-m', 'http.server', String(HTTP_PORT)], {
             cwd: path.join(__dirname),
             stdio: ['ignore', 'pipe', 'pipe']
         });
@@ -253,7 +257,7 @@ async function runTest() {
         // test drives the human controller path so a deck is needed for both
         // seats (same deck avoids missing-card errors).
         log('Loading fancy TUI page (Human vs Zero, local boot via params)...');
-        const base = 'http://localhost:8767';
+        const base = `http://localhost:${HTTP_PORT}`;
         const firstDeck = await firstBuiltinDeck(base);
         await page.goto(localGameUrl(base, 'tui_game.html', {
             deck: firstDeck, p1: 'human', p2: 'zero',
