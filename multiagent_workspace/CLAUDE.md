@@ -449,6 +449,52 @@ for wt in ../worktrees/*; do
 done
 ```
 
+## Parallelism Level & Resource-Aware Scaling
+
+The number of concurrent worker-agents/slots is NOT a fixed count — it scales
+to available machine resources. The coordinator owns this decision.
+
+- **Resources ample (disk AND memory headroom):** fire on all cylinders —
+  5+ agents, up to ~20 on a large machine. Maximize throughput.
+- **Resources restricted (disk OR memory tight):** serialize work onto fewer
+  slots / worker-agents. Steady progress on 1–2 slots beats thrashing or
+  OOMing with many. This is the correct mode while debugging a memory problem.
+- **Check before scaling up.** Before spawning a new wave of agents — and
+  before letting many agents run `make validate` concurrently — sample free
+  memory and disk and back off if low. The dominant risk is a single runaway
+  test (infinite loop / unbounded allocation) multiplied by N concurrent
+  *uncapped* validates.
+  - **Cautionary incident (2026-06-09):** a self-copying spell ("Return the
+    Favor") looped unbounded (~419k copies), ballooning one `mtg` process to
+    ~40 GB; three concurrent uncapped validates running it exhausted 72 GB RAM
+    + 18 GB swap, drove load to 53, and wedged SSH. NEVER run uncapped
+    validates concurrently on a known-red integration.
+
+### Validates must be memory-capped (cgroups with teeth)
+
+Never run `make validate` without a cgroup memory limit. An uncapped validate
+that hits a runaway allocates until the box dies; a *capped* one gets
+OOM-killed at its own limit, leaving the machine alive (and pointing at the
+offending step). Two levels:
+
+- **Inner cgroup (per step):** each validate step runs in its own child cgroup
+  with `MemoryMax` ≈ **1.25×** that step's characterized typical peak RSS.
+- **Outer cgroup (whole parallel run):** the scope's `MemoryMax` ≈ **1.25×**
+  the typical *total* of a parallel run.
+- Relax 1.25× → **1.5×** only if it proves annoying (steps failing and forcing
+  frequent baseline bumps), not by default.
+
+**Baselines must be REAL.** Characterize typical per-step and total peak RSS
+only AFTER any memory leak / unbounded loop is fixed — a baseline measured
+during a leak is garbage. Record baselines in one clearly-named place.
+
+**The OOM message is load-bearing.** When a step or the scope is OOM-killed,
+the harness error MUST state: (a) which step/scope hit its cap, (b) WHERE the
+baseline is defined (file + symbol), and (c) how to SAFELY raise it — i.e. an
+agent must first confirm the growth is genuine (the step legitimately outgrew
+its baseline) and NOT an unbounded leak, before bumping the cap. A cap bump
+without that confirmation just re-arms the OOM gun.
+
 ## CWD Protocol
 
 - Orchestrator CWD: parent workspace root (`~/work/mtg/`).
