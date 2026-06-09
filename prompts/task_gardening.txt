@@ -4,7 +4,7 @@ We're going to work on an DOCUMENTATION task.
 We want to make sure our tasks are up to date and match what's in the code.
 Review the open tasks and other context:
 
- - Tracking issue(s) for performance: `bd show mtg-2`
+ - Tracking issue(s) for performance: `mb show mtg-2`
  - CLAUDE.md
  - PROJECT_VISION.md
  - Game rules: rules/02_mtg_rules_condensed_medium_length_gemini.md 

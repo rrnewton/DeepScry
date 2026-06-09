@@ -8,7 +8,7 @@ our task.
 If the starting state is clean, we're ready to select a task to make
 forward progress. Review the context:
 
- - Tracking issue(s) for performance: `bd show mtg-2`
+ - Tracking issue(s) for performance: `mb show mtg-2`
  - OPTIMIZATION.md
  - CLAUDE.md
  - Game rules: rules/02_mtg_rules_condensed_medium_length_gemini.md

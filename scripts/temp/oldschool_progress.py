@@ -6,11 +6,11 @@ For each deck-tracking issue ("TRACK: Old School 1994 deck ..." or
 description and report how many are CLOSED (= card reached WORKING). Also
 prints the overall 'Card Compatibility:' closed/total.
 
-Robust: uses `bd list --json` (structured) rather than scraping human output,
+Robust: uses `mb list --json` (structured) rather than scraping human output,
 so it is immune to terminal formatting / color / row-limit differences.
 
 Usage:  scripts/temp/oldschool_progress.py        (run from anywhere in the repo)
-Requires: bd (minibeads) on PATH.
+Requires: mb (Minibeads) on PATH.
 """
 import json
 import re
@@ -25,14 +25,14 @@ def sh(args):
 
 def main():
     try:
-        raw = sh(["bd", "list", "--json", "--limit", "100000"])
+        raw = sh(["mb", "list", "--json", "--limit", "100000"])
     except FileNotFoundError:
-        sys.exit("error: bd (minibeads) not on PATH")
+        sys.exit("error: mb (Minibeads) not on PATH")
     except subprocess.CalledProcessError as e:
-        sys.exit(f"error: `bd list --json` failed: {e.stderr.strip()}")
+        sys.exit(f"error: `mb list --json` failed: {e.stderr.strip()}")
     issues = json.loads(raw)
     if not issues:
-        sys.exit("error: bd returned no issues (run from inside the repo / its .beads).")
+        sys.exit("error: mb returned no issues (run from inside the repo / its .beads).")
 
     by_id = {i["id"]: i for i in issues}
     ref_re = re.compile(r"mtg-[0-9a-z]+")
@@ -59,7 +59,7 @@ def main():
 
     union = {}  # card_id -> closed(bool); dedups cards shared across decks
     if not decks:
-        print("  (no deck-tracking issues matched — check titles via `bd list`)")
+        print("  (no deck-tracking issues matched — check titles via `mb list`)")
     for d in decks:
         refs = {r for r in ref_re.findall(d.get("description", "") or "") if r != d["id"]}
         done = total = 0

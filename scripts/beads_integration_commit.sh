@@ -27,7 +27,7 @@ force=0
 branch=$(git rev-parse --abbrev-ref HEAD)
 if [ "$branch" != "integration" ] && [ "$branch" != "main" ]; then
   echo "ERROR: on '$branch'. Renumber only at the serialization point (integration/main)." >&2
-  echo "       On a worktree/feature branch, just 'bd create' (hash) and let integration renumber." >&2
+  echo "       On a worktree/feature branch, just 'mb create' (hash) and let integration renumber." >&2
   exit 1
 fi
 

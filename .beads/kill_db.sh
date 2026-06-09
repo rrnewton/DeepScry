@@ -1,5 +1,5 @@
 #!/bin/bash
 
-killall bd
+killall mb
 killall beads-mcp
-rm -f daemon.* mtg.db* bd.sock
+rm -f daemon.* mtg.db* mb.sock
