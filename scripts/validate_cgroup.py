@@ -110,27 +110,46 @@ class StepCgroups:
             controllers = (scope_cg / "cgroup.controllers").read_text().split()
         except OSError:
             return
-        # Move the supervisor (this runner + its threads) OUT of the scope root
-        # into a child cgroup, so the root holds no processes and may gain child
-        # cgroups (cgroup v2 no-internal-processes rule). Then enable the
-        # controllers for children via subtree_control.
+        # Move EVERY process out of the scope root into the `supervisor/` child
+        # cgroup, so the root holds NO processes and may then enable controllers
+        # for its children (cgroup v2 "no internal processes" rule). It is NOT
+        # enough to move just os.getpid(): by the time we run, run_with_harness
+        # has already started the DISOWNED utilization sampler (a bash subshell +
+        # its mpstat/awk children) which lives in the scope root — leaving it
+        # there made the subtree_control write below fail with EBUSY, so the
+        # per-step memory.max/swap.max were silently never applied (the inner
+        # caps were a no-op). Drain the whole root, repeatedly (moving a leader
+        # can reveal late-forked children), best-effort per pid.
         sup = scope_cg / _SUPERVISOR
         try:
             sup.mkdir(exist_ok=True)
-            # Move the whole thread-group: writing the leader pid to
-            # cgroup.procs migrates every thread of the process.
-            (sup / "cgroup.procs").write_text(str(os.getpid()))
-            want = " ".join(f"+{c}" for c in ("cpu", "memory", "pids") if c in controllers)
-            if want:
-                try:
-                    (scope_cg / "cgroup.subtree_control").write_text(want)
-                except OSError:
-                    # Non-fatal: even without delegated controllers, cgroup.kill
-                    # on a child still works (it's a core cgroup-v2 file). We
-                    # only lose per-step cpu/mem accounting, not the kill.
-                    pass
         except OSError:
             return
+        for _ in range(5):
+            try:
+                pids = (scope_cg / "cgroup.procs").read_text().split()
+            except OSError:
+                pids = []
+            if not pids:
+                break
+            for pid in pids:
+                try:
+                    (sup / "cgroup.procs").write_text(pid)
+                except OSError:
+                    pass  # pid may have exited mid-drain; ignore
+        # Now the root should be empty → enable controllers for children. Enable
+        # each INDEPENDENTLY so a single unavailable one doesn't block the rest
+        # (the atomic multi-controller write fails wholesale on any one error).
+        for c in ("memory", "cpu", "pids"):
+            if c in controllers:
+                try:
+                    (scope_cg / "cgroup.subtree_control").write_text(f"+{c}")
+                except OSError:
+                    # Non-fatal: even without this controller delegated, cgroup.kill
+                    # on a child still works (core cgroup-v2 file). We lose that
+                    # controller's per-step accounting/limit, not the kill. The
+                    # `memory` one is the load-bearing one for the inner caps.
+                    pass
         self.root = scope_cg
         self.enabled = True
 
