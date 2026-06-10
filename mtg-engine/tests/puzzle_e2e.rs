@@ -4024,7 +4024,7 @@ async fn test_stasis_skips_untap_step() -> Result<()> {
     Ok(())
 }
 
-/// Regression (1994 World Championship compat — mtg-0dzxa / mtg-713 B13): Winter
+/// Regression (1994 World Championship compat — mtg-904 / mtg-713 B13): Winter
 /// Orb's "As long as Winter Orb is untapped, players can't untap more than one
 /// land during their untap steps" (`S:Mode$ Continuous | Affected$ Player |
 /// AddKeyword$ UntapAdjust:Land:1 | IsPresent$ Card.Self+untapped`). The

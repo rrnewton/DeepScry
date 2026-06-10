@@ -7540,7 +7540,7 @@ Oracle:First strike\nCreatures and nonbasic lands your opponents control enter t
     }
 
     /// Parser-shape regression for the 1994 World Championship compat sweep
-    /// (mtg-0dzxa / mtg-713 B13). Winter Orb's `S:Mode$ Continuous | Affected$
+    /// (mtg-904 / mtg-713 B13). Winter Orb's `S:Mode$ Continuous | Affected$
     /// Player | AddKeyword$ UntapAdjust:Land:1 | IsPresent$ Card.Self+untapped`
     /// must lower into a `limits_land_untap = Some(1)` lock. Before the fix the
     /// `AddKeyword$ UntapAdjust:Land:N` player-keyword was unrecognized, so the

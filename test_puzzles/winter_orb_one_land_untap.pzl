@@ -3,7 +3,7 @@ Name:Winter Orb limits land untap to one
 Goal:Win
 Difficulty:Easy
 
-# Regression for the 1994 World Championship compat sweep (mtg-0dzxa / mtg-713
+# Regression for the 1994 World Championship compat sweep (mtg-904 / mtg-713
 # B13). Winter Orb: "As long as Winter Orb is untapped, players can't untap more
 # than one land during their untap steps." Script:
 #   S:Mode$ Continuous | Affected$ Player | AddKeyword$ UntapAdjust:Land:1
