@@ -82,7 +82,23 @@ network-game spew, machine at ~22% of one core).
    Rust work, instead of trailing after it while cores idle. Break up long
    sequential phases; run independent browser tests concurrently; minimise the
    unavoidable start/end fork-join where few cores are busy. The `-j` width
-   should track core count, not a hardcoded 4.
+   should track core count, not a hardcoded 4. Two mechanisms in the scheduler
+   serve this and are the first knobs to reach for when the critical path is a
+   resource-serialized chain:
+   - **`--browser-capacity N`** (default 2) — how many chromium-heavy steps run
+     concurrently. At capacity 1 the ~581s browser e2e chain runs strictly
+     serial and IS the critical path; capacity 2 overlaps it (every networked
+     test uses RANDOM ports, so concurrent runs don't collide, and the two
+     heaviest fit far inside the outer mem cap). Native determinism comparisons
+     are on the separate, still-serial `net` resource (load-stable by design —
+     mtg-586/589), NOT `browser`.
+   - **`STEP_DURATION_HINT` + LPT dispatch** — when a capacity-limited resource
+     frees, the scheduler dispatches the LONGEST ready contended step first
+     (longest-processing-time-first makespan heuristic), so the big poles
+     (multideck/wasm.browser/gui) claim the resource early and never sit exposed
+     on the tail. Hints are advisory typical-second durations; refresh them from
+     a recent run's `✓ PASS (Ns)` lines when they drift, but they affect only
+     dispatch ORDER, never correctness.
 
 6. **Verbose mode is opt-in, terse is default.** `VALIDATE_VERBOSE=1` streams
    tagged detail live; `VALIDATE_VERBOSE_DIR=<dir>` persists every step's detail
