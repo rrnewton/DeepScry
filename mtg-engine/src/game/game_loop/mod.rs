@@ -717,12 +717,14 @@ impl<'a> GameLoop<'a> {
     ///             NetworkMessage::CardRevealed { owner, card, reason } => {
     ///                 process_card_reveal(game, &card_db, owner, card, reason);
     ///             }
-    ///             NetworkMessage::ChoiceRequest { .. } if player == our_player => {
+    ///             NetworkMessage::ChoiceRequest { buffer, .. } if player == our_player => {
+    ///                 // The opponent's decisions ride in our ChoiceRequest buffer as
+    ///                 // BufferedFact::Choice (mtg-786 retired the eager OpponentChoice
+    ///                 // message); apply them, then ask our controller.
+    ///                 apply_choice_buffer(buffer);
     ///                 return PreChoiceResult::AskController;
     ///             }
-    ///             NetworkMessage::OpponentChoice { indices, spell_ability, .. } if player != our_player => {
-    ///                 return PreChoiceResult::UseChoice(RawChoice { indices, spell_ability });
-    ///             }
+    ///             // Opponent choices come from the buffer above, not a dedicated message.
     ///             NetworkMessage::GameEnded { .. } => {
     ///                 return PreChoiceResult::Exit;
     ///             }

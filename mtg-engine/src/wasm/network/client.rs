@@ -925,51 +925,12 @@ impl WasmNetworkClient {
                 });
             }
 
-            ServerMessage::OpponentChoice {
-                choice_seq,
-                choice_indices,
-                description,
-                spell_ability,
-                action_count,
-                library_search_result,
-                target_card_ids,
-                ..
-            } => {
-                // Minimal lazy protocol (mtg-752): the opponent's decision now
-                // rides in our next ChoiceRequest buffer as BufferedFact::Choice.
-                // Ignore the eager (dual-emit) copy — routing it too would
-                // double-push the same choice_seq into opponent_choices and panic
-                // ActionLog's strict-monotonic key.
-                if self.buffer_is_authoritative {
-                    return;
-                }
-                log::debug!(
-                    "WasmNetworkClient: OpponentChoice seq={} indices={:?} action_count={} desc={}",
-                    choice_seq,
-                    choice_indices,
-                    action_count,
-                    description
-                );
-                // mtg-752 L3: see ChoiceRequest — reveals are self-keyed by
-                // game ac now; just advance the reveal-history watermark.
-                self.note_received_choice_ac(action_count);
-                // dual-emit (mtg-752): record into the per-controller choice
-                // buffer keyed by `choice_seq`, deduping the eager-vs-buffer
-                // duplicate (see `record_opponent_choice`). `choice_seq` (NOT
-                // `action_count`) is the log key: the server bumps it once per
-                // ChoiceRequest, so it is unique/monotonic per choice, whereas
-                // `action_count` is NOT unique (multi-step combat damage emits
-                // two choices at one action_count, mtg-sfihb).
-                self.record_opponent_choice(ChoiceEntry {
-                    choice_seq,
-                    action_count,
-                    choice_indices,
-                    description,
-                    spell_ability,
-                    library_search_result,
-                    target_card_ids,
-                });
-            }
+            // ServerMessage::OpponentChoice is dead on the wire (mtg-786): the
+            // server no longer sends the eager opponent-choice message. The
+            // opponent's decision rides in our next ChoiceRequest buffer as
+            // BufferedFact::Choice, routed by apply_choice_buffer ->
+            // record_opponent_choice. Drop any legacy-server eager copy.
+            ServerMessage::OpponentChoice { .. } => {}
 
             ServerMessage::ChoiceAccepted { choice_seq, .. } => {
                 log::debug!("WasmNetworkClient: ChoiceAccepted seq={}", choice_seq);
@@ -1404,32 +1365,24 @@ impl WasmNetworkClient {
     /// Record an opponent choice into the `choice_seq`-keyed `opponent_choices`
     /// log, deduping the dual-emit duplicate (mtg-752).
     ///
-    /// During the additive-buffer window the SAME opponent choice can arrive
-    /// BOTH eagerly (`ServerMessage::OpponentChoice`, processed only while the
-    /// buffer is not yet authoritative) AND in our next `ChoiceRequest` buffer
-    /// (`BufferedFact::Choice`). Which lands first varies by timing: the
-    /// opponent's first choice can precede our first `ChoiceRequest` (eager
-    /// first) — that race is exactly the `choice_seq=1` double-push that panicked
-    /// `ActionLog::push`'s strict-monotonic key. We dedup by `choice_seq`, the
-    /// same idempotent-resend discipline `push_state_sync` applies to reveals
-    /// keyed by `action_count`.
+    /// **Idempotent dedup on re-delivery.** The eager `ServerMessage::OpponentChoice`
+    /// wire message is gone (mtg-786); the sole feeder is now `apply_choice_buffer`
+    /// (the `ChoiceRequest` buffer's `BufferedFact::Choice` facts). That buffer is
+    /// re-applied on a rewind/snapshot-resume, so a previously-recorded `choice_seq`
+    /// can re-arrive. We dedup by `choice_seq` — the same idempotent-resend
+    /// discipline `push_state_sync` applies to reveals keyed by `action_count` —
+    /// dropping the duplicate before it reaches `ActionLog::push` (whose
+    /// strict-monotonic key would otherwise panic on the re-pushed `choice_seq`).
     ///
-    /// Keep-FIRST is safe because both copies derive from the coordinator's
-    /// single `OpponentChoiceInfo`, so the decision payload is content-identical
-    /// (verified: choice_indices / description / spell_ability /
-    /// library_search_result / target_card_ids / action_count all flow from the
-    /// same source). A `debug_assert` on `choice_indices` turns any genuine
-    /// divergence into a fatal desync rather than a silent drop.
+    /// Keep-FIRST is safe because every copy derives from the coordinator's single
+    /// `OpponentChoiceInfo`, so the decision payload is content-identical; a
+    /// `debug_assert` on `choice_indices` turns any genuine divergence into a fatal
+    /// desync rather than a silent drop.
     ///
-    /// Uses `push` (NOT `insert_sorted`): `opponent_choices` is the
-    /// per-controller choice buffer (owner #1), which `action_log.rs` requires
-    /// to stay strictly append-ordered. Opponent `choice_seq`s arrive
-    /// monotonically; the only out-of-order arrival is the dual-emit duplicate,
-    /// which we drop here before it reaches `push`.
-    ///
-    /// TRANSITIONAL: once eager `OpponentChoice` is deleted (mtg-752) only the buffer
-    /// feeds this, the dedup becomes a no-op, and this helper collapses back to a
-    /// bare `push`.
+    /// Uses `push` (NOT `insert_sorted`): `opponent_choices` is the per-controller
+    /// choice buffer (owner #1), which `action_log.rs` requires to stay strictly
+    /// append-ordered. Opponent `choice_seq`s arrive monotonically; the only
+    /// out-of-order arrival is the re-delivery duplicate, dropped here.
     fn record_opponent_choice(&mut self, entry: ChoiceEntry) {
         let key = u64::from(entry.choice_seq);
         if let Some(existing) = self.opponent_choices.get(key) {
@@ -2489,24 +2442,21 @@ mod tests {
 
     // ─── netarch step 2 (mtg-752) — per-controller choice buffer ─────────────────
 
-    /// Drive the on_message OpponentChoice path. Bypasses JSON parsing by
-    /// directly calling the private handler; verifies the message lands in
-    /// `opponent_choices` keyed by the wire `choice_seq` (mtg-sfihb), while
-    /// the wire `action_count` is carried on the payload.
+    /// Drive the opponent-choice recording path. The eager
+    /// `ServerMessage::OpponentChoice` wire message is gone (mtg-786); the live
+    /// feeder is `apply_choice_buffer -> record_opponent_choice`, so we exercise
+    /// `record_opponent_choice` directly here. Verifies the choice lands in
+    /// `opponent_choices` keyed by the wire `choice_seq` (mtg-sfihb), while the
+    /// wire `action_count` is carried on the payload.
     fn push_opponent_choice(client: &mut WasmNetworkClient, ac: u64, choice_seq: u32, desc: &str) {
-        client.handle_server_message(crate::network::ServerMessage::OpponentChoice {
+        client.record_opponent_choice(ChoiceEntry {
             choice_seq,
-            player: PlayerId::new(1),
-            choice_type: crate::network::ChoiceType::Priority,
+            action_count: ac,
             choice_indices: vec![choice_seq as usize],
             description: desc.into(),
-            action_count: ac,
-            timestamp_ms: 0,
             spell_ability: None,
             library_search_result: None,
             target_card_ids: None,
-            state_hash_after: None,
-            debug_info: None,
         });
     }
 

@@ -96,20 +96,9 @@ pub enum NetworkMessage {
         /// The CardId chosen for library search operations (for local player)
         library_search_result: Option<CardId>,
     },
-    /// Opponent made a choice
-    OpponentChoice {
-        action_count: u64,
-        /// Server-assigned sequence number (the `ActionLog<ChoiceEntry>` key
-        /// — strictly unique/monotonic per choice, unlike `action_count`).
-        choice_seq: u32,
-        choice_indices: Vec<usize>,
-        description: String,
-        spell_ability: Option<crate::core::SpellAbility>,
-        /// The CardId chosen for library search operations
-        library_search_result: Option<CardId>,
-        /// Actual target CardIds (if this was a target choice)
-        target_card_ids: Option<Vec<CardId>>,
-    },
+    // NetworkMessage::OpponentChoice removed (mtg-786): the eager opponent-choice
+    // message is dead on the wire; opponent decisions now flow only through the
+    // ChoiceRequest buffer (BufferedFact::Choice) into `push_opponent_choice`.
     /// Game has ended
     GameEnded {
         winner: Option<PlayerId>,
@@ -196,24 +185,12 @@ impl NetworkMessage {
                 action_count,
                 library_search_result,
             }),
-            ServerMessage::OpponentChoice {
-                choice_seq,
-                choice_indices,
-                description,
-                spell_ability,
-                library_search_result,
-                target_card_ids,
-                action_count,
-                ..
-            } => Some(NetworkMessage::OpponentChoice {
-                action_count,
-                choice_seq,
-                choice_indices,
-                description,
-                spell_ability,
-                library_search_result,
-                target_card_ids,
-            }),
+            // ServerMessage::OpponentChoice is dead on the wire (mtg-786): the
+            // server no longer sends the eager opponent-choice message — the
+            // opponent's decision rides in our next ChoiceRequest buffer as
+            // BufferedFact::Choice. Drop it on the floor if a legacy server ever
+            // emits one (it is also IGNORED downstream once authoritative).
+            ServerMessage::OpponentChoice { .. } => None,
             ServerMessage::GameEnded {
                 winner, action_count, ..
             } => Some(NetworkMessage::GameEnded { winner, action_count }),
@@ -1123,19 +1100,18 @@ impl SharedNetworkState {
     /// by the server `choice_seq` (strictly unique/monotonic per choice;
     /// `action_count` is NOT unique — mtg-sfihb). Notifies the Condvar.
     ///
-    /// **Dedups the Phase-1 dual-emit duplicate (mtg-752 native buffer shim).**
-    /// During the additive-buffer window the SAME opponent choice can arrive
-    /// BOTH eagerly (`OpponentChoice`, processed only while the buffer is not yet
-    /// authoritative) AND in our next `ChoiceRequest` buffer
-    /// (`BufferedFact::Choice`). Whichever lands first wins; the duplicate is
-    /// dropped here before it reaches `ActionLog::push` (whose strict-monotonic
-    /// key would otherwise panic on the re-pushed `choice_seq`). Keep-first is
-    /// safe because both copies derive from the coordinator's single
-    /// `OpponentChoiceInfo`, so the payload is content-identical; a
-    /// `debug_assert` on `choice_indices` turns any genuine divergence into a
-    /// fatal desync rather than a silent drop (mirrors the WASM
-    /// `record_opponent_choice`). Sole appenders: the WS reader (pre-auth eager
-    /// arm) and `apply_choice_buffer`.
+    /// **Idempotent dedup on re-delivery.** The same opponent choice can be
+    /// pushed more than once for a given `choice_seq` — `apply_choice_buffer`
+    /// re-applies the catch-up buffer on a rewind/snapshot-resume, so a
+    /// previously-recorded `choice_seq` can re-arrive. The duplicate is dropped
+    /// here before it reaches `ActionLog::push` (whose strict-monotonic key would
+    /// otherwise panic on the re-pushed `choice_seq`). Keep-first is safe because
+    /// both copies derive from the coordinator's single `OpponentChoiceInfo`, so
+    /// the payload is content-identical; a `debug_assert` on `choice_indices`
+    /// turns any genuine divergence into a fatal desync rather than a silent drop
+    /// (mirrors the WASM `record_opponent_choice`). Sole appender:
+    /// `apply_choice_buffer` (the dead eager `OpponentChoice` arm was removed in
+    /// mtg-786).
     pub fn push_opponent_choice(&self, entry: ChoiceEntry) {
         let key = u64::from(entry.choice_seq);
         let mut buf = self.opponent_choices.lock().unwrap();
@@ -2634,50 +2610,11 @@ async fn run_ws_reader_shared(
                                 // (mtg-629 step 3c), keyed by choice_seq.
                                 shared_state.push_choice_accepted(choice_seq, library_search_result);
                             }
-                            NetworkMessage::OpponentChoice {
-                                action_count,
-                                choice_seq,
-                                choice_indices,
-                                description,
-                                spell_ability,
-                                library_search_result,
-                                target_card_ids,
-                            } => {
-                                // mtg-752 native buffer shim: once authoritative,
-                                // the opponent's decision rides in our next
-                                // ChoiceRequest buffer as BufferedFact::Choice — ignore
-                                // the eager (dual-emit) copy.
-                                if shared_state.buffer_is_authoritative() {
-                                    log::trace!(
-                                        "WsReaderShared: ignoring eager OpponentChoice seq={} — buffer authoritative",
-                                        choice_seq,
-                                    );
-                                    continue;
-                                }
-                                // Update tracked action count (for sync targeting) +
-                                // reveal-history watermark.
-                                shared_state.update_server_action_count(action_count);
-                                shared_state.note_received_choice_ac(action_count);
-                                // Append to the per-controller opponent-choice
-                                // buffer (mtg-629 step 3b), keyed by choice_seq.
-                                log::debug!(
-                                    "WsReaderShared: OpponentChoice seq={} indices={:?} action={} lib_search={:?} targets={:?} -> opponent_choices",
-                                    choice_seq,
-                                    choice_indices,
-                                    action_count,
-                                    library_search_result,
-                                    target_card_ids
-                                );
-                                shared_state.push_opponent_choice(ChoiceEntry {
-                                    choice_seq,
-                                    action_count,
-                                    choice_indices,
-                                    description,
-                                    spell_ability,
-                                    library_search_result,
-                                    target_card_ids,
-                                });
-                            }
+                            // NetworkMessage::OpponentChoice arm removed (mtg-786):
+                            // the eager opponent-choice message is dead on the wire.
+                            // Opponent decisions arrive only via the ChoiceRequest
+                            // buffer (BufferedFact::Choice), routed by
+                            // apply_choice_buffer -> push_opponent_choice above.
                             NetworkMessage::GameEnded { winner, action_count } => {
                                 log::info!(
                                     "WsReaderShared: Game ended, winner={:?}, action={}",
