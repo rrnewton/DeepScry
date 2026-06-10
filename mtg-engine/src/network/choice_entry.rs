@@ -32,6 +32,56 @@
 //! so the `[GAMELOG]` line matches the server's.
 
 use crate::core::{CardId, SpellAbility};
+use serde::{Deserialize, Serialize};
+
+/// The structured payload of a single choice — the data the shadow's remote
+/// controller needs to replay an opponent's decision without seeing hidden
+/// information (mtg-787).
+///
+/// This is the ONE canonical declaration of the "choice payload" that used to
+/// be re-spelled field-by-field in five places: `BufferedFact::Choice` and
+/// `ServerMessage::OpponentChoice` (the wire forms), `ChoiceEntry` (the
+/// per-controller buffer entry), `OpponentChoiceInfo` (the server-side
+/// broadcast record), and the now-deleted `CachedOpponentChoice` (a
+/// field-renamed clone in `remote_controller.rs`). The envelope fields that
+/// vary by call site — `choice_seq`, `choice_type`, `description`,
+/// `action_count`, `player`, transport timestamps — stay on the enclosing
+/// type; only the decision payload itself lives here.
+///
+/// # Wire-format invariance
+///
+/// The wire forms embed this with `#[serde(flatten)]`, so the four fields
+/// appear at the SAME JSON object level they did when spelled inline. The
+/// project speaks JSON on the wire (`serde_json`, order-independent), and the
+/// rewind/replay buffer comparison is **structural** (`PartialEq` /
+/// `choice_indices` field compare in `push_opponent_choice`), never a
+/// JSON-string compare — so flattening is byte-compatible and replay-stable.
+/// `library_search_result` / `target_card_ids` carry `#[serde(default)]` to
+/// stay decode-compatible with legacy senders that omit them.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChoicePayload {
+    /// The choice as a sequence of integer indices into the controller's
+    /// option list. Multi-index choices (mana payment, attackers,
+    /// blockers, modes) carry multiple entries.
+    pub choice_indices: Vec<usize>,
+    /// For `choose_spell_ability_to_play`: the authoritative
+    /// `SpellAbility` the server picked, so the shadow controller does
+    /// not have to reconstruct it from a `valid` list that may not even
+    /// be visible client-side (opponent's hand cards).
+    pub spell_ability: Option<SpellAbility>,
+    /// For `choose_from_library` / `LibrarySearchByName`: the specific
+    /// `CardId` the server's tutor moved to hand. The shadow uses this
+    /// instead of an index because the client's view of the library may
+    /// not include the matched card (hidden information).
+    #[serde(default)]
+    pub library_search_result: Option<CardId>,
+    /// For SMART damage assignment (`choose_blocker_for_lethal_damage`
+    /// / `_for_remaining_damage`): the authoritative `CardId` list the
+    /// server chose, used when index-based lookup would point at the
+    /// wrong shadow-side blocker (mtg-418).
+    #[serde(default)]
+    pub target_card_ids: Option<Vec<CardId>>,
+}
 
 /// One entry in a per-controller choice buffer (`ActionLog<ChoiceEntry>`).
 ///
@@ -57,29 +107,13 @@ pub struct ChoiceEntry {
     /// display only. It is NOT the log key, because `action_count` is not
     /// unique per choice (see `choice_seq` above).
     pub action_count: u64,
-    /// The choice as a sequence of integer indices into the controller's
-    /// option list. Multi-index choices (mana payment, attackers,
-    /// blockers, modes) carry multiple entries.
-    pub choice_indices: Vec<usize>,
     /// Pre-formatted server-side description of the choice. Plumbed
     /// through verbatim so the client's `[GAMELOG]` line matches the
     /// server's. Opaque to the controller's decision logic.
     pub description: String,
-    /// For `choose_spell_ability_to_play`: the authoritative
-    /// `SpellAbility` the server picked, so the shadow controller does
-    /// not have to reconstruct it from a `valid` list that may not even
-    /// be visible client-side (opponent's hand cards).
-    pub spell_ability: Option<SpellAbility>,
-    /// For `choose_from_library` / `LibrarySearchByName`: the specific
-    /// `CardId` the server's tutor moved to hand. The shadow uses this
-    /// instead of an index because the client's view of the library may
-    /// not include the matched card (hidden information).
-    pub library_search_result: Option<CardId>,
-    /// For SMART damage assignment (`choose_blocker_for_lethal_damage`
-    /// / `_for_remaining_damage`): the authoritative `CardId` list the
-    /// server chose, used when index-based lookup would point at the
-    /// wrong shadow-side blocker (mtg-418).
-    pub target_card_ids: Option<Vec<CardId>>,
+    /// The structured decision payload (indices + the hidden-info
+    /// disambiguators). See [`ChoicePayload`].
+    pub payload: ChoicePayload,
 }
 
 #[cfg(test)]
@@ -88,26 +122,20 @@ mod tests {
     use crate::network::ActionLog;
 
     fn mk_entry(seq: u32, desc: &str) -> ChoiceEntry {
-        ChoiceEntry {
-            choice_seq: seq,
-            action_count: 0,
-            choice_indices: vec![seq as usize],
-            description: desc.into(),
-            spell_ability: None,
-            library_search_result: None,
-            target_card_ids: None,
-        }
+        mk_entry_ac(seq, 0, desc)
     }
 
     fn mk_entry_ac(seq: u32, action_count: u64, desc: &str) -> ChoiceEntry {
         ChoiceEntry {
             choice_seq: seq,
             action_count,
-            choice_indices: vec![seq as usize],
             description: desc.into(),
-            spell_ability: None,
-            library_search_result: None,
-            target_card_ids: None,
+            payload: ChoicePayload {
+                choice_indices: vec![seq as usize],
+                spell_ability: None,
+                library_search_result: None,
+                target_card_ids: None,
+            },
         }
     }
 
@@ -154,7 +182,7 @@ mod tests {
         match log.get(1) {
             Some(e) => {
                 assert_eq!(e.choice_seq, 10);
-                assert_eq!(e.choice_indices, vec![10]);
+                assert_eq!(e.payload.choice_indices, vec![10]);
                 assert_eq!(e.description, "pass");
             }
             None => panic!("expected entry at ac=1"),

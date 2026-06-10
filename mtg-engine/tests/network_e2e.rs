@@ -19,7 +19,9 @@
 #[cfg(test)]
 mod async_tests {
     use mtg_engine::core::PlayerId;
-    use mtg_engine::network::{CardReveal, ChoiceType, ClientMessage, DeckSubmission, RevealReason, ServerMessage};
+    use mtg_engine::network::{
+        CardReveal, ChoicePayload, ChoiceType, ClientMessage, DeckSubmission, RevealReason, ServerMessage,
+    };
 
     /// Test protocol message round-trips work correctly
     #[test]
@@ -159,13 +161,15 @@ mod async_tests {
                 killable_count: 2,
                 remaining_power: 4,
             },
-            choice_indices: vec![0],
             description: "lethal damage to Boulder (72)".to_string(),
             action_count: 422,
             timestamp_ms: 1234567890,
-            spell_ability: None,
-            library_search_result: None,
-            target_card_ids: Some(vec![blocker_id]),
+            payload: ChoicePayload {
+                choice_indices: vec![0],
+                spell_ability: None,
+                library_search_result: None,
+                target_card_ids: Some(vec![blocker_id]),
+            },
             state_hash_after: Some(0xDEAD_BEEF_CAFE_BABE),
             debug_info: None,
         };
@@ -176,7 +180,11 @@ mod async_tests {
 
         match decoded {
             ServerMessage::OpponentChoice {
-                target_card_ids: Some(ids),
+                payload:
+                    ChoicePayload {
+                        target_card_ids: Some(ids),
+                        ..
+                    },
                 ..
             } => {
                 assert_eq!(ids, vec![blocker_id], "target_card_ids must be preserved");

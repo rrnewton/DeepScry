@@ -60,6 +60,7 @@
 
 use crate::core::{CardId, ManaCost, PlayerId, SpellAbility};
 use crate::game::GameEndReason;
+use crate::network::ChoicePayload;
 use serde::{Deserialize, Serialize};
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -468,11 +469,12 @@ pub enum BufferedFact {
     Choice {
         choice_seq: u32,
         choice_type: ChoiceType,
-        choice_indices: Vec<usize>,
         description: String,
-        spell_ability: Option<SpellAbility>,
-        library_search_result: Option<CardId>,
-        target_card_ids: Option<Vec<CardId>>,
+        /// The structured decision payload (mtg-787): `choice_indices` plus the
+        /// hidden-info disambiguators, flattened so the wire JSON is byte-compatible
+        /// with the former inline fields. See [`crate::network::ChoicePayload`].
+        #[serde(flatten)]
+        payload: ChoicePayload,
     },
 }
 
@@ -867,11 +869,6 @@ pub enum ServerMessage {
         player: PlayerId,
         /// What type of choice was made
         choice_type: ChoiceType,
-        /// The choice indices selected
-        ///
-        /// For single-select choices (priority, targets), this is a 1-element vec.
-        /// For multi-select choices (attackers, blockers), contains all selected indices.
-        choice_indices: Vec<usize>,
         /// Human-readable description of what was chosen
         description: String,
         /// Server's undo_log length when this opponent choice was recorded
@@ -882,26 +879,12 @@ pub enum ServerMessage {
         action_count: u64,
         /// Wall-clock timestamp for debugging (ms since Unix epoch)
         timestamp_ms: u64,
-        /// The actual spell ability chosen (for Priority choices)
-        ///
-        /// When the opponent plays a spell/land/ability, this contains the
-        /// actual ability so the client can execute it directly without
-        /// needing to compute available abilities from hidden hand contents.
-        spell_ability: Option<SpellAbility>,
-        /// The CardId chosen for library search operations
-        ///
-        /// When the opponent searches their library (e.g., typecycling), this contains
-        /// the specific CardId that was chosen. Client needs this because it cannot
-        /// determine which CardId was chosen from the name alone (libraries are hidden).
-        #[serde(default)]
-        library_search_result: Option<CardId>,
-        /// Actual target CardIds for target choices
-        ///
-        /// When the opponent chooses targets, this contains the actual CardIds chosen.
-        /// Client uses these directly instead of mapping indices, which can fail if
-        /// the client's valid_targets list differs from the server's.
-        #[serde(default)]
-        target_card_ids: Option<Vec<CardId>>,
+        /// The structured decision payload (mtg-787): `choice_indices`, the chosen
+        /// `spell_ability`, the tutored `library_search_result`, and the chosen
+        /// `target_card_ids`. Flattened so the wire JSON is byte-compatible with
+        /// the former inline fields. See [`crate::network::ChoicePayload`].
+        #[serde(flatten)]
+        payload: ChoicePayload,
         /// State hash AFTER applying this choice (for client validation)
         state_hash_after: Option<u64>,
         /// Debug synchronization info (only in network debug mode)
@@ -2062,15 +2045,17 @@ mod tests {
                 choice_seq: 5,
                 player: player_id,
                 choice_type: ChoiceType::Priority { available_count: 0 },
-                choice_indices: vec![0],
                 description: "Pass priority".to_string(),
                 action_count: 0,
                 timestamp_ms: 1234567891,
-                spell_ability: None,
+                payload: ChoicePayload {
+                    choice_indices: vec![0],
+                    spell_ability: None,
+                    library_search_result: None,
+                    target_card_ids: None,
+                },
                 state_hash_after: None,
                 debug_info: None,
-                library_search_result: None,
-                target_card_ids: None,
             },
             ServerMessage::GameEnded {
                 winner: Some(player_id),

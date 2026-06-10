@@ -20,7 +20,7 @@ use crate::network::protocol::{
     now_ms, BufferedFact, CardReveal, ChoiceType, ClientMessage, DeckListInfo, DeckSubmission, JoinFailReason,
     ReconnectToken, RevealReason, ServerMessage, DEFAULT_LOBBY_GAME,
 };
-use crate::network::{CardRevealInfo, ChoiceRequest, ChoiceResponse, NetworkController, DEFAULT_PORT};
+use crate::network::{CardRevealInfo, ChoicePayload, ChoiceRequest, ChoiceResponse, NetworkController, DEFAULT_PORT};
 use crate::zones::Zone;
 use anyhow::{anyhow, Result};
 use futures_util::{SinkExt, StreamExt};
@@ -209,21 +209,14 @@ struct OpponentChoiceInfo {
     player: PlayerId,
     /// Type of choice
     choice_type: ChoiceType,
-    /// Indices of the chosen options (multiple for attackers/blockers/discard)
-    choice_indices: Vec<usize>,
     /// Human-readable description
     description: String,
     /// Action count at time of choice (for sync validation)
     action_count: u64,
-    /// The actual spell ability chosen (for Priority choices)
-    /// Allows client to execute the ability directly without computing from hidden hand
-    spell_ability: Option<SpellAbility>,
-    /// For LibrarySearchByName choices: the specific CardId that was chosen
-    /// Allows client's shadow game to know which card moved to hand
-    library_search_result: Option<CardId>,
-    /// Actual target CardIds for target choices
-    /// Client uses these directly instead of mapping indices
-    target_card_ids: Option<Vec<CardId>>,
+    /// The structured decision payload (mtg-787): chosen indices + the
+    /// hidden-info disambiguators (spell ability, tutored CardId, target
+    /// CardIds). See [`crate::network::ChoicePayload`].
+    payload: ChoicePayload,
 }
 
 /// Card reveal info to broadcast to a player
@@ -2698,12 +2691,14 @@ async fn run_coordinator(
                                     choice_seq,
                                     player: PlayerId::new(0),
                                     choice_type,
-                                    choice_indices: response.choice_indices.clone(),
                                     description: format!("P1 choice #{}", choice_seq),
                                     action_count,
-                                    spell_ability,
-                                    library_search_result,
-                                    target_card_ids: response.target_card_ids,
+                                    payload: ChoicePayload {
+                                        choice_indices: response.choice_indices.clone(),
+                                        spell_ability,
+                                        library_search_result,
+                                        target_card_ids: response.target_card_ids,
+                                    },
                                 };
                                 let _ = p2_to_handler_tx.send(GameToHandler::OpponentMadeChoice(opponent_info)).await;
                             }
@@ -2890,12 +2885,14 @@ async fn run_coordinator(
                                     choice_seq,
                                     player: PlayerId::new(1),
                                     choice_type,
-                                    choice_indices: response.choice_indices.clone(),
                                     description: format!("P2 choice #{}", choice_seq),
                                     action_count,
-                                    spell_ability,
-                                    library_search_result,
-                                    target_card_ids: response.target_card_ids,
+                                    payload: ChoicePayload {
+                                        choice_indices: response.choice_indices.clone(),
+                                        spell_ability,
+                                        library_search_result,
+                                        target_card_ids: response.target_card_ids,
+                                    },
                                 };
                                 let _ = p1_to_handler_tx.send(GameToHandler::OpponentMadeChoice(opponent_info)).await;
                             }
@@ -3568,14 +3565,11 @@ fn assemble_choice_buffer(
             BufferedFact::Choice {
                 choice_seq: info.choice_seq,
                 choice_type: info.choice_type.clone(),
-                choice_indices: info.choice_indices.clone(),
                 description: info.description.clone(),
-                spell_ability: info.spell_ability.clone(),
-                library_search_result: info.library_search_result,
-                target_card_ids: info.target_card_ids.clone(),
+                payload: info.payload.clone(),
             },
         ));
-        if let Some(card_id) = info.library_search_result {
+        if let Some(card_id) = info.payload.library_search_result {
             buffer.push((
                 info.action_count,
                 BufferedFact::Reveal {

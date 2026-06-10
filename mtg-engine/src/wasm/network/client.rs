@@ -6,8 +6,8 @@
 
 use crate::core::{PlayerId, SpellAbility};
 use crate::network::{
-    state_sync_entries_equivalent, ActionLog, BufferedFact, ChoiceEntry, ChoiceType, ClientMessage, DeckSubmission,
-    ServerMessage, StateSyncEntry,
+    state_sync_entries_equivalent, ActionLog, BufferedFact, ChoiceEntry, ChoicePayload, ChoiceType, ClientMessage,
+    DeckSubmission, ServerMessage, StateSyncEntry,
 };
 use std::cell::RefCell;
 use std::collections::VecDeque;
@@ -85,12 +85,12 @@ impl OpponentChoiceData {
     fn from_log_entry(entry: &ChoiceEntry) -> Self {
         Self {
             choice_seq: entry.choice_seq,
-            choice_indices: entry.choice_indices.clone(),
+            choice_indices: entry.payload.choice_indices.clone(),
             description: entry.description.clone(),
-            spell_ability: entry.spell_ability.clone(),
+            spell_ability: entry.payload.spell_ability.clone(),
             action_count: entry.action_count,
-            library_search_result: entry.library_search_result,
-            target_card_ids: entry.target_card_ids.clone(),
+            library_search_result: entry.payload.library_search_result,
+            target_card_ids: entry.payload.target_card_ids.clone(),
         }
     }
 }
@@ -1336,11 +1336,8 @@ impl WasmNetworkClient {
                 }
                 BufferedFact::Choice {
                     choice_seq,
-                    choice_indices,
                     description,
-                    spell_ability,
-                    library_search_result,
-                    target_card_ids,
+                    payload,
                     .. // choice_type is wire-envelope only; the controller re-derives it
                 } => {
                     // Keyed by choice_seq (strictly unique/monotonic per choice),
@@ -1351,11 +1348,8 @@ impl WasmNetworkClient {
                     self.record_opponent_choice(ChoiceEntry {
                         choice_seq,
                         action_count: ac,
-                        choice_indices,
                         description,
-                        spell_ability,
-                        library_search_result,
-                        target_card_ids,
+                        payload,
                     });
                 }
             }
@@ -1387,11 +1381,11 @@ impl WasmNetworkClient {
         let key = u64::from(entry.choice_seq);
         if let Some(existing) = self.opponent_choices.get(key) {
             debug_assert_eq!(
-                existing.choice_indices, entry.choice_indices,
+                existing.payload.choice_indices, entry.payload.choice_indices,
                 "record_opponent_choice: two DIFFERENT choices share choice_seq={} \
                  (existing indices={:?}, new={:?}) — protocol desync \
                  (NETWORK_ARCHITECTURE.md: Desync is ALWAYS Fatal).",
-                key, existing.choice_indices, entry.choice_indices,
+                key, existing.payload.choice_indices, entry.payload.choice_indices,
             );
             // Idempotent dual-emit duplicate — already logged. Drop it.
             return;
@@ -2452,11 +2446,13 @@ mod tests {
         client.record_opponent_choice(ChoiceEntry {
             choice_seq,
             action_count: ac,
-            choice_indices: vec![choice_seq as usize],
             description: desc.into(),
-            spell_ability: None,
-            library_search_result: None,
-            target_card_ids: None,
+            payload: ChoicePayload {
+                choice_indices: vec![choice_seq as usize],
+                spell_ability: None,
+                library_search_result: None,
+                target_card_ids: None,
+            },
         });
     }
 

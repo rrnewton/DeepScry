@@ -25,7 +25,7 @@ use crate::loader::{AsyncCardDatabase, CardDefinition, DeckList};
 use crate::network::protocol::{
     BufferedFact, CardReveal, ChoiceType, ClientMessage, DeckSubmission, RevealReason, ServerMessage,
 };
-use crate::network::{state_sync_entries_equivalent, ActionLog, ChoiceEntry, StateSyncEntry};
+use crate::network::{state_sync_entries_equivalent, ActionLog, ChoiceEntry, ChoicePayload, StateSyncEntry};
 use anyhow::{anyhow, Result};
 use futures_util::stream::{SplitSink, SplitStream};
 use futures_util::{SinkExt, StreamExt};
@@ -814,11 +814,8 @@ impl SharedNetworkState {
         for (ac, fact) in choices {
             if let BufferedFact::Choice {
                 choice_seq,
-                choice_indices,
                 description,
-                spell_ability,
-                library_search_result,
-                target_card_ids,
+                payload,
                 .. // choice_type is wire-envelope only; the controller re-derives it
             } = fact
             {
@@ -828,11 +825,8 @@ impl SharedNetworkState {
                 self.push_opponent_choice(ChoiceEntry {
                     choice_seq,
                     action_count: ac,
-                    choice_indices,
                     description,
-                    spell_ability,
-                    library_search_result,
-                    target_card_ids,
+                    payload,
                 });
             }
         }
@@ -1117,11 +1111,11 @@ impl SharedNetworkState {
         let mut buf = self.opponent_choices.lock().unwrap();
         if let Some(existing) = buf.log.get(key) {
             debug_assert_eq!(
-                existing.choice_indices, entry.choice_indices,
+                existing.payload.choice_indices, entry.payload.choice_indices,
                 "push_opponent_choice: two DIFFERENT choices share choice_seq={} \
                  (existing indices={:?}, new={:?}) — protocol desync \
                  (NETWORK_ARCHITECTURE.md: Desync is ALWAYS Fatal).",
-                key, existing.choice_indices, entry.choice_indices,
+                key, existing.payload.choice_indices, entry.payload.choice_indices,
             );
             // Idempotent dual-emit duplicate — already logged. Drop it.
             return;
@@ -1180,11 +1174,13 @@ impl SharedNetworkState {
             ChoiceEntry {
                 choice_seq,
                 action_count: 0,
-                choice_indices: Vec::new(),
                 description: String::new(),
-                spell_ability: None,
-                library_search_result,
-                target_card_ids: None,
+                payload: ChoicePayload {
+                    choice_indices: Vec::new(),
+                    spell_ability: None,
+                    library_search_result,
+                    target_card_ids: None,
+                },
             },
         );
         drop(buf);
@@ -1203,7 +1199,7 @@ impl SharedNetworkState {
         let mut buf = self.choice_accepted.lock().unwrap();
         loop {
             if let Some(entry) = buf.log.get(key) {
-                let result = entry.library_search_result;
+                let result = entry.payload.library_search_result;
                 if buf.cursor < key {
                     buf.cursor = key;
                 }

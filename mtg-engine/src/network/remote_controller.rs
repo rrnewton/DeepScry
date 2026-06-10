@@ -20,18 +20,9 @@ use crate::core::{CardId, ManaCost, PlayerId, SpellAbility};
 use crate::game::controller::{ChoiceResult, GameStateView, PlayerController};
 use crate::game::snapshot::ControllerType;
 use crate::network::client::SharedNetworkState;
+use crate::network::{ChoiceEntry, ChoicePayload};
 use smallvec::SmallVec;
 use std::sync::Arc;
-
-/// Cached choice info from prepare_for_priority_choice()
-#[derive(Debug, Clone)]
-struct CachedOpponentChoice {
-    action_count: u64,
-    indices: Vec<usize>,
-    spell_ability: Option<SpellAbility>,
-    library_search_result: Option<CardId>,
-    target_card_ids: Option<Vec<CardId>>,
-}
 
 /// A controller that represents the remote opponent.
 ///
@@ -51,8 +42,11 @@ pub struct RemoteController {
     /// Stored here so the game loop can retrieve the authoritative CardId after
     /// choose_from_library returns an index into an empty valid_cards list.
     last_library_search_result: Option<CardId>,
-    /// Cached OpponentChoice from prepare_for_priority_choice()
-    pending_choice: Option<CachedOpponentChoice>,
+    /// Cached opponent choice from prepare_for_priority_choice(). Holds the
+    /// `ChoiceEntry` taken from the per-controller opponent-choice buffer until
+    /// `get_opponent_choice_full` consumes it (mtg-787: was a field-renamed
+    /// clone `CachedOpponentChoice`; now reuses the buffer's own entry type).
+    pending_choice: Option<ChoiceEntry>,
 }
 
 impl RemoteController {
@@ -92,15 +86,9 @@ impl RemoteController {
                     "RemoteController::prepare_choice_info: got OpponentChoice seq={} action={} indices={:?}",
                     entry.choice_seq,
                     entry.action_count,
-                    entry.choice_indices
+                    entry.payload.choice_indices
                 );
-                self.pending_choice = Some(CachedOpponentChoice {
-                    action_count: entry.action_count,
-                    indices: entry.choice_indices,
-                    spell_ability: entry.spell_ability,
-                    library_search_result: entry.library_search_result,
-                    target_card_ids: entry.target_card_ids,
-                });
+                self.pending_choice = Some(entry);
                 true
             }
             None => {
@@ -162,21 +150,22 @@ impl RemoteController {
                     "RemoteController: action count mismatch! expected={}, got={}, indices={:?}",
                     expected_action,
                     cached.action_count,
-                    cached.indices
+                    cached.payload.choice_indices
                 );
                 // Continue anyway - server is authoritative, but log the discrepancy
             }
             log::debug!(
                 "RemoteController: using cached OpponentChoice indices={:?} action={}",
-                cached.indices,
+                cached.payload.choice_indices,
                 cached.action_count
             );
-            return ChoiceResult::Ok((
-                cached.indices,
-                cached.spell_ability,
-                cached.library_search_result,
-                cached.target_card_ids,
-            ));
+            let ChoicePayload {
+                choice_indices,
+                spell_ability,
+                library_search_result,
+                target_card_ids,
+            } = cached.payload;
+            return ChoiceResult::Ok((choice_indices, spell_ability, library_search_result, target_card_ids));
         }
 
         // Read the next unconsumed opponent choice from the buffer (mtg-629
@@ -189,24 +178,25 @@ impl RemoteController {
                         "RemoteController: action count mismatch! expected={}, got={}, indices={:?}",
                         expected_action,
                         entry.action_count,
-                        entry.choice_indices
+                        entry.payload.choice_indices
                     );
                     // Continue anyway - server is authoritative, but log the discrepancy
                 }
                 log::debug!(
                     "RemoteController: got OpponentChoice seq={} indices={:?} action={} lib_search={:?} targets={:?}",
                     entry.choice_seq,
-                    entry.choice_indices,
+                    entry.payload.choice_indices,
                     entry.action_count,
-                    entry.library_search_result,
-                    entry.target_card_ids
+                    entry.payload.library_search_result,
+                    entry.payload.target_card_ids
                 );
-                ChoiceResult::Ok((
-                    entry.choice_indices,
-                    entry.spell_ability,
-                    entry.library_search_result,
-                    entry.target_card_ids,
-                ))
+                let ChoicePayload {
+                    choice_indices,
+                    spell_ability,
+                    library_search_result,
+                    target_card_ids,
+                } = entry.payload;
+                ChoiceResult::Ok((choice_indices, spell_ability, library_search_result, target_card_ids))
             }
             None => {
                 log::debug!("RemoteController: opponent-choice buffer signaled exit");
