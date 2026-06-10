@@ -63,6 +63,28 @@ function log(msg) {
         const page = await browser.newPage();
         await page.setViewportSize({ width: 1280, height: 720 });
 
+        // mtg-808: make this test HERMETIC w.r.t. the gitignored local image
+        // cache. The test wants to exercise the "OPPONENT card has no local art
+        // → cascade local→CDN→gatherer" path, and asserts a card is NOT stuck on
+        // its 404ing local /images/ URL. That assertion is only valid when the
+        // local URL actually 404s. On a clean CI box web/images/ is essentially
+        // empty so it 404s naturally; but on a dev box with the 67k-file
+        // web/images/ cache present, a handful of cards (Island, Multiversal
+        // Passage, …) load locally, the src legitimately settles on /images/…,
+        // and the old test mis-flagged them as "stuck" → a false validate
+        // failure (recurred 2026-06-10 landing wave). Force EVERY local image
+        // request to 404 at the browser-context level so the cascade-to-CDN path
+        // is exercised by construction — identical behavior WITH or WITHOUT the
+        // real cache on disk. Intercept all /images/ asset requests (jpg/png/…),
+        // not the page/script/json loads.
+        await page.route('**/images/**', (route) => {
+            const url = route.request().url();
+            if (/\.(jpe?g|png|gif|webp|avif)(\?|$)/i.test(url)) {
+                return route.fulfill({ status: 404, contentType: 'text/plain', body: 'not found (mtg-808 hermetic)' });
+            }
+            return route.continue();
+        });
+
         const browserErrors = [];
         page.on('pageerror', err => browserErrors.push(err.message));
         page.on('console', msg => {
@@ -71,8 +93,10 @@ function log(msg) {
 
         // Boot heuristic-vs-heuristic (seed 42 → never blocks on human input)
         // with local images ENABLED so the battlefield cascade is
-        // [local, (CDN), gatherer] and local 404s in this hermetic env exactly
-        // like an OPPONENT card the client has no local art for.
+        // [local, (CDN), gatherer]. The page.route('**/images/**') above forces
+        // every local image to 404 (independent of the on-disk cache), so the
+        // cascade fires exactly like an OPPONENT card the client has no local
+        // art for — see the mtg-808 hermetic note above.
         const base = `http://localhost:${HTTP_PORT}`;
         const deck = await firstBuiltinDeck(base);
         await page.goto(localGameUrl(base, 'native_game.html', {
