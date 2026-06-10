@@ -51,6 +51,15 @@ For network multiplayer code, the **deterministic sequential simulation** model 
 
 **Controllers must be information-independent**: ALL controller types (heuristic, random, zero, etc.) MUST produce identical decisions whether running on the server (full state) or on a client (shadow state). Controllers must NEVER use hidden information (opponent hand contents, library order, RNG state). If a controller produces different gamelogs in local vs network mode, it has an information-leakage bug. See `docs/NETWORK_ARCHITECTURE.md` for details.
 
+### Prefer functional/immutable style, especially for GameState (rewind safety)
+
+`GameState` carries undo-log / rewind obligations: the engine must be able to rewind to a prior turn and replay to reproduce a **bit-identical** state — including the undo log and the network-shadow / WASM-rewind view hashes. Mutable transient state is the single largest source of desync bugs in this model, so PREFER functional/immutable constructions over mutation.
+
+- **Thread explicit parameters instead of stashing transient state on `GameState`.** If a value is only needed across a few call sites for one resolution (e.g. "who caused this discard"), pass it as a parameter rather than setting a mutable field and reading it back later. An explicit parameter carries no reconstruct-on-rewind obligation; a mutable field does.
+- **If state genuinely must live on `GameState`, it MUST be serialized** (`#[serde(default)]`) so snapshot/resume, network-shadow, and WASM rewind/replay reconstruct it identically. The "transient-but-serialized" fields (`remembered_amount`, `remembered_cards`, `remembered_players`, `extra_turns`, ...) follow this on purpose.
+- **`#[serde(skip)]` is only acceptable for**: (a) derived caches rebuilt deterministically after load (`mana_caches`), (b) static reference data reloaded at init (`token_definitions`, `card_definitions`), (c) the bump allocator, or (d) pure resolution scratch that is PROVABLY empty/`None` at every serialize / choice / game-loop boundary (`current_damage_source`). A `#[serde(skip)]` field holding real game-loop state across a choice point is a desync waiting to happen — the WASM-resumption fields (`spell_targets`, `pending_activation*`, `pending_cycling_search`) are an existing hazard of this kind currently being reworked, NOT a pattern to copy.
+- **Litmus test:** "if the game rewinds to turn start and replays, does this value come back bit-identical?" If correctness depends on a mutation happening in a specific order, thread it or serialize it instead.
+
 ### NO HACKY STRING OPERATIONS ON STRUCTURED DATA
 
 We do NOT treat structured data formats (card scripts, SVars, ability definitions) as unstructured strings. **NEVER** use substring matching like `body.contains("AB$ Mana")` or `line.contains("some keyword")` to parse structured DSL formats.
