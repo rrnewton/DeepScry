@@ -201,28 +201,6 @@ pub enum ClientMessage {
         query: Option<ListGamesQuery>,
     },
 
-    /// List currently registered (logged-in) lobby players.
-    ///
-    /// The server replies with a single [`ServerMessage::PlayerList`]. The
-    /// connection stays open afterwards, exactly like `ListGames`, so a UI
-    /// client can poll both lists on its lobby refresh timer and then follow
-    /// up with `CreateGame`/`JoinGame`.
-    ///
-    /// The set of players is the server's name registry — every connection
-    /// that has sent a successful [`ClientMessage::Register`] and not yet
-    /// disconnected. `query` mirrors `ListGames`: when omitted the server
-    /// returns every registered player (no clamp); when present it applies the
-    /// case-insensitive substring `filter` against the player name, then
-    /// paginates with `limit`/`offset`. The reply's `total_count` is the
-    /// post-filter total so the client can render "Showing N of M".
-    ListPlayers {
-        /// Server password (must match server config if non-empty)
-        password: String,
-        /// Optional filter + pagination. `None` ⇒ "return all" behavior.
-        #[serde(default)]
-        query: Option<ListPlayersQuery>,
-    },
-
     /// Create a new pre-game lobby slot and become its creator.
     ///
     /// The connection then waits in the same way the legacy `Authenticate`
@@ -564,24 +542,6 @@ pub enum ServerMessage {
         /// joins are denied with `ServerFull` once
         /// `system_memory_used_percent > max_memory_percent`.
         max_memory_percent: u32,
-    },
-
-    /// Reply to `ClientMessage::ListPlayers`. Lists registered (logged-in)
-    /// lobby players — the server's name registry.
-    ///
-    /// Deliberately mirrors [`ServerMessage::GameList`] minus the game- and
-    /// memory-specific fields: a player entry is just a display name.
-    PlayerList {
-        /// One entry per registered player (post-filter, post-pagination).
-        /// Order is server-defined (currently case-insensitive by name);
-        /// clients should not rely on it beyond stability across consecutive
-        /// list calls.
-        players: Vec<LobbyPlayerEntry>,
-        /// Total number of players matching the filter BEFORE pagination was
-        /// applied. Clients render "Showing players.len() of total_count".
-        /// `#[serde(default)]` keeps older decoders that omit it working.
-        #[serde(default)]
-        total_count: u32,
     },
 
     /// Acknowledge a `CreateGame` succeeded — the client is now the creator
@@ -1052,43 +1012,6 @@ pub struct LobbyGameEntry {
     /// Wall-clock ms when the game was created (Unix epoch). Lets the UI
     /// show "waiting for 30s" instead of just "waiting".
     pub created_at_ms: u64,
-}
-
-/// Filter + pagination parameters for `ClientMessage::ListPlayers`.
-///
-/// The players-list analogue of [`ListGamesQuery`]. Kept as a distinct type
-/// (rather than reusing `ListGamesQuery`) so the two lists can be tuned and
-/// documented independently — the players filter matches a single name field,
-/// whereas the games filter matches name OR creator. All fields are optional
-/// on the wire (`#[serde(default)]`); send `{}` for "page 0, default limit, no
-/// filter". To return ALL players, omit `query` on the parent `ListPlayers`.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct ListPlayersQuery {
-    /// Case-insensitive substring matched against the player name. `None` or
-    /// empty string ⇒ no filter (return all matches for the page).
-    #[serde(default)]
-    pub filter: Option<String>,
-    /// Maximum entries to return. Server clamps to `MAX_LIST_PLAYERS_LIMIT`.
-    /// `0` is treated as `DEFAULT_LIST_PLAYERS_LIMIT`.
-    #[serde(default)]
-    pub limit: u32,
-    /// Number of entries to skip (after filtering). Defaults to 0.
-    #[serde(default)]
-    pub offset: u32,
-}
-
-/// Default `limit` when a `ListPlayersQuery` arrives with `limit == 0`.
-pub const DEFAULT_LIST_PLAYERS_LIMIT: u32 = 20;
-/// Hard ceiling on the server-side players `limit` regardless of the request.
-pub const MAX_LIST_PLAYERS_LIMIT: u32 = 100;
-
-/// One entry in the lobby players-list response. A registered player is
-/// identified solely by display name (no game/password/memory fields), so this
-/// is the players analogue of [`LobbyGameEntry`] with just the name.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LobbyPlayerEntry {
-    /// Registered display name (the case the client supplied at `Register`).
-    pub name: String,
 }
 
 /// Reasons a `JoinGame` may fail (other than `ServerFull`).

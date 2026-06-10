@@ -13,14 +13,6 @@
  *      pending choice) produce far FEWER battlefield mutations than real game
  *      advances — i.e. the skip preserves the DOM (and element identity) when
  *      nothing changed.
- *
- *  (C) BATTLEFIELD CARD <img> NODES ARE REUSED across an advance when the card
- *      (card_id + image src) is unchanged (slot05/web-ui-fixes — Safari auto-run
- *      flicker fix). The old `innerHTML = ''` teardown recreated every <img>
- *      every frame, which Safari blanks-then-re-decodes → flicker. We tag each
- *      battlefield <img> with a unique marker, advance the game, and assert that
- *      cards still present keep the SAME node (marker survives) — i.e. their
- *      <img> was reused, not recreated.
  */
 const { chromium } = require('playwright');
 const { spawn } = require('child_process');
@@ -104,60 +96,6 @@ function log(m) { const ts = new Date().toISOString().substring(11, 23); console
         check('benign no-op nav ticks produce ~no battlefield DOM mutations (skip fires)',
               navMut <= 2,
               `battlefield mutations during 20 no-op nav ticks = ${navMut} (≈0 expected when the render-skip fires; real advances produced ${advMut})`);
-
-        // ── (C) battlefield card <img> nodes are REUSED across an advance for
-        // cards that are still present with the same image (Safari flicker fix).
-        // Tag every battlefield card tile (keyed by card_id) with a unique
-        // marker on its <img>; advance the game; for each card_id still present
-        // afterward, the marker must survive → the <img> node was reused.
-        let reuse = { tagged: 0, survivors: 0, stillPresent: 0 };
-        for (let attempt = 0; attempt < 10; attempt++) {
-            // Tag current battlefield card <img> elements by card_id, and record
-            // which card_ids were present before the advance.
-            const tagged = await page.evaluate(() => {
-                window.__preCardIds = new Set();
-                let n = 0;
-                document.querySelectorAll('#player-field-cards .card, #opp-field-cards .card').forEach(card => {
-                    const img = card.querySelector('img.card-image');
-                    if (img) {
-                        img.dataset.reuseMarker = `m${card.dataset.cardId}`;
-                        window.__preCardIds.add(card.dataset.cardId);
-                        n++;
-                    }
-                });
-                return n;
-            });
-            if (tagged === 0) { await page.keyboard.press('Space'); await page.waitForTimeout(120); continue; }
-
-            // Advance one real step.
-            await page.keyboard.press('Space');
-            await page.waitForTimeout(160);
-
-            // For each card_id present BOTH before and after, did its <img> keep
-            // the marker (node reused) ?
-            reuse = await page.evaluate(() => {
-                let survivors = 0, stillPresent = 0;
-                document.querySelectorAll('#player-field-cards .card, #opp-field-cards .card').forEach(card => {
-                    const id = card.dataset.cardId;
-                    if (!window.__preCardIds.has(id)) return;   // newly-appeared card
-                    const img = card.querySelector('img.card-image');
-                    if (!img) return;
-                    stillPresent++;
-                    if (img.dataset.reuseMarker === `m${id}`) survivors++;  // node reused
-                });
-                return { tagged: 0, survivors, stillPresent };
-            });
-            reuse.tagged = tagged;
-            if (reuse.stillPresent > 0) break;   // got a meaningful sample
-            const over = await page.evaluate(() => window.__mtg.getViewModel().game_over);
-            if (over) break;
-        }
-        // Every card present across the advance must have kept its <img> node
-        // (no recreation). If any survivor lost its marker, the <img> was
-        // recreated → the flicker bug regressed.
-        check('battlefield card <img> nodes are REUSED across an advance (Safari flicker fix)',
-              reuse.stillPresent > 0 && reuse.survivors === reuse.stillPresent,
-              `${reuse.survivors}/${reuse.stillPresent} surviving cards kept their <img> node identity (tagged ${reuse.tagged})`);
 
         const nonImage404 = browserErrors.filter(e => !(e.includes('Failed to load resource') && e.includes('404')));
         check('no non-image browser errors / WASM panics', nonImage404.length === 0,

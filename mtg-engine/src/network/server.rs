@@ -886,31 +886,6 @@ async fn run_lobby_dispatch(
                 // Loop: connection stays open for a follow-up Create/Join.
             }
 
-            ClientMessage::ListPlayers { password, query } => {
-                if !check_server_password(config, &password) {
-                    // Mirror ListGames: send a decodable AuthResult failure.
-                    // ListPlayers is a pre-auth probe, but the server password
-                    // still gates it.
-                    send_message(
-                        &mut ws_stream,
-                        &ServerMessage::AuthResult {
-                            success: false,
-                            error: Some("Invalid server password".to_string()),
-                            your_player_id: None,
-                            your_name: None,
-                        },
-                    )
-                    .await?;
-                    return Ok(());
-                }
-                let (players, total_count) = {
-                    let l = lobby.lock().await;
-                    l.list_players_paged(query.as_ref())
-                };
-                send_message(&mut ws_stream, &ServerMessage::PlayerList { players, total_count }).await?;
-                // Loop: connection stays open for a follow-up Create/Join.
-            }
-
             ClientMessage::CreateGame {
                 password,
                 game_name,
@@ -3323,7 +3298,6 @@ async fn handle_player_websocket(
                             | ClientMessage::CreateGame { .. }
                             | ClientMessage::JoinGame { .. }
                             | ClientMessage::ListGames { .. }
-                            | ClientMessage::ListPlayers { .. }
                             | ClientMessage::Register { .. }
                             | ClientMessage::SetDeck { .. }
                             | ClientMessage::SetReady { .. }

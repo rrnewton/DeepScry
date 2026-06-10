@@ -1,24 +1,28 @@
 #!/usr/bin/env node
 /**
- * Regression test for the native_game.html AI-WATCH AFFORDANCE, choice-based
- * design (slot05 / claude/web-ui-fixes).
+ * Regression test for the native_game.html ACTION-PANE AFFORDANCE FOOTER
+ * (slot05 / claude/native-action-pane-hints).
  *
- * DESIGN (user feedback on the earlier footer): when an AI seat is paused and it
- * is our move to advance, the affordance is presented as NORMAL numbered CHOICES
- * in the action list — "1. Play next <Kind> AI move" / "2. Auto-run" — the SAME
- * UI a human-controller game uses ("1. Pass / 2. Cast Lightning Bolt"), NOT a
- * separate footer banner. The bottom footer (#actions-affordance) is now the
- * GREEN "auto-running" banner ONLY.
+ * USER-REPORTED PROBLEM: when watching a random-vs-random (both-AI) game, the
+ * Actions pane went silent — the engine's semantic prompt is things like
+ * "Game ready. Press Space to advance turn.", "Network AI game running...", or
+ * "Waiting for server..." with an EMPTY choice list, so the pane showed only
+ * "No actions available" and nothing telling the user the next move. The fix
+ * adds a persistent affordance footer (#actions-affordance) that surfaces the
+ * page's meta-controls (Space to continue / A to toggle auto-run) whenever the
+ * game is in a watch / auto-advance / waiting state.
  *
- * Properties asserted:
- *  (1) IN-LIST CHOICES: a paused local random-vs-random game shows two
- *      action-items ("Play next … move" + "Auto-run") — not "No actions
- *      available" — and the footer banner is HIDDEN while paused. No wrong
- *      "waiting for the other player" text appears on our own turn.
- *  (2) "PLAY NEXT" advances: selecting choice 1 (number key) advances the game.
- *  (3) "AUTO-RUN" choice enables auto-run: selecting choice 2 turns the GREEN
- *      footer banner on and flips #btn-auto to "Stop Auto"; pressing A reverts
- *      to the paused in-list choices with the banner hidden.
+ * Properties asserted (the affordance is the deliverable, so these are the gate):
+ *  (1) NEVER SILENT during AI turns: in a paused local random-vs-random game the
+ *      affordance footer is visible + non-empty and names the Space / auto-run
+ *      controls — and STAYS visible as we advance turn-by-turn (the core
+ *      complaint: the pane must always tell the user what to do).
+ *  (2) ACCURATE ON TOGGLE: pressing 'A' (toggle auto-run) flips the affordance to
+ *      its auto-running treatment, and the #btn-auto label flips in lockstep
+ *      (single source of truth — applyAutoRunState). Pressing 'A' again reverts.
+ *  (3) HIDDEN WHEN A REAL CHOICE IS PENDING / AT GAME OVER (no double-guidance):
+ *      verified opportunistically — when the run reaches game over the footer is
+ *      hidden (the game is finished; nothing left to do).
  *  (4) No WASM panics / non-image browser errors.
  *
  * Run with: node test_action_affordance.js
@@ -32,26 +36,19 @@ const { firstBuiltinDeck, localGameUrl } = require('./game_boot_params');
 const projectRoot = path.join(__dirname, '..');
 function log(m) { const ts = new Date().toISOString().substring(11, 23); console.log(`[${ts}] ${m}`); }
 
-// Snapshot of the action pane: the in-list choices (data-meta entries), the
-// footer banner, the auto-run button, and view-model bits — read straight from
-// the DOM (no production test-only hook needed).
-function readPaneInPage() {
-    const body = document.getElementById('actions-body');
-    const footer = document.getElementById('actions-affordance');
+// Snapshot of the affordance footer + the auto-run button label, read straight
+// from the DOM (no production test-only hook needed). `visible` is the rendered
+// display state; `text` is normalized (collapsed whitespace) for substring
+// checks; `autoOn` reflects the auto-running CSS treatment.
+function readAffordanceInPage() {
+    const el = document.getElementById('actions-affordance');
     const btn = document.getElementById('btn-auto');
     const vm = window.__mtg.getViewModel();
-    const items = body ? Array.from(body.querySelectorAll('.action-item')) : [];
     return {
-        // All action-items currently in the list (real or synthetic).
-        itemTexts: items.map(el => el.textContent.replace(/\s+/g, ' ').trim()),
-        // Synthetic meta-choices specifically (carry data-meta).
-        metaActions: items.filter(el => el.dataset.meta).map(el => el.dataset.meta),
-        bodyText: body ? body.textContent.replace(/\s+/g, ' ').trim() : '',
-        footerVisible: !!footer && footer.style.display !== 'none',
-        footerText: footer ? footer.textContent.replace(/\s+/g, ' ').trim() : '',
-        footerAutoOn: !!footer && footer.classList.contains('auto-on'),
+        visible: !!el && el.style.display !== 'none',
+        text: el ? el.textContent.replace(/\s+/g, ' ').trim() : '',
+        autoOn: !!el && el.classList.contains('auto-on'),
         btnText: btn ? btn.textContent.trim() : '',
-        turn: vm.turn_number,
         gameOver: !!vm.game_over,
         choices: (vm.choices || []).length,
     };
@@ -79,82 +76,94 @@ function readPaneInPage() {
         const base = `http://localhost:${HTTP_PORT}`;
         const deck = await firstBuiltinDeck(base);
 
-        // Boot a PAUSED local random-vs-random game (both seats AI, no auto_run →
-        // empty engine choices, our seat is AI so the game waits for us).
+        // Boot a PAUSED local random-vs-random game (the exact user scenario:
+        // both seats AI, no auto_run → engine prompt has empty choices, our seat
+        // is AI so the game waits for Space / Auto-Run). seed fixed for repro.
         await page.goto(localGameUrl(base, 'native_game.html', { deck, p1: 'random', p2: 'random', seed: 42 }),
             { waitUntil: 'networkidle', timeout: 30000 });
         await page.waitForSelector('#game-area.show', { state: 'attached', timeout: 30000 });
         await page.waitForTimeout(1200);
 
-        // ── (1) IN-LIST CHOICES in the paused AI-watch state. ───────────────────
-        const initial = await page.evaluate(readPaneInPage);
-        check('paused AI-watch shows the two synthetic meta-choices in the action list',
-              !initial.gameOver && initial.metaActions.length === 2
-              && initial.metaActions.includes('continue') && initial.metaActions.includes('autorun'),
-              `metaActions=[${initial.metaActions}] items=${JSON.stringify(initial.itemTexts)}`);
-        check('action list is NOT "No actions available" while paused',
-              !/no actions available/i.test(initial.bodyText),
-              `bodyText="${initial.bodyText}"`);
-        check('choice 1 reads "Play next … move", choice 2 reads "Auto-run"',
-              /play next/i.test(initial.itemTexts[0] || '') && /auto-run/i.test(initial.itemTexts[1] || ''),
-              `items=${JSON.stringify(initial.itemTexts)}`);
-        // fix #3: no contradictory "waiting for the other player" text on our turn.
-        check('no wrong "waiting for the other player" text on our own turn',
-              !/waiting for the other player/i.test(initial.bodyText)
-              && !/waiting for the other player/i.test(initial.footerText),
-              `bodyText="${initial.bodyText}" footerText="${initial.footerText}"`);
-        // The green auto-running footer is hidden while paused.
-        check('green auto-running footer is hidden while paused',
-              !initial.footerVisible,
-              `footerVisible=${initial.footerVisible} footerText="${initial.footerText}"`);
+        // ── (1) NEVER SILENT: the affordance is visible + names the controls in
+        // the initial paused AI-watch state. ───────────────────────────────────
+        const initial = await page.evaluate(readAffordanceInPage);
+        check('action pane is NOT silent in paused AI-watch state (affordance footer visible + non-empty)',
+              initial.visible && initial.text.length > 0 && !initial.gameOver,
+              `visible=${initial.visible} gameOver=${initial.gameOver} text="${initial.text}"`);
+        // It must name BOTH meta-controls the user needs to know about.
+        check('paused affordance names the Space + auto-run controls',
+              /Space/i.test(initial.text) && /auto-run/i.test(initial.text),
+              `text="${initial.text}"`);
+        // Paused (not auto-running) at boot: button reads "Auto Run".
+        check('paused affordance is in non-auto treatment + button reads "Auto Run"',
+              !initial.autoOn && /Auto Run/i.test(initial.btnText),
+              `autoOn=${initial.autoOn} btn="${initial.btnText}"`);
 
-        // ── (2) "Play next" (choice 1) advances the game. ───────────────────────
-        const beforeTurn = initial.turn;
-        let advanced = false;
-        for (let i = 0; i < 8 && !advanced; i++) {
-            await page.keyboard.press('1');           // select meta-choice 1 = continue
-            await page.waitForTimeout(140);
-            const s = await page.evaluate(readPaneInPage);
-            if (s.gameOver || s.turn !== beforeTurn || s.choices > 0) advanced = true;
+        // ── (1 cont.) STAYS visible as we advance turn-by-turn (Space). The pane
+        // must never go silent mid-AI-game while the game is still running. ─────
+        let advances = 0, silentWhileRunning = 0;
+        for (let i = 0; i < 12; i++) {
+            await page.keyboard.press('Space');
+            await page.waitForTimeout(110);
+            const s = await page.evaluate(readAffordanceInPage);
+            advances++;
+            // While the game is running AND no human choice is pending, the
+            // footer must be visible + non-empty. (random seats never produce a
+            // human choice, so choices is expected to stay 0 here.)
+            if (!s.gameOver && s.choices === 0 && !(s.visible && s.text.length > 0)) silentWhileRunning++;
+            if (s.gameOver) {
+                // (3) at game over the footer hides (nothing left to do).
+                check('affordance hides at game over (no stale guidance)', !s.visible,
+                      `visible=${s.visible} after ${advances} advances`);
+                break;
+            }
         }
-        check('selecting "Play next … move" (key 1) advances the game',
-              advanced,
-              `started at turn ${beforeTurn}; advanced=${advanced}`);
+        check('action pane NEVER goes silent during AI turns (footer stays visible while running)',
+              silentWhileRunning === 0,
+              `${advances} advances, ${silentWhileRunning} silent-while-running frames`);
 
-        // ── (3) "Auto-run" (choice 2) turns on the GREEN banner. Reboot a fresh
-        // paused game so the meta-choices are present and the game is running. ──
-        await page.goto(localGameUrl(base, 'native_game.html', { deck, p1: 'random', p2: 'random', seed: 7 }),
-            { waitUntil: 'networkidle', timeout: 30000 });
-        await page.waitForSelector('#game-area.show', { state: 'attached', timeout: 30000 });
-        await page.waitForTimeout(1200);
-        const paused = await page.evaluate(readPaneInPage);
-        if (!paused.gameOver && paused.metaActions.includes('autorun')) {
-            await page.keyboard.press('2');           // select meta-choice 2 = autorun
-            await page.waitForTimeout(80);
-            const on = await page.evaluate(readPaneInPage);
-            // Either we caught auto-running (green banner + "Stop Auto"), or
-            // auto-run already raced to game over.
-            const sawBanner = on.footerVisible && on.footerAutoOn && /auto-running/i.test(on.footerText)
-                && /Stop Auto/i.test(on.btnText);
-            check('selecting "Auto-run" (key 2) turns on the GREEN auto-running banner',
-                  sawBanner || on.gameOver,
-                  `footerVisible=${on.footerVisible} autoOn=${on.footerAutoOn} btn="${on.btnText}" footer="${on.footerText}" gameOver=${on.gameOver}`);
+        // ── (2) ACCURATE ON TOGGLE: only meaningful if the game is still
+        // running. If the short Space loop above already finished the game,
+        // re-boot a fresh paused game so we can exercise the toggle. ────────────
+        let cur = await page.evaluate(readAffordanceInPage);
+        if (cur.gameOver) {
+            await page.goto(localGameUrl(base, 'native_game.html', { deck, p1: 'random', p2: 'random', seed: 7 }),
+                { waitUntil: 'networkidle', timeout: 30000 });
+            await page.waitForSelector('#game-area.show', { state: 'attached', timeout: 30000 });
+            await page.waitForTimeout(1200);
+            cur = await page.evaluate(readAffordanceInPage);
+        }
 
-            // Press A to stop auto-run → banner hidden, paused choices return.
-            const mid = await page.evaluate(readPaneInPage);
+        if (!cur.gameOver) {
+            // Press 'A' → auto-run ON. Read immediately (short wait) so we catch
+            // the auto-running treatment before auto-run can race to game over.
+            await page.keyboard.press('a');
+            await page.waitForTimeout(60);
+            const on = await page.evaluate(readAffordanceInPage);
+            // Either we caught it auto-running (footer auto-on + button "Stop
+            // Auto"), or auto-run already drove to game over (footer hidden).
+            const sawAutoOn = on.autoOn && /Stop Auto/i.test(on.btnText);
+            check('toggling auto-run (A) flips the affordance + button to the auto-running treatment',
+                  sawAutoOn || on.gameOver,
+                  `autoOn=${on.autoOn} btn="${on.btnText}" gameOver=${on.gameOver} text="${on.text}"`);
+            check('auto-running affordance mentions pausing auto-run',
+                  on.gameOver || /pause/i.test(on.text),
+                  `gameOver=${on.gameOver} text="${on.text}"`);
+
+            // Press 'A' again → auto-run OFF (revert). Skip if the game ended.
+            const mid = await page.evaluate(readAffordanceInPage);
             if (!mid.gameOver) {
                 await page.keyboard.press('a');
-                await page.waitForTimeout(120);
-                const off = await page.evaluate(readPaneInPage);
-                check('stopping auto-run (A) hides the banner and restores the in-list choices',
-                      off.gameOver
-                      || (!off.footerVisible && /Auto Run/i.test(off.btnText) && off.metaActions.length === 2),
-                      `footerVisible=${off.footerVisible} btn="${off.btnText}" metaActions=[${off.metaActions}] gameOver=${off.gameOver}`);
+                await page.waitForTimeout(80);
+                const off = await page.evaluate(readAffordanceInPage);
+                check('toggling auto-run OFF reverts the affordance + button',
+                      off.gameOver || (!off.autoOn && /Auto Run/i.test(off.btnText) && off.visible),
+                      `autoOn=${off.autoOn} btn="${off.btnText}" visible=${off.visible} gameOver=${off.gameOver}`);
             } else {
-                log('INFO: game reached over after enabling auto-run; skipping revert assertion');
+                log('INFO: game reached over after first toggle; skipping revert assertion');
             }
         } else {
-            log('INFO: fresh game already over or no autorun choice; skipping auto-run assertion (rare)');
+            log('INFO: both seeds finished before the toggle could be exercised; toggle assertion skipped (rare)');
         }
 
         // ── (4) no WASM panics / non-image browser errors. ──────────────────────

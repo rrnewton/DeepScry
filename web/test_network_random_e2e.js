@@ -248,12 +248,8 @@ async function runTest() {
             lastLogCount = testResults.browserLogs.length;
 
             for (const logEntry of newLogs) {
-                // Check for game ended. The clean "[Network] Game ended" notice
-                // (mtg-grofw) is debug-INDEPENDENT; the legacy
-                // `"type":"game_ended"` match only fires when the full per-message
-                // "[Network] Received:" dump is enabled (debug tracing on).
-                if (logEntry.text.includes('[Network] Game ended') ||
-                    logEntry.text.includes('"type":"game_ended"') ||
+                // Check for game ended in network messages
+                if (logEntry.text.includes('"type":"game_ended"') ||
                     logEntry.text.includes('type":"game_ended')) {
                     gameOver = true;
                     log('Game completed (GameEnded message received)!');

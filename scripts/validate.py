@@ -356,7 +356,6 @@ def build_registry():
         ("landing", "landing-page UX e2e", "cd web && node test_landing_page_ux.js"),
         ("redo-reload", "lobby-redo multiturn + mid-game reload (mtg-682 4+5)", "cd web && node test_redo_multiturn_reload_e2e.js"),
         ("redo-lobby", "lobby-flow-fixes e2e (mtg-682 1-4)", "cd web && node test_redo_lobby_e2e.js"),
-        ("players-list", "lobby logged-in players list e2e (mtg-eesvz)", "cd web && node test_lobby_players_list_e2e.js"),
         ("smoke", "hermetic CAS web-asset smoke (mtg-571)", "cd web && node test_web_server_smoke.js"),
         ("deploy-nav", "hashed deploy-tree navigation gate (mtg-682)", "cd web && node test_deploy_tree_nav.js"),
     ]

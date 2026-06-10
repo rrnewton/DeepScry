@@ -1076,20 +1076,6 @@
                 if (msg.includes('Extension context')) return;
                 window.onerror('Unhandled: ' + msg, null, null, null, e.reason);
             };
-            // Shared banner-append helper (DRY): every escalated error — JS
-            // runtime (window.onerror, above), WASM engine, and now network —
-            // renders one row through here so they look consistent and share
-            // the dedup + show logic.
-            function appendBanner(label, msg, sublineHtml) {
-                count++;
-                banner.style.display = 'block';
-                const d = document.createElement('div');
-                d.style.cssText = 'border-bottom: 1px solid #f66; padding-bottom: 5px; margin-bottom: 5px;';
-                d.innerHTML = `<div><strong>#${count} ${esc(label)}:</strong> ${esc(msg)}</div>`
-                    + (sublineHtml ? `<div style="color:#faa;font-size:11px;">${sublineHtml}</div>` : '');
-                msgs.appendChild(d);
-            }
-
             // mtg-436: surface a FATAL ENGINE/SESSION error (rewind/replay
             // verifier + monotonicity-invariant failure) carried by the GUI view
             // model's `error_message`. tui_game.html's terminal renderer draws
@@ -1100,24 +1086,14 @@
             window.__showWasmEngineError = function(msg) {
                 if (!msg || msg === lastWasmError) return;
                 lastWasmError = msg;
-                appendBanner('ENGINE ERROR', msg,
-                    'rewind/replay verifier or invariant failure (mtg-436); the game is halted.');
+                count++;
+                banner.style.display = 'block';
+                const d = document.createElement('div');
+                d.style.cssText = 'border-bottom: 1px solid #f66; padding-bottom: 5px; margin-bottom: 5px;';
+                d.innerHTML = `<div><strong>#${count} ENGINE ERROR:</strong> ${esc(msg)}</div>`
+                    + `<div style="color:#faa;font-size:11px;">rewind/replay verifier or invariant failure (mtg-436); the game is halted.</div>`;
+                msgs.appendChild(d);
                 console.error('[WASM ENGINE ERROR]', msg);
-            };
-
-            // web-ui-fixes fix #2: surface NETWORK errors (WebSocket disconnect
-            // / connection failure) to the SAME bottom red banner. Previously a
-            // dropped "wss://…/lobby failed: The network connection was lost"
-            // only hit the JS console; the user saw nothing. network.js routes
-            // its onclose(non-clean)/onerror through onError, and the page wires
-            // onError here. Dedup so a flapping socket doesn't spam.
-            let lastNetworkError = null;
-            window.__showNetworkError = function(msg) {
-                if (!msg || msg === lastNetworkError) return;
-                lastNetworkError = msg;
-                appendBanner('NETWORK ERROR', msg,
-                    'connection to the game server was lost — check your network and reload to reconnect.');
-                console.error('[NETWORK ERROR]', msg);
             };
         })();
     </script>
@@ -1259,10 +1235,6 @@
                 resetNetworkClient = networkJs.resetNetworkClient;
 
                 networkEnabled = true;
-                // One-time load-time notice (NOT per-frame traffic spam). Kept
-                // as a plain log because this runs during initial module
-                // evaluation, BEFORE `bootConfig` (a `let`) is initialized, so
-                // debugLog()/isDebugMode() would hit the temporal-dead-zone.
                 console.log('[Network] Network features available in native_game.html');
             }
         } catch (e) {
@@ -1428,16 +1400,7 @@
         // onerror (battlefield tile path, which renders via innerHTML).
         // The onerror walks `data-fallbacks` (comma-joined remaining URLs)
         // exactly like attachImageCascade walks its array.
-        //
-        // `eager` (slot05/web-ui-fixes Safari flicker): for the small, always-
-        // on-screen card tiles (battlefield + hand) we DROP `loading="lazy"` and
-        // add `decoding="sync"`. lazy/async decoding is a contributing factor to
-        // the Safari auto-run flicker — Safari blanks a freshly-created <img> to
-        // background while it async-decodes. (The REAL fix is node REUSE so the
-        // <img> isn't recreated at all; this is the cheap decode-timing
-        // narrowing the audit asked for, and it is harmless/beneficial for these
-        // tiny in-viewport tiles.) The Card-Details pane keeps lazy/auto.
-        function cardImageHtml(urls, className, alt, eager) {
+        function cardImageHtml(urls, className, alt) {
             if (!Array.isArray(urls) || urls.length === 0) return '';
             // Start from the memoized known-good URL (if any) so a re-render of
             // this card paints from cache instead of restarting the cascade.
@@ -1451,8 +1414,7 @@
             // stable original first-choice URL in data-memokey) so subsequent
             // renders skip straight to it — settles the image to ONE state.
             const onload = "if(window.__recordImgResolved)window.__recordImgResolved(this.dataset.memokey,this.getAttribute('src'))";
-            const loadAttrs = eager ? 'decoding="sync"' : 'loading="lazy" decoding="async"';
-            return `<img class="${escapeAttr(className)}" src="${escapeAttr(ordered[0])}" alt="${escapeAttr(alt)}" ${loadAttrs} data-memokey="${escapeAttr(memo.key)}" data-fallbacks="${fallbacks}" onerror="${escapeAttr(onerr)}" onload="${escapeAttr(onload)}">`;
+            return `<img class="${escapeAttr(className)}" src="${escapeAttr(ordered[0])}" alt="${escapeAttr(alt)}" loading="lazy" data-memokey="${escapeAttr(memo.key)}" data-fallbacks="${fallbacks}" onerror="${escapeAttr(onerr)}" onload="${escapeAttr(onload)}">`;
         }
 
         // ==================== STATE ====================
@@ -1499,13 +1461,6 @@
         // Track the last image URL the details pane requested so we can skip
         // re-loading the same image during rapid redraws.
         let _detailsImageCardId = null;
-        // slot05/web-ui-fixes: the synthetic meta-choices ("Play next move" /
-        // "Auto-run") currently rendered in the action list, or null when the
-        // real engine choices (or nothing) are shown. Recomputed every updateUI
-        // and consulted by the action-list click + number-key handlers so a
-        // synthetic choice dispatches to selectMetaChoice() instead of an engine
-        // choice index. Single source of truth for "what does selecting N do".
-        let _metaChoices = null;
         let _lastStateSummary = null;
         // mtg-6vzht change-detection: the last (view-model JSON + measured card
         // sizes) we actually rendered. updateUI skips ALL rendering when this is
@@ -1969,7 +1924,7 @@
                     const playerName  = bootConfig.playerName;
                     const deckJson    = cardDb.get_deck_json(ourDeck);
 
-                    debugLog(`[Network] Connecting to ${serverUrl} as ${playerName}...`);
+                    console.log(`[Network] Connecting to ${serverUrl} as ${playerName}...`);
 
                     const wasmExports = {
                         network_init,
@@ -1986,29 +1941,21 @@
                         network_clear_lobby_action: window.__mtg_network_clear_lobby_action,
                     };
                     networkClient = getNetworkClient(wasmExports);
-                    // fix #3: gate the chatty [Network] traffic logs behind the
-                    // page's debug-tracing flag (network.js uses this.debug).
-                    networkClient.debug = isDebugMode();
 
                     networkClient.onStateChange = (state) => {
                         const el = document.getElementById('network-status');
                         if (el) { el.textContent = `Status: ${state}`; el.style.color = '#4cc9f0'; }
-                        debugLog(`[Network] State: ${state}`);
+                        console.log(`[Network] State: ${state}`);
                     };
 
                     networkClient.onError = (msg) => {
                         console.error(`[Network] Error: ${msg}`);
                         const el = document.getElementById('network-status');
                         if (el) { el.textContent = `Error: ${msg}`; el.style.color = '#ff6b6b'; }
-                        // fix #2: escalate to the bottom red banner so the user
-                        // actually sees a lost connection (not just the console).
-                        if (typeof window.__showNetworkError === 'function') {
-                            window.__showNetworkError(msg);
-                        }
                     };
 
                     networkClient.onGameReady = () => {
-                        debugLog('[Network] Game is ready (native card renderer)!');
+                        console.log('[Network] Game is ready (native card renderer)!');
 
                         const controllerSeed = bootConfig.seed ? BigInt(bootConfig.seed) : BigInt(0);
 
@@ -2037,7 +1984,7 @@
 
                         // Initial native render of the synced state.
                         setTimeout(updateUI, 200);
-                        debugLog('[Network] Launched network game with NATIVE card renderer');
+                        console.log('[Network] Launched network game with NATIVE card renderer');
                     };
 
                     networkClient.onMessageProcessed = (msgType) => {
@@ -2333,13 +2280,6 @@
                 window.__showWasmEngineError(state.error_message);
             }
 
-            // mtg-grofw: once the game is over, tell the network client so the
-            // server's normal post-game socket close (a non-clean 1006) is NOT
-            // mistaken for a lost connection — no spurious red banner / reconnect.
-            if (state.game_over && networkClient) {
-                networkClient.gameEnded = true;
-            }
-
             // Rebuild the card index from this snapshot. Includes hand,
             // every battlefield section across both players, graveyards,
             // command zones, and the stack — every CardView the UI might
@@ -2407,15 +2347,11 @@
             renderHand(ourPlayer);
             renderHandGraveyard(ourPlayer, state.selected_card?.card_id);
             renderStack(state.stack || []);
-            // slot05/web-ui-fixes: when an AI seat is paused and it's our move
-            // to advance, present "Play next move" / "Auto-run" as NORMAL
-            // numbered choices (same UI as a human game's "1. Pass / 2. Cast").
-            // Recompute + cache so the click/number handlers dispatch them.
-            _metaChoices = computeMetaChoices(state);
-            renderActions(state.current_prompt, state.choices || [], state.selected_choice_idx || 0, state.choice_context, _metaChoices);
-            // slot05: the GREEN auto-running banner only (the paused affordance
-            // is now in-list choices, above). autoRunning is in the render-skip
-            // key below, so toggling auto-run re-renders this.
+            renderActions(state.current_prompt, state.choices || [], state.selected_choice_idx || 0, state.choice_context);
+            // slot05: persistent meta-control affordance (Space / auto-run) in
+            // the Actions pane so it's never silent during AI-watch / waiting
+            // states. Driven off real state + the autoRunning flag (which is in
+            // the render-skip key below, so a toggle re-renders this).
             renderActionAffordance(state.choices || [], state.game_over);
             renderLog(state.logs || []);
             renderStatusBar(state);
@@ -2444,26 +2380,10 @@
         /// Each section comes pre-ordered and labelled by the view model
         /// (PWs/Creatures/Enchants/Artifacts/Lands for the local player;
         /// reversed for the opponent), so JS just maps them to DOM.
-        ///
-        /// NODE-REUSE (slot05/web-ui-fixes — Safari auto-run flicker): the old
-        /// implementation did `container.innerHTML = ''` every frame and
-        /// RECREATED every card <img>. Chrome repaints recreated <img>s from its
-        /// decoded cache, but Safari blanks each freshly-created element to its
-        /// background while it re-decodes → the flicker (and it churns the DOM on
-        /// every browser). We now RECONCILE: card tiles are kept in a per-
-        /// container pool keyed by `card_id` and REUSED across renders. An
-        /// unchanged card's <img> is never recreated (its decoded bitmap stays
-        /// live), so Safari has nothing to blank. Only cards that appeared,
-        /// disappeared, moved, or whose content changed touch the DOM.
         function renderBattlefield(player, containerId, paneSize) {
             const container = document.getElementById(containerId);
-            // Persistent card-tile pool (card_id -> .card element) kept across
-            // renders so node identity survives an advance.
-            const pool = container._cardPool || (container._cardPool = new Map());
-
+            container.innerHTML = '';
             if (!player || !player.battlefield_sections || player.battlefield_sections.length === 0) {
-                if (container.firstChild) container.textContent = '';
-                pool.clear();
                 return;
             }
             // Pick the image resolution to match the rendered card height
@@ -2474,30 +2394,19 @@
             const imgHeightPx = paneSize?.card_height_px
                 ? Math.round(paneSize.card_height_px)
                 : 106;
+            for (const section of player.battlefield_sections) {
+                if (!section.cards || section.cards.length === 0) continue;
 
-            // Reconcile section containers by index, reusing existing .bf-section
-            // wrappers so their child grids (and the pooled card tiles inside)
-            // are not torn down. Track which card_ids we (re)used this frame.
-            const seen = new Set();
-            const sections = player.battlefield_sections.filter(s => s.cards && s.cards.length > 0);
-            let secNode = container.firstElementChild;
+                const secEl = document.createElement('div');
+                secEl.className = `bf-section bf-${section.category}`;
 
-            for (const section of sections) {
-                // Reuse or create the .bf-section wrapper at this position.
-                if (!secNode) {
-                    secNode = document.createElement('div');
-                    secNode.innerHTML = '<div class="bf-section-label"></div><div class="bf-section-cards"></div>';
-                    container.appendChild(secNode);
-                }
-                const wantClass = `bf-section bf-${section.category}`;
-                if (secNode.className !== wantClass) secNode.className = wantClass;
-                const labelEl = secNode.firstElementChild;
-                const grid = secNode.lastElementChild;
-                const wantLabel = `${section.label} (${section.cards.length})`;
-                if (labelEl.textContent !== wantLabel) labelEl.textContent = wantLabel;
+                const labelEl = document.createElement('div');
+                labelEl.className = 'bf-section-label';
+                labelEl.textContent = `${section.label} (${section.cards.length})`;
+                secEl.appendChild(labelEl);
 
-                // Reconcile the card tiles within this grid, in order.
-                let gridPos = grid.firstElementChild;
+                const grid = document.createElement('div');
+                grid.className = 'bf-section-cards';
                 for (const card of section.cards) {
                     // Skip EQUIPMENT attached to its host — the host already
                     // shows it as a badge (mirroring the TUI's stacked
@@ -2508,43 +2417,23 @@
                     // swallowed attached auras → an empty "Enchantments"
                     // section when e.g. Friendly Neighborhood enchanted a land.)
                     if ((card.css_classes || []).includes('equipment') && card.attached_to != null) continue;
-
-                    let el = pool.get(card.card_id);
-                    if (el) {
-                        updateCardElement(el, card, false, imgHeightPx); // reuse <img>
-                    } else {
-                        el = createCardElement(card, false, imgHeightPx);
-                        pool.set(card.card_id, el);
+                    const el = createCardElement(card, false, imgHeightPx);
+                    if (card.attachments && card.attachments.length > 0) {
+                        // Badge lists every attached card (equipment AND auras)
+                        // on the host so the relationship is visible even
+                        // without true visual stacking (tracked in mtg-i9bux).
+                        const attachNames = card.attachments.map(a => a.name).join(', ');
+                        const badge = document.createElement('div');
+                        badge.className = 'card-equip-badge';
+                        badge.textContent = attachNames;
+                        badge.title = attachNames;
+                        el.appendChild(badge);
+                        el.classList.add('equipped');
                     }
-                    seen.add(card.card_id);
-
-                    // Place el at the current grid position (move only if needed
-                    // — moving a live node preserves its <img>'s decoded bitmap).
-                    if (gridPos === el) {
-                        gridPos = el.nextElementSibling;
-                    } else {
-                        grid.insertBefore(el, gridPos);
-                    }
+                    grid.appendChild(el);
                 }
-                // Drop any leftover tiles in this grid beyond the rebuilt run.
-                while (gridPos) {
-                    const next = gridPos.nextElementSibling;
-                    gridPos.remove();
-                    gridPos = next;
-                }
-                secNode = secNode.nextElementSibling;
-            }
-
-            // Remove leftover section wrappers beyond what we need this frame.
-            while (secNode) {
-                const next = secNode.nextElementSibling;
-                secNode.remove();
-                secNode = next;
-            }
-
-            // Evict pooled tiles for cards no longer on this battlefield.
-            for (const id of pool.keys()) {
-                if (!seen.has(id)) pool.delete(id);
+                secEl.appendChild(grid);
+                container.appendChild(secEl);
             }
         }
 
@@ -2681,125 +2570,39 @@
         /// Build a battlefield/hand card tile. CSS classes, formatted P/T,
         /// and the is_selected/is_valid_choice flags all come from the view
         /// model — we never re-derive them from the card name here.
-        // The space-separated className for a card tile, derived purely from the
-        // view model (DRY: shared by create + in-place update). `.equipped` is
-        // added when the card hosts attachments (badge below).
-        function cardClassName(card) {
+        function createCardElement(card, showMana, imgHeightPx) {
+            const div = document.createElement('div');
             const classes = (card.css_classes && card.css_classes.length > 0) ? card.css_classes.slice() : ['card'];
             if (card.is_selected) classes.push('selected-card');
             if (card.is_valid_choice) classes.push('valid-choice');
-            if (card.attachments && card.attachments.length > 0) classes.push('equipped');
-            return classes.join(' ');
-        }
+            div.className = classes.join(' ');
 
-        // Normalize the height the engine picked for a tile (or 106 fallback).
-        function cardImgHeightPx(imgHeightPx) {
-            return (typeof imgHeightPx === 'number' && imgHeightPx > 0) ? imgHeightPx : 106;
-        }
+            let imgHtml = '';
+            if (showImages) {
+                // Image lookup is keyed by card NAME (file naming convention,
+                // shared with the TUI's image overlay). The selection /
+                // identity key remains card_id. `imgHeightPx` is the
+                // rendered card height the engine picked (or 106 for
+                // hand-list cards) — `tui_get_image_urls` uses it to
+                // choose between 'small' (≤204) and 'normal' images so
+                // big battlefield cards aren't a blurry up-scaled small.
+                const heightPx = (typeof imgHeightPx === 'number' && imgHeightPx > 0)
+                    ? imgHeightPx
+                    : 106;
+                const urls = getCardImageFallbackUrls(card, heightPx);
+                imgHtml = cardImageHtml(urls, 'card-image', card.name);
+            }
 
-        // The IMAGE IDENTITY KEY for a card tile: the stable memo key of its
-        // image cascade (deterministic per card name + chosen resolution). When
-        // this is unchanged across renders the <img> need not be recreated — the
-        // crux of the Safari node-reuse flicker fix (slot05/web-ui-fixes). Empty
-        // string when images are off / unavailable.
-        function cardImageKey(card, imgHeightPx) {
-            if (!showImages) return '';
-            const urls = getCardImageFallbackUrls(card, cardImgHeightPx(imgHeightPx));
-            return applyImageMemo(urls).key || '';
-        }
-
-        // Build the inner non-image markup (name + P/T + mana + attachment
-        // badge). The <img>, when present, is a separate first child so it can be
-        // preserved across updates independently of these cheap text bits.
-        function cardInnerNonImageHtml(card, showMana) {
             const ptHtml = card.formatted_pt
                 ? `<div class="card-pt">${card.formatted_pt}</div>`
                 : '';
             const manaHtml = (showMana && card.mana_cost)
                 ? `<div class="card-mana">${escapeHtml(card.mana_cost)}</div>`
                 : '';
-            // Attachment badge: lists every attached card (equipment AND auras)
-            // on the host so the relationship is visible even without true visual
-            // stacking (mtg-i9bux). Part of the unified non-image content so the
-            // reconcile updates it in place without recreating the <img>.
-            let badgeHtml = '';
-            if (card.attachments && card.attachments.length > 0) {
-                const attachNames = card.attachments.map(a => a.name).join(', ');
-                badgeHtml = `<div class="card-equip-badge" title="${escapeAttr(attachNames)}">${escapeHtml(attachNames)}</div>`;
-            }
-            return `<div class="card-name">${escapeHtml(card.name)}</div>${ptHtml}${manaHtml}${badgeHtml}`;
-        }
 
-        function cardImgHtmlFor(card, imgHeightPx) {
-            if (!showImages) return '';
-            const urls = getCardImageFallbackUrls(card, cardImgHeightPx(imgHeightPx));
-            // eager=true: small on-screen tile → decode synchronously, no lazy
-            // (slot05 Safari flicker narrowing).
-            return cardImageHtml(urls, 'card-image', card.name, true);
-        }
-
-        function createCardElement(card, showMana, imgHeightPx) {
-            const div = document.createElement('div');
-            div.className = cardClassName(card);
             div.setAttribute('data-card-id', String(card.card_id));
             div.setAttribute('data-card-name', card.name); // diagnostic aid only
-            // Stamp the image identity key + non-image signature so a later
-            // reconcile can tell whether the <img> may be reused as-is and
-            // whether the cheap bits changed (Safari flicker fix).
-            div.setAttribute('data-img-key', cardImageKey(card, imgHeightPx));
-            const nonImg = cardInnerNonImageHtml(card, showMana);
-            div.setAttribute('data-nonimg', nonImg);
-            div.innerHTML = `${cardImgHtmlFor(card, imgHeightPx)}${nonImg}`;
-            return div;
-        }
-
-        // Patch an EXISTING card tile in place to match `card`, REUSING its
-        // <img> element whenever the image identity key is unchanged — so an
-        // unchanged card never recreates its <img> and Safari never re-decodes /
-        // blanks it (slot05/web-ui-fixes Safari auto-run flicker). Only the parts
-        // that actually changed are touched.
-        function updateCardElement(div, card, showMana, imgHeightPx) {
-            const newClass = cardClassName(card);
-            if (div.className !== newClass) div.className = newClass;
-            if (div.getAttribute('data-card-name') !== card.name) {
-                div.setAttribute('data-card-name', card.name);
-            }
-
-            const newImgKey = cardImageKey(card, imgHeightPx);
-            const imgKeyChanged = div.getAttribute('data-img-key') !== newImgKey;
-            if (imgKeyChanged) {
-                // Card/image actually changed → rebuild ONLY the <img>, leaving
-                // the rest (and, crucially, unchanged sibling tiles) untouched.
-                div.setAttribute('data-img-key', newImgKey);
-                const existingImg = div.querySelector('img.card-image');
-                const newImgHtml = cardImgHtmlFor(card, imgHeightPx);
-                if (newImgHtml) {
-                    const tmp = document.createElement('template');
-                    tmp.innerHTML = newImgHtml;
-                    const newImg = tmp.content.firstChild;
-                    if (existingImg) existingImg.replaceWith(newImg);
-                    else div.insertBefore(newImg, div.firstChild);
-                } else if (existingImg) {
-                    existingImg.remove();
-                }
-            }
-
-            // Patch the cheap non-image bits (name/P/T/mana/badge) only when they
-            // changed, WITHOUT touching the <img>. Compare against the exact HTML
-            // we last applied (stamped in data-nonimg) — cheaper and more
-            // reliable than reconstructing + comparing the live DOM's outerHTML
-            // (which can differ by attribute normalization even when unchanged).
-            const desiredNonImg = cardInnerNonImageHtml(card, showMana);
-            if (div.getAttribute('data-nonimg') !== desiredNonImg) {
-                div.setAttribute('data-nonimg', desiredNonImg);
-                const img = div.querySelector('img.card-image');
-                // Remove the old non-image nodes, keep the live <img> in place,
-                // then append the rebuilt non-image content after it.
-                Array.from(div.childNodes).forEach(n => { if (n !== img) n.remove(); });
-                const tmp = document.createElement('template');
-                tmp.innerHTML = desiredNonImg;
-                div.append(...tmp.content.childNodes);
-            }
+            div.innerHTML = `${imgHtml}<div class="card-name">${escapeHtml(card.name)}</div>${ptHtml}${manaHtml}`;
             return div;
         }
 
@@ -2883,15 +2686,7 @@
 
         /// Render the available-actions list. Choice text and 1-based display
         /// numbers come pre-formatted from the view model (`ChoiceView`).
-        ///
-        /// `metaChoices` (slot05/web-ui-fixes): when the engine has NO real
-        /// choices but it is our move to advance an AI seat, these synthetic
-        /// "Play next move" / "Auto-run" entries are rendered as ordinary
-        /// numbered action-items — the SAME UI as a human game's real choices —
-        /// instead of "No actions available". They carry `data-meta` so the
-        /// click/number handlers dispatch to selectMetaChoice() rather than an
-        /// engine choice index.
-        function renderActions(prompt, choices, selectedIdx, choiceContext, metaChoices) {
+        function renderActions(prompt, choices, selectedIdx, choiceContext) {
             const promptEl = document.getElementById('actions-prompt');
             const body = document.getElementById('actions-body');
 
@@ -2911,132 +2706,91 @@
                 promptEl.style.display = 'none';
             }
 
-            // Real engine choices take precedence; render them exactly as before.
-            if (choices.length > 0) {
-                body.innerHTML = choices.map((choice) => {
-                    const i = choice.index;
-                    const classes = ['action-item'];
-                    if (i === selectedIdx) classes.push('selected');
-                    if (choice.highlighted) classes.push('highlighted');
-                    return `<div class="${classes.join(' ')}" data-idx="${i}">
-                        <span class="action-idx">${choice.display_number}.</span>${escapeHtml(choice.text)}
-                    </div>`;
-                }).join('');
+            if (choices.length === 0) {
+                body.innerHTML = '<div style="color:#444; padding:8px; font-size:12px; text-align:center;">No actions available</div>';
                 return;
             }
 
-            // No real choices: render the synthetic meta-choices as the same
-            // kind of numbered action-items (1-based display, data-meta marker).
-            if (metaChoices && metaChoices.length > 0) {
-                body.innerHTML = metaChoices.map((mc, i) =>
-                    `<div class="action-item" data-meta="${escapeAttr(mc.action)}">
-                        <span class="action-idx">${i + 1}.</span>${escapeHtml(mc.label)}
-                    </div>`
-                ).join('');
-                return;
-            }
-
-            body.innerHTML = '<div style="color:#444; padding:8px; font-size:12px; text-align:center;">No actions available</div>';
+            body.innerHTML = choices.map((choice) => {
+                const i = choice.index;
+                const classes = ['action-item'];
+                if (i === selectedIdx) classes.push('selected');
+                if (choice.highlighted) classes.push('highlighted');
+                return `<div class="${classes.join(' ')}" data-idx="${i}">
+                    <span class="action-idx">${choice.display_number}.</span>${escapeHtml(choice.text)}
+                </div>`;
+            }).join('');
         }
 
-        /// Render the bottom action-pane banner (slot05 / web-ui-fixes).
+        /// Render the action-pane affordance footer (slot05 /
+        /// native-action-pane-hints).
         ///
-        /// This is now the GREEN "auto-running" banner ONLY. The user liked the
-        /// green auto-run indicator but rejected the paused/"waiting" footer
-        /// text (it was redundant with — and sometimes contradicted — the
-        /// top-of-pane prompt, e.g. saying "Waiting for the other player" when
-        /// it was actually OUR move to advance). The paused "continue vs
-        /// auto-run" affordance is no longer a footer at all: it is presented as
-        /// NORMAL numbered CHOICES in the action list (see computeMetaChoices /
-        /// renderActions), the same UI a human-controller game uses
-        /// ("1. Pass / 2. Cast Lightning Bolt").
+        /// PROBLEM this solves: when watching an AI-vs-AI (e.g. random/random)
+        /// game, the engine's semantic prompt is things like "Waiting for
+        /// server...", "Network AI game running...", or "Game ready. Press
+        /// Space to advance turn." with an EMPTY choice list — so the Actions
+        /// pane showed "No actions available" and nothing telling the user what
+        /// to do. The only hint lived in the tiny bottom status bar. This
+        /// footer makes the Actions pane ALWAYS tell the user the next move by
+        /// surfacing the page's meta-controls (Space / A).
         ///
-        /// So this footer shows iff we are actively auto-running; otherwise it
-        /// is hidden and the action list carries the guidance.
+        /// DESIGN: the affordance is a RENDERER concern, not an engine concern.
+        /// Space/A are native_game.html keybindings; embedding them in the
+        /// shared engine `current_prompt` (gui_view_model.rs / fancy_tui.rs)
+        /// would couple the engine view-model to one renderer's keys and
+        /// collide with concurrent engine work. So we keep the engine prompt
+        /// semantic and add the interaction hint here, driven off REAL state —
+        /// no `prompt.includes(...)` string-matching:
+        ///   - `game_over`            → no affordance (game is finished).
+        ///   - manual human choice pending (`choices.length > 0`) → no
+        ///     affordance; the choice list itself is the guidance, and Space/A
+        ///     would interfere.
+        ///   - otherwise (watch / auto-advance / waiting; choices empty) → show
+        ///     the affordance, with text driven by `autoRunning` (the single
+        ///     source of truth, owned by applyAutoRunState) and whether this is
+        ///     a network game (`bootConfig.isNetwork`):
+        ///       * auto-running        → "⏸ Auto-running — A: pause"
+        ///       * paused, network     → "⏳ Waiting for the other player —
+        ///         Space: continue · A: auto-run" (auto-run polls and advances
+        ///         the moment the server is ready; a lone Space mid-wait just
+        ///         re-checks because the server drives the next step)
+        ///       * paused, local       → "▶ Space: continue · A: auto-run"
         function renderActionAffordance(choices, gameOver) {
             const el = document.getElementById('actions-affordance');
             if (!el) return;
 
-            if (!autoRunning) {
+            // Hide while a human choice is pending or the game is over — the
+            // pane already has real guidance (or nothing left to do).
+            if (gameOver || (choices && choices.length > 0)) {
                 el.style.display = 'none';
                 el.classList.remove('auto-on');
                 return;
             }
 
             const keyCap = (k) => `<span class="key">${escapeHtml(k)}</span>`;
-            el.innerHTML = `<span class="aff-state">⏸ Auto-running</span>${keyCap('A')}pause`;
-            el.classList.add('auto-on');
+            const sep = `<span class="sep">·</span>`;
+            let stateGlyph, stateLabel, controlsHtml;
+
+            if (autoRunning) {
+                stateGlyph = '⏸';
+                stateLabel = 'Auto-running';
+                controlsHtml = `${keyCap('A')}pause`;
+            } else if (bootConfig.isNetwork) {
+                stateGlyph = '⏳';
+                stateLabel = 'Waiting for the other player';
+                controlsHtml = `${keyCap('Space')}continue${sep}${keyCap('A')}auto-run`;
+            } else {
+                stateGlyph = '▶';
+                stateLabel = '';
+                controlsHtml = `${keyCap('Space')}continue${sep}${keyCap('A')}auto-run`;
+            }
+
+            const labelHtml = stateLabel
+                ? `<span class="aff-state">${stateGlyph} ${escapeHtml(stateLabel)}</span>`
+                : `<span class="aff-state">${stateGlyph}</span>`;
+            el.innerHTML = labelHtml + controlsHtml;
+            el.classList.toggle('auto-on', autoRunning);
             el.style.display = 'block';
-        }
-
-        // The literal engine prompt that means "genuinely blocked on the server,
-        // nothing the user can do but wait" — set in fancy_tui.rs ONLY in
-        // network mode when the controller needs a server ChoiceRequest before
-        // it can proceed (SpellAbility with empty `available`). This is a
-        // DISPLAY status string the engine produces for the renderer (NOT
-        // structured DSL data), and we centralize the single comparison here so
-        // the meta-choice logic has one source of truth. When the engine shows
-        // THIS, we must NOT offer a "continue" choice — you can't continue, only
-        // the server can advance — which is exactly the contradiction the old
-        // footer created (fix #3).
-        const ENGINE_PROMPT_WAITING_FOR_SERVER = 'Waiting for server...';
-
-        // Compute the synthetic META-CHOICES to show in the action list when an
-        // AI-controlled seat is paused and it is OUR move to advance. Returns an
-        // array of {label, action} or null when no meta-choices apply. These are
-        // rendered as ordinary numbered action-items (same flow as real engine
-        // choices) and dispatched by selectMetaChoice().
-        //
-        // Returns null (→ no synthetic choices) when:
-        //   - the game is over (nothing to do), OR
-        //   - the engine already offers real choices (the human is choosing —
-        //     never override the real choice list), OR
-        //   - we are auto-running (the green banner covers it), OR
-        //   - we are genuinely blocked on the server ("Waiting for server...":
-        //     "continue" is impossible, so we let the engine prompt stand alone).
-        function computeMetaChoices(state) {
-            if (!state) return null;
-            if (state.game_over) return null;
-            if ((state.choices || []).length > 0) return null;
-            if (autoRunning) return null;
-            if (state.current_prompt === ENGINE_PROMPT_WAITING_FOR_SERVER) return null;
-
-            return [
-                { label: `Play next ${nextMoverKind(state)} move`, action: 'continue' },
-                { label: 'Auto-run', action: 'autorun' },
-            ];
-        }
-
-        // The controller kind whose move advances next, for the "Play next …
-        // move" label, e.g. "Random AI" / "Heuristic AI". Falls back to a plain
-        // "AI" when the controller kind is unknown. The kind comes from
-        // bootConfig (p1/p2); in network mode both seats share one controller,
-        // in local mode they may differ. The active seat index follows
-        // bootConfig's p1/p2 ordering.
-        function nextMoverKind(state) {
-            const players = state.players || [];
-            const active = players.find(p => p.is_active) || players[state.active_player_idx ?? 0];
-            const seatIdx = active?.index ?? state.active_player_idx ?? 0;
-            const ctrlRaw = seatIdx === 0 ? bootConfig.p1Controller : bootConfig.p2Controller;
-            if (ctrlRaw && ctrlRaw !== 'human') {
-                return `${ctrlRaw.charAt(0).toUpperCase() + ctrlRaw.slice(1)} AI`;
-            }
-            return 'AI';
-        }
-
-        // Dispatch a synthetic meta-choice selected from the action list.
-        //   'continue' → advance one step (same as Space): commit any pending
-        //               selection then run to the next choice point.
-        //   'autorun'  → turn auto-run ON (same as the A key / Auto Run button).
-        function selectMetaChoice(action) {
-            debugLog('selectMetaChoice:', action);
-            if (action === 'autorun') {
-                applyAutoRunState(true);
-            } else { // 'continue'
-                tui_select_choice();
-                tui_run_turn();
-                setTimeout(updateUI, 50);
-            }
         }
 
         function selectAction(idx) {
@@ -3196,22 +2950,12 @@
                     showGraveyardDialog();
                     break;
                 default:
-                    // 1-9 quick select. When synthetic meta-choices are shown
-                    // (AI-watch paused state), the number picks one of them
-                    // (slot05/web-ui-fixes); otherwise it selects an engine
-                    // choice by index, as before.
+                    // 1-9 quick select
                     if (e.key >= '1' && e.key <= '9') {
                         e.preventDefault();
                         const idx = parseInt(e.key) - 1;
-                        if (_metaChoices && _metaChoices.length > 0) {
-                            if (idx < _metaChoices.length) {
-                                debugLog('key: number select meta-choice', idx);
-                                selectMetaChoice(_metaChoices[idx].action);
-                            }
-                        } else {
-                            debugLog('key: number select action', idx);
-                            selectAction(idx);
-                        }
+                        debugLog('key: number select action', idx);
+                        selectAction(idx);
                     }
                     break;
             }
@@ -3468,17 +3212,10 @@
                 });
             }
 
-            // Action clicks. A real engine choice carries data-idx (→
-            // selectAction); a synthetic meta-choice carries data-meta (→
-            // selectMetaChoice, slot05/web-ui-fixes).
+            // Action clicks (controller choices) — unchanged routing.
             document.getElementById('actions-body').addEventListener('click', (e) => {
                 const item = e.target.closest('.action-item');
                 if (!item) return;
-                if (item.dataset.meta) {
-                    debugLog('click meta-action:', item.dataset.meta);
-                    selectMetaChoice(item.dataset.meta);
-                    return;
-                }
                 const idx = parseInt(item.dataset.idx, 10);
                 debugLog('click action:', idx, item.textContent.trim());
                 if (!isNaN(idx)) selectAction(idx);

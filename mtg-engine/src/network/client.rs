@@ -251,7 +251,6 @@ impl NetworkMessage {
             | ServerMessage::ReconnectResult { .. }
             | ServerMessage::GameStarted { .. }
             | ServerMessage::GameList { .. }
-            | ServerMessage::PlayerList { .. }
             | ServerMessage::GameCreated { .. }
             | ServerMessage::ServerFull { .. }
             | ServerMessage::JoinFailed { .. }
