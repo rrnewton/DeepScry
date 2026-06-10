@@ -5825,6 +5825,67 @@ mod tests {
         );
     }
 
+    /// Card compat: Psychic Purge (cardsfolder/p/psychic_purge.txt) — mtg-534
+    ///
+    /// Script:
+    ///   ManaCost:U
+    ///   Types:Sorcery
+    ///   A:SP$ DealDamage | ValidTgts$ Any | NumDmg$ 1
+    ///   T:Mode$ Discarded | ValidCard$ Card.Self
+    ///     | ValidCause$ SpellAbility.OppCtrl | Execute$ TrigLoseLife
+    ///   SVar:TrigLoseLife:DB$ LoseLife | Defined$ TriggeredCauseController
+    ///     | LifeAmount$ 5
+    ///
+    /// Parser-shape guard for the opponent-forced-discard punisher (mtg-648):
+    /// the `T:Mode$ Discarded | ValidCard$ Card.Self` self-trigger must lower
+    /// into a `TriggerEvent::Discarded` flagged `requires_opponent_cause`
+    /// (`ValidCause$ SpellAbility.OppCtrl`) whose effect is a `LoseLife 5`
+    /// targeting the `triggered_cause_controller` sentinel. A silent drop would
+    /// strip Psychic Purge's downside-for-the-opponent clause.
+    #[test]
+    fn test_card_compat_psychic_purge() {
+        use crate::core::TriggerEvent;
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("../cardsfolder/p/psychic_purge.txt");
+        if !path.exists() {
+            eprintln!("Skipping: cardsfolder not present at {:?}", path);
+            return;
+        }
+        let def = crate::loader::CardLoader::load_from_file(&path).expect("Psychic Purge should load");
+        assert_eq!(def.name.as_str(), "Psychic Purge");
+        assert!(def.types.contains(&CardType::Sorcery));
+
+        let card = def.instantiate(CardId::new(1), PlayerId::new(0));
+
+        let discarded = card
+            .triggers
+            .iter()
+            .find(|t| t.event == TriggerEvent::Discarded)
+            .expect(
+                "Psychic Purge must have a Discarded self-trigger \
+                 (T:Mode$ Discarded | ValidCard$ Card.Self). Silently dropping it \
+                 removes the opponent-discard punisher.",
+            );
+        assert!(
+            discarded.requires_opponent_cause,
+            "Psychic Purge's Discarded trigger must set requires_opponent_cause \
+             (ValidCause$ SpellAbility.OppCtrl) so it only fires on an OPPONENT-forced discard.",
+        );
+        let loses_5_to_cause = discarded.effects.iter().any(|e| {
+            matches!(
+                e,
+                Effect::LoseLife { player, amount: 5 } if player.is_triggered_cause_controller()
+            )
+        });
+        assert!(
+            loses_5_to_cause,
+            "Psychic Purge's Discarded trigger must make the discard's cause controller \
+             lose 5 life (LoseLife 5 -> TriggeredCauseController). Got: {:?}",
+            discarded.effects
+        );
+    }
+
     /// Card compat: Juzám Djinn (cardsfolder/j/juzam_djinn.txt) — mtg-515
     ///
     /// Script:

@@ -2610,6 +2610,24 @@ pub enum TriggerEvent {
     /// Fires from any permanent on the battlefield when its controller (or any
     /// player matching ValidCard$) discards a card.
     CardDiscarded,
+
+    /// When THIS card is itself discarded (the discarded card is the trigger
+    /// source), fired on its last-known information as it moves Hand→Graveyard
+    /// (CR 603.6/603.10 — a leaves-the-zone trigger looking back at the object).
+    ///
+    /// Corresponds to: T:Mode$ Discarded | ValidCard$ Card.Self
+    ///   | ValidCause$ SpellAbility.OppCtrl | Execute$ ...
+    /// Example: Psychic Purge — "When a spell or ability an opponent controls
+    /// causes you to discard Psychic Purge, that player loses 5 life."
+    ///
+    /// Distinct from [`CardDiscarded`], which is a battlefield permanent
+    /// watching its controller's discards (Monument to Endurance). This event
+    /// fires on the DISCARDED CARD ITSELF and is gated by `requires_opponent_
+    /// cause`: it only fires when the discard was caused by a spell/ability
+    /// controlled by an OPPONENT of the card's owner (the `cause` threaded into
+    /// `GameState::discard_card`), so a self-discard (cleanup, your own looting)
+    /// does NOT fire it.
+    Discarded,
 }
 
 /// A triggered ability that executes when an event occurs
@@ -2688,6 +2706,18 @@ pub struct Trigger {
     /// is not attached (no `attached_to`), the trigger cannot fire.
     #[serde(default)]
     pub enchanted_controller_turn_only: bool,
+
+    /// For [`TriggerEvent::Discarded`] self-triggers: when true the trigger
+    /// fires ONLY if the discard was caused by a spell or ability controlled by
+    /// an OPPONENT of the card's owner (`ValidCause$ SpellAbility.OppCtrl`).
+    /// Psychic Purge — "When a spell or ability an OPPONENT controls causes you
+    /// to discard this, that player loses 5 life." The firing site
+    /// (`discard_card`) consults the `cause` threaded in explicitly; if that
+    /// cause is absent (a discard with no spell/ability cause, e.g. the cleanup-
+    /// step over-the-limit discard) or is the card's own owner (self-discard /
+    /// own looting), the trigger does NOT fire.
+    #[serde(default)]
+    pub requires_opponent_cause: bool,
 
     /// When true, trigger only fires if event source is NOT a creature
     /// Replaces "[noncreature]" marker in description
@@ -2785,6 +2815,7 @@ impl Trigger {
             controller_turn_only: false,
             chosen_player_turn_only: false,
             enchanted_controller_turn_only: false,
+            requires_opponent_cause: false,
             requires_noncreature: false,
             requires_instant_or_sorcery: false,
             requires_attached_source: false,
@@ -2814,6 +2845,7 @@ impl Trigger {
             controller_turn_only: false,
             chosen_player_turn_only: false,
             enchanted_controller_turn_only: false,
+            requires_opponent_cause: false,
             requires_noncreature: false,
             requires_instant_or_sorcery: false,
             requires_attached_source: false,
@@ -2849,6 +2881,7 @@ impl Trigger {
             controller_turn_only: false,
             chosen_player_turn_only: false,
             enchanted_controller_turn_only: false,
+            requires_opponent_cause: false,
             requires_noncreature: false,
             requires_instant_or_sorcery: false,
             requires_attached_source: false,
@@ -2879,6 +2912,7 @@ impl Trigger {
             controller_turn_only: false,
             chosen_player_turn_only: false,
             enchanted_controller_turn_only: false,
+            requires_opponent_cause: false,
             requires_noncreature: false,
             requires_instant_or_sorcery: false,
             requires_attached_source: false,

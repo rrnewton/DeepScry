@@ -3356,30 +3356,89 @@ impl CardDefinition {
                 triggers.push(trigger);
             }
 
-            // Parse Discarded triggers (Mode$ Discarded)
-            // Example: T:Mode$ Discarded | ValidCard$ Card.YouOwn | TriggerZones$ Battlefield | Execute$ TrigCharm
-            //   | TriggerDescription$ Whenever you discard a card, choose one...
-            // Fires when the trigger's controller discards a card.
-            // ValidCard$ Card.YouOwn = fires when the card's controller discards.
+            // Parse Discarded triggers (Mode$ Discarded). Two distinct shapes:
+            //
+            // (a) ValidCard$ Card.Self — the DISCARDED CARD ITSELF triggers, on
+            //     its LKI as it leaves hand (CR 603.6/603.10). Psychic Purge:
+            //       T:Mode$ Discarded | ValidCard$ Card.Self
+            //         | ValidCause$ SpellAbility.OppCtrl | Execute$ TrigLoseLife
+            //       SVar:TrigLoseLife:DB$ LoseLife
+            //         | Defined$ TriggeredCauseController | LifeAmount$ 5
+            //     -> TriggerEvent::Discarded, with requires_opponent_cause from
+            //        ValidCause$ ...OppCtrl, and a LoseLife targeting the cause
+            //        controller (resolved at fire time in discard_card).
+            //
+            // (b) ValidCard$ Card.YouOwn — a battlefield permanent watching its
+            //     controller's discards (Monument to Endurance):
+            //       T:Mode$ Discarded | ValidCard$ Card.YouOwn | TriggerZones$
+            //         Battlefield | Execute$ TrigCharm
+            //     -> TriggerEvent::CardDiscarded (the long-standing behavior).
             if mode == Some("Discarded") {
-                let mut effects = Vec::new();
+                let valid_card = params.get("ValidCard").map(|s| s.as_str());
 
-                if let Some(exec_ref) = params.get("Execute") {
-                    if let Some(svar_params) = self.parsed_svars.get(exec_ref) {
-                        effects.extend(self.extract_effects_from_svar(svar_params));
+                if valid_card == Some("Card.Self") {
+                    // Self-discard punisher (Psychic Purge). Build the LoseLife
+                    // effect explicitly so its target is the cause-controller
+                    // sentinel rather than the generic placeholder (= controller)
+                    // the SVar extractor would emit.
+                    let mut effects = Vec::new();
+                    if let Some(exec_ref) = params.get("Execute") {
+                        if let Some(svar_params) = self.parsed_svars.get(exec_ref) {
+                            if svar_params.api_type == ApiType::LoseLife
+                                && svar_params.get("Defined") == Some("TriggeredCauseController")
+                            {
+                                if let Some(amount) = svar_params.get("LifeAmount").and_then(|s| s.parse::<i32>().ok())
+                                {
+                                    effects.push(Effect::LoseLife {
+                                        player: PlayerId::triggered_cause_controller(),
+                                        amount,
+                                    });
+                                }
+                            }
+                        }
                     }
+
+                    // Only register the trigger if we lowered its effect; an
+                    // unrecognized Execute shape stays a no-op rather than a
+                    // silently-wrong trigger.
+                    if !effects.is_empty() {
+                        let description = params
+                            .get("TriggerDescription")
+                            .map(|s| s.to_string())
+                            .unwrap_or_else(|| "When this card is discarded".to_string());
+
+                        // ValidCause$ SpellAbility.OppCtrl => only fire when an
+                        // OPPONENT's spell/ability caused the discard.
+                        let requires_opponent_cause = params.get("ValidCause").is_some_and(|c| c.contains("OppCtrl"));
+
+                        let mut trigger = Trigger::new(TriggerEvent::Discarded, effects, description);
+                        trigger.requires_opponent_cause = requires_opponent_cause;
+                        // The trigger source IS the discarded card, fired from the
+                        // graveyard on its LKI; clear the default battlefield-only
+                        // trigger_zones gate so the firing site (discard_card)
+                        // controls when it fires.
+                        trigger.trigger_zones = smallvec::SmallVec::new();
+                        triggers.push(trigger);
+                    }
+                } else {
+                    // (b) Battlefield watcher (Monument to Endurance). ValidCard$
+                    // Card.YouOwn = "when the trigger's controller discards"
+                    // (other ValidCard patterns not yet distinguished).
+                    let mut effects = Vec::new();
+                    if let Some(exec_ref) = params.get("Execute") {
+                        if let Some(svar_params) = self.parsed_svars.get(exec_ref) {
+                            effects.extend(self.extract_effects_from_svar(svar_params));
+                        }
+                    }
+
+                    let description = params
+                        .get("TriggerDescription")
+                        .map(|s| s.to_string())
+                        .unwrap_or_else(|| "Whenever you discard a card".to_string());
+
+                    let trigger = Trigger::new_any(TriggerEvent::CardDiscarded, effects, description);
+                    triggers.push(trigger);
                 }
-
-                let description = params
-                    .get("TriggerDescription")
-                    .map(|s| s.to_string())
-                    .unwrap_or_else(|| "Whenever you discard a card".to_string());
-
-                // ValidCard$ Card.YouOwn means "when the trigger's controller discards"
-                // (the only currently-handled restriction; other ValidCard patterns
-                // are not yet distinguished — both fire on controller discard).
-                let trigger = Trigger::new_any(TriggerEvent::CardDiscarded, effects, description);
-                triggers.push(trigger);
             }
         }
 

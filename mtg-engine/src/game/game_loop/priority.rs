@@ -1937,7 +1937,17 @@ impl<'a> GameLoop<'a> {
                                                     if remember {
                                                         self.game.remembered_cards.push(card_id);
                                                     }
-                                                    if let Err(e) = self.game.discard_card(discard_player, card_id) {
+                                                    // Cause = the player resolving this activated
+                                                    // ability (the priority holder). A Discarded
+                                                    // self-trigger (Psychic Purge) attributes the
+                                                    // discard to that ability's controller; a player
+                                                    // discarding their own card (cause == owner) does
+                                                    // not fire the opponent-only punisher.
+                                                    if let Err(e) = self.game.discard_card(
+                                                        discard_player,
+                                                        card_id,
+                                                        Some(current_priority),
+                                                    ) {
                                                         if self.verbosity >= VerbosityLevel::Normal && !self.replaying {
                                                             eprintln!("    Failed to discard: {e}");
                                                         }
@@ -2028,8 +2038,16 @@ impl<'a> GameLoop<'a> {
                                                         );
 
                                                         for card_id in cards_to_discard {
-                                                            if let Err(e) = self.game.discard_card(loot_player, card_id)
-                                                            {
+                                                            // Loot's discard is part of the activated
+                                                            // ability; attribute the cause to its
+                                                            // controller (the priority holder). Self-
+                                                            // looting (cause == owner) does not fire
+                                                            // the opponent-gated Discarded trigger.
+                                                            if let Err(e) = self.game.discard_card(
+                                                                loot_player,
+                                                                card_id,
+                                                                Some(current_priority),
+                                                            ) {
                                                                 if self.verbosity >= VerbosityLevel::Normal
                                                                     && !self.replaying
                                                                 {
@@ -3224,7 +3242,14 @@ impl<'a> GameLoop<'a> {
                                 if remember {
                                     self.game.remembered_cards.push(card_id);
                                 }
-                                if let Err(e) = self.game.discard_card(*player, card_id) {
+                                // Cause = the resolving spell's controller (CR
+                                // 701.8): this discard is forced by that spell,
+                                // so a Discarded self-trigger (Psychic Purge)
+                                // sees `spell_owner` as the cause controller. If
+                                // the spell's owner is discarding their OWN card
+                                // (cause == owner) the opponent-only gate keeps
+                                // the punisher from firing.
+                                if let Err(e) = self.game.discard_card(*player, card_id, Some(spell_owner)) {
                                     if should_log {
                                         eprintln!("    Failed to discard: {e}");
                                     }
@@ -3272,7 +3297,12 @@ impl<'a> GameLoop<'a> {
                                 self.log_choice_point(*player, Some(replay_choice), prior_log_size);
 
                                 for card_id in cards_to_discard {
-                                    if let Err(e) = self.game.discard_card(*player, card_id) {
+                                    // Loot's discard is part of the resolving
+                                    // spell/ability; attribute the cause to its
+                                    // controller. A player looting themselves
+                                    // (cause == owner) does not fire an
+                                    // opponent-gated Discarded trigger.
+                                    if let Err(e) = self.game.discard_card(*player, card_id, Some(spell_owner)) {
                                         if should_log {
                                             eprintln!("    Failed to discard: {e}");
                                         }

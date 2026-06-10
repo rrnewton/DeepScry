@@ -1,0 +1,15 @@
+[metadata]
+Name:Psychic Purge punishes an opponent-forced discard
+Turns:2
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Mind Rot
+p0battlefield=Swamp; Swamp; Swamp
+p0library=Swamp; Swamp; Swamp; Swamp; Swamp
+
+p1life=20
+p1hand=Psychic Purge; Mountain
+p1library=Mountain; Mountain; Mountain; Mountain; Mountain

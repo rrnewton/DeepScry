@@ -1,0 +1,14 @@
+[metadata]
+Name:Psychic Purge self-discard (cleanup) does NOT punish
+Turns:2
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Psychic Purge; Mountain; Mountain; Mountain; Mountain; Mountain; Mountain; Mountain
+p0battlefield=Mountain
+p0library=Mountain; Mountain; Mountain; Mountain; Mountain
+
+p1life=20
+p1library=Forest; Forest; Forest; Forest; Forest

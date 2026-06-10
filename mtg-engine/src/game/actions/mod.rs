@@ -3428,7 +3428,7 @@ impl GameState {
                         if *remember_discarded {
                             self.remembered_cards.push(card_id);
                         }
-                        self.discard_card(*player, card_id)?;
+                        self.discard_card(*player, card_id, None)?;
                     }
                     if *remember_discarding_players && did_discard {
                         self.remembered_players.push(*player);
@@ -3466,7 +3466,7 @@ impl GameState {
                             if *remember_discarded {
                                 self.remembered_cards.push(card_id);
                             }
-                            self.discard_card(*player, card_id)?;
+                            self.discard_card(*player, card_id, None)?;
                         } else {
                             // No cards in hand to discard
                             break;
@@ -3487,7 +3487,7 @@ impl GameState {
                 for _ in 0..*discard_count {
                     let card_to_discard = self.choose_card_to_discard(*player)?;
                     if let Some(card_id) = card_to_discard {
-                        self.discard_card(*player, card_id)?;
+                        self.discard_card(*player, card_id, None)?;
                     } else {
                         // No cards to discard, can't complete the loot
                         break;
@@ -7123,11 +7123,23 @@ impl GameState {
     ///
     /// Moves the card from hand to graveyard and logs the action.
     ///
+    /// `cause` is the controller of the spell/ability that is FORCING this
+    /// discard (CR 701.8 / CR 603), threaded explicitly from the resolution
+    /// context — `None` for a self-initiated discard (cleanup-step
+    /// over-the-limit discard, your own looting/rummaging, a discard you pay as
+    /// a cost). It is consumed only by the `TriggerEvent::Discarded` self-trigger
+    /// (Psychic Purge) to resolve `ValidCause$ SpellAbility.OppCtrl` and
+    /// `Defined$ TriggeredCauseController`. Passing it as an explicit parameter
+    /// (rather than mutable transient `GameState` state) keeps the cause out of
+    /// the serialized/rewound game state entirely — there is nothing to
+    /// reconstruct on a WASM rewind or a network shadow, which is the safest
+    /// possible shape for a determinism-critical value.
+    ///
     /// # Errors
     ///
     /// Returns an error if the card or player cannot be found, or if the
     /// card cannot be moved from hand to graveyard.
-    pub fn discard_card(&mut self, player_id: PlayerId, card_id: CardId) -> Result<()> {
+    pub fn discard_card(&mut self, player_id: PlayerId, card_id: CardId, cause: Option<PlayerId>) -> Result<()> {
         let player_name = self.get_player(player_id)?.name.clone();
 
         // Move card from hand to graveyard. The graveyard is a PUBLIC zone
@@ -7165,10 +7177,102 @@ impl GameState {
         self.logger
             .gamelog_reveal_stable(&format!("{} discards {}", player_name, card_name), &verifier_stable);
 
-        // Fire discard triggers (T:Mode$ Discarded, e.g. Monument to Endurance).
-        // CR 603.1: triggered ability fires whenever the trigger event occurs.
-        // Called AFTER the card is in the graveyard so the trigger can "see" it there.
+        // Fire battlefield-watcher discard triggers (T:Mode$ Discarded |
+        // ValidCard$ Card.YouOwn, e.g. Monument to Endurance). CR 603.1: a
+        // triggered ability fires whenever its event occurs. Called AFTER the
+        // card is in the graveyard so the trigger can "see" it there.
         self.check_card_discarded_triggers(player_id)?;
+
+        // Fire the DISCARDED CARD's own Discarded self-trigger (T:Mode$
+        // Discarded | ValidCard$ Card.Self, e.g. Psychic Purge's opponent
+        // punisher), on its LKI in the graveyard (CR 603.6/603.10). The cause
+        // controller is threaded in explicitly (None for a self-discard).
+        self.check_discarded_self_trigger(card_id, player_id, cause)?;
+
+        Ok(())
+    }
+
+    /// Fire a [`TriggerEvent::Discarded`] self-trigger on a card that was just
+    /// discarded (now in its owner's graveyard, fired on LKI — CR 603.6/603.10).
+    ///
+    /// `discarded_card` is the card that left hand; `owner` is the player who
+    /// discarded it (its owner). `cause` is the controller of the spell/ability
+    /// that forced the discard (threaded explicitly from the resolution
+    /// context; `None` for a self-initiated discard). The trigger fires only if
+    /// the card carries a `Discarded` trigger AND — when that trigger sets
+    /// `requires_opponent_cause` (`ValidCause$ SpellAbility.OppCtrl`) — the
+    /// discard was caused by a spell/ability controlled by an OPPONENT of
+    /// `owner`. A self-caused discard (cleanup / own looting: `cause == owner`)
+    /// or a cause-less discard (`cause == None`) does NOT fire an opponent-gated
+    /// trigger.
+    ///
+    /// The trigger's `LoseLife` effect targets the
+    /// `PlayerId::triggered_cause_controller()` sentinel, resolved here to the
+    /// concrete cause controller.
+    fn check_discarded_self_trigger(
+        &mut self,
+        discarded_card: CardId,
+        owner: PlayerId,
+        cause: Option<PlayerId>,
+    ) -> Result<()> {
+        // Collect the discarded card's Discarded triggers (LKI read from the
+        // graveyard). Fast-path: most cards have none.
+        let triggers: smallvec::SmallVec<[(bool, Vec<Effect>); 1]> = {
+            let Some(card) = self.cards.try_get(discarded_card) else {
+                return Ok(());
+            };
+            card.triggers
+                .iter()
+                .filter(|t| t.event == TriggerEvent::Discarded)
+                .map(|t| (t.requires_opponent_cause, t.effects.clone()))
+                .collect()
+        };
+        if triggers.is_empty() {
+            return Ok(());
+        }
+
+        let cause_controller = cause;
+
+        for (requires_opponent_cause, effects) in triggers {
+            // ValidCause$ SpellAbility.OppCtrl gate: the cause must exist AND be
+            // controlled by an OPPONENT of the discarding card's owner.
+            if requires_opponent_cause {
+                let opponent_caused = cause_controller.is_some_and(|cc| cc != owner);
+                if !opponent_caused {
+                    continue;
+                }
+            }
+
+            // Resolve the cause-controller sentinel for this firing. If the gate
+            // above passed, cause_controller is Some; for an ungated trigger
+            // (no requires_opponent_cause) a missing cause leaves the sentinel
+            // unresolved and the effect is skipped (no legal target).
+            let Some(cause) = cause_controller else {
+                continue;
+            };
+
+            for effect in &effects {
+                // Resolve the cause-controller sentinel on a LoseLife payload
+                // (Psychic Purge's "that player loses 5 life") to the concrete
+                // cause. Any other effect shape is executed unchanged — the
+                // parser only ever emits the sentinel LoseLife here, so this is
+                // the single resolution case (avoiding a forbidden wildcard
+                // enum match — see CLAUDE.md strong-types convention).
+                let resolved = if let Effect::LoseLife { player, amount } = effect {
+                    if player.is_triggered_cause_controller() {
+                        Effect::LoseLife {
+                            player: cause,
+                            amount: *amount,
+                        }
+                    } else {
+                        effect.clone()
+                    }
+                } else {
+                    effect.clone()
+                };
+                self.execute_effect(&resolved)?;
+            }
+        }
 
         Ok(())
     }
