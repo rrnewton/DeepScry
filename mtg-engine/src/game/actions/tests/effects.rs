@@ -5786,6 +5786,43 @@ mod tests {
              (R:Event$ Untap | Layer$ CantHappen). Statics: {:?}",
             card.static_abilities
         );
+
+        // mtg-646: the third ability — "At the beginning of the upkeep of
+        // enchanted creature's controller, that player may pay {4}. If they do,
+        // untap the creature." — must parse into a BeginningOfUpkeep trigger
+        // flagged `enchanted_controller_turn_only` (fires on the HOST's
+        // controller's upkeep, not the Aura controller's), whose effect is an
+        // UnlessCostWrapper { UntapPermanent } with a {4} mana cost and
+        // switched=true (the untap runs ONLY if the {4} is paid). A bare
+        // unconditional untap here would make Paralyze free to escape every
+        // upkeep — strictly worse than not firing — so the UnlessCost gate is
+        // load-bearing.
+        use crate::core::effects::{UnlessCost, UnlessCostType};
+        use crate::core::TriggerEvent;
+        let upkeep = card
+            .triggers
+            .iter()
+            .find(|t| t.event == TriggerEvent::BeginningOfUpkeep && t.enchanted_controller_turn_only)
+            .expect(
+                "Paralyze must have a BeginningOfUpkeep trigger flagged \
+                 enchanted_controller_turn_only (ValidPlayer$ Player.EnchantedController). \
+                 Dropping it makes the doesn't-untap lock permanent with no escape.",
+            );
+        let untap_unless = upkeep.effects.iter().any(|e| {
+            matches!(
+                e,
+                Effect::UnlessCostWrapper {
+                    inner_effect,
+                    unless_cost: UnlessCost { cost: UnlessCostType::Mana(_), switched: true, .. },
+                } if matches!(inner_effect.as_ref(), Effect::UntapPermanent { .. })
+            )
+        });
+        assert!(
+            untap_unless,
+            "Paralyze's upkeep trigger must be an UnlessCostWrapper {{ UntapPermanent }} \
+             with a {{4}} mana cost and switched=true (pay {{4}} -> untap). Got: {:?}",
+            upkeep.effects
+        );
     }
 
     /// Card compat: Juzám Djinn (cardsfolder/j/juzam_djinn.txt) — mtg-515

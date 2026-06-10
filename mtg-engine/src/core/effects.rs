@@ -2678,6 +2678,17 @@ pub struct Trigger {
     #[serde(default)]
     pub chosen_player_turn_only: bool,
 
+    /// When true, the trigger only fires on the upkeep of the ENCHANTED
+    /// permanent's controller — a DIFFERENT player than the source Aura's
+    /// controller for a curse Aura (`ValidPlayer$ Player.EnchantedController`).
+    /// Paralyze's "At the beginning of the upkeep of enchanted creature's
+    /// controller, that player may pay {4}; if they do, untap the creature."
+    /// The firing sites gate on `active_player == cards[aura.attached_to].
+    /// controller` instead of `active_player == aura.controller`. If the Aura
+    /// is not attached (no `attached_to`), the trigger cannot fire.
+    #[serde(default)]
+    pub enchanted_controller_turn_only: bool,
+
     /// When true, trigger only fires if event source is NOT a creature
     /// Replaces "[noncreature]" marker in description
     /// Example: "Whenever you cast a noncreature spell"
@@ -2773,6 +2784,7 @@ impl Trigger {
             requires_landfall: false,
             controller_turn_only: false,
             chosen_player_turn_only: false,
+            enchanted_controller_turn_only: false,
             requires_noncreature: false,
             requires_instant_or_sorcery: false,
             requires_attached_source: false,
@@ -2801,6 +2813,7 @@ impl Trigger {
             requires_landfall: false,
             controller_turn_only: false,
             chosen_player_turn_only: false,
+            enchanted_controller_turn_only: false,
             requires_noncreature: false,
             requires_instant_or_sorcery: false,
             requires_attached_source: false,
@@ -2835,6 +2848,7 @@ impl Trigger {
             requires_landfall: false,
             controller_turn_only: false,
             chosen_player_turn_only: false,
+            enchanted_controller_turn_only: false,
             requires_noncreature: false,
             requires_instant_or_sorcery: false,
             requires_attached_source: false,
@@ -2864,6 +2878,7 @@ impl Trigger {
             requires_landfall: false,
             controller_turn_only: false,
             chosen_player_turn_only: false,
+            enchanted_controller_turn_only: false,
             requires_noncreature: false,
             requires_instant_or_sorcery: false,
             requires_attached_source: false,

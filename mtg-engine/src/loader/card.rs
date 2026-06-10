@@ -2506,6 +2506,11 @@ impl CardDefinition {
                     // ValidPlayer$ Player.Chosen (Black Vise): fires only on the
                     // turn of the player chosen by the ETB ChoosePlayer replacement.
                     let is_chosen_player_only = valid_player == Some("Player.Chosen");
+                    // ValidPlayer$ Player.EnchantedController (Paralyze): fires on
+                    // the upkeep of the ENCHANTED creature's controller — a
+                    // different player than this curse Aura's controller. The
+                    // firing sites gate on the attached creature's controller.
+                    let is_enchanted_controller_only = valid_player == Some("Player.EnchantedController");
 
                     // Check if we have Execute$ parameter (references a SVar with effects)
                     // Use pre-parsed SVars for O(1) lookup
@@ -2612,6 +2617,38 @@ impl CardDefinition {
                                     player,
                                     count: num_cards,
                                 });
+                            }
+                            // DB$ Untap on a phase trigger (Paralyze):
+                            //   "DB$ Untap | Defined$ Enchanted | UnlessCost$ 4
+                            //    | UnlessPayer$ EnchantedController | UnlessSwitched$ True"
+                            // "At the beginning of the upkeep of enchanted
+                            // creature's controller, that player MAY pay {4}. If
+                            // they do, untap the enchanted creature."
+                            //
+                            // The untap target is the ENCHANTED permanent
+                            // (Defined$ Enchanted), resolved per-fire from the
+                            // Aura's `attached_to` in check_triggers_for_controller
+                            // (placeholder CardId 0 here). The optional {4} payment
+                            // is modeled with the shared UnlessCostWrapper:
+                            // UnlessSwitched$ True means the inner effect (untap)
+                            // runs ONLY when the cost is paid — so if the
+                            // controller can't or won't pay, the creature stays
+                            // tapped (the doesn't-untap lock holds). This reuses
+                            // the determinism-safe in-engine pay/don't-pay decision
+                            // (tracked under mtg-rpmpg) rather than re-implementing
+                            // it. Only handled for the Enchanted-controller phase
+                            // trigger; a naive unconditional untap would make
+                            // Paralyze free to escape and is explicitly avoided
+                            // (mtg-646).
+                            if svar_params.api_type == ApiType::Untap
+                                && svar_params.get("Defined") == Some("Enchanted")
+                                && is_enchanted_controller_only
+                            {
+                                let untap = Effect::UntapPermanent { target: CardId::new(0) };
+                                effects.push(crate::loader::effect_converter::wrap_with_unless_cost(
+                                    untap,
+                                    svar_params,
+                                ));
                             }
                             // DB$ Earthbend effects
                             // Example: "DB$ Earthbend | Num$ 8"
@@ -2747,6 +2784,9 @@ impl CardDefinition {
                     }
                     if is_chosen_player_only {
                         trigger.chosen_player_turn_only = true;
+                    }
+                    if is_enchanted_controller_only {
+                        trigger.enchanted_controller_turn_only = true;
                     }
                     trigger.trigger_zones = trigger_zones;
                     trigger.present_self_condition = present_self_condition;

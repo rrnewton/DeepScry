@@ -198,6 +198,19 @@ impl<'a> GameLoop<'a> {
                 if t.chosen_player_turn_only && card.chosen_player != Some(active_player) {
                     return false;
                 }
+                // ValidPlayer$ Player.EnchantedController (Paralyze): fire only on
+                // the upkeep of the ENCHANTED permanent's controller. If the Aura
+                // is not attached to anything, or the attached permanent's
+                // controller is not the active player, the trigger does not fire.
+                if t.enchanted_controller_turn_only {
+                    let fires = card
+                        .attached_to
+                        .and_then(|host| self.game.cards.try_get(host))
+                        .is_some_and(|host| host.controller == active_player);
+                    if !fires {
+                        return false;
+                    }
+                }
                 // Intervening-if condition (CR 603.4): the source must satisfy the
                 // counter condition right now (All Hallow's Eve: >= 1 scream).
                 if let Some(cond) = &t.present_self_condition {
