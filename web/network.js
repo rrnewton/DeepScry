@@ -121,18 +121,30 @@ export class MTGNetworkClient {
                 // Non-JSON messages still flow into WASM for normal handling/error reporting
             }
 
-            // mtg-grofw: the server announces game end with a `game_ended`
-            // message and then closes the socket (non-clean 1006). Mark the game
-            // as ended HERE — the earliest, authoritative signal — so the
-            // ensuing close is not mis-escalated as a lost connection. (The page
-            // also sets this from its view-model game_over, as a backstop.)
-            // Emit ONE clean, terminal, NON-gated notice: it is a meaningful
-            // state transition (not per-message traffic spam), and the e2e
-            // game-completion gate relies on it (the full per-message
-            // "[Network] Received:" dump is debug-gated).
+            // mtg-grofw: when the game CONCLUDES legitimately, the server sends a
+            // `game_ended` and then closes the socket (non-clean 1006); we mark
+            // the game ended so that ensuing close is not mis-escalated as a lost
+            // connection. (The page also sets this from its view-model game_over.)
+            //
+            // mtg-redo-fix: but the server ALSO sends a `game_ended` when it
+            // ABORTS a game on a peer DISCONNECT or fatal error mid-game — and in
+            // that case the survivor's connection IS being lost and MUST get the
+            // normal connection-lost / reconnect handling, NOT suppression. The
+            // two are distinguishable by the message's structured fields: a
+            // legitimate conclusion carries a real outcome (a `winner`, or a
+            // genuine draw that actually played out → `action_count > 0`), while
+            // the abort-teardown is synthesized by the server's error path
+            // (server.rs: the `Err(_)` branch) as `winner: null` AND
+            // `action_count: 0` — no winner and zero actions taken, i.e. NOT a
+            // real game outcome. Only a legitimate conclusion suppresses the
+            // disconnect handling.
             if (msg?.type === 'game_ended' || msg?.type === 'game_over') {
-                this.gameEnded = true;
-                console.log('[Network] Game ended');
+                if (isLegitimateGameEnd(msg)) {
+                    this.gameEnded = true;
+                    console.log('[Network] Game ended');
+                }
+                // else: an abort/disconnect teardown — fall through so the
+                // ensuing close runs the normal connection-lost + reconnect path.
             }
 
             // Two-phase bug report (mtg-749): phase 1 = disk-write
@@ -329,6 +341,29 @@ export class MTGNetworkClient {
             }
         }, 3000);
     }
+}
+
+/**
+ * Does a `game_ended` server message represent a LEGITIMATE game conclusion
+ * (a real win/decking, or a genuine draw that actually played out) — as opposed
+ * to the synthetic teardown the server emits when it ABORTS a game on a peer
+ * disconnect or fatal error mid-game?
+ *
+ * Server contract (mtg-engine/src/network/server.rs, the GameEnded send sites):
+ *   - Ok(result)  →  real `winner` + real `action_count` (the undo-log length,
+ *                    always > 0 for a game that actually played).
+ *   - Err(_)      →  `winner: null`, `reason: "draw"`, `action_count: 0`
+ *                    (no winner AND zero actions = not a real outcome).
+ *
+ * So a legitimate conclusion is one that has a winner OR took at least one
+ * action. The abort-teardown (winner null AND action_count 0) is NOT legitimate
+ * and must be handled as a connection loss, not a normal game end.
+ */
+function isLegitimateGameEnd(msg) {
+    if (!msg) return false;
+    const hasWinner = msg.winner !== null && msg.winner !== undefined;
+    const tookActions = typeof msg.action_count === 'number' && msg.action_count > 0;
+    return hasWinner || tookActions;
 }
 
 // Singleton instance (created when needed)
