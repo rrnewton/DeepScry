@@ -8533,13 +8533,10 @@ impl GameState {
                     }
 
                     // Find SpellCast triggers on this permanent
-                    eprintln!("DEBUG: card='{}', triggers={:?}", card.name, card.triggers);
                     let matching_triggers: Vec<&Trigger> = card
                         .triggers
                         .iter()
                         .filter(|trigger| {
-                            eprintln!("DEBUG: testing trigger event={:?}, requires_noncreature={}, is_creature_spell={}, requires_instant_or_sorcery={}, is_instant_or_sorcery={}", 
-                                trigger.event, trigger.requires_noncreature, is_creature_spell, trigger.requires_instant_or_sorcery, is_instant_or_sorcery);
                             if trigger.event != TriggerEvent::SpellCast {
                                 return false;
                             }

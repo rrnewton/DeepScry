@@ -259,15 +259,10 @@ impl PlayerController for RichInputController {
         // Try to match next command if present
         if let Some(cmd) = self.peek_command() {
             let cmd_clean = cmd.trim().to_lowercase();
-            eprintln!(
-                "DEBUG: choose_targets: cmd_clean='{}', valid_targets={:?}",
-                cmd_clean, valid_targets
-            );
             let matched_targets: SmallVec<[CardId; 4]> = valid_targets
                 .iter()
                 .filter(|&&tid| {
                     let name = _view.card_name(tid).unwrap_or_default();
-                    eprintln!("DEBUG: target CardId={:?}, name='{}'", tid, name);
                     if let Some(pid) = crate::core::player_target_from_sentinel(tid) {
                         let pid_idx = pid.as_u32();
                         cmd_clean == format!("p{}", pid_idx + 1)
@@ -279,7 +274,6 @@ impl PlayerController for RichInputController {
                 })
                 .copied()
                 .collect();
-            eprintln!("DEBUG: matched_targets={:?}", matched_targets);
             if !matched_targets.is_empty() {
                 self.next_command();
                 return ChoiceResult::Ok(matched_targets);
