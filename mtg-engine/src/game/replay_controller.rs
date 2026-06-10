@@ -72,6 +72,44 @@ pub enum ReplayChoice {
     },
 }
 
+/// Partition a turn's recorded [`crate::undo::GameAction::ChoicePoint`] actions
+/// into `(our_choices, opponent_choices)` in forward chronological order.
+///
+/// This is the shared helper behind every WASM rewind+replay re-entry: after
+/// [`crate::undo::UndoLog::rewind_to_turn_start`] returns the intra-turn choice
+/// actions (already reversed back into forward order), each side feeds its own
+/// list into a [`ReplayController`] so the loop deterministically re-reaches the
+/// blocking frontier. Centralised here (DRY) so the local AI-vs-AI step driver
+/// (`wasm::mod::WasmGame`), the network AI harness
+/// (`wasm::network::ai_harness`), and the human-vs-AI `fancy_tui` path do not
+/// each carry their own copy of the partition loop.
+///
+/// Only `ChoicePoint`s carrying a recorded `Some(choice)` contribute; markers
+/// and `None`-choice points (which represent the loop reaching a decision that
+/// was never answered) are skipped, matching every prior open-coded copy.
+pub fn partition_choices_by_player(
+    choice_actions: impl IntoIterator<Item = crate::undo::GameAction>,
+    our_id: PlayerId,
+) -> (Vec<ReplayChoice>, Vec<ReplayChoice>) {
+    let mut our_choices = Vec::new();
+    let mut opponent_choices = Vec::new();
+    for action in choice_actions {
+        if let crate::undo::GameAction::ChoicePoint {
+            player_id,
+            choice: Some(c),
+            ..
+        } = action
+        {
+            if player_id == our_id {
+                our_choices.push(c);
+            } else {
+                opponent_choices.push(c);
+            }
+        }
+    }
+    (our_choices, opponent_choices)
+}
+
 /// Controller that replays a sequence of choices then delegates to another controller
 ///
 /// This is used for snapshot resume. The replay controller:

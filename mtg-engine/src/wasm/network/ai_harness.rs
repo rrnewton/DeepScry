@@ -35,7 +35,6 @@ use crate::game::{
     derive_player_seed, GameLoop, GameLoopState, GameState, HeuristicController, PlayerController, PlayerSlot,
     RandomController, ReplayController, VerbosityLevel, ZeroController,
 };
-use crate::undo::GameAction;
 use std::cell::RefCell;
 use wasm_bindgen::prelude::*;
 
@@ -398,27 +397,10 @@ fn rewind_and_partition(
         }
     };
 
-    // Partition choices by player. `rewind_to_turn_start` already reverses its
-    // collected choices back to FORWARD chronological order before returning,
-    // so iterating as-is preserves replay order (identical to the fancy_tui
-    // partition at fancy_tui.rs:1864-1877).
-    let mut our_choices = Vec::new();
-    let mut opponent_choices = Vec::new();
-    for action in choice_actions {
-        if let GameAction::ChoicePoint {
-            player_id,
-            choice: Some(c),
-            ..
-        } = action
-        {
-            if player_id == our_id {
-                our_choices.push(c);
-            } else {
-                opponent_choices.push(c);
-            }
-        }
-    }
-    (our_choices, opponent_choices)
+    // Partition choices by player via the shared helper. `rewind_to_turn_start`
+    // already reverses its collected choices back to FORWARD chronological order
+    // before returning, so the partition preserves replay order.
+    crate::game::replay_controller::partition_choices_by_player(choice_actions, our_id)
 }
 
 /// A throwaway controller used to temporarily fill `harness.controller` while

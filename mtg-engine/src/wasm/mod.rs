@@ -88,9 +88,10 @@ use wasm_bindgen::prelude::*;
 
 use crate::core::PlayerId;
 use crate::game::logger::OutputMode;
+use crate::game::replay_controller::partition_choices_by_player;
 use crate::game::{
-    derive_player_seed, GameLoop, GameState, HeuristicController, PlayerController, PlayerSlot, RandomController,
-    VerbosityLevel, ZeroController,
+    derive_player_seed, GameEndReason, GameLoop, GameLoopState, GameResult, GameState, HeuristicController,
+    PlayerController, PlayerSlot, RandomController, ReplayController, VerbosityLevel, ZeroController,
 };
 use crate::loader::{CardDefinition, DeckEntry, DeckList};
 
@@ -483,6 +484,46 @@ pub struct WasmGame {
     p1_controller_type: WasmControllerType,
     p2_controller_type: WasmControllerType,
     game_seed: u64,
+    /// Persistent long-lived driver for the AI-vs-AI step-through
+    /// (`run_one_turn`). `None` until the first `run_one_turn` call, then it
+    /// owns the two PERSISTENT controllers and the rewind/replay re-entry
+    /// bookkeeping across every subsequent step. See [`LocalAiDriver`] and
+    /// `run_one_turn`.
+    ///
+    /// Not exported to JS (wasm_bindgen exports methods, not fields).
+    ai_driver: Option<LocalAiDriver>,
+}
+
+/// Long-lived owner of the durable per-step state for the local (non-network)
+/// AI-vs-AI step-through driven by [`WasmGame::run_one_turn`] — the
+/// WASM-legal "long-lived GameLoop" (mtg-vpjru / mtg-677 / mtg-610).
+///
+/// WASM cannot suspend a Rust call stack across a JS return, so a `GameLoop`
+/// struct cannot itself persist mid-`run_turn`; instead this driver persists
+/// the DURABLE state a long-lived loop would own — the two controllers (so
+/// their RNG advances monotonically instead of being re-seeded every turn) and
+/// the small re-entry bookkeeping — and re-reaches any intra-turn frontier by
+/// REWIND + REPLAY, exactly as the proven network harness
+/// (`wasm::network::ai_harness`) does. A fresh `GameLoop` borrow is spun up per
+/// call; that recreation is harmless because no continuation state lives on its
+/// stack across the yield (it is reconstructed by replay).
+struct LocalAiDriver {
+    /// Persistent controller for player 1 (slot P1). Created ONCE so a stateful
+    /// controller's RNG / memory advances across turns, instead of being
+    /// re-seeded from `game_seed` every call as the old `run_one_turn` did.
+    controller1: Box<dyn PlayerController>,
+    /// Persistent controller for player 2 (slot P2).
+    controller2: Box<dyn PlayerController>,
+    p1_id: PlayerId,
+    /// The turn whose forward run we have already started. When a `run_one_turn`
+    /// entry finds the game still on this turn, it is a mid-turn RE-ENTRY (the
+    /// loop yielded `AwaitingInput` and JS re-called us) → rewind+replay.
+    /// Otherwise it is the first forward run of a fresh turn → run straight
+    /// through. `None` until the first step. (Pure AI-vs-AI with no human never
+    /// yields mid-turn today, so the replay branch is rarely taken — but routing
+    /// through it keeps this path on the SAME resumable model as the network
+    /// harness and proves the `sub_action_scratch` stash is unnecessary here.)
+    forward_run_turn: Option<u32>,
 }
 
 #[wasm_bindgen]
@@ -506,6 +547,7 @@ impl WasmGame {
             p1_controller_type: WasmControllerType::Heuristic,
             p2_controller_type: WasmControllerType::Heuristic,
             game_seed: 0,
+            ai_driver: None,
         }
     }
 
@@ -616,23 +658,30 @@ impl WasmGame {
             p1_controller_type: WasmControllerType::Heuristic,
             p2_controller_type: WasmControllerType::Heuristic,
             game_seed: seed,
+            ai_driver: None,
         })
     }
 
     /// Set the controller type for player 1
     pub fn set_p1_controller(&mut self, controller_type: WasmControllerType) {
         self.p1_controller_type = controller_type;
+        // The persistent driver caches controllers built from the old type;
+        // drop it so the next `run_one_turn` rebuilds with the new controller.
+        self.ai_driver = None;
     }
 
     /// Set the controller type for player 2
     pub fn set_p2_controller(&mut self, controller_type: WasmControllerType) {
         self.p2_controller_type = controller_type;
+        self.ai_driver = None;
     }
 
     /// Set the game seed for reproducible games
     pub fn set_seed(&mut self, seed: u64) {
         self.game_seed = seed;
         self.game.seed_rng(seed);
+        // Seed change invalidates the cached (seeded) controllers.
+        self.ai_driver = None;
     }
 
     /// Get the current game state as JSON
@@ -725,25 +774,48 @@ impl WasmGame {
         }
     }
 
-    /// Run a single turn with AI controllers
+    /// Run the AI-vs-AI step-through until it next yields (needs input) or the
+    /// game completes, driven by the LONG-LIVED [`LocalAiDriver`] (mtg-vpjru /
+    /// mtg-677 / mtg-610).
     ///
-    /// Returns true if game is still ongoing, false if game ended
+    /// Returns `true` if the game is still ongoing, `false` if it has ended —
+    /// the same contract JS (`web/demo.html`) already depends on.
+    ///
+    /// Unlike the previous implementation, this does NOT reconstruct the
+    /// controllers (and re-seed their RNG) on every call. The driver persists
+    /// the two controllers and the rewind/replay re-entry bookkeeping across
+    /// calls, so a stateful controller's RNG advances monotonically and the
+    /// path runs on the SAME resumable rewind+replay model as the proven
+    /// network harness — the WASM-legal "long-lived GameLoop." A `GameLoop`
+    /// struct is still spun up fresh per call (WASM can't suspend a Rust stack
+    /// across a JS return), but no continuation state lives on it across the
+    /// yield: the `sub_action_scratch` stash is empty at every yield boundary
+    /// (asserted in debug builds below), proving it is unnecessary for this
+    /// non-network path.
     pub fn run_one_turn(&mut self) -> bool {
-        let p1_id = self.game.players[0].id;
-        let p2_id = self.game.players[1].id;
+        // Lazily build the long-lived driver with PERSISTENT controllers, then
+        // move it out so we can borrow `self.game` mutably alongside it, and put
+        // it back. (The driver owns no reference into `self.game`.)
+        let mut driver = match self.ai_driver.take() {
+            Some(d) => d,
+            None => {
+                let p1_id = self.game.players[0].id;
+                let p2_id = self.game.players[1].id;
+                // Same per-slot derivation as `run_ai_game` — see that comment.
+                let p1_seed = derive_player_seed(self.game_seed, PlayerSlot::P1);
+                let p2_seed = derive_player_seed(self.game_seed, PlayerSlot::P2);
+                LocalAiDriver {
+                    controller1: create_ai_controller(self.p1_controller_type, p1_id, p1_seed),
+                    controller2: create_ai_controller(self.p2_controller_type, p2_id, p2_seed),
+                    p1_id,
+                    forward_run_turn: None,
+                }
+            }
+        };
 
-        // Same per-slot derivation as `run_ai_game` — see that method's comment.
-        let p1_seed = derive_player_seed(self.game_seed, PlayerSlot::P1);
-        let p2_seed = derive_player_seed(self.game_seed, PlayerSlot::P2);
-        let mut controller1 = create_ai_controller(self.p1_controller_type, p1_id, p1_seed);
-        let mut controller2 = create_ai_controller(self.p2_controller_type, p2_id, p2_seed);
-
-        let mut game_loop = GameLoop::new(&mut self.game).with_verbosity(VerbosityLevel::Normal);
-
-        match game_loop.run_turns(controller1.as_mut(), controller2.as_mut(), 1) {
-            Ok(result) => result.winner.is_none(),
-            Err(_) => false,
-        }
+        let ongoing = driver.step(&mut self.game);
+        self.ai_driver = Some(driver);
+        ongoing
     }
 
     /// Get the game logs as a JSON array of strings
@@ -756,6 +828,159 @@ impl WasmGame {
     pub fn clear_logs(&mut self) {
         self.game.logger.clear_logs();
     }
+}
+
+impl LocalAiDriver {
+    /// Advance the AI-vs-AI game by exactly one turn (or to the next yield),
+    /// preserving the historic one-turn-per-call step-through contract while
+    /// running on the resumable rewind+replay model.
+    ///
+    /// Returns `true` while the game is ongoing, `false` once it has ended.
+    ///
+    /// Forward vs re-entry is decided exactly like the network harness
+    /// (`ai_harness::step_harness`): if we already started a forward run for the
+    /// CURRENT turn number, this is a mid-turn RE-ENTRY (the loop yielded
+    /// `NeedInput` last call) → rewind to turn start and replay both players'
+    /// recorded choices, delegating only the new frontier choice. Otherwise it
+    /// is the first forward run of a fresh turn → run one turn straight through.
+    fn step(&mut self, game: &mut GameState) -> bool {
+        debug_assert!(
+            scratch_is_empty(game),
+            "sub_action_scratch must be empty at a run_one_turn boundary (start)"
+        );
+
+        let current_turn = game.turn.turn_number;
+        let is_reentry = self.forward_run_turn == Some(current_turn);
+
+        let result = if is_reentry {
+            self.step_replay(game)
+        } else {
+            self.step_forward(game)
+        };
+
+        // Remember the turn we last drove so the next entry can tell
+        // forward-vs-reentry.
+        self.forward_run_turn = Some(game.turn.turn_number);
+
+        match result {
+            Ok(GameLoopState::Complete(res)) => {
+                // At a clean turn boundary the scratch stash must be empty.
+                debug_assert!(
+                    scratch_is_empty(game),
+                    "sub_action_scratch must be empty after a completed turn"
+                );
+                // Ongoing iff no winner — exactly the old `run_turns(.., 1)`
+                // contract (`result.winner.is_none()`). A finished turn with no
+                // winner synthesizes `winner: None` in `step_forward`, so it too
+                // reports ongoing.
+                res.winner.is_none()
+            }
+            // Mid-turn yield (rare for pure AI-vs-AI). Game is still ongoing; JS
+            // re-calls run_one_turn, which will take the replay branch.
+            Ok(GameLoopState::AwaitingInput(_)) => true,
+            Err(_) => false,
+        }
+    }
+
+    /// First forward run of a turn: drive the two persistent controllers through
+    /// exactly one turn, converting a mid-turn `NeedInput` into
+    /// `AwaitingInput`.
+    fn step_forward(&mut self, game: &mut GameState) -> crate::Result<GameLoopState> {
+        let mut game_loop = GameLoop::new(game).with_verbosity(VerbosityLevel::Normal);
+        match game_loop.run_one_turn(self.controller1.as_mut(), self.controller2.as_mut()) {
+            // Game ended during this turn.
+            Ok(Some(result)) => Ok(GameLoopState::Complete(result)),
+            // Turn completed, game continues. Synthesize a Complete with no
+            // winner + Manual reason so the caller treats it as "ongoing"
+            // (matches the old run_turns(.., 1) contract).
+            Ok(None) => Ok(GameLoopState::Complete(GameResult {
+                winner: None,
+                turns_played: game_loop.game.turn.turn_number,
+                end_reason: GameEndReason::Manual,
+                action_count: game_loop.game.action_count(),
+            })),
+            Err(crate::MtgError::NeedInput(ctx)) => Ok(GameLoopState::AwaitingInput(*ctx)),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Mid-turn re-entry: rewind to the current turn's start and replay both
+    /// players' recorded choices, delegating only the new frontier choice to the
+    /// persistent inner controllers. Mirrors `ai_harness::step_replay` minus the
+    /// network remote/sync pieces. After replay we finish the turn (re-reaching
+    /// the same yield point or completing it).
+    fn step_replay(&mut self, game: &mut GameState) -> crate::Result<GameLoopState> {
+        let p1_id = self.p1_id;
+
+        // Rewind to the start of the current turn, partitioning the recorded
+        // intra-turn choices by player (forward chronological order).
+        let mut undo_log = std::mem::take(&mut game.undo_log);
+        let rewind = undo_log.rewind_to_turn_start(game);
+        game.undo_log = undo_log;
+
+        let choice_actions = match rewind {
+            Some((_turn, choice_actions, _rewound, log_size_at_turn)) => {
+                game.logger.truncate_to(log_size_at_turn);
+                choice_actions
+            }
+            None => Vec::new(),
+        };
+        let (p1_choices, p2_choices) = partition_choices_by_player(choice_actions, p1_id);
+
+        // Clear transient sub-action scratch not tracked by the undo log so the
+        // replay starts clean (mirrors the network harness replay branch). With
+        // the rewind back at a clean turn boundary this is a no-op in practice
+        // — these fields are only ever non-empty mid-sub-action — but we keep it
+        // for parity and defence in depth until the stash is removed entirely
+        // (mtg-vpjru).
+        game.sub_action_scratch.spell_targets.clear();
+        game.sub_action_scratch.pending_activation = None;
+        game.sub_action_scratch.pending_activation_effect_idx = None;
+        game.sub_action_scratch.pending_cycling_search = None;
+
+        // Wrap each PERSISTENT controller in a fresh ReplayController carrying its
+        // accumulated choice history: prior choices are echoed from cache (inner
+        // not invoked → RNG untouched); the genuinely-new frontier choice
+        // delegates to the persistent inner (RNG advances exactly once per real
+        // choice). Recover the inner afterwards so its RNG carries forward.
+        let p2_id = self.controller2.player_id();
+        let inner1 = std::mem::replace(&mut self.controller1, placeholder_controller(p1_id));
+        let inner2 = std::mem::replace(&mut self.controller2, placeholder_controller(p2_id));
+        let mut p1_replay = ReplayController::new(p1_id, inner1, p1_choices);
+        let mut p2_replay = ReplayController::new(p2_id, inner2, p2_choices);
+
+        let result = {
+            let mut game_loop = GameLoop::new(game).with_verbosity(VerbosityLevel::Normal);
+            game_loop.run_until_input(&mut p1_replay, &mut p2_replay)
+        };
+
+        self.controller1 = p1_replay.into_inner();
+        self.controller2 = p2_replay.into_inner();
+        result
+    }
+}
+
+/// `true` iff every transient sub-action scratch field is empty/`None` — the
+/// invariant that must hold at every `run_one_turn` yield boundary (proving the
+/// `sub_action_scratch` stash is unnecessary for this non-network path, the
+/// mtg-vpjru elimination prerequisite).
+fn scratch_is_empty(game: &GameState) -> bool {
+    let s = &game.sub_action_scratch;
+    s.pending_cycling_search.is_none()
+        && s.pending_activation.is_none()
+        && s.pending_activation_effect_idx.is_none()
+        && s.spell_targets.is_empty()
+        && s.pending_library_reorders.borrow().is_empty()
+}
+
+/// A throwaway controller used to temporarily fill a driver controller slot
+/// while the real persistent inner is moved into a `ReplayController`. Never
+/// invoked for a choice (the `ReplayController` holds the real inner for the
+/// whole replay run); it exists only so `std::mem::replace` can move the box out
+/// and back without an `Option` dance. Mirrors
+/// `ai_harness::placeholder_controller`.
+fn placeholder_controller(player_id: PlayerId) -> Box<dyn PlayerController> {
+    Box::new(ZeroController::new(player_id))
 }
 
 /// Simplified game state view for JSON serialization

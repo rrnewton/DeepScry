@@ -28,8 +28,24 @@ three increments on branch claude/netarch-longlived-gameloop:
     17 files rewritten to `game.sub_action_scratch.<field>`. rewind/replay
     oracle + whole-game oracle GREEN; full make validate cited in the commit.
 
-  INCREMENT 2 — long-lived GameLoop (run_turn returns NeedsInput/Yield, the
-    GameLoop object persists across step_harness calls; mine PR #11). PENDING.
+  INCREMENT 2 — long-lived GameLoop (DONE @ Increment-2 commit):
+    The non-network AI-vs-AI step-through (WasmGame::run_one_turn, wasm/mod.rs)
+    no longer reconstructs its controllers + GameLoop every call. A new
+    long-lived owner `LocalAiDriver` persists the two controllers (so a stateful
+    controller's RNG advances monotonically instead of being re-seeded from
+    game_seed each turn — a real prior bug) and the rewind/replay re-entry
+    bookkeeping (forward_run_turn), and re-reaches any intra-turn frontier by
+    rewind+replay, exactly as the proven network harness does — the WASM-legal
+    "long-lived GameLoop" (a Rust stack can't be suspended across a JS return,
+    so a fresh GameLoop borrow is spun up per call but carries no cross-yield
+    continuation state). run_one_turn now returns via the explicit
+    GameLoopState (Complete/AwaitingInput) yield enum. A debug_assert proves the
+    sub_action_scratch stash is EMPTY at every run_one_turn yield boundary (the
+    mtg-vpjru elimination prerequisite for this non-network path). DRY: the
+    choice-partition loop (duplicated in ai_harness + fancy_tui) is extracted to
+    the shared `replay_controller::partition_choices_by_player`, and ai_harness
+    now calls it. Full capped make validate GREEN (wasm.browser + network
+    multideck + native/WASM equivalence legs), log cited in the commit.
 
   INCREMENT 3 — unify the ~33 non-rewind WASM exports + delete the remaining
     re-entry/TurnStructure guards + unify the WasmHumanController path onto the
