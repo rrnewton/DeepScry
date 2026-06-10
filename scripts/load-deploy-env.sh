@@ -85,3 +85,59 @@ load_deploy_env() {
 
     return 0
 }
+
+# Source the gitignored OAuth + R2 secret files (`.oauth.env`, `.r2.env`)
+# into the current shell, FAIL-SOFT. These hold the login (GitHub/Google)
+# and Cloudflare-R2 deck-storage secrets; they are deliberately SEPARATE
+# from `.deepscry-deploy.env` (which carries infra config) so the high-
+# sensitivity credentials live in their own narrowly-scoped, easily-
+# rotated files. Each is OPTIONAL: a missing or empty file leaves the
+# corresponding feature disabled (mirrors the server's "disabled if the
+# env vars are absent" behaviour) and MUST NOT break the deploy.
+#
+# Searched in the SAME parent-then-repo order as the main config so the
+# operator can keep all three local files together in the dev-harness
+# parent dir. After this returns, any vars the files set
+# (GITHUB_OAUTH_CLIENT_ID, ..., AWS_ACCESS_KEY_ID, ...) are present in the
+# environment for render_env_file() to forward. Sourced files are echoed
+# (by path only, never their contents) into DEPLOY_OAUTH_FILE /
+# DEPLOY_R2_FILE for the caller to log.
+load_deploy_secrets() {
+    local repo_root="${DEPLOY_CONFIG_REPO_ROOT:-$(cd "$_LOAD_DEPLOY_ENV_DIR/.." && pwd)}"
+    local parent_dir
+    parent_dir="$(cd "$repo_root/.." 2>/dev/null && pwd || echo "$repo_root")"
+
+    # Search roots, in order: parent dir (preferred), then repo root. A test
+    # harness or an unusual layout can override BOTH with a single explicit
+    # directory via DEPLOY_SECRETS_SEARCH_DIR (used by the deploy-env-
+    # forwarding test to point at a temp dir holding dummy secret files).
+    local -a search_dirs
+    if [[ -n "${DEPLOY_SECRETS_SEARCH_DIR:-}" ]]; then
+        search_dirs=("$DEPLOY_SECRETS_SEARCH_DIR")
+    else
+        search_dirs=("$parent_dir" "$repo_root")
+    fi
+
+    DEPLOY_OAUTH_FILE=""
+    DEPLOY_R2_FILE=""
+
+    local basename file dir
+    # Map each secret-file basename to the caller-visible "which file did
+    # we source" variable name. Parent dir is preferred; repo root is the
+    # fallback (matching the main config search).
+    for basename in .oauth.env .r2.env; do
+        for dir in "${search_dirs[@]}"; do
+            file="$dir/$basename"
+            [[ -f "$file" ]] || continue
+            # shellcheck disable=SC1090
+            source "$file"
+            case "$basename" in
+                .oauth.env) DEPLOY_OAUTH_FILE="$file" ;;
+                .r2.env)    DEPLOY_R2_FILE="$file" ;;
+            esac
+            break
+        done
+    done
+
+    return 0
+}

@@ -26,6 +26,9 @@
 #   scripts/deploy-cloud.sh deploy   [flags...]
 #   scripts/deploy-cloud.sh status   # show systemd status + URLs
 #   scripts/deploy-cloud.sh logs     # tail the service log
+#   scripts/deploy-cloud.sh render-env  # print the EnvironmentFile body that
+#                                       # WOULD be forwarded (OAuth/R2 secrets
+#                                       # resolved fail-soft), no VM touched
 #   scripts/deploy-cloud.sh          # alias for "deploy" (backwards-compat)
 #
 # COMMON FLAGS (both phases):
@@ -63,7 +66,7 @@ source "$SCRIPT_DIR/load-deploy-env.sh"
 
 CMD="${1:-deploy}"
 case "$CMD" in
-    config|deploy|status|logs|--help|-h|help)
+    config|deploy|status|logs|render-env|--help|-h|help)
         shift || true
         ;;
     -*|--*)
@@ -132,7 +135,24 @@ DEPLOY_CONFIG_FILE_OVERRIDE="$CONFIG_FILE_OVERRIDE" \
     DEPLOY_CONFIG_REPO_ROOT="$REPO_ROOT" \
     load_deploy_env >/dev/null 2>&1 || true
 if [[ -n "${DEPLOY_CONFIG_FILE:-}" ]]; then
-    echo "→ loaded config: $DEPLOY_CONFIG_FILE"
+    echo "→ loaded config: $DEPLOY_CONFIG_FILE" >&2
+fi
+
+# Source the OPTIONAL OAuth + R2 secret files (`.oauth.env`, `.r2.env`) into
+# this shell, fail-soft. They carry the GitHub/Google login + Cloudflare-R2
+# deck-storage secrets and live in their own gitignored files (kept separate
+# from infra config). render_env_file() below forwards whatever they set into
+# the systemd EnvironmentFile; a missing/empty file simply leaves that feature
+# disabled and never breaks the deploy. Done for BOTH `config` and `deploy` so
+# populating a secret file + a normal `deploy` pushes it live (mtg-742).
+DEPLOY_CONFIG_REPO_ROOT="$REPO_ROOT" load_deploy_secrets || true
+# Notices to stderr so `render-env` (which writes the env body to stdout) and
+# any caller piping its output stays clean.
+if [[ -n "${DEPLOY_OAUTH_FILE:-}" ]]; then
+    echo "→ loaded OAuth secrets: $DEPLOY_OAUTH_FILE" >&2
+fi
+if [[ -n "${DEPLOY_R2_FILE:-}" ]]; then
+    echo "→ loaded R2 secrets: $DEPLOY_R2_FILE" >&2
 fi
 
 # Layer precedence: CLI > pre-existing env > config file > default.
@@ -165,18 +185,21 @@ PUBLIC_HOST="$REMOTE_HOST"
 # Banner
 # ---------------------------------------------------------------------------
 
-echo "═════════════════════════════════════════════════════════════════════"
-echo "  deploy-cloud.sh  (subcommand: $CMD)"
-echo "═════════════════════════════════════════════════════════════════════"
-echo "  Remote user/host : $REMOTE_USER@$REMOTE_HOST"
-echo "  SSH target       : $REMOTE_SSH"
-echo "  Remote dir       : ~/$REMOTE_DIR"
-echo "  HTTP port        : $REMOTE_PORT"
-echo "  Service          : $SERVICE_NAME (systemd-$SYSTEMD_MODE)"
-echo "  TLS cert/key     : ${TLS_CERT_PATH:-<none, plain HTTP>}"
-echo "  Repo root        : $REPO_ROOT"
-echo "═════════════════════════════════════════════════════════════════════"
-echo ""
+# `render-env` writes ONLY the env-file body to stdout (so it can be piped /
+# captured cleanly); its banner goes to stderr.
+if [[ "$CMD" == "render-env" ]]; then exec 3>&2; else exec 3>&1; fi
+echo "═════════════════════════════════════════════════════════════════════" >&3
+echo "  deploy-cloud.sh  (subcommand: $CMD)" >&3
+echo "═════════════════════════════════════════════════════════════════════" >&3
+echo "  Remote user/host : $REMOTE_USER@$REMOTE_HOST" >&3
+echo "  SSH target       : $REMOTE_SSH" >&3
+echo "  Remote dir       : ~/$REMOTE_DIR" >&3
+echo "  HTTP port        : $REMOTE_PORT" >&3
+echo "  Service          : $SERVICE_NAME (systemd-$SYSTEMD_MODE)" >&3
+echo "  TLS cert/key     : ${TLS_CERT_PATH:-<none, plain HTTP>}" >&3
+echo "  Repo root        : $REPO_ROOT" >&3
+echo "═════════════════════════════════════════════════════════════════════" >&3
+echo "" >&3
 
 # ---------------------------------------------------------------------------
 # Helper: render systemd unit file
@@ -224,6 +247,19 @@ WantedBy=$( [[ "$mode" == "system" ]] && echo "multi-user.target" || echo "defau
 UNIT
 }
 
+# Emit a single `NAME=value` line for the named env var IFF it is set and
+# non-empty (fail-soft). Used by render_env_file() to forward optional
+# secrets (OAuth / R2) into the systemd EnvironmentFile without a wall of
+# repeated `if [[ -n ... ]]` blocks. The value is read indirectly so we
+# never have to interpolate the secret into this function's source.
+forward_env_var() {
+    local name="$1"
+    local value="${!name:-}"
+    if [[ -n "$value" ]]; then
+        echo "${name}=${value}"
+    fi
+}
+
 render_env_file() {
     # The env file (systemd EnvironmentFile=) holds runtime secrets
     # (TLS paths, trusted bug-report password) and lives in the user's
@@ -255,20 +291,36 @@ ENV
     if [[ -n "${MTG_GH_PROXY:-}" ]]; then
         echo "MTG_GH_PROXY=${MTG_GH_PROXY}"
     fi
+    # OAuth login — GitHub + Google (mtg-742). The server reads these at startup
+    # and enables "Sign in with GitHub/Google" for any provider whose client
+    # id+secret are present; an absent provider's button simply does not appear
+    # (the server reports availability via /auth/status). OAUTH_CALLBACK_BASE is
+    # the public origin the provider redirects back to (e.g. https://deepscry.net);
+    # the callback paths /auth/callback/github and /auth/callback/google are
+    # appended by the server. These are SECRETS — sourced fail-soft from the
+    # gitignored <parent>/.oauth.env (see load_deploy_secrets). Per-var emission:
+    # only forward what is actually set, mirroring the server's per-provider
+    # "disabled if absent" behaviour.
+    forward_env_var GITHUB_OAUTH_CLIENT_ID
+    forward_env_var GITHUB_OAUTH_CLIENT_SECRET
+    forward_env_var GOOGLE_OAUTH_CLIENT_ID
+    forward_env_var GOOGLE_OAUTH_CLIENT_SECRET
+    forward_env_var OAUTH_CALLBACK_BASE
+
     # R2 durable deck storage (mtg-742). The server reads these at startup and
     # mints short-TTL, prefix-scoped presigned URLs from them; deck bytes never
-    # transit the server. ALL FOUR must be present for the deck-storage endpoint
-    # to enable (otherwise it 503s and the rest of the server is unaffected).
-    # These are SECRETS — they live only in this gitignored env file, never in
-    # the repo. Source them from the local config (.deepscry-deploy.env) before
-    # running `deploy-cloud.sh config`.
-    if [[ -n "${AWS_ACCESS_KEY_ID:-}" && -n "${AWS_SECRET_ACCESS_KEY:-}" \
-          && -n "${R2_ENDPOINT:-}" && -n "${R2_BUCKET:-}" ]]; then
-        echo "AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}"
-        echo "AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}"
-        echo "R2_ENDPOINT=${R2_ENDPOINT}"
-        echo "R2_BUCKET=${R2_BUCKET}"
-    fi
+    # transit the server. The endpoint enables only when the server sees a
+    # COMPLETE set (all four); a partial set leaves it disabled (503) and the
+    # rest of the server is unaffected. We forward each var INDEPENDENTLY and
+    # fail-soft — emit only the ones that are set — so an empty/missing
+    # .r2.env never breaks the deploy, it just leaves R2 disabled. These are
+    # SECRETS — sourced from the gitignored <parent>/.r2.env (see
+    # load_deploy_secrets); they live only in this generated env file, never in
+    # the repo.
+    forward_env_var AWS_ACCESS_KEY_ID
+    forward_env_var AWS_SECRET_ACCESS_KEY
+    forward_env_var R2_ENDPOINT
+    forward_env_var R2_BUCKET
 }
 
 # ---------------------------------------------------------------------------
@@ -711,6 +763,30 @@ PYGC
     echo "→ rsyncing $native_bin → ~/${REMOTE_DIR}/bin/mtg"
     rsync -avh "$native_bin" "$REMOTE_SSH:$REMOTE_DIR/bin/mtg"
 
+    # --- 7b. Refresh the systemd EnvironmentFile (mtg-742) ---
+    # Regenerate + push the EnvironmentFile on EVERY deploy, idempotently. This
+    # closes the config-vs-deploy gap that left GitHub/Google login + R2 cloud
+    # decks DISABLED live: previously the env file was written ONLY during
+    # `config`, so populating .oauth.env / .r2.env and running a normal `deploy`
+    # never reached the VM. Now the operator just (1) fills in the secret files
+    # and (2) re-runs `deploy` — the secrets go live with the same single step
+    # used for code. render_env_file() is fail-soft (emits only set vars), so an
+    # empty/missing secret file is a no-op here, not a breakage. The destination
+    # path matches the unit's `EnvironmentFile=-%h/.config/<svc>/deploy.env`,
+    # and `config` writes the SAME content, so re-running config stays a no-op.
+    echo "→ refreshing systemd EnvironmentFile (forwards OAuth/R2 secrets fail-soft)"
+    local tmp_env_deploy
+    tmp_env_deploy="$(mktemp)"
+    render_env_file > "$tmp_env_deploy"
+    rsync -q "$tmp_env_deploy" "$REMOTE_SSH:/tmp/${SERVICE_NAME}.env.staged"
+    rm -f "$tmp_env_deploy"
+    ssh "$REMOTE_SSH" "SERVICE_NAME='$SERVICE_NAME' bash -se" <<'REMOTE_ENV'
+set -euo pipefail
+mkdir -p ~/.config/"$SERVICE_NAME"
+mv /tmp/"$SERVICE_NAME".env.staged ~/.config/"$SERVICE_NAME"/deploy.env
+chmod 600 ~/.config/"$SERVICE_NAME"/deploy.env
+REMOTE_ENV
+
     # --- 8. Restart the service ---
     echo "→ restarting service ${SERVICE_NAME} (systemd-$SYSTEMD_MODE)"
     if [[ "$SYSTEMD_MODE" == "user" ]]; then
@@ -1068,5 +1144,11 @@ case "$CMD" in
     deploy) cmd_deploy ;;
     status) cmd_status ;;
     logs)   cmd_logs ;;
+    # Hidden diagnostic: print the systemd EnvironmentFile body that WOULD be
+    # forwarded (OAuth/R2 secrets resolved fail-soft from .oauth.env/.r2.env),
+    # without touching any VM. Lets an operator preview what is enabled and
+    # backs the deploy-env-forwarding test harness. Prints to stdout only —
+    # never rsynced anywhere by this subcommand.
+    render-env) render_env_file ;;
     *) echo "internal error: unhandled subcommand $CMD" >&2; exit 99 ;;
 esac

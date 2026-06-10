@@ -23,6 +23,40 @@ Run from the **primary checkout** (`parent/mtg-forge-rs/`), as the coordinator.
 3. `<parent>/.deepscry-deploy.env` exists (REMOTE_USER/REMOTE_HOST/etc.). The VM
    is already bootstrapped (`deploy-cloud.sh config` was run once).
 
+## Login + cloud-deck secrets (GitHub/Google OAuth + R2) — mtg-742
+
+The login and cloud-deck-storage SECRETS live in their own gitignored files in
+the dev-harness parent dir, kept SEPARATE from `.deepscry-deploy.env`:
+
+- `<parent>/.oauth.env` — `GITHUB_OAUTH_CLIENT_ID/SECRET`,
+  `GOOGLE_OAUTH_CLIENT_ID/SECRET`, `OAUTH_CALLBACK_BASE`.
+- `<parent>/.r2.env` — `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`,
+  `R2_ENDPOINT`, `R2_BUCKET`.
+
+`deploy-cloud.sh` SOURCES both files (fail-soft) via `load_deploy_secrets` and
+`render_env_file()` forwards whatever they set into the production systemd
+EnvironmentFile (`~/.config/<svc>/deploy.env`) on **both `config` AND `deploy`**.
+A missing/empty file simply leaves that feature disabled — it never breaks the
+deploy. Only the vars that are actually set are emitted (per-var fail-soft).
+
+**One-step enable flow:** populate the secret file(s), then run a normal
+`scripts/deploy-cloud.sh deploy`. The deploy regenerates + pushes the env file
+and restarts the service, so the secrets go live with the SAME single operation
+used for code (no separate `config` run required). Verify after with
+`curl -sk https://<host>/auth/status` (advertises which providers are
+configured) — see the live-verification section.
+
+**Out-of-band operator steps (one-time, NOT done by the deploy):**
+- Register the OAuth callback URLs at each provider:
+  `https://deepscry.net/auth/callback/github` and `.../google` (must match
+  `OAUTH_CALLBACK_BASE`).
+- Apply the R2 bucket CORS policy from `scripts/r2-cors.json` (Cloudflare
+  dashboard / admin token); steps in `ai_docs/reference/R2_DECK_STORAGE.md`.
+- Rotate the OAuth client secrets + the R2 token before public launch.
+
+Secret values NEVER enter the repo; the tracked template
+`scripts/deepscry-deploy.env.example` documents the file layout only.
+
 ## (Optional but recommended) CAS determinism confidence check
 
 Content-addressed set-bins must be byte-stable across rebuilds (only changed
@@ -95,6 +129,9 @@ curl -sk -o /dev/null -w '%{http_code}\n' https://<host>:<port>/data/sets/index.
 curl -skI https://<host>:<port>/data/sets/index.<hash>.json | grep -i cache-control   # immutable, max-age=31536000
 curl -skI https://<host>:<port>/pkg/mtg_engine_bg.<hash>.wasm | grep -i cache-control  # immutable, max-age=31536000
 curl -sk -o /dev/null -w '%{http_code}\n' https://<host>:<port>/   # 200
+# Login + cloud-deck secrets wired in (mtg-742): confirm the providers the
+# server now sees as configured (reflects .oauth.env forwarded into the unit).
+curl -sk https://<host>:<port>/auth/status            # lists configured OAuth providers
 ```
 
 ## Caching model (mtg-620 full-graph hashing + mtg-704 pure-DAG)
