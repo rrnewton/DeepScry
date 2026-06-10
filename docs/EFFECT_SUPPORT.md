@@ -67,8 +67,8 @@ workflow, row format, and update rules.
 | Mode$ TgtChoose (controller picks discard) | WORKING | 2026-05-12_#2226(928ec99f) | (none)     | Bazaar of Baghdad   |
 | AB$ Pump Cost$ R NumAtt$ +1 (firebreathing) | WORKING | 2026-05-29_#2432(f85d828d) | (none)    | Shivan Dragon       |
 | AB$ Pump Cost$ T ValidTgts$ Creature.X (targeted activated pump) | WORKING | 2026-05-30_#2525(d40c4206) | (fixed) | Mishra's Factory |
-| SP$ Pump NumAtt$ +X (X = Targeted$CardPower; +X/+0 power-doubling) | WORKING | 2026-06-10_#3143(1da3cff10b) | (fixed mtg-3xc3r / B18) | Berserk |
-| DB$ DelayedTrigger Mode$ Phase Phase$ "End Of Turn" Execute$ DB$ Destroy RememberObjects$ Targeted (delayed end-step destroy of the targeted creature, gated on attackedThisTurn — DelayedEffect::DestroyTracked) | WORKING | 2026-06-10_#3143(1da3cff10b) | (fixed mtg-3xc3r / B9+B18) | Berserk |
+| SP$ Pump NumAtt$ +X (X = Targeted$CardPower; +X/+0 power-doubling) | WORKING | 2026-06-10_#3143(1da3cff10b) | (fixed mtg-903 / B18) | Berserk |
+| DB$ DelayedTrigger Mode$ Phase Phase$ "End Of Turn" Execute$ DB$ Destroy RememberObjects$ Targeted (delayed end-step destroy of the targeted creature, gated on attackedThisTurn — DelayedEffect::DestroyTracked) | WORKING | 2026-06-10_#3143(1da3cff10b) | (fixed mtg-903 / B9+B18) | Berserk |
 | R$ Event$ Untap Layer$ CantHappen (doesn't-untap lock) | WORKING | 2026-05-30_#2525(d40c4206) | (fixed) | Paralyze |
 | K$ DoesNotUntap (forced stay-tapped, untap step) | WORKING | 2026-05-30_#2525(d40c4206) | (fixed) | Paralyze |
 | ValidCard$ Creature.powerGE<N> (power-threshold AffectedSelector) | WORKING | 2026-06-02_#2614(d3293adc) | (fixed) | Meekstone |
