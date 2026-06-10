@@ -188,10 +188,22 @@
             border-bottom: 1px solid var(--border);
             background: rgba(0,0,0,0.18);
             font-size: 12px;
-            max-height: 180px;
+            max-height: 280px;
             overflow-y: auto;
         }
         .card-details .cd-empty { color: var(--muted); font-style: italic; }
+        /* Two-column layout: art on the left, text fields on the right. The art
+           column collapses to zero width (no gap) when the image fails to load. */
+        .card-details .cd-body { display: flex; gap: 10px; align-items: flex-start; }
+        .card-details .cd-text { flex: 1; min-width: 0; }
+        .card-details .cd-art {
+            flex: none;
+            width: 146px;
+            border-radius: 6px;
+            border: 1px solid var(--border);
+            background: var(--surface-2);
+            display: block;
+        }
         .card-details .cd-name { font-size: 14px; font-weight: 700; color: var(--accent-2); margin-bottom: 4px; }
         .card-details .cd-row { margin: 2px 0; color: var(--muted); }
         .card-details .cd-row .cd-val { color: var(--text); }
@@ -406,7 +418,8 @@
         </div>
 
         <!-- Card Details: populated on click of a catalog row or a deck-list row
-             (renderCardDetails). Text-only for now (images later). -->
+             (renderCardDetails). Shows the card art (Gatherer, WASM-free) plus
+             name, mana cost, type line, P/T, and oracle text. -->
         <div class="card-details" id="card-details">
             <div class="cd-empty">Click a card to see its details.</div>
         </div>
@@ -660,10 +673,27 @@ function escapeHtml(s) {
 }
 
 /**
+ * Build a card-art image URL from a card NAME only, with no WASM and no card
+ * database. The deck editor is deliberately WASM-free (it only fetches two
+ * lightweight JSON files), so it cannot use the Scryfall-CDN path the game
+ * pages use — that needs the WASM `tui_card_cdn_url` + the binary
+ * `card-lookup.bin` table (see tui_game.html, mtg-722). Instead we use the same
+ * pure-name Gatherer source the launcher pages (launcher.html / solo_launcher.html)
+ * expose as their WASM-free image option. Gatherer only covers older cards and
+ * returns a card-back for misses, so the <img> is loaded best-effort: an onerror
+ * handler hides it and the text details still render in full.
+ */
+function gathererArtUrl(cardName) {
+    return 'https://gatherer.wizards.com/Handlers/Image.ashx?name=' +
+        encodeURIComponent(cardName) + '&type=card';
+}
+
+/**
  * Render the Card Details panel (TUI parity, deck_builder/ui.rs draw_card_details):
+ * the card art (left column, Gatherer/WASM-free, hidden on load failure) plus
  * name, mana cost (reusing renderMana), type line (types — subtypes), P/T (only
  * when both non-null, i.e. creatures), and oracle text. Pass a falsy entry to
- * reset the panel to its empty hint. Text-only for now (images later).
+ * reset the panel to its empty hint.
  */
 function renderCardDetails(entry) {
     const el = document.getElementById('card-details');
@@ -672,10 +702,10 @@ function renderCardDetails(entry) {
         el.innerHTML = '<div class="cd-empty">Click a card to see its details.</div>';
         return;
     }
-    const parts = [];
-    parts.push(`<div class="cd-name">${escapeHtml(entry.name)}</div>`);
+    const text = [];
+    text.push(`<div class="cd-name">${escapeHtml(entry.name)}</div>`);
     if (entry.mana_cost) {
-        parts.push(`<div class="cd-row">Cost: <span class="cd-val">${renderMana(entry.mana_cost)}</span></div>`);
+        text.push(`<div class="cd-row">Cost: <span class="cd-val">${renderMana(entry.mana_cost)}</span></div>`);
     }
     // Type line: "Creature — Goblin Warrior" (types joined, then subtypes).
     // `subtypes` is a space-joined string from the Rust catalog export; `types`
@@ -684,18 +714,33 @@ function renderCardDetails(entry) {
     const subs = (entry.subtypes || '').trim();
     const typeLine = subs ? `${typeNames} — ${subs}` : typeNames;
     if (typeLine) {
-        parts.push(`<div class="cd-row">Type: <span class="cd-val">${escapeHtml(typeLine)}</span></div>`);
+        text.push(`<div class="cd-row">Type: <span class="cd-val">${escapeHtml(typeLine)}</span></div>`);
     }
     // P/T only for creatures (both power and toughness present / non-null).
     if (entry.power !== null && entry.power !== undefined &&
         entry.toughness !== null && entry.toughness !== undefined) {
-        parts.push(`<div class="cd-row cd-pt">P/T: <span class="cd-val">` +
+        text.push(`<div class="cd-row cd-pt">P/T: <span class="cd-val">` +
             `${escapeHtml(String(entry.power))}/${escapeHtml(String(entry.toughness))}</span></div>`);
     }
     if (entry.oracle) {
-        parts.push(`<div class="cd-oracle">${escapeHtml(entry.oracle)}</div>`);
+        text.push(`<div class="cd-oracle">${escapeHtml(entry.oracle)}</div>`);
     }
-    el.innerHTML = parts.join('');
+
+    el.innerHTML = `<div class="cd-body">` +
+        `<div class="cd-text">${text.join('')}</div>` +
+        `</div>`;
+
+    // Build the art <img> via the DOM (not innerHTML) so we can attach an
+    // onerror handler that hides a missing/broken image without an inline
+    // handler string. The art column is FIRST in the flex row (left of text).
+    const body = el.querySelector('.cd-body');
+    const img = document.createElement('img');
+    img.className = 'cd-art';
+    img.alt = entry.name + ' card art';
+    img.loading = 'lazy';
+    img.src = gathererArtUrl(entry.name);
+    img.addEventListener('error', () => { img.style.display = 'none'; });
+    body.insertBefore(img, body.firstChild);
 }
 
 // ── Filtering ──────────────────────────────────────────────────────────────

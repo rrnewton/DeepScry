@@ -12,6 +12,8 @@
  *      {main_deck, sideboard} object form), Load-chip renders.
  *   6. Saved deck contents are correct (4-of limit reflected in counts).
  *   7. Import round-trips a .dck back to the same deck state.
+ *      Card-details pane (4b) shows name/cost/type/P-T/oracle AND a Gatherer
+ *      card-art <img> (WASM-free, computed from the card name) on selection.
  *   8. "Use in Lobby" sets mtg_lobby_deck_preselect in localStorage.
  *   9. Editing a PREMADE (?edit=<name>&source=premade) loads its cards and
  *      Save writes a COPY under a new name — the premade is never mutated
@@ -228,6 +230,7 @@ function check(cond, msg) {
             await page.waitForTimeout(100);
             const details = await page.evaluate(() => {
                 const el = document.getElementById('card-details');
+                const art = el.querySelector('img.cd-art');
                 return {
                     name: el.querySelector('.cd-name') ? el.querySelector('.cd-name').textContent : null,
                     rows: [...el.querySelectorAll('.cd-row')].map((r) => r.textContent),
@@ -237,6 +240,11 @@ function check(cond, msg) {
                     pt: el.querySelector('.cd-pt') ? el.querySelector('.cd-pt').textContent : null,
                     oracle: el.querySelector('.cd-oracle') ? el.querySelector('.cd-oracle').textContent : null,
                     empty: !!el.querySelector('.cd-empty'),
+                    // Read the raw src ATTRIBUTE (not the .src property), since an
+                    // onerror handler may hide the <img> when Gatherer art is
+                    // unavailable in the headless/offline test — the element +
+                    // its computed URL must still be present.
+                    artSrc: art ? art.getAttribute('src') : null,
                 };
             });
             check(!details.empty, 'card-details no longer shows the empty hint after a click');
@@ -255,6 +263,14 @@ function check(cond, msg) {
                 check(!!details.oracle && details.oracle.length > 0,
                     'card-details shows the oracle text');
             }
+            // Card art: the pane builds a Gatherer <img> (WASM-free, computed
+            // from the card name) for the clicked card. The art may be hidden on
+            // an offline/missing-image onerror, but the element + URL must exist.
+            check(!!details.artSrc && details.artSrc.includes('gatherer.wizards.com'),
+                'card-details renders a Gatherer art <img> for the card: "' + details.artSrc + '"');
+            check(!!details.artSrc &&
+                details.artSrc.includes('name=' + encodeURIComponent(detailCard.name)),
+                'card-details art URL is computed from the clicked card name');
             // Clear the search so later sections see the full list again.
             await page.fill('#search-input', '');
             await page.waitForTimeout(250);
