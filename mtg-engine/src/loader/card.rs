@@ -2827,16 +2827,15 @@ impl CardDefinition {
                         })
                         .unwrap_or_default();
 
-                    // Parse the intervening-if condition:
+                    // Parse the intervening-if condition (CR 603.4):
                     //   IsPresent$ Card.Self+counters_<CMP><N>_<TYPE> | PresentZone$ <zone>
-                    // We only model the `counters_…` self-condition here (which is
-                    // what zone-resident upkeep triggers like All Hallow's Eve need).
-                    let present_self_condition = params.get("IsPresent").and_then(|present| {
-                        present
-                            .split(['.', '+'])
-                            .find_map(|clause| clause.strip_prefix("counters_"))
-                            .and_then(crate::core::SelfCounterCondition::parse_clause)
-                    });
+                    //   IsPresent$ Card.untapped  (Howling Mine: "if ~ is untapped")
+                    // We model the `counters_…` self-condition (zone-resident
+                    // upkeep triggers like All Hallow's Eve) and the tap-status
+                    // self-condition (Howling Mine's each-player draw).
+                    let present_self_condition = params
+                        .get("IsPresent")
+                        .and_then(|present| crate::core::PresentSelfCondition::parse(present));
 
                     // Intervening-if condition (CR 603.4):
                     //   IsPresent$ Card.Self+dealtDamageToOppThisTurn

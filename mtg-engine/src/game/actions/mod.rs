@@ -8491,6 +8491,22 @@ impl GameState {
                             .and_then(|host| self.cards.try_get(host))
                             .is_some_and(|host| host.controller == active_player);
                     }
+                    // Intervening-if condition (CR 603.4): the source must satisfy
+                    // its self-state condition right now, or the trigger does not
+                    // fire. Howling Mine: "if CARDNAME is untapped, that player
+                    // draws an additional card" — a tapped Howling Mine grants no
+                    // extra draw.
+                    if let Some(cond) = &trigger.present_self_condition {
+                        use crate::core::PresentSelfCondition;
+                        let satisfied = match cond {
+                            PresentSelfCondition::Counter(c) => c.evaluate(card.get_counter(c.counter_type)),
+                            PresentSelfCondition::Untapped => !card.tapped,
+                            PresentSelfCondition::Tapped => card.tapped,
+                        };
+                        if !satisfied {
+                            return false;
+                        }
+                    }
                     true
                 })
                 .flat_map(|trigger| trigger.effects.clone())

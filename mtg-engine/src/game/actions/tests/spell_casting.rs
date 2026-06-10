@@ -1615,7 +1615,7 @@ Oracle:Exile All Hallow's Eve with two scream counters on it.
     #[test]
     fn test_all_hallows_eve_upkeep_trigger_parse_shape() {
         use crate::core::effects::CompareCondition;
-        use crate::core::{CounterType, Effect, SelfCounterCondition, TriggerEvent};
+        use crate::core::{CounterType, Effect, PresentSelfCondition, SelfCounterCondition, TriggerEvent};
         use crate::loader::card::CardLoader;
 
         // Full printed script (cardsfolder/a/all_hallows_eve.txt).
@@ -1657,10 +1657,10 @@ Oracle:Exile All Hallow's Eve with two scream counters on it.
         // IsPresent$ ...counters_GE1_SCREAM intervening-if
         assert_eq!(
             trigger.present_self_condition,
-            Some(SelfCounterCondition {
+            Some(PresentSelfCondition::Counter(SelfCounterCondition {
                 counter_type: CounterType::Scream,
                 compare: CompareCondition::GreaterOrEqual(1),
-            }),
+            })),
             "Upkeep trigger must carry the GE1 SCREAM intervening-if condition. \
              Got: {:?}",
             trigger.present_self_condition
@@ -1725,6 +1725,87 @@ Oracle:Exile All Hallow's Eve with two scream counters on it.
             "Trigger must gate the graveyard→battlefield mass resurrection on \
              counters_EQ0_SCREAM. Got: {:?}",
             effects
+        );
+    }
+
+    /// Parser-shape regression for Howling Mine (1994 World Championship compat,
+    /// mtg-713 B11). Exercises:
+    ///   - `Phase$ Draw | ValidPlayer$ Player` → BeginningOfDraw, NOT
+    ///     controller-only (fires on EACH player's draw step).
+    ///   - `IsPresent$ Card.untapped | PresentDefined$ Self` →
+    ///     Trigger::present_self_condition == PresentSelfCondition::Untapped
+    ///     (CR 603.4 intervening-if: "if Howling Mine is untapped").
+    ///   - `SVar:TrigDraw:DB$ Draw | Defined$ TriggeredPlayer` →
+    ///     Effect::DrawCards routed to the triggered (active) player, not the
+    ///     controller-placeholder.
+    #[test]
+    fn test_howling_mine_trigger_parse_shape() {
+        use crate::core::{Effect, PlayerId, PresentSelfCondition, TriggerEvent};
+        use crate::loader::card::CardLoader;
+
+        // Full printed script (cardsfolder/h/howling_mine.txt).
+        let content = r#"
+Name:Howling Mine
+ManaCost:2
+Types:Artifact
+T:Mode$ Phase | Phase$ Draw | ValidPlayer$ Player | TriggerZones$ Battlefield | PresentDefined$ Self | IsPresent$ Card.untapped | Execute$ TrigDraw | TriggerDescription$ At the beginning of each player's draw step, if CARDNAME is untapped, that player draws an additional card.
+SVar:TrigDraw:DB$ Draw | Defined$ TriggeredPlayer
+Oracle:At the beginning of each player's draw step, if Howling Mine is untapped, that player draws an additional card.
+"#;
+        let def = CardLoader::parse(content).expect("Howling Mine should parse");
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        let card_id = game.next_card_id();
+        let card = def.instantiate(card_id, p1_id);
+
+        let trigger = card
+            .triggers
+            .iter()
+            .find(|t| t.event == TriggerEvent::BeginningOfDraw)
+            .expect("Howling Mine must have a beginning-of-draw trigger");
+
+        // ValidPlayer$ Player → fires on EACH player's draw step, not just the
+        // controller's. (controller_turn_only would suppress the opponent's.)
+        assert!(
+            !trigger.controller_turn_only,
+            "Howling Mine fires on each player's draw step (ValidPlayer$ Player), \
+             so controller_turn_only must be false."
+        );
+
+        // IsPresent$ Card.untapped → Untapped intervening-if (CR 603.4).
+        assert_eq!(
+            trigger.present_self_condition,
+            Some(PresentSelfCondition::Untapped),
+            "Howling Mine's trigger must carry the `untapped` intervening-if so a \
+             tapped Howling Mine grants no extra draw. Got: {:?}",
+            trigger.present_self_condition
+        );
+
+        // DB$ Draw | Defined$ TriggeredPlayer → draw routed to the triggered
+        // (active) player, not a controller placeholder.
+        let draw = trigger
+            .effects
+            .iter()
+            .find_map(|e| {
+                if let Effect::DrawCards { player, count } = e {
+                    Some((*player, *count))
+                } else {
+                    None
+                }
+            })
+            .expect("Howling Mine trigger must contain a DrawCards effect");
+        assert_eq!(draw.1, 1, "Howling Mine draws exactly one extra card");
+        assert!(
+            draw.0.is_triggered_player(),
+            "DrawCards player must be the TriggeredPlayer sentinel (resolves to the \
+             active player whose draw step fired), not a controller placeholder. Got: {:?}",
+            draw.0
+        );
+        // Guard: not accidentally the controller-placeholder sentinel.
+        assert!(
+            !PlayerId::placeholder().is_triggered_player(),
+            "placeholder and triggered_player sentinels must be distinct"
         );
     }
 }

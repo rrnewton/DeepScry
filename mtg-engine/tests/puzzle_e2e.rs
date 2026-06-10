@@ -5817,6 +5817,68 @@ async fn test_whirling_dervish_end_step_counter() -> Result<()> {
     Ok(())
 }
 
+/// Regression (1994 World Championship compat — mtg-713 B11, intervening-if):
+/// Howling Mine's trigger is gated by "if CARDNAME is untapped" (`IsPresent$
+/// Card.untapped` — CR 603.4 intervening "if"). A TAPPED Howling Mine must NOT
+/// grant the extra draw on any player's draw step. Before the tap-status
+/// intervening-if was modeled, the parser only understood `counters_…`
+/// self-conditions, so a tapped Howling Mine still wrongly drew a card.
+#[tokio::test]
+async fn test_howling_mine_tapped_no_extra_draw() -> Result<()> {
+    use mtg_engine::core::TriggerEvent;
+
+    let cardsfolder = require_cardsfolder();
+    let puzzle_path = PathBuf::from("../test_puzzles/howling_mine_tapped_no_draw.pzl");
+    let puzzle_contents = std::fs::read_to_string(&puzzle_path)?;
+    let puzzle = PuzzleFile::parse(&puzzle_contents)?;
+
+    let card_db = CardDatabase::new(cardsfolder);
+    let mut game = load_puzzle_into_game(&puzzle, &card_db).await?;
+    game.seed_rng(42);
+
+    let p0_id = game.players[0].id; // Howling Mine's controller
+    let p1_id = game.players[1].id; // active player (its draw step)
+
+    let howling_mine = game
+        .battlefield
+        .cards
+        .iter()
+        .copied()
+        .find(|&id| {
+            game.cards
+                .try_get(id)
+                .is_some_and(|c| c.name.as_str() == "Howling Mine")
+        })
+        .expect("Howling Mine should be on the battlefield");
+
+    // Sanity: the puzzle placed Howling Mine tapped.
+    assert!(
+        game.cards.get(howling_mine)?.tapped,
+        "Puzzle must start with a TAPPED Howling Mine"
+    );
+
+    let p0_hand_before = game.get_player_zones(p0_id).map(|z| z.hand.cards.len()).unwrap_or(0);
+    let p1_hand_before = game.get_player_zones(p1_id).map(|z| z.hand.cards.len()).unwrap_or(0);
+
+    // Fire Howling Mine's beginning-of-draw-step trigger for P1's draw step.
+    game.check_triggers_for_controller(TriggerEvent::BeginningOfDraw, howling_mine, p1_id)?;
+
+    let p0_hand_after = game.get_player_zones(p0_id).map(|z| z.hand.cards.len()).unwrap_or(0);
+    let p1_hand_after = game.get_player_zones(p1_id).map(|z| z.hand.cards.len()).unwrap_or(0);
+
+    assert_eq!(
+        p1_hand_after, p1_hand_before,
+        "A TAPPED Howling Mine must NOT grant P1 an extra draw (CR 603.4 intervening-if not met)"
+    );
+    assert_eq!(
+        p0_hand_after, p0_hand_before,
+        "A TAPPED Howling Mine must NOT grant its controller an extra draw either"
+    );
+
+    println!("✓ Tapped Howling Mine grants no extra draw (IsPresent$ Card.untapped intervening-if, CR 603.4)");
+    Ok(())
+}
+
 /// Regression (1994 World Championship compat — mtg-713 B12): Kismet's GLOBAL
 /// ETB-tapped replacement — "Artifacts, creatures, and lands your opponents
 /// control enter tapped" (`R:Event$ Moved | ValidCard$ Artifact.OppCtrl,

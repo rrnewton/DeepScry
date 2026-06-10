@@ -2286,6 +2286,50 @@ impl SelfCounterCondition {
     }
 }
 
+/// Intervening-if condition evaluated against the trigger source card itself
+/// (CR 603.4). Encodes the `IsPresent$ Card.Self+<filter>` family of self-state
+/// gates that suppress a trigger when the source no longer meets the printed
+/// "if" clause at the moment it would trigger.
+///
+/// Two shapes are supported:
+/// - `Counter`: `IsPresent$ Card.Self+counters_<CMP><N>_<TYPE>` (All Hallow's
+///   Eve: at least one SCREAM counter).
+/// - `Tapped` / `Untapped`: `IsPresent$ Card.untapped` / `Card.tapped`
+///   (Howling Mine: "if CARDNAME is untapped, that player draws an additional
+///   card" — CR 603.4 the source must be untapped right now).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum PresentSelfCondition {
+    /// The source must satisfy a counter-count comparison.
+    Counter(SelfCounterCondition),
+    /// The source must currently be untapped (`IsPresent$ Card.untapped`).
+    Untapped,
+    /// The source must currently be tapped (`IsPresent$ Card.tapped`).
+    Tapped,
+}
+
+impl PresentSelfCondition {
+    /// Parse the `IsPresent$` value of a phase/self trigger into a self-state
+    /// intervening-if condition, if it encodes one we model.
+    ///
+    /// Recognized clauses (split on `.`/`+`):
+    /// - `counters_<CMP><N>_<TYPE>` -> `Counter` (All Hallow's Eve).
+    /// - `untapped` -> `Untapped` (Howling Mine).
+    /// - `tapped`   -> `Tapped`.
+    ///
+    /// Returns `None` when the `IsPresent$` value does not contain a clause we
+    /// understand (the trigger then carries no self-state intervening-if).
+    pub fn parse(is_present: &str) -> Option<Self> {
+        is_present.split(['.', '+']).find_map(|clause| match clause {
+            "untapped" => Some(PresentSelfCondition::Untapped),
+            "tapped" => Some(PresentSelfCondition::Tapped),
+            _ => clause
+                .strip_prefix("counters_")
+                .and_then(SelfCounterCondition::parse_clause)
+                .map(PresentSelfCondition::Counter),
+        })
+    }
+}
+
 /// Source of the spell to copy for CopySpellAbility
 ///
 /// Corresponds to the `Defined$` parameter in DB$ CopySpellAbility
@@ -2778,15 +2822,17 @@ pub struct Trigger {
     #[serde(default)]
     pub trigger_zones: smallvec::SmallVec<[crate::zones::Zone; 2]>,
 
-    /// Intervening-if condition: the source card must satisfy this counter
-    /// condition (in `present_zone`) for the trigger to fire (CR 603.4).
+    /// Intervening-if condition: the source card must satisfy this self-state
+    /// condition for the trigger to fire (CR 603.4).
     ///
-    /// Corresponds to `IsPresent$ Card.Self+counters_<CMP><N>_<TYPE>` combined
-    /// with `PresentZone$`. All Hallow's Eve: `IsPresent$
-    /// Card.Self+counters_GE1_SCREAM | PresentZone$ Exile`. None means no
-    /// intervening-if check.
+    /// Corresponds to `IsPresent$ Card.Self+<filter>` (optionally combined with
+    /// `PresentZone$`). Supported filters: a `counters_<CMP><N>_<TYPE>`
+    /// counter-count (All Hallow's Eve: `IsPresent$ Card.Self+counters_GE1_SCREAM
+    /// | PresentZone$ Exile`) and a tap-status check (Howling Mine: `IsPresent$
+    /// Card.untapped` — "if CARDNAME is untapped"). None means no intervening-if
+    /// check.
     #[serde(default)]
-    pub present_self_condition: Option<SelfCounterCondition>,
+    pub present_self_condition: Option<PresentSelfCondition>,
 
     /// Intervening-if condition: the source card must have dealt damage to an
     /// opponent this turn for the trigger to fire (CR 603.4). Corresponds to

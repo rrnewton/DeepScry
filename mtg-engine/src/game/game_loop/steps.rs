@@ -212,9 +212,16 @@ impl<'a> GameLoop<'a> {
                     }
                 }
                 // Intervening-if condition (CR 603.4): the source must satisfy the
-                // counter condition right now (All Hallow's Eve: >= 1 scream).
+                // self-state condition right now (All Hallow's Eve: >= 1 scream
+                // counter; Howling Mine: the source must be untapped).
                 if let Some(cond) = &t.present_self_condition {
-                    if !cond.evaluate(card.get_counter(cond.counter_type)) {
+                    use crate::core::PresentSelfCondition;
+                    let satisfied = match cond {
+                        PresentSelfCondition::Counter(c) => c.evaluate(card.get_counter(c.counter_type)),
+                        PresentSelfCondition::Untapped => !card.tapped,
+                        PresentSelfCondition::Tapped => card.tapped,
+                    };
+                    if !satisfied {
                         return false;
                     }
                 }

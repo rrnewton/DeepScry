@@ -1,0 +1,24 @@
+[metadata]
+Name:Howling Mine Tapped — No Extra Draw
+Goal:Win
+Turns:3
+Difficulty:Easy
+Description:Howling Mine ("At the beginning of each player's draw step, if Howling Mine is untapped, that player draws an additional card"). Here P0's Howling Mine is TAPPED, so the intervening-if condition (IsPresent$ Card.untapped, CR 603.4) is NOT met and the trigger must NOT fire on P1's draw step. P1 draws no extra card; P0 draws nothing either. Before the IsPresent$ untapped intervening-if was modeled, a tapped Howling Mine still wrongly granted the extra draw.
+
+[state]
+turn=2
+activeplayer=p1
+activephase=DRAW
+p0life=20
+p0hand=
+p0library=Plains; Plains; Plains; Plains; Plains
+p0graveyard=
+p0battlefield=Howling Mine|Tapped
+p0exile=
+
+p1life=20
+p1hand=
+p1library=Island; Island; Island; Island; Island
+p1graveyard=
+p1battlefield=
+p1exile=
