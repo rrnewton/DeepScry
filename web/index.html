@@ -658,6 +658,7 @@
     var lastListPlayers = [];     // most recent players page ({ name })
     var lastPlayersTotalCount = 0; // server-reported total players (pre-pagination)
     var refreshTimer = null;
+    var keepaliveTimer = null;    // lobby Phase 0 keepalive (mtg-z459a)
     var currentUsername = sessionStorage.getItem('mtg.username') || '';
     // True once the server confirms Register success.
     var nameRegistered = false;
@@ -851,6 +852,7 @@
         }
         ws.onopen = function () {
             setConnState('ok', 'Connected');
+            startLobbyKeepalive();
             wsReady = true;
             // On the FIRST connect we wait until /auth/status has resolved before
             // deciding whether to auto-register: a signed-in user must NOT be
@@ -867,6 +869,7 @@
         };
         ws.onclose = function () {
             setConnState('err', 'Disconnected — retrying in 5s');
+            stopLobbyKeepalive();
             ws = null;
             wsReady = false;
             nameRegistered = false;
@@ -1274,6 +1277,29 @@
 
     function stopRefreshTimer() {
         if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null; }
+    }
+
+    // Lobby keepalive (Phase 0, mtg-z459a). The list-poll above only fires
+    // while actively browsing (isInLobby()); a lobby tab sitting idle (a dialog
+    // open, or just left open) would otherwise have a silent socket that
+    // Safari / a proxy reaps after ~100s, producing the user-reported
+    // "wss://…/lobby failed: The network connection was lost". A periodic
+    // application-level Ping keeps it warm. The server's lobby loop answers
+    // Ping with Pong (server.rs); it is OUT-OF-BAND from any game stream (the
+    // lobby browse socket carries no game state at all). 25s < the ~100s idle
+    // cutoff (same value as the in-game and waiting-room keepalives).
+    window.__lobbyPingsSent = 0;
+    function startLobbyKeepalive() {
+        if (keepaliveTimer) return;
+        keepaliveTimer = setInterval(function () {
+            if (send({ type: 'ping', timestamp_ms: Date.now() })) {
+                window.__lobbyPingsSent += 1;
+            }
+        }, 25000);
+    }
+
+    function stopLobbyKeepalive() {
+        if (keepaliveTimer) { clearInterval(keepaliveTimer); keepaliveTimer = null; }
     }
 
     // -------------------------------------------------------------------------

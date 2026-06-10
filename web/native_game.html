@@ -1253,6 +1253,9 @@
                 window.__mtg_network_set_lobby_create = networkModule.network_set_lobby_create;
                 window.__mtg_network_set_lobby_join   = networkModule.network_set_lobby_join;
                 window.__mtg_network_clear_lobby_action = networkModule.network_clear_lobby_action;
+                // Phase 0 keepalive ping export (mtg-z459a). network.js guards
+                // optional usage so older WASM builds without it still work.
+                window.__mtg_network_ping = networkModule.network_ping;
 
                 const networkJs = await import('./network.js');
                 getNetworkClient  = networkJs.getNetworkClient;
@@ -1984,8 +1987,14 @@
                         network_set_lobby_create: window.__mtg_network_set_lobby_create,
                         network_set_lobby_join:   window.__mtg_network_set_lobby_join,
                         network_clear_lobby_action: window.__mtg_network_clear_lobby_action,
+                        // Phase 0 keepalive (mtg-z459a): lets network.js send a
+                        // periodic Ping over the live in-game socket.
+                        network_ping: window.__mtg_network_ping,
                     };
                     networkClient = getNetworkClient(wasmExports);
+                    // Expose the live client for the bug-report hook and the
+                    // Phase 0 keepalive e2e (window.__mtgNetworkClient._sendKeepalivePing).
+                    window.__mtgNetworkClient = networkClient;
                     // fix #3: gate the chatty [Network] traffic logs behind the
                     // page's debug-tracing flag (network.js uses this.debug).
                     networkClient.debug = isDebugMode();
@@ -2005,6 +2014,22 @@
                         if (typeof window.__showNetworkError === 'function') {
                             window.__showNetworkError(msg);
                         }
+                    };
+
+                    // Phase 0 reconnect status (mtg-z459a). Show an HONEST
+                    // transient "reconnecting…" status while network.js attempts
+                    // to re-open a dropped in-game socket. Phase 0 does NOT yet
+                    // resume the game (recovered is always false here), so this
+                    // only reports the attempt; the terminal honest message
+                    // ("reconnected but cannot resume" / "could not reconnect")
+                    // arrives via onError above.
+                    networkClient.onReconnecting = (status) => {
+                        const el = document.getElementById('network-status');
+                        if (el && status && !status.recovered) {
+                            el.textContent = `Reconnecting… (attempt ${status.attempt}/${status.maxAttempts})`;
+                            el.style.color = '#f0a04c';
+                        }
+                        debugLog(`[Network] Reconnecting attempt ${status?.attempt}/${status?.maxAttempts}`);
                     };
 
                     networkClient.onGameReady = () => {

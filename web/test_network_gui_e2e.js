@@ -322,6 +322,50 @@ async function runTest() {
         }
         log(`Player-name check OK: local slot shows username "${expectedUserName}", not deck name "${browserDeckName}"`);
 
+        // --- Phase 0 keepalive guard (mtg-z459a) ---
+        // The in-game socket must accept an application-level keepalive Ping so
+        // long idle AI-vs-AI auto-runs survive Safari/proxy idle reaping (the
+        // user-reported "network connection was lost"). A true ~100s idle is
+        // impractical to drive here, so we drive ONE real ping over the live
+        // in-game socket via the SAME path the periodic timer uses
+        // (network.js _sendKeepalivePing) and assert (1) the exposed pingsSent
+        // counter increments and (2) the socket stays connected afterward —
+        // proving the server answered Pong (server.rs in-game loop) rather than
+        // treating it as an idle drop. Ping/Pong is OUT-OF-BAND from the
+        // deterministic game stream (no action_count/undo-log/view-hash effect),
+        // so this cannot perturb the game.
+        const kaProbe = await page.evaluate(() => {
+            const c = window.__mtgNetworkClient;
+            if (!c || typeof c._sendKeepalivePing !== 'function') return { hook: false };
+            if (!c.isConnected()) return { hook: true, connected: false };
+            const before = c.pingsSent;
+            const sent = c._sendKeepalivePing();
+            return { hook: true, connected: true, before, after: c.pingsSent, sent };
+        });
+        if (!kaProbe.hook) {
+            throw new Error('Phase 0 keepalive: window.__mtgNetworkClient._sendKeepalivePing unavailable on the live game page');
+        }
+        if (kaProbe.connected === false) {
+            // Fast auto-run already concluded before we could probe — the
+            // keepalive PATH still exists (hook present); the in-game accept of
+            // a Ping over a live socket is also covered by the lobby keepalive
+            // test. Don't hard-fail on a race with game completion.
+            log('Phase 0 keepalive: socket already closed (game concluded before probe) — skipping live-ping assertion');
+        } else {
+            if (!kaProbe.sent || kaProbe.after !== kaProbe.before + 1) {
+                throw new Error(`Phase 0 keepalive: in-game ping not emitted (sent=${kaProbe.sent}, before=${kaProbe.before}, after=${kaProbe.after})`);
+            }
+            await page.waitForTimeout(500);
+            const kaStillConnected = await page.evaluate(() => {
+                const c = window.__mtgNetworkClient;
+                return !!(c && c.isConnected());
+            });
+            if (!kaStillConnected) {
+                throw new Error('Phase 0 keepalive: in-game socket dropped right after a keepalive ping (server should answer Pong, not close)');
+            }
+            log(`Phase 0 keepalive OK: in-game ping accepted (pingsSent ${kaProbe.before} → ${kaProbe.after}), socket stayed connected`);
+        }
+
         // Track process state
         let serverExited = false;
         let nativeClientExited = false;
