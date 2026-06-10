@@ -64,6 +64,9 @@ use tower_http::services::ServeDir;
 use crate::network::lobby::SharedLobby;
 use crate::network::{GameServer, ServerConfig};
 
+pub mod r2;
+use r2::{DevIdentity, Identity, PresignMethod, R2Config, DEFAULT_PRESIGN_TTL};
+
 // Build/version identity lives in the central `crate::version` module
 // (single source of truth shared with the CLI `mtg --version`). Re-export
 // the names the rest of this module already uses to avoid churn.
@@ -108,6 +111,17 @@ struct AppState {
     /// `waiting_games` counts from here. Read-only access from the
     /// HTTP side; never mutated.
     lobby: SharedLobby,
+    /// R2 deck-storage backend (mtg-742). `None` when the R2 env vars are
+    /// absent — the deck-storage endpoint then returns 503, and the rest of
+    /// the server (static files + lobby) is unaffected. The server holds the
+    /// ONE parent token here and mints short-TTL presigned URLs from it; it
+    /// never proxies deck bytes.
+    r2: Option<Arc<R2Config>>,
+    /// Pluggable identity resolver (mtg-742). Today this is the [`DevIdentity`]
+    /// stub (fixed `dev` prefix); the OAuth login leg swaps in a real
+    /// implementation WITHOUT touching the storage path. Boxed behind a trait
+    /// object so the concrete type is a drop-in replacement.
+    identity: Arc<dyn Identity>,
 }
 
 /// Entry point for `mtg server-web`. Boots the embedded GameServer on a
@@ -152,11 +166,27 @@ pub async fn run_web_server(mut config: WebServerConfig) -> Result<()> {
 
     // ---- 3. Build the axum app. ----
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
+
+    // R2 deck storage (mtg-742): read the parent token from the environment
+    // (mirrors how `.r2.env` / the systemd EnvironmentFile feed creds in).
+    // Absent creds → `None` → the deck-storage endpoint 503s; everything
+    // else still serves.
+    let r2 = R2Config::from_env().map(Arc::new);
+    if r2.is_some() {
+        log::info!("[web-server] R2 deck storage ENABLED (bucket from env)");
+    } else {
+        log::info!("[web-server] R2 deck storage disabled (no R2_* env vars)");
+    }
+    // The identity resolver is the DevIdentity stub until the OAuth leg lands.
+    let identity: Arc<dyn Identity> = Arc::new(DevIdentity);
+
     let state = AppState {
         upstream_ws_url: Arc::new(upstream_ws_url),
         shutdown_rx: shutdown_rx.clone(),
         start_time: std::time::Instant::now(),
         lobby: lobby_for_health,
+        r2,
+        identity,
     };
 
     // ── Tiered cache policy (content-addressing, mtg-571 + mtg-620) ───
@@ -223,6 +253,10 @@ pub async fn run_web_server(mut config: WebServerConfig) -> Result<()> {
     let app = Router::new()
         .route(&config.lobby_path, get(lobby_ws_handler))
         .route("/health", get(health_handler))
+        // Deck storage (mtg-742): mint short-TTL, prefix-scoped presigned R2
+        // URLs for the caller's collection object. The browser uses these to
+        // PUT/GET its `.tgz` directly against R2 — bytes never transit here.
+        .route("/api/deck-storage/credentials", get(deck_credentials_handler))
         .fallback_service(static_with_cache)
         .with_state(state);
 
@@ -598,6 +632,82 @@ async fn health_handler(State(state): State<AppState>) -> impl IntoResponse {
         StatusCode::OK,
         [(axum::http::header::CACHE_CONTROL, "no-store")],
         axum::Json(body),
+    )
+}
+
+// ─── Deck storage: presigned R2 credentials (mtg-742) ─────────────────
+
+/// `GET /api/deck-storage/credentials` — mint short-TTL, prefix-scoped
+/// presigned R2 URLs for the caller's deck collection.
+///
+/// The server resolves the caller's [`Identity`] (today: the fixed `dev`
+/// prefix stub; later: OAuth), computes that user's single collection key
+/// `decks/<id>/collection.tgz`, and returns presigned PUT / GET / HEAD URLs
+/// plus the download URL (a GET with `response-content-disposition` so the
+/// browser saves a real file — the data-liberation property). The browser
+/// then talks to R2 directly; deck bytes NEVER pass through this server.
+///
+/// Returns 503 when R2 is not configured (no env creds) so a dev box without
+/// R2 degrades gracefully instead of 500ing.
+///
+/// SECURITY: the returned URLs are each bound to ONE object key, ONE method,
+/// and a short expiry. They are NOT a bucket-wide capability: even though the
+/// parent token can see the whole bucket, a handed-out URL can only touch the
+/// caller's own collection object for ~10 minutes.
+async fn deck_credentials_handler(State(state): State<AppState>) -> impl IntoResponse {
+    let Some(r2) = state.r2.as_ref() else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            [(axum::http::header::CACHE_CONTROL, "no-store")],
+            axum::Json(serde_json::json!({
+                "error": "deck storage not configured",
+                "detail": "the server has no R2 credentials in its environment",
+            })),
+        );
+    };
+
+    let user_id = state.identity.user_id();
+    // Defensive: the identity provider must yield a prefix-safe id. The stub
+    // always does; this guards the future OAuth provider against handing us a
+    // traversal-y id.
+    if !r2::is_valid_user_id(user_id) {
+        log::error!("[web-server] identity yielded unsafe user_id; refusing to presign");
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            [(axum::http::header::CACHE_CONTROL, "no-store")],
+            axum::Json(serde_json::json!({ "error": "invalid identity" })),
+        );
+    }
+
+    let key = R2Config::collection_key(user_id);
+    let now = std::time::SystemTime::now();
+    let ttl = DEFAULT_PRESIGN_TTL;
+
+    let put_url = r2.presign(PresignMethod::Put, &key, ttl, now);
+    let get_url = r2.presign(PresignMethod::Get, &key, ttl, now);
+    let head_url = r2.presign(PresignMethod::Head, &key, ttl, now);
+    // "Download my decks": a GET that forces an attachment download of the
+    // real .tgz. Same presigning machinery; the disposition is a separate
+    // presigned GET so the in-app hydrate GET above stays a plain fetch.
+    let download_url = r2.presign_download(&key, ttl, now, "deepscry-decks.tgz");
+
+    (
+        StatusCode::OK,
+        [(axum::http::header::CACHE_CONTROL, "no-store")],
+        axum::Json(serde_json::json!({
+            // The prefix the browser is scoped to (informational).
+            "user_id": user_id,
+            "object_key": key,
+            "ttl_secs": ttl.as_secs(),
+            "put_url": put_url,
+            "get_url": get_url,
+            "head_url": head_url,
+            "download_url": download_url,
+            // Opaque storage contract (mtg-742): clients MUST send the body as
+            // application/gzip with NO Content-Encoding so the bytes are stored
+            // byte-clean (no CDN re-compression / auto-decompression).
+            "content_type": "application/gzip",
+        })),
     )
 }
 

@@ -126,6 +126,12 @@ tower-http = { version = "0.6", features = [
 ], optional = true }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"], optional = true }
 rustls-pemfile = { version = "2", optional = true }
+# R2 deck-storage presigned URLs (mtg-742): SigV4 signing reuses `ring`
+# (already pulled in by rustls) for HMAC-SHA256 / SHA-256, and
+# `percent-encoding` for the strict RFC-3986 query encoding S3 requires.
+# No `aws-sdk-*`; no new crypto crate.
+ring = { version = "0.17", optional = true }
+percent-encoding = { version = "2", optional = true }
 
 # WASM-specific dependencies
 wasm-bindgen = { version = "0.2", optional = true }
@@ -246,6 +252,8 @@ web-server = [
     "tower-http",
     "rustls",
     "rustls-pemfile",
+    "ring",
+    "percent-encoding",
     "tokio",
     "tokio-tungstenite",
     "futures-util",

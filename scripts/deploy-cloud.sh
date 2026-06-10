@@ -255,6 +255,20 @@ ENV
     if [[ -n "${MTG_GH_PROXY:-}" ]]; then
         echo "MTG_GH_PROXY=${MTG_GH_PROXY}"
     fi
+    # R2 durable deck storage (mtg-742). The server reads these at startup and
+    # mints short-TTL, prefix-scoped presigned URLs from them; deck bytes never
+    # transit the server. ALL FOUR must be present for the deck-storage endpoint
+    # to enable (otherwise it 503s and the rest of the server is unaffected).
+    # These are SECRETS — they live only in this gitignored env file, never in
+    # the repo. Source them from the local config (.deepscry-deploy.env) before
+    # running `deploy-cloud.sh config`.
+    if [[ -n "${AWS_ACCESS_KEY_ID:-}" && -n "${AWS_SECRET_ACCESS_KEY:-}" \
+          && -n "${R2_ENDPOINT:-}" && -n "${R2_BUCKET:-}" ]]; then
+        echo "AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}"
+        echo "AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}"
+        echo "R2_ENDPOINT=${R2_ENDPOINT}"
+        echo "R2_BUCKET=${R2_BUCKET}"
+    fi
 }
 
 # ---------------------------------------------------------------------------

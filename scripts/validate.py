@@ -406,6 +406,7 @@ def build_registry():
                      "test_card_size_stability.js", "test_battlefield_layout.js",
                      "test_decouple_step6_valid_choices.js", "test_tapped_rotation.js",
                      "test_graveyard_overlay.js", "test_deck_editor.js",
+                     "test_deck_storage.js",
                      "test_cdn_image_table.js", "test_image_flicker_memo.js",
                      "test_aura_render.js", "test_render_skip.js",
                      "test_action_affordance.js"]),

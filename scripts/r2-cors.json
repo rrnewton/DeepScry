@@ -1,0 +1,12 @@
+[
+  {
+    "AllowedOrigins": [
+      "https://deepscry.net",
+      "https://www.deepscry.net"
+    ],
+    "AllowedMethods": ["GET", "PUT", "HEAD"],
+    "AllowedHeaders": ["*"],
+    "ExposeHeaders": ["ETag"],
+    "MaxAgeSeconds": 3600
+  }
+]

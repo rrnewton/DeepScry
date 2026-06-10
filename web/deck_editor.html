@@ -444,6 +444,11 @@
             <button id="btn-export" class="ghost" title="Export as .dck text">Export .dck</button>
             <button id="btn-import" class="ghost" title="Import from .dck text">Import .dck</button>
             <button id="btn-clear" class="danger" title="Clear the current deck">Clear</button>
+            <!-- Cloud deck storage (mtg-742). Hidden unless the cloud feature
+                 flag is on (localStorage['mtg-deck-cloud']='1'); shown by the
+                 init code below. Lets the user pull their real .tgz collection. -->
+            <button id="btn-download-decks" class="ghost" style="display:none"
+                    title="Download all your decks as a .tgz file (data liberation)">Download my decks</button>
             <span id="action-status" class="status-msg"></span>
         </div>
     </div>
@@ -467,6 +472,9 @@
     </div>
 </div>
 
+<!-- R2 durable deck storage (mtg-742). Additive + OFF by default; the inline
+     script below only engages it when the cloud feature flag is set. -->
+<script src="deck_storage.js"></script>
 <script>
 'use strict';
 
@@ -1187,6 +1195,31 @@ function readCustomDecks() {
 /** Write the full custom-decks object to localStorage. */
 function writeCustomDecks(obj) {
     localStorage.setItem(CUSTOM_DECKS_KEY, JSON.stringify(obj));
+    // Cloud mirror (mtg-742): when the cloud flag is on, ALSO push to R2 with
+    // a debounced, If-Match conditional write. localStorage stays the
+    // source-of-truth for THIS device; R2 is the cross-device store. Failures
+    // here never block the local save (offline-tolerant by design).
+    maybeCloudSync(obj);
+}
+
+// Tracks the last-known remote ETag so conditional writes can detect a
+// cross-device clobber (a 412 → we re-hydrate and surface a hint).
+let _cloudEtag = null;
+let _cloudReady = false;
+function maybeCloudSync(obj) {
+    if (!window.DeckStorage || !window.DeckStorage.cloudEnabled()) return;
+    if (!_cloudReady) return; // don't push until the initial hydrate settled.
+    window.DeckStorage.saveDebounced(obj, _cloudEtag, (err, res) => {
+        if (err) {
+            if (err.conflict) {
+                showStatus('Your decks changed on another device — reload to merge.', 'err');
+            } else {
+                console.warn('cloud deck sync failed:', err);
+            }
+            return;
+        }
+        _cloudEtag = res.etag;
+    });
 }
 
 /** Convert a Map<name,count> to the canonical [[name,count], ...] array form. */
@@ -1512,6 +1545,48 @@ renderDeck();
 renderSavedList();
 loadCatalog();
 loadEditTarget();
+
+// ── Cloud deck storage bootstrap (mtg-742) ─────────────────────────────────
+// Additive + flag-gated: when localStorage['mtg-deck-cloud']='1', reveal the
+// "Download my decks" button, run a one-time additive migration of existing
+// localStorage decks into R2, hydrate the cross-device collection, and merge
+// any cloud-only decks into the local view. All best-effort; any failure
+// leaves the existing offline flow fully intact.
+(async function initCloudDeckStorage() {
+    if (!window.DeckStorage || !window.DeckStorage.cloudEnabled()) return;
+    const dlBtn = document.getElementById('btn-download-decks');
+    if (dlBtn) {
+        dlBtn.style.display = '';
+        dlBtn.addEventListener('click', async () => {
+            try {
+                await window.DeckStorage.downloadMyDecks();
+            } catch (e) {
+                showStatus('Download failed: ' + e.message, 'err');
+            }
+        });
+    }
+    try {
+        // One-time additive import of localStorage decks (never removes them).
+        await window.DeckStorage.migrateLocalStorage();
+        // Hydrate cross-device collection and merge cloud-only decks into the
+        // local view so a fresh device sees decks made elsewhere.
+        const { collection, etag } = await window.DeckStorage.hydrate();
+        _cloudEtag = etag;
+        const local = readCustomDecks();
+        let added = 0;
+        for (const [name, deck] of Object.entries(collection)) {
+            if (!(name in local)) { local[name] = deck; added++; }
+        }
+        if (added > 0) {
+            localStorage.setItem(CUSTOM_DECKS_KEY, JSON.stringify(local));
+            renderSavedList();
+        }
+        _cloudReady = true; // subsequent writeCustomDecks() pushes to R2.
+    } catch (e) {
+        console.warn('cloud deck storage init failed (offline-tolerant):', e);
+        // Leave _cloudReady false so we never push a half-initialized state.
+    }
+})();
 </script>
 </body>
 </html>
