@@ -1419,19 +1419,6 @@ struct WasmFancyTuiState {
     /// works for Human/Random/Heuristic/Zero alike.
     #[cfg(feature = "wasm-network")]
     net_our_controller: Option<Box<dyn PlayerController>>,
-    /// Turn-1-start baseline snapshot for network rewind+replay (mtg-610).
-    ///
-    /// Turn 1 has no `ChangeTurn` undo-log marker, so
-    /// `undo.rs::rewind_to_turn_start` would over-rewind through the
-    /// externally-applied setup (reserved CardID slots, opening-hand reveals
-    /// pushed by the server) — state the WASM client cannot re-derive by
-    /// replay. Instead we clone the `GameState` ONCE at the moment of the very
-    /// first forward run (the externally-set-up turn-1-start state) and restore
-    /// from this clone on turn-1 re-entries, mirroring
-    /// `GameLoop::with_post_setup_hook` in the native rewind/replay oracle.
-    /// `None` until the first network run; only set in network mode.
-    #[cfg(feature = "wasm-network")]
-    net_turn1_baseline: Option<Box<GameState>>,
     /// The turn number whose forward run we have already started in network
     /// mode (mtg-610). When a `run_network_mode` entry finds the game on this
     /// same turn, it is a mid-turn RE-ENTRY (the loop blocked waiting for the
@@ -1681,8 +1668,6 @@ impl WasmFancyTuiState {
             #[cfg(feature = "wasm-network")]
             net_our_controller: None,
             #[cfg(feature = "wasm-network")]
-            net_turn1_baseline: None,
-            #[cfg(feature = "wasm-network")]
             net_forward_run_turn: None,
             high_water_action_count: 0,
             high_water_log_count: 0,
@@ -1857,24 +1842,10 @@ impl WasmFancyTuiState {
             turn_number, actions_rewound, log_len_after, total_choices
         );
 
-        // Partition choices by player: our choices vs opponent choices
-        let mut our_choices = Vec::new();
-        let mut opponent_choices = Vec::new();
-
-        for action in choice_actions {
-            if let GameAction::ChoicePoint {
-                player_id,
-                choice: Some(c),
-                ..
-            } = action
-            {
-                if player_id == our_id {
-                    our_choices.push(c);
-                } else {
-                    opponent_choices.push(c);
-                }
-            }
-        }
+        // Partition choices by player (our choices vs opponent choices) via the
+        // shared helper — same loop the network AI harness uses (DRY).
+        let (our_choices, opponent_choices) =
+            crate::game::replay_controller::partition_choices_by_player(choice_actions, our_id);
 
         log::debug!(
             target: "wasm_tui",
@@ -2604,20 +2575,6 @@ impl WasmFancyTuiState {
     ) {
         let current_turn = self.game.turn.turn_number;
 
-        // Capture the turn-1-start baseline ONCE, before the very first forward
-        // run, so turn-1 re-entries can restore it (rewind_to_turn_start would
-        // over-rewind through the externally-applied setup since turn 1 has no
-        // ChangeTurn marker). Mirrors GameLoop::with_post_setup_hook in the
-        // native rewind/replay oracle.
-        if self.net_turn1_baseline.is_none() && current_turn <= 1 {
-            self.net_turn1_baseline = Some(Box::new(self.game.clone()));
-            log::debug!(
-                target: "wasm_tui",
-                "NETWORK AI: captured turn-1 baseline at undo_log={}",
-                self.game.undo_log.len()
-            );
-        }
-
         // Re-entry detection: if we already started a forward run for this turn
         // number, this entry is a mid-turn re-entry (loop blocked waiting for
         // the opponent) → rewind+replay. Otherwise it is the first forward run
@@ -2712,9 +2669,12 @@ impl WasmFancyTuiState {
         self.in_rewind_replay = true;
 
         // Rewind to the start of the current turn, extracting both players'
-        // recorded choices. Turn 1 has no ChangeTurn marker, so restore the
-        // captured baseline instead of over-rewinding through setup.
-        let (our_choices, opponent_choices) = self.rewind_for_network_replay(our_id);
+        // recorded choices. Turn 1 now carries a post-setup `ChangeTurn`
+        // boundary marker (`GameState::ensure_turn_one_boundary`), so a turn-1
+        // rewind stops there just like turn 2+ — no full-state baseline special
+        // case is needed (the obsolete `net_turn1_baseline` path was removed; the
+        // `ai_harness` network driver already omits it).
+        let (our_choices, opponent_choices) = self.rewind_to_turn_start(our_id);
 
         // Clear transient game-loop state not tracked by the undo log so the
         // replay starts clean (mirrors the human replay branch).
@@ -2782,77 +2742,6 @@ impl WasmFancyTuiState {
             self.game_over = true;
         }
         result
-    }
-
-    /// Rewind to the current turn's start for the AI network replay path,
-    /// returning `(our_choices, opponent_choices)`. On turn 1 (no ChangeTurn
-    /// marker) restore the captured turn-1 baseline and read the choices from
-    /// the pre-rewind undo log; otherwise delegate to `rewind_to_turn_start`.
-    #[cfg(feature = "wasm-network")]
-    fn rewind_for_network_replay(&mut self, our_id: PlayerId) -> (Vec<ReplayChoice>, Vec<ReplayChoice>) {
-        let on_turn_one = self.game.turn.turn_number <= 1 && self.game.undo_log.current_turn().is_none();
-        if on_turn_one {
-            if let Some(baseline) = self.net_turn1_baseline.as_ref() {
-                // Extract this turn's choices from the live (pre-restore) log
-                // BEFORE replacing the game with the baseline clone.
-                let (our_choices, opponent_choices) = Self::partition_choices(&self.game, our_id);
-                let baseline_clone = (**baseline).clone();
-                self.game = baseline_clone;
-                // The baseline clone reverts `game.cards` to turn-1-start, so the
-                // async-reveal-materialised instances are already gone for the
-                // baseline-captured set. Unwind the reveal-history buffer to the
-                // restored action_count (mtg-610): clears any opponent instance a
-                // reveal stamped > R materialised, and resets the cursor so the
-                // forward replay re-consumes reveals in lockstep (gated by their
-                // effective action_count) as the replay re-advances.
-                let retained = self.game.undo_log.len() as u64;
-                ensure_client()
-                    .borrow_mut()
-                    .unwind_state_sync_to(&mut self.game, retained);
-                return (our_choices, opponent_choices);
-            }
-            log::warn!(target: "wasm_tui", "NETWORK AI REPLAY: turn-1 re-entry but no baseline captured");
-        }
-        // Turn >= 2: undo-log rewind. `rewind_to_turn_start` (undo.rs) clears
-        // any shadow card instance sitting in a hidden library zone, so the
-        // rewound `cards` set is deterministic regardless of when async reveals
-        // landed — fixing the turn-start-hash determinism hole (mtg-610). The
-        // verifier's turn-start hash is captured INSIDE that call, AFTER the
-        // library clear, so it reflects the clean (instance-free-library) state.
-        //
-        // `rewind_to_turn_start` already unwinds the reveal-history buffer to
-        // the rewound action_count (clearing async opponent instances stamped
-        // past it) and resets the sync cursor, so the forward replay re-consumes
-        // reveals in lockstep (gated by effective action_count) and
-        // re-instantiates exactly the cards that belong at each position — e.g.
-        // a land drawn earlier this turn comes back as a known card so it is
-        // offered as a PlayLand again, matching the server. The turn-start hash
-        // captured inside that call reflects the position-deterministic set.
-        self.rewind_to_turn_start(our_id)
-    }
-
-    /// Partition the undo log's recorded `ChoicePoint` choices into
-    /// `(our_choices, opponent_choices)` in forward chronological order. Used
-    /// by the turn-1 baseline-restore path, which does not pop the undo log.
-    #[cfg(feature = "wasm-network")]
-    fn partition_choices(game: &GameState, our_id: PlayerId) -> (Vec<ReplayChoice>, Vec<ReplayChoice>) {
-        let mut our_choices = Vec::new();
-        let mut opponent_choices = Vec::new();
-        for action in game.undo_log.actions() {
-            if let GameAction::ChoicePoint {
-                player_id,
-                choice: Some(c),
-                ..
-            } = action
-            {
-                if *player_id == our_id {
-                    our_choices.push(c.clone());
-                } else {
-                    opponent_choices.push(c.clone());
-                }
-            }
-        }
-        (our_choices, opponent_choices)
     }
 
     /// Build the state-sync callback used by the AI network path.

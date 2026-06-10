@@ -47,9 +47,29 @@ three increments on branch claude/netarch-longlived-gameloop:
     now calls it. Full capped make validate GREEN (wasm.browser + network
     multideck + native/WASM equivalence legs), log cited in the commit.
 
-  INCREMENT 3 — unify the ~33 non-rewind WASM exports + delete the remaining
-    re-entry/TurnStructure guards + unify the WasmHumanController path onto the
-    single rewind/replay path (mtg-677/mtg-680). PENDING — large; may be split.
+  INCREMENT 3 — unify the non-rewind WASM paths + delete remaining guards +
+    unify the WasmHumanController path (mtg-677/mtg-680). IN PROGRESS, split
+    into sub-pieces, full-validate-gated after each:
+      3a (DONE @ Increment-3a commit): folded in slot02's local-only Phase 4 B
+         (branch claude/netarch-local-unify @73ef168e) — removed the obsolete
+         `net_turn1_baseline` full-state turn-1 clone+restore path from
+         fancy_tui's network driver (made dead by ensure_turn_one_boundary; the
+         ai_harness driver already omits it; 704-call dead-branch probe proved
+         it was never taken), collapsing `rewind_for_network_replay` to its only
+         live arm `rewind_to_turn_start` and deleting the dead `partition_choices`
+         helper. ALSO DRY'd fancy_tui's remaining inline partition loop onto the
+         shared `replay_controller::partition_choices_by_player` (so all three
+         WASM drivers — ai_harness, fancy_tui, local AI — now share ONE partition
+         helper). fancy_tui.rs -121/+10. network.gui + multideck + wasm.browser
+         GREEN.
+      3b+ (PENDING — large): migrate the ~33 non-rewind `tui_*` exports onto the
+         single rewind/replay path; remove the remaining is_reentry /
+         net_forward_run_turn re-entry bookkeeping by unifying the three drivers
+         into ONE shared rewind-aware driver (design Phase 5 DRY); unify
+         WasmHumanController/WasmControllerType::Human onto the single path
+         (ties mtg-679). Each guard/export removed ONE at a time, full-validate-
+         gated (network multideck mirror = sharpest desync canary). Tracked under
+         mtg-677/mtg-680.
 
 The §9 phased plan below is the original Phase-1..6 design; the three
 increments above are the user's re-cut of that same work. Increment 1
