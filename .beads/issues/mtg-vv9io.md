@@ -1,0 +1,52 @@
+---
+title: 2020 Championship — broken-card root-cause backlog (B1-B5)
+status: open
+priority: 2
+issue_type: task
+depends_on:
+  mtg-rwu5j: parent-child
+created_at: 2026-06-10T20:56:42.097874463+00:00
+updated_at: 2026-06-10T20:56:42.097874463+00:00
+---
+
+# Description
+
+2020 World Championship compat sweep — broken/partial-card root-cause backlog. Compiled by agent compat-2020-champ (slot03) from a static script scan of all 63 unique cards + targeted-puzzle reproducers with verbosity-3 game logs. Rolls up under the 2020 TRACK bead mtg-rwu5j (umbrella mtg-684).
+
+STAMP: 2026-06-10_#3147(18c190e1)
+
+Reproducer puzzles live in (gitignored) debug/survey2020/*.pzl on branch claude/compat-2020-champ. Per-deck mirror logs in debug/survey2020/<deck>.log.
+
+== Prioritized backlog ==
+
+B1 [BROKEN, HIGH VALUE — DO FIRST] Torbran, Thane of Red Fell
+  Card: cardsfolder/t/torbran_thane_of_red_fell.txt (4x in 03_manfield_mono_red)
+  Script: R:Event$ DamageDone | ValidSource$ Card.RedSource+YouCtrl | ValidTarget$ Player.Opponent,Permanent.OppCtrl | ReplaceWith$ DmgPlus2
+          SVar:DmgPlus2:DB$ ReplaceEffect | VarName$ DamageAmount | VarValue$ X ; SVar:X:ReplaceCount$DamageAmount/Plus.2
+  Root cause: NO damage-INCREASE replacement layer in the engine. core/prevention.rs implements damage-PREVENTION replacements (DamageSourceFilter::ColoredSource etc.) and there is a source-filtered prevention shield path in game/actions/combat.rs (apply_source_prevention_shields), but nothing applies a +N modification to outgoing damage from a filtered source. The DB$ ReplaceEffect | VarName$ DamageAmount construct has no converter arm (falls through to Effect::Unimplemented, only logged if it resolves — and it never gets a chance because the R: line is dropped).
+  Empirical evidence: debug/survey2020/torbran_test.pzl (Torbran + Scorch Spitter, both attacking). Observed: "Torbran deals 2 damage" (base, should be combat 2->4 itself excluded since not opponent's... actually self combat IS red source -> should be 4) and "Scorch Spitter (8) deals 1 damage to Player 2" via its attack trigger (should be 3). Opponent ended at 16; with the boost should be ~13.
+  Fix shape: add a damage-modification replacement category that applies at the SINGLE damage-application chokepoint (both combat and non-combat / ability damage) so it cannot be bypassed. Must be deterministic + rewind-safe + computed identically server+client (no transient skip-fields). Filter = ValidSource red+YouCtrl, ValidTarget opponent-or-opp-permanent. Generalizes to other "deals damage plus N" effects (e.g. Fiery Emancipation x3, Gratuitous Violence x2, City on Fire). COORDINATE with slot01 (1994) which is editing damage/effect paths — claim before editing combat.rs / effect_converter.rs.
+
+B2 [BROKEN, MEDIUM-HIGH VALUE] Adventure mechanic (AlternateMode:Adventure)
+  Cards: bonecrusher_giant_stomp (all 4 decks), brazen_borrower_petty_theft (04), rimrock_knight_boulder_rush (03), giant_killer_chop_down (04 sideboard).
+  Root cause: Adventure is essentially unimplemented — only a stub comment in core/persistent_effect.rs ("Adventure (in exile, can cast creature half)"). The adventure (instant/sorcery) half is never offered as a castable mode from hand; the creature-cast-from-exile-after-adventure path is unverified.
+  Empirical evidence: debug/survey2020/stomp_test.pzl (Bonecrusher Giant in hand + 4 Mountains) — only "cast Bonecrusher Giant" offered, no "cast Stomp". Mirror survey logs show the AI only ever casts the creature halves.
+  Fix shape: parse the ALTERNATE block as a second castable face; offer it from hand; on resolution, exile the card with an "may cast creature half from exile" permission (a cast-from-exile grant), then normal cast. Reuses ChangeZone exile + a cast-permission flag. Cards currently behave as plain creatures — functional but strictly weaker (lose the removal/bounce/burn halves). Lower urgency than B1 because the decks still PLAY; the creature bodies are correct.
+
+B3 [PARTIAL] Commence the Endgame
+  Card: cardsfolder/c/commence_the_endgame.txt (sideboard 01)
+  "Can't be countered" (R:Event$ Counter | Layer$ CantHappen) + "draw 2" (SP$ Draw) WORK. The "amass Zombies X" sub-ability (SVar:DBAmass:DB$ Amass | Type$ Zombie | Num$ X) is unimplemented — no Amass/Army support anywhere in src. Card draws 2 but creates no Army. Strictly weaker. Low priority (sideboard 1-of, niche mechanic).
+
+B4 [PARTIAL] Chandra, Acolyte of Flame
+  Card: cardsfolder/c/chandra_acolyte_of_flame.txt (sideboard 03)
+  +0 PutCounterAll (loyalty to red planeswalkers) and +0 Token (two 1/1 haste elementals, sac at EOT) parse (both ApiTypes IMPL) — likely WORKING, needs puzzle confirm. The -2 "you may cast target instant/sorcery cmc<=3 from your graveyard" (AB$ Play | TgtZone$ Graveyard | ExileOnMoved$) has NO converter arm for ApiType::Play (cast-from-other-zone). The ultimate is non-functional. Shares the cast-from-graveyard gap with many flashback-like cards.
+
+B5 [VERIFY — likely PARTIAL->WORKING] Sphinx of Foresight
+  Card: cardsfolder/s/sphinx_of_foresight.txt (4x in 02/04)
+  K:MayEffectFromOpeningHand:RevealCard keyword EXISTS (core/keyword_set.rs:298) and opening-hand reveal infra exists (network/reveal_processor.rs handles RevealReason::OpeningHand). The on-battlefield "scry 1 each upkeep" T: trigger is standard (Scry IMPL) and almost certainly WORKING. Needs a targeted puzzle to confirm: (a) opening-hand reveal is offered, (b) the one-shot "scry 3 on your first upkeep" Effect-with-Triggers fires. NOTE slot01/netarch recently reworked opening-hand reveal — check for interaction before/after rebase.
+
+== Cards CONFIRMED playable end-to-end (no crash, constructs IMPL) but per-card game-log NOT yet captured ==
+All lands (basics + Hallowed Fountain/Steam Vents/Sacred Foundry shocklands, Temple scry-lands, Castle utility lands, Field of Ruin, Fabled Passage), counterspells (Absorb, Dovin's Veto, Mystical Dispute, Aether Gust, Disenchant, Devout Decree), burn (Lava Coil, Redcap Melee, Scorching Dragonfire, Chandra's Pyrohelix, Justice Strike), sweepers (Deafening Clarion, Shatter the Sky, DamageAll), card draw (Omen of the Sea, Thirst for Meaning, Shimmer of Possibility, Light Up the Stage), and the creatures/walkers in the UNTESTED list of the TRACK bead. These default to UNTESTED in per-card tracking; promote with targeted puzzles.
+
+== Suggested order ==
+B1 Torbran (highest value, mono-red centerpiece, generalizes to a family) -> B2 Adventure (5 cards, all 4 decks) -> verify B5 Sphinx -> B4 Chandra (shares cast-from-graveyard family) -> B3 Amass (niche). Then sweep the UNTESTED list deck-by-deck with targeted puzzles.

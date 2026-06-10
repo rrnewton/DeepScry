@@ -1,0 +1,58 @@
+---
+title: 'TRACK: 2020 World Championship decks — full deck compatibility'
+status: open
+priority: 1
+issue_type: task
+depends_on:
+  mtg-684: parent-child
+created_at: 2026-06-10T20:55:52.100157138+00:00
+updated_at: 2026-06-10T20:55:52.100157138+00:00
+---
+
+# Description
+
+TRACK: full play-tested gameplay compatibility for all 2020 Magic World Championship XXVI decks (Honolulu HI, Feb 14-16 2020; Standard / Theros Beyond Death era). Sibling of mtg-709 (1994) and mtg-881 (2025); rolls up under the championship-collections umbrella mtg-684.
+
+User goal: each 2020 World Championship deck plays COMPLETE games with NO engine errors, and every card's abilities/keywords/effects classified WORKING (or PARTIAL/BROKEN then FIXED) per the targeted_compatibility + compatibility_tracking SKILLs.
+
+== Scope ==
+decks/championship/2020/ (4 Top-4 decks, incl sideboards):
+- 01_pvddr_azorius_control  (1st, Paulo Vitor Damo da Rosa, Azorius UW Control)
+- 02_carvalho_jeskai_fires  (2nd, Marcio Carvalho, Jeskai URW Fires of Invention)
+- 03_manfield_mono_red      (3rd-4th, Seth Manfield, Mono-Red Aggro)
+- 04_nassif_jeskai_fires    (4th, Gabriel Nassif, Jeskai URW Fires of Invention)
+
+This is a MODERN STANDARD pool (planeswalkers, Fires of Invention, Cavaliers, Adventure cards, Sagas, Class-style enchantments) — a very different pool from the old-school 1994/Vintage set.
+
+== Baseline survey (2026-06-10_#3147(18c190e1), agent compat-2020-champ slot03) ==
+- 63 unique cards across all 4 decks (union, incl sideboards). 59 resolve to a single cardsfolder file; 4 are Adventure DFC-style combined files (bonecrusher_giant_stomp, brazen_borrower_petty_theft, giant_killer_chop_down, rimrock_knight_boulder_rush).
+- 'mtg tourney' all 4 decks x 200 games (seed 7): ALL completed, ZERO crashes / panics / runtime 'unimplemented effect' warnings. Every deck loads 60 cards and plays end-to-end.
+- 4 per-deck mirror games at verbosity 3 captured (debug/survey2020/<deck>.log): clean; Azorius mirror ran 106 turns to deck-out (correct control-mirror behavior). Only non-error 'warn' was a legitimate 'Illegal block dropped: Bonecrusher Giant can't block Dream Trawler (evasion)'.
+
+KEY NUANCE: zero runtime errors does NOT mean every ability works. The heuristic AI exercises only a subset of abilities. Several cards are silently WEAKER than printed because an ability is dropped at the converter without a runtime warning (the Unimplemented warning only fires if such an effect actually resolves; dropped sub-abilities / replacement effects emit at debug level only). Static script + targeted-puzzle analysis found the gaps below.
+
+== ApiType / construct survey (static scan of all 63 scripts) ==
+ApiTypes used and their converter status:
+- IMPL: ChangeZone, Tap, Scry, Draw, Mana, DealDamage, Token, Effect, Cleanup, PumpAll, Pump, Dig(->DigMultiple), Destroy, Counter, PutCounter, GainLife, Discard, DamageAll, Untap, Sacrifice, PutCounterAll, DestroyAll, Charm, Attach.
+- GAP: Play (AB$ Play cast-from-graveyard / ReplaySpell — Chandra Acolyte -2), Amass (Commence the Endgame), ReplaceEffect VarName$ DamageAmount (Torbran damage-boost), Reveal (Sphinx opening-hand — has infra, needs verify).
+Keywords used: Flying, Flash, Lifelink, Haste, Reach, First Strike, Mentor, Equip:3, Protection from white/red, Spectacle:R, Afterlife:1, Chapter (Saga), MayEffectFromOpeningHand. Adventure (AlternateMode) has only a stub comment in src.
+
+== BROKEN / PARTIAL findings (see backlog bead for B1.. detail) ==
+B1 [BROKEN, HIGH VALUE] Torbran, Thane of Red Fell (4x in 03_mono_red): damage-increase replacement (R:Event$ DamageDone | ReplaceWith$ DmgPlus2; DB$ ReplaceEffect | VarName$ DamageAmount | VarValue$ X; X=ReplaceCount$DamageAmount/Plus.2) is UNIMPLEMENTED. Engine has damage-PREVENTION replacements (core/prevention.rs) but no damage-INCREASE replacement layer. EMPIRICALLY CONFIRMED: puzzle debug/survey2020/torbran_test.pzl — Scorch Spitter attack-trigger dealt 1 (expected 3); both creatures' combat damage unboosted. This is the mono-red combo centerpiece.
+B2 [BROKEN, MEDIUM-HIGH VALUE] Adventure mechanic (AlternateMode:Adventure) — 5 cards: Bonecrusher Giant (4 decks), Brazen Borrower, Rimrock Knight, Giant Killer. The adventure (instant/sorcery) half is NOT offered as a castable mode; only the creature half casts. EMPIRICALLY CONFIRMED: debug/survey2020/stomp_test.pzl — with Bonecrusher in hand + 4 Mountains, only 'cast Bonecrusher Giant' offered, no 'cast Stomp'. Creature-cast-from-exile-after-adventure also unverified. Cards play as vanilla-ish creatures.
+B3 [PARTIAL] Commence the Endgame (sideboard 01): 'can't be countered' + draw 2 work; the 'amass Zombies X' sub-ability (DB$ Amass) is unimplemented (no Amass/Army support in engine). Strictly weaker.
+B4 [PARTIAL] Chandra, Acolyte of Flame (sideboard 03): +0 put-loyalty and +0 make-tokens parse (PutCounterAll/Token IMPL); the -2 'cast instant/sorcery from graveyard' (AB$ Play) has no converter arm. Ultimate likely non-functional.
+B5 [VERIFY] Sphinx of Foresight (4x in 02/04): MayEffectFromOpeningHand:RevealCard keyword exists + opening-hand reveal infra exists (network/reveal_processor.rs); needs a targeted puzzle to confirm the opening-hand reveal -> scry-3-on-first-upkeep actually fires. On-battlefield 'scry 1 each upkeep' trigger is standard and likely WORKING.
+
+== UNTESTED (need targeted puzzles; not exercised by heuristic mirror games) ==
+Fires of Invention (namesake combo enchantment — cast 2 spells/turn free, can't pay mana), planeswalker loyalty abilities (Teferi Time Raveler -3 bounce / static, Narset Parter of Veils static + -2 dig, Kenrith the Returned King 5 activated abilities, Tibalt Rakish Instigator), Sagas (Elspeth Conquers Death, The Birth of Meletis — Chapter triggers), Embercleave (flash + cost reduction + double strike/trample equip), Cavalier cycle (ETB + dies triggers), Robber of the Rich, Runaway Steam-Kin, Anax Hardened in the Forge, Experimental Frenzy, Banishing Light / Glass Casket (exile-until-leaves), Archon of Sun's Grace, Dream Trawler. Most LIKELY work (constructs are IMPL) but lack per-card game-log evidence.
+
+== Definition of done ==
+1. Every per-card issue for these decks reaches CARD STATUS: WORKING (or accepted PARTIAL w/ bug followup).
+2. Each deck has a captured end-to-end log playing through with no unimplemented/sentinel/silent-drop errors AND with each non-vanilla ability verified by targeted puzzle.
+3. The 4-deck championship tournament reaches 0% engine-failure rate (ALREADY MET: 200 games, 0 failures).
+
+== How agents pick work ==
+Open this umbrella -> pick the highest-value not-yet-WORKING card from the backlog bead (B1 Torbran first) -> drive it through targeted_compatibility SKILL. B1 (damage-increase replacement) and B2 (Adventure) are meaty engine features; coordinate with concurrent slot01 (1994) edits to effect_converter.rs / damage paths via mb claims + rebase. Never duplicate.
+
+Driven by agent compat-2020-champ (slot03), 2026-06-10 survey pass.
