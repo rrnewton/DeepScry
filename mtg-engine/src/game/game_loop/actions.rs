@@ -1133,6 +1133,17 @@ impl<'a> GameLoop<'a> {
                         }
                     }
 
+                    // Check ActivationPhases$ window (Jade Statue's combat-only
+                    // animate, CR 602.5). The current step must fall within
+                    // [start, end] in turn order.
+                    if can_activate {
+                        if let Some(window) = &ability.activation_phases {
+                            if !window.contains(self.game.turn.current_step) {
+                                can_activate = false;
+                            }
+                        }
+                    }
+
                     // TODO(mtg-70): Check if ability has valid targets
                     // For targeting abilities, check that there's at least one valid target
                     //
@@ -1235,6 +1246,15 @@ impl<'a> GameLoop<'a> {
                                 .game
                                 .count_cards_matching_filter(player_id, &cond.filter, cond.zone);
                             if !cond.op.matches(actual, cond.count as usize) {
+                                can_activate = false;
+                            }
+                        }
+                    }
+
+                    // ActivationPhases$ window check (CR 602.5).
+                    if can_activate {
+                        if let Some(window) = &ability.activation_phases {
+                            if !window.contains(self.game.turn.current_step) {
                                 can_activate = false;
                             }
                         }

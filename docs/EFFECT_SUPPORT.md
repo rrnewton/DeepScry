@@ -79,6 +79,8 @@ workflow, row format, and update rules.
 | T$ Phase Upkeep ValidPlayer$ Player.EnchantedController + UnlessCost untap | BROKEN | 2026-05-30_#2525(d40c4206) | mtg-92jcg | Paralyze |
 | SP$ Destroy ValidTgts$ Artifact,Enchantment | WORKING | 2026-05-29_#2432(f85d828d) | (none)    | Disenchant          |
 | AB$ ChangeZone ActivationZone$ Graveyard   | BROKEN  | 2026-05-30_#2488(f9fcef95) | mtg-d8zuh  | Earthquake Dragon   |
+| ActivationPhases$ <start>-><end> (single-range activation-timing window, CR 602.5; e.g. BeginCombat->EndCombat "only during combat") | WORKING | 2026-06-10_#3139(3b5e4e6f) | (fixed) | Jade Statue |
+| ActivationPhases$ <a>-><b>,<c>-><d> (disjoint multi-range, e.g. Upkeep->Main1,Main2->Cleanup "any time except combat") | BROKEN | 2026-06-10_#3139(3b5e4e6f) | mtg-713 | Aggravated Assault |
 | AB$ Destroy Cost$ T ValidTgts$ Creature.tapped | WORKING | 2026-05-29_#2449(b5fd60b7) | (none) | Royal Assassin      |
 | AB$ Regenerate Cost$ B (self)              | WORKING | 2026-05-29_#2449(b5fd60b7) | (none)    | Will-o'-the-Wisp    |
 | SP$ Mana Produced$ B Amount$ 3 (ritual)    | WORKING | 2026-05-29_#2449(b5fd60b7) | (none)    | Dark Ritual         |

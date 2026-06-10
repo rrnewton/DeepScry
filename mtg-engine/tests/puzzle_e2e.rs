@@ -5603,6 +5603,86 @@ async fn test_earthquake_dragon_graveyard_return() -> Result<()> {
     Ok(())
 }
 
+/// Regression (1994 World Championship compat — Symens B/R/G Zoo runs a Jade
+/// Statue): Jade Statue's "{2}: Jade Statue becomes a 3/6 Golem artifact
+/// creature until end of combat. Activate only during combat." The activated
+/// `AB$ Animate` carries `ActivationPhases$ BeginCombat->EndCombat` (CR 602.5:
+/// a timing restriction is part of the ability). Before the fix `ActivationPhases$`
+/// was neither parsed nor enforced, so the animate ability was offered in every
+/// step. This test drives the action enumerator at several steps and asserts the
+/// ability is offered ONLY within the combat window. The check reads only the
+/// current turn step (public, deterministically reconstructed on replay), so it
+/// is rewind-safe and controller-agnostic.
+#[tokio::test]
+async fn test_jade_statue_combat_only_animate() -> Result<()> {
+    use mtg_engine::core::SpellAbility;
+    use mtg_engine::game::Step;
+
+    let cardsfolder = require_cardsfolder();
+    let puzzle_path = PathBuf::from("../test_puzzles/jade_statue_combat_only_animate.pzl");
+    let puzzle_contents = std::fs::read_to_string(&puzzle_path)?;
+    let puzzle = PuzzleFile::parse(&puzzle_contents)?;
+
+    let card_db = CardDatabase::new(cardsfolder);
+    let mut game = load_puzzle_into_game(&puzzle, &card_db).await?;
+    game.seed_rng(42);
+
+    let p0_id = game.players[0].id;
+
+    // Locate Jade Statue on P0's battlefield.
+    let jade = game
+        .battlefield
+        .cards
+        .iter()
+        .copied()
+        .find(|&id| game.cards.try_get(id).is_some_and(|c| c.name.as_str() == "Jade Statue"))
+        .expect("Jade Statue should be on the battlefield");
+
+    // Helper: is Jade Statue's activated ability offered to P0 in `step`?
+    let animate_offered = |game: &mut mtg_engine::game::GameState, step: Step| -> bool {
+        game.turn.current_step = step;
+        let mut game_loop = GameLoop::new(game).with_verbosity(VerbosityLevel::Silent);
+        game_loop.push_activatable_abilities_for_test(p0_id);
+        game_loop.get_abilities_buffer().iter().any(|sa| {
+            matches!(
+                sa,
+                SpellAbility::ActivateAbility { card_id, .. } if *card_id == jade
+            )
+        })
+    };
+
+    // Outside combat the ability must NOT be offered.
+    assert!(
+        !animate_offered(&mut game, Step::Upkeep),
+        "Jade Statue must not be animatable during upkeep (ActivationPhases$ BeginCombat->EndCombat)"
+    );
+    assert!(
+        !animate_offered(&mut game, Step::Main1),
+        "Jade Statue must not be animatable during main phase 1"
+    );
+    assert!(
+        !animate_offered(&mut game, Step::Main2),
+        "Jade Statue must not be animatable during main phase 2"
+    );
+
+    // Within the combat window the ability MUST be offered.
+    assert!(
+        animate_offered(&mut game, Step::BeginCombat),
+        "Jade Statue must be animatable at beginning of combat"
+    );
+    assert!(
+        animate_offered(&mut game, Step::DeclareBlockers),
+        "Jade Statue must be animatable during declare blockers"
+    );
+    assert!(
+        animate_offered(&mut game, Step::EndCombat),
+        "Jade Statue must be animatable at end of combat (inclusive window end)"
+    );
+
+    println!("✓ Jade Statue animate ability is offered only during combat (1994 champ compat)");
+    Ok(())
+}
+
 /// Regression (1994 World Championship compat — Dolan WUG Stasis runs an Ivory
 /// Tower): Ivory Tower's "At the beginning of your upkeep, you gain X life,
 /// where X is the number of cards in your hand minus 4" (`SVar:X:Count$ValidHand

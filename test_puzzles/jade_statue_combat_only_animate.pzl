@@ -1,0 +1,24 @@
+[metadata]
+Name:Jade Statue — combat-only animate (ActivationPhases enforcement)
+Goal:Win
+Turns:2
+Difficulty:Easy
+Description:Jade Statue ("{2}: Jade Statue becomes a 3/6 Golem artifact creature until end of combat. Activate only during combat."). The activated Animate ability carries ActivationPhases$ BeginCombat->EndCombat (CR 602.5: a timing restriction is part of the ability). P0 controls Jade Statue and two untapped Mountains (enough to pay {2}). The ability MUST NOT be offered outside the combat phase (Main1, Upkeep) and MUST be offered during the combat steps (BeginCombat..EndCombat). Before the fix ActivationPhases$ was neither parsed nor enforced, so Jade Statue could be animated at any time. The check reads only the current turn step (public, deterministically reconstructed on replay), so it is rewind-safe and controller-agnostic.
+
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=
+p0library=Plains; Plains; Plains; Plains
+p0graveyard=
+p0battlefield=Jade Statue; Mountain; Mountain
+p0exile=
+
+p1life=20
+p1hand=
+p1library=Plains; Plains; Plains; Plains
+p1graveyard=
+p1battlefield=
+p1exile=

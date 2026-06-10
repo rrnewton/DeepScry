@@ -3444,6 +3444,62 @@ pub struct ActivationCondition {
     pub count: u8,
 }
 
+/// Restriction on the turn-step window in which an activated ability may be
+/// activated, derived from `ActivationPhases$ <start>-><end>`.
+///
+/// "Activate only during combat" (Jade Statue's `BeginCombat->EndCombat`
+/// animate, CR 602.5: an ability's activation-timing restriction is part of
+/// the ability). The activating step must satisfy `start <= step <= end` in
+/// turn order. Because [`Step`](crate::game::phase::Step) is declared in turn
+/// order and derives `Ord`, the window is a simple inclusive range check —
+/// no per-turn flag, so it is trivially rewind-safe (it reads only the
+/// current step, which is reconstructed deterministically on replay).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ActivationPhaseWindow {
+    /// First step (inclusive) at which the ability may be activated.
+    pub start: crate::game::phase::Step,
+    /// Last step (inclusive) at which the ability may be activated.
+    pub end: crate::game::phase::Step,
+}
+
+impl ActivationPhaseWindow {
+    /// True if `step` falls within `[start, end]` (inclusive), in turn order.
+    pub fn contains(&self, step: crate::game::phase::Step) -> bool {
+        self.start <= step && step <= self.end
+    }
+
+    /// Parse a `ActivationPhases$ <start>-><end>` value (e.g.
+    /// `"BeginCombat->EndCombat"`). A bare single step (`"Upkeep"`) is treated
+    /// as a one-step window. Returns `None` if either token is unrecognised.
+    ///
+    /// Only the single contiguous-range form is modelled here. Forge also has a
+    /// *disjoint* multi-range form (`"Upkeep->Main1,Main2->Cleanup"` = "any time
+    /// except combat", used by a handful of cards like Aggravated Assault). Those
+    /// values contain a comma and/or more than one `->`; we return `None` for
+    /// them so the loader leaves the ability unrestricted rather than mis-gating
+    /// it to a wrong window. (TODO(mtg-713 B6 follow-up): model disjoint windows
+    /// as a small set/vec of ranges if a championship card needs the
+    /// except-combat case enforced.)
+    pub fn parse(value: &str) -> Option<Self> {
+        use crate::game::phase::Step;
+        // Reject the disjoint multi-range form (comma list or >1 arrow).
+        if value.contains(',') || value.matches("->").count() > 1 {
+            return None;
+        }
+        let (start_tok, end_tok) = match value.split_once("->") {
+            Some((s, e)) => (s, e),
+            None => (value, value),
+        };
+        let start = Step::from_script_name(start_tok.trim())?;
+        let end = Step::from_script_name(end_tok.trim())?;
+        // Guard against an inverted range (would never match any step).
+        if start > end {
+            return None;
+        }
+        Some(ActivationPhaseWindow { start, end })
+    }
+}
+
 /// Selector for which cards are affected by a static ability
 ///
 /// Parsed from the `Affected$` parameter in card scripts.
@@ -4297,6 +4353,14 @@ pub struct ActivatedAbility {
     #[serde(default)]
     pub activation_condition: Option<crate::core::ActivationCondition>,
 
+    /// Optional turn-step window restriction from `ActivationPhases$
+    /// <start>-><end>` (Jade Statue's combat-only `BeginCombat->EndCombat`
+    /// animate). `None` = activatable in any step (the common case). Checked
+    /// in `can_activate` alongside the other timing gates. Rewind-safe: reads
+    /// only the deterministically-reconstructed current step (CR 602.5).
+    #[serde(default)]
+    pub activation_phases: Option<crate::core::ActivationPhaseWindow>,
+
     /// True for `AB$ ManaReflected` abilities (Fellwar Stone: "Add one mana of
     /// any color that a land an opponent controls could produce"). The static
     /// mana-production cache treats such a source as AnyColor (an upper bound),
@@ -4343,6 +4407,7 @@ impl ActivatedAbility {
             your_turn_only: false, // Default to any turn
             exhaust: false,        // Default to non-exhaust
             activation_condition: None,
+            activation_phases: None,
             produces_reflected_mana: false,
             activation_zone: crate::zones::Zone::Battlefield,
             cache,
@@ -4362,6 +4427,7 @@ impl ActivatedAbility {
             your_turn_only: false, // sorcery_speed implies your turn already
             exhaust: false,
             activation_condition: None,
+            activation_phases: None,
             produces_reflected_mana: false,
             activation_zone: crate::zones::Zone::Battlefield,
             cache,
@@ -4387,6 +4453,7 @@ impl ActivatedAbility {
             your_turn_only: true, // Your turn only
             exhaust: false,
             activation_condition: None,
+            activation_phases: None,
             produces_reflected_mana: false,
             activation_zone: crate::zones::Zone::Battlefield,
             cache,
@@ -4435,6 +4502,57 @@ mod tests {
             panic!("Wrong effect type: expected DestroyPermanent, got {destroy_effect:?}");
         };
         assert_eq!(target, card_id);
+    }
+
+    #[test]
+    fn test_activation_phase_window_parse_jade_statue() {
+        use crate::game::phase::Step;
+        // Jade Statue: ActivationPhases$ BeginCombat->EndCombat.
+        let window = ActivationPhaseWindow::parse("BeginCombat->EndCombat").expect("should parse combat window");
+        assert_eq!(window.start, Step::BeginCombat);
+        assert_eq!(window.end, Step::EndCombat);
+
+        // Inclusive on both ends; every combat step is inside, non-combat is out.
+        assert!(window.contains(Step::BeginCombat));
+        assert!(window.contains(Step::DeclareAttackers));
+        assert!(window.contains(Step::DeclareBlockers));
+        assert!(window.contains(Step::CombatDamage));
+        assert!(window.contains(Step::EndCombat));
+        assert!(!window.contains(Step::Upkeep));
+        assert!(!window.contains(Step::Main1));
+        assert!(!window.contains(Step::Main2));
+        assert!(!window.contains(Step::End));
+    }
+
+    #[test]
+    fn test_activation_phase_window_spaced_and_single() {
+        use crate::game::phase::Step;
+        // Spaced human form (Siren's Call writes "Declare Blockers").
+        let w = ActivationPhaseWindow::parse("Upkeep->Declare Blockers").expect("spaced form should parse");
+        assert_eq!(w.start, Step::Upkeep);
+        assert_eq!(w.end, Step::DeclareBlockers);
+
+        // A bare single step is a one-step window.
+        let single = ActivationPhaseWindow::parse("Upkeep").expect("single step should parse");
+        assert_eq!(single.start, Step::Upkeep);
+        assert_eq!(single.end, Step::Upkeep);
+        assert!(single.contains(Step::Upkeep));
+        assert!(!single.contains(Step::Draw));
+
+        // An inverted range is rejected (would never match).
+        assert!(ActivationPhaseWindow::parse("EndCombat->BeginCombat").is_none());
+        // An unrecognised token is rejected.
+        assert!(ActivationPhaseWindow::parse("BeginCombat->Nonsense").is_none());
+
+        // Bare "Main" maps to Main1 (Forge's `Upkeep->Main`).
+        let upkeep_to_main = ActivationPhaseWindow::parse("Upkeep->Main").expect("Upkeep->Main should parse");
+        assert_eq!(upkeep_to_main.start, Step::Upkeep);
+        assert_eq!(upkeep_to_main.end, Step::Main1);
+
+        // The disjoint multi-range form is intentionally NOT modelled (returns
+        // None -> ability left unrestricted), so we never mis-gate it.
+        assert!(ActivationPhaseWindow::parse("Upkeep->Main1,Main2->Cleanup").is_none());
+        assert!(ActivationPhaseWindow::parse("Main1,Main2").is_none());
     }
 
     #[test]

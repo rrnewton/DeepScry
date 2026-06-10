@@ -109,6 +109,42 @@ impl Step {
         }
     }
 
+    /// Parse a Forge card-script phase/step token into a [`Step`].
+    ///
+    /// Used by `ActivationPhases$ <start>-><end>` (Jade Statue's combat-only
+    /// animate, Siren's Call's upkeep window, …). Forge writes these tokens
+    /// without spaces (`BeginCombat`, `EndCombat`, `DeclareBlockers`) but some
+    /// scripts use the spaced human form (`Declare Blockers`, `End of Turn`),
+    /// so we normalise by stripping whitespace and matching case-insensitively.
+    /// Returns `None` for an unrecognised token so the caller can warn rather
+    /// than silently mis-restrict an ability.
+    pub fn from_script_name(name: &str) -> Option<Step> {
+        // Strip ASCII whitespace so "Declare Blockers" == "DeclareBlockers".
+        let mut normalized = String::with_capacity(name.len());
+        for ch in name.chars() {
+            if !ch.is_ascii_whitespace() {
+                normalized.push(ch.to_ascii_lowercase());
+            }
+        }
+        Some(match normalized.as_str() {
+            "untap" => Step::Untap,
+            "upkeep" => Step::Upkeep,
+            "draw" => Step::Draw,
+            // Bare "Main" (Forge writes `ActivationPhases$ Main` / `Upkeep->Main`)
+            // denotes the pre-combat main phase.
+            "main" | "main1" | "premaincombat" | "precombatmain" => Step::Main1,
+            "begincombat" | "beginningofcombat" => Step::BeginCombat,
+            "declareattackers" => Step::DeclareAttackers,
+            "declareblockers" => Step::DeclareBlockers,
+            "combatdamage" => Step::CombatDamage,
+            "endcombat" | "endofcombat" => Step::EndCombat,
+            "main2" | "postcombatmain" | "postmaincombat" => Step::Main2,
+            "end" | "endofturn" | "endstep" => Step::End,
+            "cleanup" => Step::Cleanup,
+            _ => return None,
+        })
+    }
+
     /// Get the next step in turn order
     pub fn next(&self) -> Option<Step> {
         match self {

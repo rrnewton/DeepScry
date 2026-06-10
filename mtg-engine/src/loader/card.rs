@@ -3691,6 +3691,26 @@ impl CardDefinition {
                 .and_then(crate::zones::Zone::from_str_lenient)
                 .unwrap_or(crate::zones::Zone::Battlefield);
 
+            // Parse ActivationPhases$ <start>-><end> — restricts the ability to
+            // a turn-step window (Jade Statue's combat-only `BeginCombat->
+            // EndCombat` animate, CR 602.5). Absent for most abilities. The
+            // single-range form is modelled here; the disjoint multi-range form
+            // (`Upkeep->Main1,Main2->Cleanup`) parses to `None` and the ability
+            // is left unrestricted for now (debug-logged, not warned, since it
+            // is valid-but-unmodelled syntax — see ActivationPhaseWindow::parse).
+            let activation_phases = match params.get("ActivationPhases") {
+                Some(value) => match crate::core::ActivationPhaseWindow::parse(value) {
+                    Some(window) => Some(window),
+                    None => {
+                        log::debug!(
+                            "ActivationPhases$ '{value}' not modelled as a single range; ability left unrestricted"
+                        );
+                        None
+                    }
+                },
+                None => None,
+            };
+
             // Only add if we have effects
             if !effects.is_empty() {
                 let mut ability = if is_sorcery_speed || is_planeswalker_ability {
@@ -3711,6 +3731,7 @@ impl CardDefinition {
                 }
                 ability.activation_condition = activation_condition;
                 ability.activation_zone = activation_zone;
+                ability.activation_phases = activation_phases;
                 abilities.push(ability);
             }
         }
@@ -6471,6 +6492,37 @@ Oracle:This land enters tapped unless you control a basic land.\n{T}: Add {G}.\n
             ability.sorcery_speed,
             "Earthbend ability should be sorcery-speed (activate only as a sorcery)"
         );
+    }
+
+    #[test]
+    fn test_parse_jade_statue_activation_phases() {
+        use crate::game::phase::Step;
+
+        // Jade Statue: "{2}: Jade Statue becomes a 3/6 Golem artifact creature
+        // until end of combat. Activate only during combat."
+        let content = r#"
+Name:Jade Statue
+ManaCost:4
+Types:Artifact
+A:AB$ Animate | Cost$ 2 | Defined$ Self | Power$ 3 | Toughness$ 6 | Types$ Creature,Artifact,Golem | RemoveCreatureTypes$ True | Duration$ UntilEndOfCombat | ActivationPhases$ BeginCombat->EndCombat | SpellDescription$ CARDNAME becomes a 3/6 Golem artifact creature until end of combat. Activate only during combat.
+Oracle:{2}: Jade Statue becomes a 3/6 Golem artifact creature until end of combat. Activate only during combat.
+"#;
+
+        let def = CardLoader::parse(content).unwrap();
+        let abilities = def.parse_activated_abilities();
+        assert_eq!(
+            abilities.len(),
+            1,
+            "Jade Statue should have exactly one activated ability"
+        );
+
+        let window = abilities[0]
+            .activation_phases
+            .expect("Jade Statue's animate ability must carry an ActivationPhases$ window");
+        assert_eq!(window.start, Step::BeginCombat);
+        assert_eq!(window.end, Step::EndCombat);
+        assert!(window.contains(Step::DeclareBlockers));
+        assert!(!window.contains(Step::Main1));
     }
 
     #[test]
