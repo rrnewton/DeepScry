@@ -171,6 +171,7 @@
             <option value="old_school">Old School 1994</option>
             <option value="booster_draft">Booster Draft</option>
             <option value="commander">Commander</option>
+            <option value="championship_1994">1994 World Championship</option>
             <option value="championship_2025">2025 World Championship</option>
             <option value="custom">Custom Decks (Local)</option>
         </select>
@@ -448,6 +449,11 @@ import { buildRedirectQuery, IMAGE_SOURCE_IDS, forwardStickyParamsOnAnchor, forw
         commander: {
             name: 'Commander',
             filter: (deckName) => deckName.includes('chandra_tokens'),
+        },
+        championship_1994: {
+            name: '1994 World Championship',
+            filter: (deckName) => deckName.includes('dolan') || deckName.includes('lestree') ||
+                                  deckName.includes('symens') || deckName.includes('defoucaud'),
         },
         championship_2025: {
             name: '2025 World Championship',

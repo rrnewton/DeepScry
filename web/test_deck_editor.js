@@ -457,6 +457,61 @@ function check(cond, msg) {
             await editCtx.close();
         }
 
+        // ── 10. 1994 World Championship collection in the launcher ──────
+        // Asserts (a) the solo launcher offers a "1994 World Championship"
+        // collection in the dropdown, and (b) selecting it populates the deck
+        // picker with at least one 1994 championship deck. (b) only passes if
+        // the .dck files were actually bundled into web/data (their file-stem
+        // names appear in index.json's deck_names), so this single check
+        // covers BOTH the dropdown wiring AND the decks being served.
+        log('\n=== 10. 1994 World Championship collection (solo launcher) ===');
+        {
+            // Confirm the export bundled the 1994 deck names (served, not just listed).
+            const idx1994 = JSON.parse(fs.readFileSync(
+                path.join(WEB_SRC, 'data', 'sets', 'index.json'), 'utf8'));
+            const champ1994Stems = ['01_dolan_wug_stasis', '02_lestree_rg_zoo',
+                '03_symens_zoo', '04_defoucaud_zoo'];
+            const servedNames = Array.isArray(idx1994.deck_names) ? idx1994.deck_names : [];
+            const servedChamp = champ1994Stems.filter((s) => servedNames.includes(s));
+            check(servedChamp.length === champ1994Stems.length,
+                'all four 1994 championship decks are bundled/served in index.json deck_names ' +
+                '(found ' + JSON.stringify(servedChamp) + ')');
+
+            const lctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+            const lpage = await lctx.newPage();
+            lpage.on('pageerror', (e) => check(false, 'solo_launcher JS error: ' + e.message));
+            await lpage.goto(BASE + '/solo_launcher.html', { timeout: 20000 });
+            await lpage.waitForLoadState('domcontentloaded');
+            // Wait for the collection dropdown to be populated from index.json.
+            await lpage.waitForFunction(
+                () => document.getElementById('p1-collection') &&
+                      document.getElementById('p1-collection').options.length > 0,
+                { timeout: 15000 }).catch(() => {});
+
+            const hasGroup = await lpage.evaluate(() => {
+                const sel = document.getElementById('p1-collection');
+                if (!sel) return false;
+                return Array.from(sel.options).some((o) => o.value === 'championship_1994');
+            });
+            check(hasGroup, 'solo launcher dropdown offers the "1994 World Championship" collection');
+
+            // Select it and confirm the deck picker fills with a 1994 deck.
+            const filledDecks = await lpage.evaluate(() => {
+                const col = document.getElementById('p1-collection');
+                const deck = document.getElementById('p1-deck');
+                if (!col || !deck) return [];
+                col.value = 'championship_1994';
+                col.dispatchEvent(new Event('change'));
+                return Array.from(deck.options).map((o) => o.value).filter((v) => v);
+            });
+            const sawChampDeck = filledDecks.some((v) =>
+                ['dolan', 'lestree', 'symens', 'defoucaud'].some((s) => v.includes(s)));
+            check(sawChampDeck,
+                'selecting "1994 World Championship" populates the deck picker with a 1994 deck ' +
+                '(got ' + JSON.stringify(filledDecks) + ')');
+            await lctx.close();
+        }
+
         // ── Summary ────────────────────────────────────────────────────
         await browser.close();
         browser = null;

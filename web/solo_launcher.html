@@ -300,6 +300,11 @@ import { IMAGE_SOURCE_IDS, forwardStickyParams, forwardStickyParamsOnAnchor } fr
             name: 'Commander',
             filter: (deckName) => deckName.includes('chandra_tokens'),
         },
+        championship_1994: {
+            name: '1994 World Championship',
+            filter: (deckName) => deckName.includes('dolan') || deckName.includes('lestree') ||
+                                  deckName.includes('symens') || deckName.includes('defoucaud'),
+        },
         championship_2025: {
             name: '2025 World Championship',
             filter: (deckName) => deckName.includes('manfield') || deckName.includes('shibata') ||
@@ -310,7 +315,7 @@ import { IMAGE_SOURCE_IDS, forwardStickyParams, forwardStickyParamsOnAnchor } fr
             filter: () => false, // handled separately from localStorage
         },
     };
-    const COLLECTION_ORDER = ['old_school', 'booster_draft', 'commander', 'championship_2025', 'custom'];
+    const COLLECTION_ORDER = ['old_school', 'booster_draft', 'commander', 'championship_1994', 'championship_2025', 'custom'];
     const CUSTOM_DECKS_KEY = 'mtg-forge-custom-decks';
 
     let allDeckNames = [];
