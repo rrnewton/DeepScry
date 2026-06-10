@@ -247,12 +247,36 @@
 
 <div class="container">
 
-    <!-- 1. Username / Register pane -->
+    <!-- 1. Sign-in pane: GitHub / Google / Ephemeral account (mtg-742) -->
     <div id="pane-name" class="card">
-        <h2>Pick a Username</h2>
-        <p style="color: var(--muted); margin: 4px 0 12px;">
-            Choose a display name. The server reserves it uniquely for your session &mdash;
-            duplicate names are rejected immediately.
+        <h2>Sign in</h2>
+
+        <!-- OAuth login choices. Shown only when the server has the matching
+             provider configured (filled in by /auth/status). Signing in with
+             GitHub or Google gives you a durable cloud deck collection that
+             follows you across devices. -->
+        <div id="oauth-choices" style="display:none; margin: 4px 0 16px;">
+            <p style="color: var(--muted); margin: 4px 0 12px;">
+                Sign in to save your custom decks to the cloud (they follow you across devices):
+            </p>
+            <div class="row" style="gap: 10px;">
+                <button type="button" id="btn-login-github" style="display:none">Sign in with GitHub</button>
+                <button type="button" id="btn-login-google" style="display:none">Sign in with Google</button>
+            </div>
+            <div style="height: 16px;"></div>
+            <div style="border-top: 1px solid var(--border); margin: 4px 0 14px;"></div>
+        </div>
+
+        <!-- Ephemeral (name-only) account. Always available; no OAuth. -->
+        <h3 style="margin: 0 0 4px;">Ephemeral account</h3>
+        <p style="color: var(--muted); margin: 4px 0 6px;">
+            Just pick a display name &mdash; no account is created on the server. The
+            (globally unique) username is only <strong>reserved while you are logged in</strong>
+            and released as soon as you log out or disconnect.
+        </p>
+        <p id="ephemeral-warning" style="color: var(--warn, #d98c00); margin: 4px 0 12px; font-size: 13px;">
+            ⚠ An ephemeral account <strong>cannot save decks to the cloud</strong>. Decks you build stay
+            only in this browser (localStorage) and can be lost. Sign in with GitHub or Google for cloud deck saving.
         </p>
         <form id="name-form" class="row" autocomplete="off">
             <div style="flex: 2 1 220px;">
@@ -260,7 +284,7 @@
                 <input type="text" id="username" name="username" required maxlength="32" placeholder="e.g. planeswalker42">
             </div>
             <div>
-                <button type="submit" id="btn-name">Enter Lobby</button>
+                <button type="submit" id="btn-name">Continue as ephemeral</button>
             </div>
         </form>
         <p id="name-status" class="status-line"></p>
@@ -1156,6 +1180,36 @@
         var n = document.getElementById('username').value.trim();
         submitName(n);
     });
+
+    // ── OAuth sign-in choices (mtg-742) ─────────────────────────────────────
+    // Ask the server which providers are configured + whether we are already
+    // logged in, then reveal the matching buttons. Signing in navigates to the
+    // server's authorization-code start endpoint. The ephemeral (name-only)
+    // path always remains available below — guests get no cloud deck prefix.
+    (function initOAuthChoices() {
+        var ghBtn = document.getElementById('btn-login-github');
+        var ggBtn = document.getElementById('btn-login-google');
+        if (ghBtn) ghBtn.addEventListener('click', function () { window.location.href = '/auth/login/github'; });
+        if (ggBtn) ggBtn.addEventListener('click', function () { window.location.href = '/auth/login/google'; });
+        fetch('/auth/status', { cache: 'no-store' }).then(function (r) {
+            return r.ok ? r.json() : null;
+        }).then(function (s) {
+            if (!s || !s.oauth_enabled) return; // no OAuth → only ephemeral shown.
+            document.getElementById('oauth-choices').style.display = '';
+            if (s.providers && s.providers.github && ghBtn) ghBtn.style.display = '';
+            if (s.providers && s.providers.google && ggBtn) ggBtn.style.display = '';
+            // If already logged in, remember it so the deck UI can enable cloud
+            // save. We surface a small note rather than auto-skipping the name
+            // step, since a logged-in user still picks a lobby display name.
+            if (s.logged_in) {
+                try { sessionStorage.setItem('mtg.cloudIdentity', s.user_id || '1'); } catch (_) {}
+                var ns = document.getElementById('name-status');
+                if (ns) ns.textContent = 'Signed in — your decks will save to the cloud.';
+            } else {
+                try { sessionStorage.removeItem('mtg.cloudIdentity'); } catch (_) {}
+            }
+        }).catch(function () { /* offline / no server: ephemeral path still works */ });
+    })();
 
     document.getElementById('create-form').addEventListener('submit', function (ev) {
         ev.preventDefault();

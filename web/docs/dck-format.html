@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The .dck deck format — DeepScry</title>
+<style>
+  :root { --bg:#0a0a14; --fg:#e8e8f0; --muted:#9a9ab0; --accent:#7c9eff; --code:#12121f; --border:#272740; }
+  body { background:var(--bg); color:var(--fg); font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+         line-height:1.6; max-width: 760px; margin: 0 auto; padding: 32px 20px 64px; }
+  h1 { font-size: 1.8em; margin: 0 0 8px; }
+  h2 { font-size: 1.25em; margin: 28px 0 8px; border-bottom: 1px solid var(--border); padding-bottom: 4px; }
+  a { color: var(--accent); }
+  code { background: var(--code); padding: 1px 5px; border-radius: 4px; font-size: 0.92em; }
+  pre { background: var(--code); border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px;
+        overflow-x: auto; }
+  pre code { background: none; padding: 0; }
+  .muted { color: var(--muted); }
+  table { border-collapse: collapse; width: 100%; margin: 8px 0; }
+  th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { color: var(--accent); }
+</style>
+</head>
+<body>
+<h1>The <code>.dck</code> deck format</h1>
+<p class="muted">
+  A <code>.dck</code> file is a plain-text list of the cards in a Magic: The Gathering deck.
+  It is the format DeepScry (and the desktop Forge program it descends from) uses. Because it
+  is plain text, you can write it by hand, store it anywhere, and share it as a simple link.
+</p>
+
+<h2>Minimal example</h2>
+<pre><code>[metadata]
+Name=My Burn Deck
+
+[Main]
+4 Lightning Bolt
+20 Mountain
+
+[Sideboard]
+2 Pyroblast</code></pre>
+
+<h2>The rules</h2>
+<table>
+  <tr><th>Element</th><th>Meaning</th></tr>
+  <tr><td><code>[metadata]</code></td><td>Optional header. The <code>Name=</code> line under it sets the deck's display name.</td></tr>
+  <tr><td><code>[Main]</code></td><td>Starts the main deck. Lines after it are main-deck cards (this is also the default if no section header appears).</td></tr>
+  <tr><td><code>[Sideboard]</code></td><td>Starts the sideboard. Lines after it are sideboard cards.</td></tr>
+  <tr><td><code>4 Lightning Bolt</code></td><td>A card line: a <strong>count</strong>, a space, then the exact <strong>card name</strong>.</td></tr>
+  <tr><td><code># comment</code></td><td>A line starting with <code>#</code> is a comment and is ignored.</td></tr>
+</table>
+
+<h2>Notes</h2>
+<ul>
+  <li>Section headers are case-insensitive: <code>[main]</code>, <code>[MAIN]</code>, and <code>[Main]</code> are the same.</li>
+  <li>An optional set/collector suffix after the card name is ignored, e.g.
+      <code>4 Lightning Bolt|LEA|[161]</code> loads as <code>Lightning Bolt</code>.</li>
+  <li>Card names must match the spelling in DeepScry's card database exactly.</li>
+  <li>Blank lines are ignored, so you can space the file out for readability.</li>
+</ul>
+
+<h2>Loading a deck from a URL</h2>
+<p>
+  On the launcher you can paste a <strong>Custom Deck URL</strong> that points directly at a
+  plain-text <code>.dck</code> file. The browser fetches and parses it on your device.
+</p>
+<p class="muted">
+  The host must allow cross-origin reads (CORS). Raw file links from GitHub
+  (<code>raw.githubusercontent.com</code>), GitHub Gists (the "Raw" button), and most
+  raw paste services work. A normal web page (not a raw file) or a host that blocks
+  cross-origin reads will not load — use a raw/plain-text link instead.
+</p>
+
+<p style="margin-top:32px"><a href="/">&larr; Back to DeepScry</a></p>
+</body>
+</html>

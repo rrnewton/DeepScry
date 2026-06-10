@@ -64,8 +64,10 @@ use tower_http::services::ServeDir;
 use crate::network::lobby::SharedLobby;
 use crate::network::{GameServer, ServerConfig};
 
+pub mod oauth;
 pub mod r2;
-use r2::{DevIdentity, Identity, PresignMethod, R2Config, DEFAULT_PRESIGN_TTL};
+use oauth::{OAuthConfig, OAuthState, Provider, SESSION_COOKIE, STATE_COOKIE};
+use r2::{Identity, PresignMethod, R2Config, DEFAULT_PRESIGN_TTL};
 
 // Build/version identity lives in the central `crate::version` module
 // (single source of truth shared with the CLI `mtg --version`). Re-export
@@ -117,11 +119,13 @@ struct AppState {
     /// ONE parent token here and mints short-TTL presigned URLs from it; it
     /// never proxies deck bytes.
     r2: Option<Arc<R2Config>>,
-    /// Pluggable identity resolver (mtg-742). Today this is the [`DevIdentity`]
-    /// stub (fixed `dev` prefix); the OAuth login leg swaps in a real
-    /// implementation WITHOUT touching the storage path. Boxed behind a trait
-    /// object so the concrete type is a drop-in replacement.
-    identity: Arc<dyn Identity>,
+    /// OAuth login state (mtg-742): provider config + session/CSRF stores.
+    /// `None` when no OAuth env is configured — the deck-storage endpoint then
+    /// requires login and 401s, while the ephemeral (name-only) lobby path is
+    /// always available. The session cookie resolves to an
+    /// [`oauth::OAuthIdentity`], which implements the SAME [`Identity`] trait
+    /// the storage path consumes (the old `DevIdentity` stub is retired).
+    oauth: Option<OAuthState>,
 }
 
 /// Entry point for `mtg server-web`. Boots the embedded GameServer on a
@@ -177,8 +181,18 @@ pub async fn run_web_server(mut config: WebServerConfig) -> Result<()> {
     } else {
         log::info!("[web-server] R2 deck storage disabled (no R2_* env vars)");
     }
-    // The identity resolver is the DevIdentity stub until the OAuth leg lands.
-    let identity: Arc<dyn Identity> = Arc::new(DevIdentity);
+    // OAuth login (mtg-742): enabled iff at least one provider + the callback
+    // base are configured in the environment. Absent → login routes report
+    // not-configured and deck storage requires a (then-impossible) session;
+    // the ephemeral name-only lobby path is unaffected.
+    let oauth = OAuthConfig::from_env().map(OAuthState::new);
+    match &oauth {
+        Some(o) => {
+            let (gh, gg) = o.config().available();
+            log::info!("[web-server] OAuth login ENABLED (github={gh}, google={gg})");
+        }
+        None => log::info!("[web-server] OAuth login disabled (no OAuth env vars)"),
+    }
 
     let state = AppState {
         upstream_ws_url: Arc::new(upstream_ws_url),
@@ -186,7 +200,7 @@ pub async fn run_web_server(mut config: WebServerConfig) -> Result<()> {
         start_time: std::time::Instant::now(),
         lobby: lobby_for_health,
         r2,
-        identity,
+        oauth,
     };
 
     // ── Tiered cache policy (content-addressing, mtg-571 + mtg-620) ───
@@ -257,6 +271,11 @@ pub async fn run_web_server(mut config: WebServerConfig) -> Result<()> {
         // URLs for the caller's collection object. The browser uses these to
         // PUT/GET its `.tgz` directly against R2 — bytes never transit here.
         .route("/api/deck-storage/credentials", get(deck_credentials_handler))
+        // OAuth login leg (mtg-742): GitHub/Google authorization-code flow.
+        .route("/auth/login/:provider", get(auth_login_handler))
+        .route("/auth/callback/:provider", get(auth_callback_handler))
+        .route("/auth/logout", axum::routing::post(auth_logout_handler))
+        .route("/auth/status", get(auth_status_handler))
         .fallback_service(static_with_cache)
         .with_state(state);
 
@@ -654,11 +673,12 @@ async fn health_handler(State(state): State<AppState>) -> impl IntoResponse {
 /// and a short expiry. They are NOT a bucket-wide capability: even though the
 /// parent token can see the whole bucket, a handed-out URL can only touch the
 /// caller's own collection object for ~10 minutes.
-async fn deck_credentials_handler(State(state): State<AppState>) -> impl IntoResponse {
+async fn deck_credentials_handler(headers: axum::http::HeaderMap, State(state): State<AppState>) -> impl IntoResponse {
+    let no_store = [(axum::http::header::CACHE_CONTROL, "no-store")];
     let Some(r2) = state.r2.as_ref() else {
         return (
             StatusCode::SERVICE_UNAVAILABLE,
-            [(axum::http::header::CACHE_CONTROL, "no-store")],
+            no_store,
             axum::Json(serde_json::json!({
                 "error": "deck storage not configured",
                 "detail": "the server has no R2 credentials in its environment",
@@ -666,15 +686,32 @@ async fn deck_credentials_handler(State(state): State<AppState>) -> impl IntoRes
         );
     };
 
-    let user_id = state.identity.user_id();
-    // Defensive: the identity provider must yield a prefix-safe id. The stub
-    // always does; this guards the future OAuth provider against handing us a
-    // traversal-y id.
+    // Resolve identity from the OAuth session cookie. Ephemeral (name-only)
+    // users have no session → 401: they get no cloud R2 prefix and stay on the
+    // localStorage-only path (by design).
+    let identity = match (&state.oauth, cookie_value(&headers, SESSION_COOKIE)) {
+        (Some(oauth), Some(sid)) => oauth.identity_for(&sid),
+        _ => None,
+    };
+    let Some(identity) = identity else {
+        return (
+            StatusCode::UNAUTHORIZED,
+            no_store,
+            axum::Json(serde_json::json!({
+                "error": "login required",
+                "detail": "cloud deck storage requires signing in with GitHub or Google",
+            })),
+        );
+    };
+
+    let user_id = identity.user_id();
+    // Defensive: the identity must yield a prefix-safe id (OAuthIdentity
+    // sanitizes, but guard against any traversal-y id reaching the key).
     if !r2::is_valid_user_id(user_id) {
         log::error!("[web-server] identity yielded unsafe user_id; refusing to presign");
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
-            [(axum::http::header::CACHE_CONTROL, "no-store")],
+            no_store,
             axum::Json(serde_json::json!({ "error": "invalid identity" })),
         );
     }
@@ -693,7 +730,7 @@ async fn deck_credentials_handler(State(state): State<AppState>) -> impl IntoRes
 
     (
         StatusCode::OK,
-        [(axum::http::header::CACHE_CONTROL, "no-store")],
+        no_store,
         axum::Json(serde_json::json!({
             // The prefix the browser is scoped to (informational).
             "user_id": user_id,
@@ -707,6 +744,165 @@ async fn deck_credentials_handler(State(state): State<AppState>) -> impl IntoRes
             // application/gzip with NO Content-Encoding so the bytes are stored
             // byte-clean (no CDN re-compression / auto-decompression).
             "content_type": "application/gzip",
+        })),
+    )
+}
+
+// ─── OAuth login handlers (mtg-742) ───────────────────────────────────────
+
+/// Read a single cookie value out of the request `Cookie` header.
+fn cookie_value(headers: &axum::http::HeaderMap, name: &str) -> Option<String> {
+    let raw = headers.get(axum::http::header::COOKIE)?.to_str().ok()?;
+    for part in raw.split(';') {
+        let part = part.trim();
+        if let Some(rest) = part.strip_prefix(name) {
+            if let Some(v) = rest.strip_prefix('=') {
+                return Some(v.to_string());
+            }
+        }
+    }
+    None
+}
+
+/// Build a `Set-Cookie` header value. `max_age` of 0 expires the cookie.
+/// HttpOnly + SameSite=Lax + Secure + Path=/. (Lax lets the OAuth provider's
+/// top-level redirect back to us still carry the state cookie.)
+fn set_cookie(name: &str, value: &str, max_age_secs: i64) -> String {
+    format!("{name}={value}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age={max_age_secs}")
+}
+
+/// `GET /auth/login/:provider` — start the authorization-code flow: set a
+/// CSRF `state` cookie and 302 to the provider's authorize endpoint.
+async fn auth_login_handler(
+    axum::extract::Path(provider): axum::extract::Path<String>,
+    State(state): State<AppState>,
+) -> axum::response::Response {
+    let Some(oauth) = state.oauth.as_ref() else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "OAuth login is not configured on this server",
+        )
+            .into_response();
+    };
+    let Some(provider) = Provider::parse_slug(&provider) else {
+        return (StatusCode::NOT_FOUND, "unknown provider").into_response();
+    };
+    let csrf = oauth.new_state();
+    let Some(redirect) = oauth.config().authorize_redirect(provider, &csrf) else {
+        return (StatusCode::SERVICE_UNAVAILABLE, "that provider is not configured").into_response();
+    };
+    let mut resp = axum::response::Redirect::temporary(&redirect).into_response();
+    resp.headers_mut().insert(
+        axum::http::header::SET_COOKIE,
+        HeaderValue::from_str(&set_cookie(STATE_COOKIE, &csrf, 600)).unwrap(),
+    );
+    resp
+}
+
+/// Query parameters on the OAuth callback.
+#[derive(serde::Deserialize)]
+struct CallbackParams {
+    code: Option<String>,
+    state: Option<String>,
+    error: Option<String>,
+}
+
+/// `GET /auth/callback/:provider` — verify CSRF state, exchange the code for
+/// the stable subject id, create a session, set the session cookie, redirect
+/// home.
+async fn auth_callback_handler(
+    axum::extract::Path(provider): axum::extract::Path<String>,
+    axum::extract::Query(params): axum::extract::Query<CallbackParams>,
+    headers: axum::http::HeaderMap,
+    State(state): State<AppState>,
+) -> axum::response::Response {
+    let Some(oauth) = state.oauth.as_ref() else {
+        return (StatusCode::SERVICE_UNAVAILABLE, "OAuth login is not configured").into_response();
+    };
+    let Some(provider) = Provider::parse_slug(&provider) else {
+        return (StatusCode::NOT_FOUND, "unknown provider").into_response();
+    };
+    if let Some(err) = params.error {
+        log::warn!("[web-server] OAuth provider returned error: {err}");
+        return axum::response::Redirect::temporary("/?login=denied").into_response();
+    }
+    // CSRF: the `state` query param MUST match the one-shot cookie we set AND
+    // a state we issued. Both checks defend against forged callbacks.
+    let cookie_state = cookie_value(&headers, STATE_COOKIE);
+    match (&params.state, &cookie_state) {
+        (Some(qs), Some(cs)) if qs == cs && oauth.consume_state(qs) => {}
+        _ => {
+            log::warn!("[web-server] OAuth callback failed CSRF state check");
+            return (StatusCode::BAD_REQUEST, "invalid or expired login state").into_response();
+        }
+    }
+    let Some(code) = params.code else {
+        return (StatusCode::BAD_REQUEST, "missing authorization code").into_response();
+    };
+
+    let subject = match oauth.exchange_code_for_subject(provider, &code).await {
+        Ok(sub) => sub,
+        Err(e) => {
+            log::warn!("[web-server] OAuth code exchange failed: {e}");
+            return (StatusCode::BAD_GATEWAY, "login failed talking to the identity provider").into_response();
+        }
+    };
+    let sid = oauth.create_session(provider, subject);
+
+    // Redirect home with the session cookie set and the (now-spent) state
+    // cookie cleared.
+    let mut resp = axum::response::Redirect::temporary("/?login=ok").into_response();
+    let h = resp.headers_mut();
+    h.append(
+        axum::http::header::SET_COOKIE,
+        HeaderValue::from_str(&set_cookie(SESSION_COOKIE, &sid, 30 * 24 * 60 * 60)).unwrap(),
+    );
+    h.append(
+        axum::http::header::SET_COOKIE,
+        HeaderValue::from_str(&set_cookie(STATE_COOKIE, "", 0)).unwrap(),
+    );
+    resp
+}
+
+/// `POST /auth/logout` — destroy the session and clear the cookie.
+async fn auth_logout_handler(
+    headers: axum::http::HeaderMap,
+    State(state): State<AppState>,
+) -> axum::response::Response {
+    if let (Some(oauth), Some(sid)) = (&state.oauth, cookie_value(&headers, SESSION_COOKIE)) {
+        oauth.destroy_session(&sid);
+    }
+    let mut resp = (StatusCode::OK, "logged out").into_response();
+    resp.headers_mut().insert(
+        axum::http::header::SET_COOKIE,
+        HeaderValue::from_str(&set_cookie(SESSION_COOKIE, "", 0)).unwrap(),
+    );
+    resp
+}
+
+/// `GET /auth/status` — JSON describing which providers are available and
+/// whether the caller is currently logged in (so the landing page can render
+/// the right login choices without exposing secrets).
+async fn auth_status_handler(headers: axum::http::HeaderMap, State(state): State<AppState>) -> impl IntoResponse {
+    let (github, google) = state
+        .oauth
+        .as_ref()
+        .map(|o| o.config().available())
+        .unwrap_or((false, false));
+    let identity = match (&state.oauth, cookie_value(&headers, SESSION_COOKIE)) {
+        (Some(oauth), Some(sid)) => oauth.identity_for(&sid),
+        _ => None,
+    };
+    let logged_in = identity.is_some();
+    let user_id = identity.map(|i| i.user_id().to_string());
+    (
+        StatusCode::OK,
+        [(axum::http::header::CACHE_CONTROL, "no-store")],
+        axum::Json(serde_json::json!({
+            "providers": { "github": github, "google": google },
+            "oauth_enabled": github || google,
+            "logged_in": logged_in,
+            "user_id": user_id,
         })),
     )
 }

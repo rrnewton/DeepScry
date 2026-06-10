@@ -103,8 +103,9 @@ tokio-tungstenite = { version = "0.26", optional = true, features = ["rustls-tls
 futures-util = { version = "0.3", optional = true }
 futures-executor = { version = "0.3", optional = true }
 
-# HTTP client for image downloading (native only)
-reqwest = { version = "0.12", features = ["rustls-tls"], default-features = false, optional = true }
+# HTTP client for image downloading (native) + OAuth code→token exchange and
+# userinfo fetch (web-server, mtg-742). `json` decodes provider responses.
+reqwest = { version = "0.12", features = ["rustls-tls", "json"], default-features = false, optional = true }
 
 # Progress bar for downloads (native only)
 indicatif = { version = "0.17", optional = true }
@@ -254,6 +255,10 @@ web-server = [
     "rustls-pemfile",
     "ring",
     "percent-encoding",
+    # OAuth login leg (mtg-742): reqwest for the code→token exchange + userinfo
+    # fetch against GitHub/Google. (Auth URLs are built with percent-encoding;
+    # callback params come from axum's Query extractor — no `url` crate needed.)
+    "reqwest",
     "tokio",
     "tokio-tungstenite",
     "futures-util",

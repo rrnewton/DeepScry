@@ -48,10 +48,33 @@
   const TGZ_CONTENT_TYPE = 'application/gzip';
 
   // ── Feature flag ──────────────────────────────────────────────────────────
+  // Cloud deck storage engages when EITHER an explicit dev/feature flag is set
+  // OR the user is signed in via OAuth (a session-derived identity was recorded
+  // by the landing page in sessionStorage['mtg.cloudIdentity']). Ephemeral
+  // (name-only) users have no identity → cloud stays off and they remain on the
+  // localStorage-only path. The credentials endpoint is the real authority: a
+  // flag-on guest with no session just gets a graceful 401.
   function cloudEnabled() {
     if (global.MTG_DECK_CLOUD === true) return true;
     try {
-      return localStorage.getItem(CLOUD_FLAG_KEY) === '1';
+      if (localStorage.getItem(CLOUD_FLAG_KEY) === '1') return true;
+    } catch (_) {
+      /* ignore */
+    }
+    try {
+      return !!sessionStorage.getItem('mtg.cloudIdentity');
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /** True iff the server currently has a valid OAuth session for this browser. */
+  async function isLoggedIn() {
+    try {
+      const r = await fetch('/auth/status', { cache: 'no-store' });
+      if (!r.ok) return false;
+      const s = await r.json();
+      return !!(s && s.logged_in);
     } catch (_) {
       return false;
     }
@@ -413,6 +436,7 @@
 
   global.DeckStorage = {
     cloudEnabled,
+    isLoggedIn,
     hydrate,
     save,
     saveDebounced,

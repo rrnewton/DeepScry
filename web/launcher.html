@@ -188,6 +188,22 @@
         </div>
     </div>
 
+    <!-- Custom Deck URL (mtg-742): load a deck from any plain-text .dck link.
+         Available to EVERYONE (no login / no cloud needed). Client-side fetch. -->
+    <div class="field">
+        <label class="field-label" for="deck-url">Custom Deck URL</label>
+        <div class="deck-row">
+            <input type="url" id="deck-url" placeholder="https://&hellip;/mydeck.dck" style="flex:1 1 auto;">
+            <button id="btn-load-url" type="button" class="deck-editor-btn">Load</button>
+        </div>
+        <p class="field-hint" style="font-size:12px; color:#9a9ab0; margin:6px 0 0;">
+            Must point to a plain-text deck in
+            <a href="docs/dck-format.html" target="_blank" rel="noopener">.dck format</a>.
+            The deck is fetched in your browser; raw GitHub / Gist links work best.
+        </p>
+        <p id="deck-url-status" style="font-size:12px; margin:6px 0 0;"></p>
+    </div>
+
     <!-- Renderer toggle: Native (DEFAULT) vs Web TUI -->
     <div class="field">
         <label class="field-label">Renderer</label>
@@ -508,6 +524,106 @@ import { buildRedirectQuery, IMAGE_SOURCE_IDS, forwardStickyParamsOnAnchor, forw
         }
     }
 
+    // ── Custom Deck URL (mtg-742) ───────────────────────────────────────────
+    // Load a deck from any plain-text .dck link, client-side. Available to
+    // EVERYONE (no login, no R2). We parse with the SAME structured rules the
+    // deck editor uses (count + name; [Main]/[Sideboard] sections; metadata
+    // Name=), then store the result under the shared custom-decks key and
+    // select it — reusing the entire existing custom-deck play path.
+
+    /** Parse .dck text → { name, main_deck:[[c,n]], sideboard:[[c,n]] } or null. */
+    function parseDckText(text) {
+        const main = new Map();
+        const side = new Map();
+        let name = '';
+        let section = 'main';
+        for (const raw of text.split(/\r?\n/)) {
+            const line = raw.trim();
+            if (!line || line.startsWith('#')) continue;
+            if (line.startsWith('[')) {
+                const lower = line.toLowerCase();
+                if (lower.includes('sideboard')) section = 'sideboard';
+                else if (lower.includes('commander')) section = 'commander';
+                else if (lower.includes('main')) section = 'main';
+                continue;
+            }
+            if (line.includes('=') && !/^\d/.test(line)) {
+                const i = line.indexOf('=');
+                if (line.slice(0, i).trim().toLowerCase() === 'name') name = line.slice(i + 1).trim();
+                continue;
+            }
+            const sp = line.indexOf(' ');
+            if (sp <= 0) continue;
+            const count = parseInt(line.slice(0, sp), 10);
+            if (isNaN(count) || count <= 0) continue;
+            let card = line.slice(sp + 1).trim();
+            const pipe = card.indexOf('|');
+            if (pipe >= 0) card = card.slice(0, pipe).trim();
+            if (card.endsWith('+')) card = card.slice(0, -1).trim();
+            if (!card) continue;
+            const map = section === 'sideboard' ? side : main; // commander → main below
+            if (section === 'sideboard') map.set(card, (map.get(card) || 0) + count);
+            else main.set(card, (main.get(card) || 0) + count);
+        }
+        if (main.size === 0) return null;
+        const toPairs = (m) => [...m.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+        return { name, main_deck: toPairs(main), sideboard: toPairs(side) };
+    }
+
+    /** Fetch + parse a deck URL, store it as a custom deck, and select it. */
+    async function loadDeckFromUrl(url) {
+        const statusEl = document.getElementById('deck-url-status');
+        const setStatus = (msg, ok) => {
+            statusEl.textContent = msg;
+            statusEl.style.color = ok ? '#5fbf5f' : '#d98c00';
+        };
+        let u;
+        try {
+            u = new URL(url);
+        } catch (_) {
+            setStatus('That is not a valid URL.', false);
+            return;
+        }
+        if (u.protocol !== 'https:' && u.protocol !== 'http:') {
+            setStatus('URL must start with http:// or https://', false);
+            return;
+        }
+        setStatus('Loading…', true);
+        let text;
+        try {
+            // CLIENT-SIDE fetch (no server proxy → no SSRF surface). Hosts that
+            // don't send permissive CORS headers will reject this; we surface a
+            // specific, actionable message in that case.
+            const resp = await fetch(u.href, { cache: 'no-store', redirect: 'follow' });
+            if (!resp.ok) { setStatus('Fetch failed: HTTP ' + resp.status + '.', false); return; }
+            text = await resp.text();
+        } catch (e) {
+            setStatus("Couldn't load that URL — the host may block cross-origin reads. "
+                + 'Try a raw GitHub or Gist link.', false);
+            return;
+        }
+        const deck = parseDckText(text);
+        if (!deck) {
+            setStatus('That file is not a valid .dck deck (no cards found). See the .dck format link.', false);
+            return;
+        }
+        // Name it from the file's metadata, the URL filename, or a fallback.
+        let deckName = deck.name
+            || decodeURIComponent((u.pathname.split('/').pop() || '').replace(/\.dck$/i, ''))
+            || 'URL Deck';
+        const all = getCustomDecks();
+        all[deckName] = { main_deck: deck.main_deck, sideboard: deck.sideboard };
+        localStorage.setItem(CUSTOM_DECKS_KEY, JSON.stringify(all));
+        // Switch the picker to the custom collection and select the new deck.
+        collectionSelect.value = 'custom';
+        updateDeckDropdown();
+        deckSelect.value = deckName;
+        refreshPlayEnabled();
+        saveSettings();
+        const cardCount = deck.main_deck.reduce((s, p) => s + p[1], 0);
+        setStatus('Loaded "' + deckName + '" (' + cardCount + ' cards) into Custom Decks.', true);
+    }
+
     const collectionSelect = document.getElementById('deck-collection');
     const deckSelect = document.getElementById('deck-select');
     const playBtn = document.getElementById('btn-play');
@@ -635,6 +751,16 @@ import { buildRedirectQuery, IMAGE_SOURCE_IDS, forwardStickyParamsOnAnchor, forw
     // deckSelect.value, so save AFTER it via a second listener.)
     collectionSelect.addEventListener('change', saveSettings);
     deckSelect.addEventListener('change', saveSettings);
+
+    // Custom Deck URL: load on button click or Enter in the input (mtg-742).
+    const deckUrlInput = document.getElementById('deck-url');
+    const loadUrlBtn = document.getElementById('btn-load-url');
+    if (loadUrlBtn && deckUrlInput) {
+        loadUrlBtn.addEventListener('click', () => loadDeckFromUrl(deckUrlInput.value.trim()));
+        deckUrlInput.addEventListener('keydown', (ev) => {
+            if (ev.key === 'Enter') { ev.preventDefault(); loadDeckFromUrl(deckUrlInput.value.trim()); }
+        });
+    }
 
     /** Load the built-in deck names WASM-free (same source deck_editor uses). */
     async function loadDeckNames() {

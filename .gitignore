@@ -2,6 +2,11 @@
 
 *~
 
+# Local secrets — NEVER commit (deploy/R2/OAuth credentials)
+.deepscry-deploy.env
+.r2.env
+.oauth.env
+
 # Beads command history (local state, not tracked)
 .beads/command_history.log
 .#*
