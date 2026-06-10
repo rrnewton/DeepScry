@@ -1013,6 +1013,156 @@ async fn test_must_attack_creature() -> Result<()> {
     Ok(())
 }
 
+/// Berserk: +X/+0 power-doubling (X = target power), Trample grant, and the
+/// delayed end-step "destroy if it attacked this turn" intervening-if (CR 603.4).
+///
+/// Drives the mechanic deterministically: declare the Grizzly Bears (2/2) as an
+/// attacker, resolve Berserk targeting it, then fire the end-step delayed
+/// trigger. Asserts:
+///  - power doubles to 4 and Trample is granted (mtg-713 B18),
+///  - the Bears is destroyed at the end step because it attacked (mtg-713 B9).
+#[tokio::test]
+async fn test_berserk_power_double_and_destroy() -> Result<()> {
+    use mtg_engine::core::Keyword;
+    use mtg_engine::zones::Zone;
+
+    let cardsfolder = require_cardsfolder();
+    let puzzle_path = PathBuf::from("../test_puzzles/berserk_power_double.pzl");
+    let puzzle_contents = std::fs::read_to_string(&puzzle_path)?;
+    let puzzle = PuzzleFile::parse(&puzzle_contents)?;
+
+    let card_db = CardDatabase::new(cardsfolder);
+    let mut game = load_puzzle_into_game(&puzzle, &card_db).await?;
+    game.logger.enable_capture();
+    game.seed_rng(3);
+
+    let players: Vec<_> = game.players.iter().map(|p| p.id).collect();
+    let p0_id = players[0];
+    let p1_id = players[1];
+
+    // Find the Grizzly Bears (battlefield) and Berserk (hand).
+    let bears_id = *game
+        .battlefield
+        .cards
+        .iter()
+        .find(|&&c| {
+            game.cards
+                .get(c)
+                .is_ok_and(|card| card.name.as_str() == "Grizzly Bears")
+        })
+        .expect("Grizzly Bears on battlefield");
+    let berserk_id = *game
+        .get_player_zones(p0_id)
+        .expect("p0 zones")
+        .hand
+        .cards
+        .iter()
+        .find(|&&c| game.cards.get(c).is_ok_and(|card| card.name.as_str() == "Berserk"))
+        .expect("Berserk in hand");
+
+    // Base power is 2.
+    assert_eq!(game.get_effective_power(bears_id)?, 2, "Bears starts 2/2");
+
+    // Declare the Bears as an attacker (sets attacked_this_turn).
+    game.declare_attacker_logged(bears_id, p1_id);
+    assert!(
+        game.cards.get(bears_id)?.attacked_this_turn,
+        "declaring attacker must set attacked_this_turn"
+    );
+
+    // Put Berserk on the stack and resolve it targeting the Bears.
+    let owner = game.cards.get(berserk_id)?.owner;
+    game.move_card(berserk_id, Zone::Hand, Zone::Stack, owner)?;
+    game.resolve_spell(berserk_id, &[bears_id])?;
+
+    // +X/+0 where X = 2 (the Bears' power at resolution) => power 4, Trample.
+    assert_eq!(
+        game.get_effective_power(bears_id)?,
+        4,
+        "Berserk doubles power: 2 + 2 = 4"
+    );
+    assert!(
+        game.has_keyword_with_effects(bears_id, Keyword::Trample),
+        "Berserk grants Trample"
+    );
+
+    // Fire the end-step delayed trigger (the game loop does this in end_step).
+    game.check_delayed_triggers_on_phase(mtg_engine::core::TriggerPhase::EndStep, p0_id)?;
+
+    // The Bears attacked this turn, so it is destroyed (moved off the battlefield).
+    assert!(
+        !game.battlefield.contains(bears_id),
+        "Berserk destroys the attacker at the end step"
+    );
+    let in_graveyard = game
+        .get_player_zones(p0_id)
+        .expect("p0 zones")
+        .graveyard
+        .cards
+        .contains(&bears_id);
+    assert!(in_graveyard, "destroyed Bears goes to its owner's graveyard");
+
+    Ok(())
+}
+
+/// Berserk negative branch: a creature pumped by Berserk that does NOT attack is
+/// NOT destroyed at the end step (CR 603.4 intervening-if fails).
+#[tokio::test]
+async fn test_berserk_no_destroy_if_not_attacked() -> Result<()> {
+    use mtg_engine::zones::Zone;
+
+    let cardsfolder = require_cardsfolder();
+    let puzzle_path = PathBuf::from("../test_puzzles/berserk_power_double.pzl");
+    let puzzle_contents = std::fs::read_to_string(&puzzle_path)?;
+    let puzzle = PuzzleFile::parse(&puzzle_contents)?;
+
+    let card_db = CardDatabase::new(cardsfolder);
+    let mut game = load_puzzle_into_game(&puzzle, &card_db).await?;
+    game.seed_rng(3);
+
+    let p0_id = game.players[0].id;
+
+    let bears_id = *game
+        .battlefield
+        .cards
+        .iter()
+        .find(|&&c| {
+            game.cards
+                .get(c)
+                .is_ok_and(|card| card.name.as_str() == "Grizzly Bears")
+        })
+        .expect("Grizzly Bears on battlefield");
+    let berserk_id = *game
+        .get_player_zones(p0_id)
+        .expect("p0 zones")
+        .hand
+        .cards
+        .iter()
+        .find(|&&c| game.cards.get(c).is_ok_and(|card| card.name.as_str() == "Berserk"))
+        .expect("Berserk in hand");
+
+    // Resolve Berserk WITHOUT declaring the Bears as an attacker.
+    let owner = game.cards.get(berserk_id)?.owner;
+    game.move_card(berserk_id, Zone::Hand, Zone::Stack, owner)?;
+    game.resolve_spell(berserk_id, &[bears_id])?;
+
+    // Power still doubled (the pump is unconditional), but...
+    assert_eq!(game.get_effective_power(bears_id)?, 4, "Berserk still pumps to 4");
+    assert!(
+        !game.cards.get(bears_id)?.attacked_this_turn,
+        "Bears did not attack this turn"
+    );
+
+    // ...the end-step destroy is gated on attacking, so the Bears survives.
+    game.check_delayed_triggers_on_phase(mtg_engine::core::TriggerPhase::EndStep, p0_id)?;
+    assert!(
+        game.battlefield.contains(bears_id),
+        "Berserk must NOT destroy a creature that did not attack (CR 603.4)"
+    );
+
+    Ok(())
+}
+
 /// Test trample damage assignment optimization
 ///
 /// This test verifies that the AI correctly assigns trample damage,

@@ -1,0 +1,24 @@
+[metadata]
+Name:Berserk Power Double + End-Step Destroy
+Goal:Win
+Turns:3
+Difficulty:Easy
+Description:Berserk ("Cast only before the combat damage step. Target creature gains trample and gets +X/+0 until end of turn, where X is its power. At the beginning of the next end step, destroy that creature if it attacked this turn."). P0 controls a Grizzly Bears (2/2) and holds Berserk. The e2e test casts Berserk on the attacking Bears: its power doubles to 4 (deals 4 to P1 with trample), and at the end step it is destroyed because it attacked this turn (CR 603.4 intervening-if). Before the fix (mtg-713 B18 + B9), the +X/+0 was silently dropped (only Trample applied) and the delayed end-step destroy never fired (the spaced "End Of Turn" phase string was unmatched on the delayed-trigger path, and delayed phase triggers were never checked at the end step).
+
+[state]
+turn=2
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Berserk
+p0library=Forest; Forest; Forest; Forest; Forest
+p0graveyard=
+p0battlefield=Forest; Forest; Grizzly Bears
+p0exile=
+
+p1life=20
+p1hand=
+p1library=Island; Island; Island; Island; Island
+p1graveyard=
+p1battlefield=
+p1exile=

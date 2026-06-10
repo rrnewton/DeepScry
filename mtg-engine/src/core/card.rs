@@ -928,6 +928,19 @@ pub struct Card {
     #[serde(default)]
     pub dealt_damage_to_opponent_this_turn: bool,
 
+    /// Set when this creature has been declared as an attacker this turn. Drives
+    /// the `Card.attackedThisTurn` intervening-if (CR 603.4) on Berserk's
+    /// delayed end-step trigger — "At the beginning of the next end step,
+    /// destroy that creature if it attacked this turn." Unlike combat's
+    /// transient `is_attacking` (true only during the combat phase), this flag
+    /// persists through the rest of the turn so the end-step trigger can read
+    /// it. Cleared at the cleanup step (CR 514.2). Set+logged in the
+    /// declare-attackers step as a reversible
+    /// `GameAction::MarkAttackedThisTurn` so rewind/replay restores it exactly
+    /// (same per-turn-state contract as `dealt_damage_to_opponent_this_turn`).
+    #[serde(default)]
+    pub attacked_this_turn: bool,
+
     /// Indices of exhausted activated abilities (can only be activated once per game)
     /// When an exhaust ability resolves, its index is added here to prevent reactivation
     pub exhausted_abilities: SmallVec<[usize; 1]>,
@@ -1006,6 +1019,7 @@ pub struct CardStateSnapshot {
     pub exile_if_would_die_this_turn: bool,
     pub prevent_all_combat_damage_this_turn: bool,
     pub dealt_damage_to_opponent_this_turn: bool,
+    pub attacked_this_turn: bool,
     pub exhausted_abilities: SmallVec<[usize; 1]>,
     pub definition: CardDefinition,
 }
@@ -1076,6 +1090,7 @@ impl Card {
             exile_if_would_die_this_turn: false,
             prevent_all_combat_damage_this_turn: false,
             dealt_damage_to_opponent_this_turn: false,
+            attacked_this_turn: false,
             exhausted_abilities: SmallVec::new(),
             definition,
         }
@@ -1124,6 +1139,7 @@ impl Card {
             exile_if_would_die_this_turn: self.exile_if_would_die_this_turn,
             prevent_all_combat_damage_this_turn: self.prevent_all_combat_damage_this_turn,
             dealt_damage_to_opponent_this_turn: self.dealt_damage_to_opponent_this_turn,
+            attacked_this_turn: self.attacked_this_turn,
             exhausted_abilities: self.exhausted_abilities.clone(),
             definition: self.definition.clone(),
         }
@@ -1171,6 +1187,7 @@ impl Card {
         self.exile_if_would_die_this_turn = snapshot.exile_if_would_die_this_turn;
         self.prevent_all_combat_damage_this_turn = snapshot.prevent_all_combat_damage_this_turn;
         self.dealt_damage_to_opponent_this_turn = snapshot.dealt_damage_to_opponent_this_turn;
+        self.attacked_this_turn = snapshot.attacked_this_turn;
         self.exhausted_abilities = snapshot.exhausted_abilities;
         self.definition = snapshot.definition;
     }

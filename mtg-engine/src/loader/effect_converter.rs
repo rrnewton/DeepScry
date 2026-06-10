@@ -2102,8 +2102,65 @@ pub fn params_to_effect_with_svars(params: &AbilityParams, svars: &HashMap<Strin
         }
     }
 
+    // Pump: when NumAtt$/NumDef$ reference a variable SVar (X/Y) that resolves
+    // to a non-fixed CountExpression, emit PumpCreatureVariable so the bonus is
+    // computed at resolution time. `params_to_effect` can't do this (no SVar
+    // access) and would silently drop the bonus, leaving only any granted
+    // keywords (the Berserk PARTIAL bug: Trample applied, +X/+0 lost — mtg-713
+    // B18). The variable here is `Targeted$CardPower` (Berserk's power-doubling),
+    // but the path is generic over any CountExpression a NumAtt$ SVar resolves to.
+    if params.api_type == ApiType::Pump {
+        let power_is_var = params.get("NumAtt").is_some_and(value_is_variable);
+        let toughness_is_var = params.get("NumDef").is_some_and(value_is_variable);
+        if power_is_var || toughness_is_var {
+            // Resolve each side: a variable side becomes its CountExpression; a
+            // fixed/absent side becomes Fixed(n). A variable side that fails to
+            // resolve (Fixed(0)) means the SVar shape is unsupported — fall
+            // through to params_to_effect rather than emit a silent no-op pump.
+            let power_count = pump_count_from_param(params.get("NumAtt"), svars);
+            let toughness_count = pump_count_from_param(params.get("NumDef"), svars);
+            let resolved_a_variable = (power_is_var && !matches!(power_count, crate::core::CountExpression::Fixed(0)))
+                || (toughness_is_var && !matches!(toughness_count, crate::core::CountExpression::Fixed(0)));
+            if resolved_a_variable {
+                let keywords_granted: SmallVec<[Keyword; 2]> = params
+                    .get("KW")
+                    .map(|kw_str| {
+                        kw_str
+                            .split(" & ")
+                            .filter_map(|kw| Keyword::from_string(kw.trim()))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                return Some(Effect::PumpCreatureVariable {
+                    target: CardId::new(0), // Placeholder - filled in at cast time
+                    power_count,
+                    toughness_count,
+                    keywords_granted,
+                });
+            }
+        }
+    }
+
     // For all other types, delegate to the base function
     params_to_effect(params)
+}
+
+/// Does a NumAtt$/NumDef$ value reference a pump variable (X/Y/Z, optionally
+/// signed)? Used to decide whether to route Pump through the variable path.
+fn value_is_variable(v: &str) -> bool {
+    let core = v.trim_start_matches('+').trim_start_matches('-');
+    matches!(core, "X" | "Y" | "Z")
+}
+
+/// Convert a NumAtt$/NumDef$ value into a CountExpression. A literal integer (or
+/// `None`) becomes `Fixed(n)`; a variable reference is resolved through the
+/// card's SVars by `CountExpression::parse`.
+fn pump_count_from_param(value: Option<&str>, svars: &HashMap<String, String>) -> crate::core::CountExpression {
+    match value {
+        Some(v) if value_is_variable(v) => crate::core::CountExpression::parse(v, svars),
+        Some(v) => crate::core::CountExpression::Fixed(v.trim_start_matches('+').parse::<i32>().unwrap_or(0)),
+        None => crate::core::CountExpression::Fixed(0),
+    }
 }
 
 /// Convert DelayedTrigger ability parameters to a CreateDelayedTrigger Effect with SVar resolution.
@@ -2218,8 +2275,21 @@ pub fn params_to_delayed_trigger_with_svars(params: &AbilityParams, svars: &Hash
         mode, execute_svar, execute_effect
     );
 
+    // `RememberObjects$ Targeted` (Berserk) means the delayed trigger tracks the
+    // SAME creature the parent ability targeted, rather than choosing a fresh
+    // target. Mark `tracked_card` with the reuse_previous sentinel so resolution
+    // binds it to the parent's already-resolved target instead of consuming a
+    // new chosen target (which would over-count targets and fizzle). Without
+    // this rider it falls back to the placeholder (fresh-target) path used by
+    // Fatal Fissure-style "choose target creature" delayed triggers.
+    let tracked_card = if params.get("RememberObjects") == Some("Targeted") {
+        CardId::reuse_previous()
+    } else {
+        CardId::new(0) // Placeholder - filled in at cast time
+    };
+
     Some(Effect::CreateDelayedTrigger {
-        tracked_card: CardId::new(0), // Placeholder - filled in at cast time
+        tracked_card,
         condition,
         effect: Box::new(execute_effect),
         expiry,
@@ -2442,6 +2512,79 @@ mod tests {
                 assert_eq!(toughness_bonus, 2);
             }
             _ => panic!("Expected PumpCreature effect"),
+        }
+    }
+
+    #[test]
+    fn test_convert_berserk_variable_pump() {
+        use crate::core::{CountExpression, Keyword};
+
+        // Berserk: `SP$ Pump | NumAtt$ +X | KW$ Trample` with
+        // `SVar:X:Targeted$CardPower` must produce a PumpCreatureVariable whose
+        // power_count is TargetedCardPower (the +X/+0 power-doubling, mtg-713
+        // B18) and whose granted keywords include Trample — NOT a fixed
+        // PumpCreature that silently drops the +X.
+        let params =
+            AbilityParams::parse("A:SP$ Pump | ValidTgts$ Creature | NumAtt$ +X | KW$ Trample | SubAbility$ DelTrig")
+                .unwrap();
+        let mut svars = HashMap::new();
+        svars.insert("X".to_string(), "Targeted$CardPower".to_string());
+
+        let effect = params_to_effect_with_svars(&params, &svars).expect("Berserk pump should convert");
+        match effect {
+            Effect::PumpCreatureVariable {
+                power_count,
+                toughness_count,
+                keywords_granted,
+                ..
+            } => {
+                assert_eq!(
+                    power_count,
+                    CountExpression::TargetedCardPower,
+                    "power_count must be TargetedCardPower (+X = target power)"
+                );
+                assert_eq!(
+                    toughness_count,
+                    CountExpression::Fixed(0),
+                    "toughness_count must be Fixed(0) (+X/+0)"
+                );
+                assert!(
+                    keywords_granted.contains(&Keyword::Trample),
+                    "Trample must be granted: {keywords_granted:?}"
+                );
+            }
+            other => panic!("Expected PumpCreatureVariable, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_convert_berserk_delayed_destroy_tracks_target() {
+        // Berserk's delayed trigger: `DB$ DelayedTrigger | Mode$ Phase |
+        // Phase$ End Of Turn | Execute$ TrigDestroy | RememberObjects$ Targeted`.
+        // The spaced "End Of Turn" phase string must parse (B9), and
+        // RememberObjects$ Targeted must mark tracked_card as reuse_previous so
+        // the destroy binds to Berserk's pumped target rather than choosing a
+        // fresh one.
+        let params = AbilityParams::parse(
+            "A:DB$ DelayedTrigger | Mode$ Phase | Phase$ End Of Turn | Execute$ TrigDestroy | RememberObjects$ Targeted",
+        )
+        .unwrap();
+        let mut svars = HashMap::new();
+        svars.insert(
+            "TrigDestroy".to_string(),
+            "DB$ Destroy | Defined$ DelayTriggerRemembered | ConditionPresent$ Card.attackedThisTurn".to_string(),
+        );
+
+        let effect = params_to_delayed_trigger_with_svars(&params, &svars)
+            .expect("Berserk delayed trigger should convert (spaced End Of Turn phase)");
+        match effect {
+            Effect::CreateDelayedTrigger { tracked_card, .. } => {
+                assert!(
+                    tracked_card.is_reuse_previous(),
+                    "RememberObjects$ Targeted must mark tracked_card reuse_previous"
+                );
+            }
+            other => panic!("Expected CreateDelayedTrigger, got {other:?}"),
         }
     }
 

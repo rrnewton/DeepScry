@@ -535,6 +535,18 @@ impl<'a> GameLoop<'a> {
         // Check for beginning of end step triggers
         self.check_phase_triggers(TriggerEvent::BeginningOfEndStep)?;
 
+        // Fire `Mode$ Phase | Phase$ End Of Turn` delayed triggers registered
+        // for the end step (e.g. Berserk's "At the beginning of the next end
+        // step, destroy that creature if it attacked this turn"). Mirrors the
+        // main-phase delayed-trigger firing site: the call REMOVES + undo-logs
+        // each fired trigger so it fires exactly once per forward pass and is
+        // restored on rewind for replay (same net-determinism contract).
+        {
+            let active_player = self.game.turn.active_player;
+            self.game
+                .check_delayed_triggers_on_phase(crate::core::TriggerPhase::EndStep, active_player)?;
+        }
+
         if let Some(result) = self.priority_round(controller1, controller2)? {
             return Ok(Some(result));
         }

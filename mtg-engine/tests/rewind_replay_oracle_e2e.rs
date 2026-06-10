@@ -575,23 +575,37 @@ fn per_action_undo_redo_declare_attacker() {
     // helper (not GameState::declare_attacker) so this test isolates the
     // CombatState mutation + its GameAction inverse, independent of the tap /
     // trigger side effects (which have their own separately-tested inverses).
+    // `declare_attacker_logged` logs TWO reversible actions: DeclareAttacker
+    // (combat state) and MarkAttackedThisTurn (Berserk's per-turn flag, mtg-713
+    // B18). Both must round-trip for the state hash to invert exactly.
     game.declare_attacker_logged(attacker, defender);
     assert!(game.combat.is_attacking(attacker));
+    assert!(
+        game.cards.get(attacker).unwrap().attacked_this_turn,
+        "declaring an attacker must set attacked_this_turn"
+    );
     let hash_after = compute_state_hash(&game);
     assert_ne!(
         hash_before, hash_after,
-        "declaring an attacker must change the state hash (combat.attackers / combat_active)"
+        "declaring an attacker must change the state hash (combat.attackers / combat_active / attacked_this_turn)"
     );
 
-    // Undo → must return EXACTLY to the pre-declare hash.
+    // Undo both actions (newest first): MarkAttackedThisTurn, then
+    // DeclareAttacker. The state must return EXACTLY to the pre-declare hash.
+    let mark_action = undo_last(&mut game);
+    assert!(matches!(mark_action, GameAction::MarkAttackedThisTurn { .. }));
+    assert!(
+        !game.cards.get(attacker).unwrap().attacked_this_turn,
+        "undo must clear attacked_this_turn"
+    );
     let action = undo_last(&mut game);
     assert!(matches!(action, GameAction::DeclareAttacker { .. }));
     assert!(!game.combat.is_attacking(attacker), "undo must remove the attacker");
     assert_eq!(
         compute_state_hash(&game),
         hash_before,
-        "undo of DeclareAttacker must restore the exact pre-declare state hash \
-         (combat.attackers map AND the combat_active flag)"
+        "undo of DeclareAttacker + MarkAttackedThisTurn must restore the exact pre-declare state hash \
+         (combat.attackers map, combat_active flag, AND attacked_this_turn)"
     );
 
     // Redo (re-apply) → must return EXACTLY to the post-declare hash.

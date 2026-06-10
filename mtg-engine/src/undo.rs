@@ -452,6 +452,16 @@ pub enum GameAction {
     /// count (mirrors the `SetCommanderDamage` old/new pattern).
     MarkDealtDamageToOpponent { card: CardId, prev: bool },
 
+    /// Records that `card`'s `attacked_this_turn` flag was set to `true` when it
+    /// was declared as an attacker (Berserk's end-step destroy intervening-if,
+    /// CR 603.4 / CR 514.2). `prev` is the flag value before the set, so
+    /// `undo()` restores it exactly. Logged UNCONDITIONALLY for every declared
+    /// attacker (not guarded on the live value), so the undo-log length is
+    /// identical on a forward server pass and a WASM/native rewind+replay pass —
+    /// a guard would desync the action count (same contract as
+    /// `MarkDealtDamageToOpponent`).
+    MarkAttackedThisTurn { card: CardId, prev: bool },
+
     /// Records a Clone copy-transformation (`GameState::apply_clone`, CR 707.2:
     /// Copy Artifact, Clone, Vesuvan Doppelganger, ...) so a rewind+replay can
     /// reverse it exactly. `apply_clone` overwrites ~15 copiable characteristics
@@ -845,6 +855,9 @@ impl fmt::Display for GameAction {
             }
             GameAction::MarkDealtDamageToOpponent { card, prev } => {
                 write!(f, "MarkDealtDamageToOpponent(card={} prev={})", card.as_u32(), prev)
+            }
+            GameAction::MarkAttackedThisTurn { card, prev } => {
+                write!(f, "MarkAttackedThisTurn(card={} prev={})", card.as_u32(), prev)
             }
             GameAction::CloneCard { card_id, prev } => {
                 write!(f, "CloneCard({} prev_name={})", card_id.as_u32(), prev.name.as_str())
@@ -1564,6 +1577,13 @@ impl GameAction {
                 // a missing card (it may have left the battlefield).
                 if let Ok(card) = game.cards.get_mut(*card) {
                     card.dealt_damage_to_opponent_this_turn = *prev;
+                }
+            }
+            GameAction::MarkAttackedThisTurn { card, prev } => {
+                // Restore the flag to its exact pre-set value. get_mut tolerates
+                // a missing card (it may have left the battlefield).
+                if let Ok(card) = game.cards.get_mut(*card) {
+                    card.attacked_this_turn = *prev;
                 }
             }
             GameAction::CloneCard { card_id, prev } => {

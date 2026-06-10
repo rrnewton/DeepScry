@@ -234,14 +234,22 @@ impl TriggerPhase {
     /// Returns `None` for unrecognized names so callers can skip the trigger
     /// rather than silently mapping to the wrong phase.
     pub fn from_script_name(name: &str) -> Option<Self> {
-        match name {
+        // Some scripts spell the end-step phase with embedded spaces
+        // ("End of Turn" / "End Of Turn", e.g. Berserk's delayed-trigger
+        // `Phase$ End Of Turn`). Normalise by stripping spaces and lowercasing
+        // before matching so the spaced and unspaced forms collapse together.
+        // This mirrors the same spaced-phase-string fix made for *trigger*
+        // phases in the card trigger parser (mtg-713 B9); here it covers the
+        // *delayed*-trigger phase path.
+        let normalized: String = name.chars().filter(|c| !c.is_whitespace()).collect();
+        match normalized.as_str() {
             "Upkeep" => Some(Self::Upkeep),
             "Draw" => Some(Self::Draw),
             "Main1" => Some(Self::Main1),
             "BeginCombat" => Some(Self::BeginCombat),
             "EndCombat" => Some(Self::EndCombat),
             "Main2" => Some(Self::Main2),
-            "End" | "EndStep" => Some(Self::EndStep),
+            "End" | "EndStep" | "EndofTurn" | "EndOfTurn" => Some(Self::EndStep),
             "Cleanup" => Some(Self::Cleanup),
             _ => None,
         }
@@ -293,6 +301,21 @@ pub enum DelayedEffect {
     /// Exile the tracked card
     /// Used by: Delayed exile effects
     ExileCard,
+
+    /// Destroy the tracked card, optionally only if it attacked this turn.
+    ///
+    /// Used by Berserk: "At the beginning of the next end step, destroy that
+    /// creature if it attacked this turn." (CR 603.4 intervening-if on a
+    /// delayed trigger.) The tracked card is the creature Berserk targeted
+    /// (`RememberObjects$ Targeted`). When `require_attacked_this_turn` is set,
+    /// the destroy is skipped unless the tracked card's `attacked_this_turn`
+    /// flag is true at fire time — read from public, rewind-reconstructed
+    /// per-turn state, so it is information-independent and replay-faithful.
+    DestroyTracked {
+        /// Gate the destroy on the tracked card having attacked this turn
+        /// (Berserk's `ConditionPresent$ Card.attackedThisTurn`).
+        require_attacked_this_turn: bool,
+    },
 
     /// Cast the tracked card without paying mana cost
     /// Used by: Suspend

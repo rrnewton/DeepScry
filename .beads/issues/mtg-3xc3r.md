@@ -1,0 +1,45 @@
+---
+title: 'Card Compatibility: Berserk'
+status: closed
+priority: 2
+issue_type: task
+depends_on:
+  mtg-709: blocks
+created_at: 2026-06-10T21:02:06.627258847+00:00
+updated_at: 2026-06-10T21:02:11.970378932+00:00
+---
+
+# Description
+
+Card Compatibility: Berserk (1994 Worlds — mtg-709; broken-card backlog mtg-713 item B18 + B9).
+
+Oracle: Cast this spell only before the combat damage step. Target creature gains trample and gets +X/+0 until end of turn, where X is its power. At the beginning of the next end step, destroy that creature if it attacked this turn.
+
+CARD STATUS: WORKING (2026-06-10).
+
+== Findings (2026-06-10) ==
+[x] Trample grant: parsed + honored (pre-existing).
+[x] +X/+0 power-doubling (X = target power): FIXED. Berserk's `SP$ Pump | NumAtt$ +X` with `SVar:X:Targeted$CardPower` now produces a PumpCreatureVariable whose power_count = CountExpression::TargetedCardPower, resolved at execution to the target's CURRENT power (read BEFORE the pump so X locks pre-pump, CR 613.4). A 2/2 Grizzly Bears becomes 4/2 and deals 4 with trample.
+[x] End-step "destroy if it attacked this turn" delayed trigger (CR 603.4 intervening-if): FIXED. Multiple loader/engine gaps closed (see root cause).
+[x] Intervening-if BOTH branches: attacker IS destroyed at end step; a Berserk'd creature that did NOT attack survives. Verified in real games + e2e.
+
+== Root cause (mtg-713 B18 + B9) ==
+1. `NumAtt$ +X` with a non-`Count$` variable SVar (`Targeted$CardPower`) was dropped by params_to_effect (get_i32 fails) -> only `KW$ Trample` applied. Added CountExpression::TargetedCardPower + a Pump interception in params_to_effect_with_svars that emits PumpCreatureVariable; resolved in the PumpCreatureVariable executor from the target's current power.
+2. Delayed-trigger phase string "End Of Turn" (spaced) was unmatched by TriggerPhase::from_script_name -> the delayed trigger never registered for the end step. Normalized (strip whitespace, case-insensitive; added EndofTurn/EndOfTurn).
+3. Phase-mode delayed triggers were only fired in main phases (Mana Drain) — never at the end step. Added check_delayed_triggers_on_phase(EndStep) to end_step().
+4. The delayed Destroy (`DB$ Destroy | Defined$ DelayTriggerRemembered`) was a no-op in fire_delayed_trigger. Added DelayedEffect::DestroyTracked{require_attacked_this_turn}; the loader marks tracked_card reuse_previous for `RememberObjects$ Targeted` so the destroy binds Berserk's pumped target instead of choosing a fresh one.
+5. "if it attacked this turn" needed a new per-turn Card::attacked_this_turn flag (combat's is_attacking is combat-only). Set in declare_attacker_logged, gated at the destroy.
+
+== Rewind-safety ==
+attacked_this_turn is serialized (#[serde(default)]), cleared at cleanup (CR 514.2) + zone reset, set via reversible GameAction::MarkAttackedThisTurn{card,prev}. Logged UNCONDITIONALLY (no skip-if-set guard) so undo-log length is identical forward vs rewind+replay — same contract as MarkDealtDamageToOpponent (B9). Verified: rogerbrand seed3 network GUI canary PASS (no desync), rewind_replay_oracle_e2e per_action_undo_redo_declare_attacker updated to round-trip BOTH actions.
+
+== Tests ==
+- Parser-shape unit: loader::effect_converter::tests::test_convert_berserk_variable_pump + test_convert_berserk_delayed_destroy_tracks_target
+- E2E puzzle: tests/puzzle_e2e.rs::test_berserk_power_double_and_destroy (positive) + test_berserk_no_destroy_if_not_attacked (negative intervening-if)
+- Puzzle file: test_puzzles/berserk_power_double.pzl
+
+== Reproducer (real game) ==
+mtg tui --start-state test_puzzles/berserk_power_double.pzl --p1 fixed --p1-fixed-inputs='attack grizzly;cast berserk;target grizzly;pass;pass;pass;pass;pass;pass;pass;pass;pass;pass' --p2 fixed --p2-fixed-inputs='pass;pass;pass;pass;pass;pass;pass;pass;pass;pass;pass;pass;pass' --seed 7 -v 3
+Expected: "Grizzly Bears deals 4 damage to Player 2" (2->4 doubled), then end step "Grizzly Bears is destroyed (Berserk)".
+
+CR: 603.4 intervening-if; 613.4 P/T layers; 508.1 attackers; 514.2 cleanup; 702.19 trample.

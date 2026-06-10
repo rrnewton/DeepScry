@@ -2529,6 +2529,30 @@ impl GameState {
                     effect.clone()
                 }
             }
+            // Variable-bonus pump (Berserk's +X/+0 where X = target power, or
+            // any Count$-driven pump cast as a targeted spell). Binds the chosen
+            // target the same way as the fixed PumpCreature arm above so the
+            // bonus is computed against the right creature at execution.
+            Effect::PumpCreatureVariable {
+                target,
+                power_count,
+                toughness_count,
+                keywords_granted,
+            } if target.is_placeholder() => {
+                if *target_index < chosen_targets.len() {
+                    let resolved_target = chosen_targets[*target_index];
+                    *target_index += 1;
+                    *last_resolved_target = Some(resolved_target);
+                    Effect::PumpCreatureVariable {
+                        target: resolved_target,
+                        power_count: power_count.clone(),
+                        toughness_count: toughness_count.clone(),
+                        keywords_granted: keywords_granted.clone(),
+                    }
+                } else {
+                    effect.clone()
+                }
+            }
             Effect::DebuffCreature {
                 target,
                 keywords_removed,
@@ -3084,6 +3108,24 @@ impl GameState {
                     effect.clone()
                 }
             }
+            // RememberObjects$ Targeted (Berserk): bind tracked_card to the
+            // parent ability's already-resolved target (the creature Berserk
+            // pumped) WITHOUT consuming a fresh chosen target. Mirrors the
+            // reuse_previous arms for TapPermanent / DestroyPermanent sub-effects.
+            Effect::CreateDelayedTrigger {
+                tracked_card,
+                condition,
+                effect: delayed_effect,
+                expiry,
+            } if tracked_card.is_reuse_previous() => match last_resolved_target {
+                Some(prev) => Effect::CreateDelayedTrigger {
+                    tracked_card: *prev,
+                    condition: condition.clone(),
+                    effect: delayed_effect.clone(),
+                    expiry: expiry.clone(),
+                },
+                None => effect.clone(),
+            },
 
             // UnlessCostWrapper: resolve inner effect and payer reference
             Effect::UnlessCostWrapper {
@@ -3768,9 +3810,22 @@ impl GameState {
                 // Get target's controller for filter resolution
                 let target_controller = self.cards.get(*target)?.controller;
 
-                // Evaluate the count expressions
-                let power_bonus = self.evaluate_count_expression(power_count, target_controller)?;
-                let toughness_bonus = self.evaluate_count_expression(toughness_count, target_controller)?;
+                // Evaluate the count expressions. `Targeted$CardPower` (Berserk's
+                // power-doubling +X/+0) resolves against the target itself and is
+                // not visible to `evaluate_count_expression` (controller-only), so
+                // resolve it HERE from the target's CURRENT power — read BEFORE the
+                // pump mutates power_bonus below, so X locks to the pre-pump value
+                // (CR 613.4: the +X/+0 layer applies once, X = power at resolution).
+                let target_power = i32::from(self.cards.get(*target)?.current_power());
+                let resolve = |this: &Self, count: &crate::core::CountExpression| -> Result<i32> {
+                    if matches!(count, crate::core::CountExpression::TargetedCardPower) {
+                        Ok(target_power)
+                    } else {
+                        this.evaluate_count_expression(count, target_controller)
+                    }
+                };
+                let power_bonus = resolve(self, power_count)?;
+                let toughness_bonus = resolve(self, toughness_count)?;
 
                 log::debug!(
                     target: "pump",
@@ -5678,6 +5733,18 @@ impl GameState {
                         // tracked_card will be repurposed to hold the spell being copied
                         // (set at trigger fire time, not creation time)
                         DelayedEffect::CopySpellAbility { may_choose_targets }
+                    }
+                    Effect::DestroyPermanent { .. } => {
+                        // Berserk: "At the beginning of the next end step, destroy
+                        // that creature if it attacked this turn." The delayed
+                        // Destroy targets the TRACKED card (the creature Berserk
+                        // targeted via RememberObjects$ Targeted), gated on its
+                        // attacked-this-turn flag (CR 603.4). Route to the
+                        // dedicated DestroyTracked variant so fire_delayed_trigger
+                        // can both bind the tracked card and check the gate.
+                        DelayedEffect::DestroyTracked {
+                            require_attacked_this_turn: true,
+                        }
                     }
                     _ => {
                         // For all other effects, wrap in ExecuteEffect
@@ -10280,6 +10347,16 @@ impl GameState {
                 // Conservatively evaluate as unkicked (the lower/safer damage value).
                 // TODO: Once kicker tracking is implemented, resolve the actual state.
                 Ok(*unkicked_value)
+            }
+            CountExpression::TargetedCardPower => {
+                // TargetedCardPower needs the effect's target card, which this
+                // controller-only signature does not carry. The
+                // PumpCreatureVariable executor resolves it directly from its
+                // `target` (reading power BEFORE applying the pump). If this
+                // arm is reached, the expression escaped that path — evaluate to
+                // 0 rather than silently mis-counting.
+                log::debug!("evaluate_count_expression: TargetedCardPower has no target context here; evaluated as 0");
+                Ok(0)
             }
         }
     }

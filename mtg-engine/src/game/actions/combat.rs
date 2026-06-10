@@ -247,6 +247,32 @@ impl GameState {
             },
             prior_log_size,
         );
+        // Mark the creature as having attacked this turn (Berserk's end-step
+        // destroy intervening-if reads this AFTER combat ends — CR 603.4). Both
+        // the validated `declare_attacker` and the game-loop combat step funnel
+        // through this helper, so the flag is set on every attack path. The set
+        // is undo-logged UNCONDITIONALLY (even if already true, e.g. a second
+        // combat phase) so the undo-log length is rewind/replay-identical — same
+        // net-determinism contract as the dealt-damage flag (mtg-713 B9).
+        self.mark_attacked_this_turn_logged(card_id);
+    }
+
+    /// Set a creature's `attacked_this_turn` flag (Berserk's end-step destroy
+    /// intervening-if, CR 603.4) and log a reversible `MarkAttackedThisTurn` so
+    /// rewind/replay restores it exactly. Logged UNCONDITIONALLY — the undo
+    /// captures the prior value, so re-setting an already-true flag is a no-op
+    /// on the live state but still appends one undo entry, keeping the undo-log
+    /// length identical across a forward pass and a rewind+replay pass.
+    pub fn mark_attacked_this_turn_logged(&mut self, card_id: CardId) {
+        let prev = self.cards.try_get(card_id).is_some_and(|c| c.attacked_this_turn);
+        if let Some(card) = self.cards.try_get_mut(card_id) {
+            card.attacked_this_turn = true;
+        }
+        let prior_log_size = self.logger.log_count();
+        self.undo_log.log(
+            crate::undo::GameAction::MarkAttackedThisTurn { card: card_id, prev },
+            prior_log_size,
+        );
     }
 
     /// Declare a blocker in `CombatState` and log a reversible

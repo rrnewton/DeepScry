@@ -3230,6 +3230,9 @@ impl GameState {
                 // flag (Whirling Dervish) — a per-turn transient, cleared at the
                 // end-of-turn cleanup step alongside marked damage (CR 514.2).
                 card.dealt_damage_to_opponent_this_turn = false;
+                // Clear the "attacked this turn" flag (Berserk's end-step destroy
+                // intervening-if) on the same per-turn cleanup boundary (CR 514.2).
+                card.attacked_this_turn = false;
 
                 // Roll back animation type changes (Mishra's Factory and
                 // friends become land-only again at end of turn). We have to
@@ -3881,6 +3884,46 @@ impl GameState {
                 if let Some(zone) = self.find_card_zone(card_id) {
                     let owner = self.cards.try_get(card_id).map_or(controller, |c| c.owner);
                     self.move_card(card_id, zone, Zone::Exile, owner)?;
+                }
+            }
+
+            DelayedEffect::DestroyTracked {
+                require_attacked_this_turn,
+            } => {
+                // Berserk: destroy the tracked creature at the next end step,
+                // gated on whether it attacked this turn (CR 603.4
+                // intervening-if). The gate reads the per-turn `attacked_this_turn`
+                // flag — public, rewind-reconstructed state, so the firing is
+                // information-independent and replay-faithful. If the creature
+                // already left the battlefield the destroy is a no-op (LKI is not
+                // needed; "destroy" simply finds nothing to destroy).
+                let on_battlefield = self.find_card_zone(card_id) == Some(Zone::Battlefield);
+                let gate_ok =
+                    !require_attacked_this_turn || self.cards.try_get(card_id).is_some_and(|c| c.attacked_this_turn);
+                if on_battlefield && gate_ok {
+                    // Mirror the Effect::DestroyPermanent resolution path
+                    // (indestructible / regeneration / death-trigger aware).
+                    // Berserk allows regeneration (no NoRegen$ on the script).
+                    let (owner, name, has_indestructible, has_regen_shield) = {
+                        let card = self.cards.get(card_id)?;
+                        (
+                            card.owner,
+                            card.name.to_string(),
+                            card.has_indestructible(),
+                            card.regeneration_shields > 0,
+                        )
+                    };
+                    if has_indestructible {
+                        // CR 702.12b: can't be destroyed — no-op.
+                    } else if has_regen_shield {
+                        // CR 701.15a: regeneration replaces destruction.
+                        self.apply_regeneration_shield(card_id)?;
+                    } else {
+                        let dest = self.death_destination_for_card(card_id);
+                        let _ = self.check_death_triggers(card_id);
+                        self.move_card(card_id, Zone::Battlefield, dest, owner)?;
+                        self.logger.gamelog(&format!("{} is destroyed (Berserk)", name));
+                    }
                 }
             }
 

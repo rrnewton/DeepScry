@@ -304,6 +304,18 @@ pub enum CountExpression {
     /// Resolved at effect execution time by reading Card::x_paid
     XPaid,
 
+    /// The current power of the card THIS effect targets (`Targeted$CardPower`).
+    ///
+    /// Berserk: `NumAtt$ +X` with `SVar:X:Targeted$CardPower` = "+X/+0 where X
+    /// is the target's power" (power-doubling). Resolved at effect-execution
+    /// time from the target creature's *current* power — read BEFORE the pump is
+    /// applied so the doubling uses the pre-pump value (CR 613: the +X/+0 layer
+    /// applies once, locking X to the power at resolution). Power is public
+    /// state, so this is information-independent (network determinism) and
+    /// rewind-safe (a pure function of the target's power at the resolution
+    /// instant, captured into the always-logged PumpCreature undo delta).
+    TargetedCardPower,
+
     /// Count spells cast this turn (Count$YouCastThisTurn)
     SpellsCastThisTurn,
 
@@ -479,6 +491,13 @@ impl CountExpression {
 
         // Look up the SVar
         if let Some(svar_value) = svars.get(var_name) {
+            // `Targeted$CardPower` — the targeted creature's current power
+            // (Berserk: NumAtt$ +X => +(target power)/+0, power-doubling).
+            // This is NOT a Count$ expression; it resolves against the effect's
+            // own target at execution time, so it has no `Count$` prefix.
+            if svar_value == "Targeted$CardPower" {
+                return CountExpression::TargetedCardPower;
+            }
             // Parse Count$ expressions
             if let Some(rest) = svar_value.strip_prefix("Count$") {
                 if rest == "xPaid" {
@@ -4660,6 +4679,7 @@ mod tests {
             | CountExpression::SpellsCastThisTurn
             | CountExpression::ValidGraveyard { .. }
             | CountExpression::Kicked { .. }
+            | CountExpression::TargetedCardPower
             | CountExpression::Compare { .. } => panic!("Expected CardsInHand, got {:?}", expr),
         }
 
@@ -4705,6 +4725,7 @@ mod tests {
             | CountExpression::XPaid
             | CountExpression::SpellsCastThisTurn
             | CountExpression::Compare { .. }
+            | CountExpression::TargetedCardPower
             | CountExpression::Kicked { .. } => {
                 panic!("Expected ValidGraveyard, got {:?}", &svars["CT"])
             }
@@ -4749,6 +4770,7 @@ mod tests {
                     | CountExpression::SpellsCastThisTurn
                     | CountExpression::ValidGraveyard { .. }
                     | CountExpression::Kicked { .. }
+                    | CountExpression::TargetedCardPower
                     | CountExpression::Compare { .. } => {
                         panic!("Expected ValidPermanents, got {:?}", source)
                     }
@@ -4766,7 +4788,8 @@ mod tests {
             | CountExpression::XPaid
             | CountExpression::SpellsCastThisTurn
             | CountExpression::ValidGraveyard { .. }
-            | CountExpression::Kicked { .. } => panic!("Expected Compare, got {:?}", expr),
+            | CountExpression::Kicked { .. }
+            | CountExpression::TargetedCardPower => panic!("Expected Compare, got {:?}", expr),
         }
     }
 
