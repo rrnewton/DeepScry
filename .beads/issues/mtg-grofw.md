@@ -4,7 +4,7 @@ status: open
 priority: 2
 issue_type: task
 created_at: 2026-06-09T21:47:08.267689746+00:00
-updated_at: 2026-06-09T22:50:01.565199501+00:00
+updated_at: 2026-06-10T01:20:17.377908830+00:00
 ---
 
 # Description
@@ -73,3 +73,26 @@ onclose/onerror skip escalation/reconnect once gameEnded; tests detect
 completion via that notice + view-model game_over. Bisection: clean integration
 3/3 PASS, pre-fix 3/3 FAIL, post-fix 3/3 PASS. Commits now: 4bf17463, 6229c948,
 8d24320a (data-nonimg sig), 7cdc602f (net e2e + banner fix).
+REDO-RELOAD REGRESSION FIX (mtg-682 items 4+5, branch claude/web-ui-redo-fix off combined tip a74ab088):
+When web-ui-fixes landed on integration TOGETHER with the lobby branch, CI's
+network.redo-reload (item5a) failed: on a MID-GAME peer reload the surviving
+client silently froze instead of reporting a clean peer-drop.
+
+ROOT CAUSE (confirmed by instrumentation, not assumption; reproduced locally 4/5
+fail on a74ab088, lobby-alone passes): on a mid-game peer disconnect the server
+ABORTS the game via its Err(_) path (server.rs ~2427) and sends the survivor a
+degenerate `game_ended` { winner: null, reason: "draw", action_count: 0 } — NOT
+a real conclusion. My gameEnded flag treated ANY game_ended as a normal
+completion and suppressed the onclose -> _scheduleReconnect -> "Connection lost.
+Please reconnect." notice that the test relies on -> silent freeze.
+
+FIX (first-principles, no hack): isLegitimateGameEnd(msg) distinguishes a real
+conclusion (has a winner OR action_count > 0) from the abort-teardown (winner
+null AND action_count 0). Only a legitimate end sets gameEnded; the abort case
+falls through to the normal connection-lost/reconnect path. Also gated the
+native_game.html backstop on !state.error_message (an error-induced game_over is
+a teardown, not a clean end — fancy_tui.rs sets error_message + game_over
+together on the controller-exit error).
+
+EVIDENCE: network.redo-reload 10/10 FULL runs + 5/5 quick = 15 green (was ~80%
+fail). No Rust changed.
