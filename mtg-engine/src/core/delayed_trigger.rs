@@ -275,6 +275,21 @@ pub enum DelayedEffect {
     /// Used by: "Sacrifice at end of turn" effects
     Sacrifice,
 
+    /// Sacrifice a DIFFERENT card than the one being tracked.
+    ///
+    /// Used by Animate Dead: the delayed trigger TRACKS the Aura (watching it
+    /// leave the battlefield), but the card SACRIFICED is the reanimated
+    /// creature — "When Animate Dead leaves the battlefield, that creature's
+    /// controller sacrifices it." (CR 603 delayed trigger; the creature is the
+    /// `RememberedLKI` object the Java script's `DBDelay` carries.) The
+    /// reanimated creature's `CardId` is captured here at registration time, so
+    /// the value is part of serialized delayed-trigger state and reconstructs
+    /// identically on snapshot/resume and WASM rewind/replay.
+    SacrificeOther {
+        /// The card to sacrifice when the trigger fires (the reanimated creature).
+        card: CardId,
+    },
+
     /// Exile the tracked card
     /// Used by: Delayed exile effects
     ExileCard,

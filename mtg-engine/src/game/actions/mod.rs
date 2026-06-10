@@ -1095,6 +1095,37 @@ impl GameState {
             self.attach_aura(aura_id, target_id)?;
         }
 
+        // Step 4 (mtg-400): the DBDelay leave-sacrifice trigger. Animate Dead's
+        // Oracle: "When CARDNAME leaves the battlefield, that creature's
+        // controller sacrifices it." Register a delayed trigger that WATCHES the
+        // Aura (`aura_id`) leaving the battlefield (to ANY zone — destroyed,
+        // bounced, exiled) and SACRIFICES the reanimated creature (`target_id`).
+        // Empty `to_zones` matches any destination (CR 603: the trigger fires on
+        // the Aura's leave event regardless of where it goes). The creature's
+        // CardId is captured into the delayed-trigger state (serialized), so it
+        // reconstructs identically on snapshot/resume and WASM rewind/replay.
+        //
+        // If the creature dies first, SBA detaches+graveyards the Aura, which
+        // fires this trigger — but `SacrificeOther` no-ops when the creature is
+        // no longer on the battlefield, so there is no double-sacrifice.
+        {
+            use crate::core::{DelayedEffect, DelayedTrigger, DelayedTriggerCondition, DelayedTriggerId};
+            use smallvec::smallvec;
+
+            let sac_trigger = DelayedTrigger::new(
+                DelayedTriggerId::new(0),
+                aura_id,
+                aura_id,
+                aura_controller,
+                DelayedTriggerCondition::ZoneChange {
+                    from_zones: smallvec![Zone::Battlefield],
+                    to_zones: smallvec![],
+                },
+                DelayedEffect::SacrificeOther { card: target_id },
+            );
+            self.delayed_triggers.add(sac_trigger);
+        }
+
         Ok(())
     }
 

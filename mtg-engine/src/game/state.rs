@@ -3833,6 +3833,28 @@ impl GameState {
                 }
             }
 
+            DelayedEffect::SacrificeOther { card: sac_card } => {
+                // Sacrifice a card OTHER than the tracked one (Animate Dead: the
+                // tracked Aura just left the battlefield; sacrifice the
+                // reanimated creature). CR 701.21 sacrifice: move from the
+                // battlefield to its owner's graveyard (or the death
+                // destination). No-op if the creature already left the
+                // battlefield (e.g. it died first, which removed the Aura via
+                // SBA and fired THIS trigger) — find_card_zone gates on that, so
+                // the creature is never double-handled.
+                if self.find_card_zone(sac_card) == Some(Zone::Battlefield) {
+                    let owner = self.cards.try_get(sac_card).map_or(controller, |c| c.owner);
+                    let card_name = self
+                        .cards
+                        .try_get(sac_card)
+                        .map(|c| c.name.to_string())
+                        .unwrap_or_else(|| format!("card#{}", sac_card.as_u32()));
+                    let dest = self.death_destination_for_card(sac_card);
+                    self.move_card(sac_card, Zone::Battlefield, dest, owner)?;
+                    self.logger.normal(&format!("{} is sacrificed", card_name));
+                }
+            }
+
             DelayedEffect::ExileCard => {
                 // Exile the card from wherever it is
                 if let Some(zone) = self.find_card_zone(card_id) {
