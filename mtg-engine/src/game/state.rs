@@ -3226,6 +3226,10 @@ impl GameState {
                 card.clear_temp_base_stats();
                 // Clear damage marked on permanents (MTG CR 514.2, CR 704.5f)
                 card.damage = 0;
+                // Clear the "dealt damage to an opponent this turn" intervening-if
+                // flag (Whirling Dervish) — a per-turn transient, cleared at the
+                // end-of-turn cleanup step alongside marked damage (CR 514.2).
+                card.dealt_damage_to_opponent_this_turn = false;
 
                 // Roll back animation type changes (Mishra's Factory and
                 // friends become land-only again at end of turn). We have to

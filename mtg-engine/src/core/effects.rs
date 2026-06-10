@@ -2788,6 +2788,15 @@ pub struct Trigger {
     #[serde(default)]
     pub present_self_condition: Option<SelfCounterCondition>,
 
+    /// Intervening-if condition: the source card must have dealt damage to an
+    /// opponent this turn for the trigger to fire (CR 603.4). Corresponds to
+    /// `IsPresent$ Card.Self+dealtDamageToOppThisTurn` — Whirling Dervish's "at
+    /// the beginning of each end step, if CARDNAME dealt damage to an opponent
+    /// this turn, put a +1/+1 counter on it". Checked against the source card's
+    /// `dealt_damage_to_opponent_this_turn` per-turn flag.
+    #[serde(default)]
+    pub present_self_dealt_damage_to_opponent: bool,
+
     /// For TapsForMana triggers: filter for the tapped permanent
     #[serde(default)]
     pub taps_for_mana_valid_card: Option<String>,
@@ -2824,6 +2833,7 @@ impl Trigger {
             valid_attackers_keyword: None,
             trigger_zones: smallvec::SmallVec::new(),
             present_self_condition: None,
+            present_self_dealt_damage_to_opponent: false,
             taps_for_mana_valid_card: None,
             taps_for_mana_activator: None,
         }
@@ -2854,6 +2864,7 @@ impl Trigger {
             valid_attackers_keyword: None,
             trigger_zones: smallvec::SmallVec::new(),
             present_self_condition: None,
+            present_self_dealt_damage_to_opponent: false,
             taps_for_mana_valid_card: None,
             taps_for_mana_activator: None,
         }
@@ -2890,6 +2901,7 @@ impl Trigger {
             valid_attackers_keyword: None,
             trigger_zones: smallvec::SmallVec::new(),
             present_self_condition: None,
+            present_self_dealt_damage_to_opponent: false,
             taps_for_mana_valid_card: None,
             taps_for_mana_activator: None,
         }
@@ -2921,6 +2933,7 @@ impl Trigger {
             valid_attackers_keyword: None,
             trigger_zones: smallvec::SmallVec::new(),
             present_self_condition: None,
+            present_self_dealt_damage_to_opponent: false,
             taps_for_mana_valid_card: None,
             taps_for_mana_activator: None,
         }

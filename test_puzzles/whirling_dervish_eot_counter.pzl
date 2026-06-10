@@ -1,0 +1,24 @@
+[metadata]
+Name:Whirling Dervish End-Step +1/+1 Counter
+Goal:Win
+Turns:3
+Difficulty:Easy
+Description:Whirling Dervish ("Protection from black. At the beginning of each end step, if Whirling Dervish dealt damage to an opponent this turn, put a +1/+1 counter on it"). P0 controls a Whirling Dervish (1/1). The e2e test drives BOTH branches of the CR 603.4 intervening-if: (a) after the Dervish has dealt damage to an opponent this turn, its end step puts one +1/+1 counter on it (1/1 -> 2/2); (b) with no damage dealt, the end step fires no counter. Before the fix three stacked loader gaps (mtg-713 B9) broke this: the spaced "End of Turn" phase string was unmatched so the trigger was dropped entirely; DB$ PutCounter | Defined$ Self was not parsed on a phase trigger; and the dealtDamageToOppThisTurn intervening-if was unmodeled so the counter would have been placed unconditionally.
+
+[state]
+turn=2
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=
+p0library=Plains; Plains; Plains; Plains; Plains
+p0graveyard=
+p0battlefield=Whirling Dervish
+p0exile=
+
+p1life=20
+p1hand=
+p1library=Island; Island; Island; Island; Island
+p1graveyard=
+p1battlefield=
+p1exile=

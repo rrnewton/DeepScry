@@ -442,6 +442,16 @@ pub enum GameAction {
     /// removes the last occurrence of `source` (mtg-610).
     MarkDamagedBy { target: CardId, source: CardId },
 
+    /// Records that `card`'s `dealt_damage_to_opponent_this_turn` flag was set
+    /// to `true` when it dealt combat damage to an opponent (Whirling Dervish's
+    /// end-step intervening-if, CR 603.4 / CR 514.2). `prev` is the flag value
+    /// before the set, so `undo()` restores it exactly. Logged UNCONDITIONALLY
+    /// for every attacker that dealt damage to an opponent (not guarded on the
+    /// live value), so the undo-log length is identical on a forward server pass
+    /// and a WASM/native rewind+replay pass — a guard would desync the action
+    /// count (mirrors the `SetCommanderDamage` old/new pattern).
+    MarkDealtDamageToOpponent { card: CardId, prev: bool },
+
     /// Records a Clone copy-transformation (`GameState::apply_clone`, CR 707.2:
     /// Copy Artifact, Clone, Vesuvan Doppelganger, ...) so a rewind+replay can
     /// reverse it exactly. `apply_clone` overwrites ~15 copiable characteristics
@@ -832,6 +842,9 @@ impl fmt::Display for GameAction {
                     target.as_u32(),
                     source.as_u32()
                 )
+            }
+            GameAction::MarkDealtDamageToOpponent { card, prev } => {
+                write!(f, "MarkDealtDamageToOpponent(card={} prev={})", card.as_u32(), prev)
             }
             GameAction::CloneCard { card_id, prev } => {
                 write!(f, "CloneCard({} prev_name={})", card_id.as_u32(), prev.name.as_str())
@@ -1546,6 +1559,13 @@ impl GameAction {
                     }
                 }
             }
+            GameAction::MarkDealtDamageToOpponent { card, prev } => {
+                // Restore the flag to its exact pre-set value. get_mut tolerates
+                // a missing card (it may have left the battlefield).
+                if let Ok(card) = game.cards.get_mut(*card) {
+                    card.dealt_damage_to_opponent_this_turn = *prev;
+                }
+            }
             GameAction::CloneCard { card_id, prev } => {
                 // Restore the copiable characteristics overwritten by the clone
                 // (CR 707.2) so the cloning permanent reverts to its pre-clone
@@ -2022,6 +2042,12 @@ impl UndoLog {
         // pre-rewind value. A blanket clear would break the per-action undo
         // oracle, whose replay re-derives combat damage by REDOING the logged
         // marks rather than re-running the auto combat-damage step.
+        //
+        // `dealt_damage_to_opponent_this_turn` (Whirling Dervish) follows the
+        // SAME contract: it is set+logged as a reversible
+        // `GameAction::MarkDealtDamageToOpponent` in the combat-damage step, so
+        // the undo-action phase above already restored its exact pre-rewind
+        // value — do NOT blanket-clear it here.
         for card in game.cards.values_mut() {
             card.regeneration_shields = 0;
             // Until-end-of-turn granted keywords (Rockface Village "gains haste

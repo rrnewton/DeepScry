@@ -5712,6 +5712,111 @@ async fn test_howling_mine_draws_for_active_player() -> Result<()> {
     Ok(())
 }
 
+/// Regression (1994 World Championship compat — mtg-713 B9): Whirling Dervish's
+/// "At the beginning of each end step, if Whirling Dervish dealt damage to an
+/// opponent this turn, put a +1/+1 counter on it" (`T:Mode$ Phase | Phase$ End
+/// of Turn | Execute$ TrigPutCounter | IsPresent$ Card.Self+dealtDamageToOpp
+/// ThisTurn` → `DB$ PutCounter | Defined$ Self | CounterType$ P1P1`). Three
+/// stacked loader gaps broke this: (1) the spaced "End of Turn" phase string was
+/// not matched (`EndOfTurn`|`End` only), so the whole trigger was dropped; (2)
+/// `DB$ PutCounter | Defined$ Self` was not parsed inside a phase trigger; (3)
+/// the `dealtDamageToOppThisTurn` intervening-if was unmodeled, so once the
+/// trigger fired it placed the counter UNCONDITIONALLY. This test drives BOTH
+/// branches of the CR 603.4 intervening-if from the real end_step turn loop.
+#[tokio::test]
+async fn test_whirling_dervish_end_step_counter() -> Result<()> {
+    use mtg_engine::core::CounterType;
+    use mtg_engine::game::zero_controller::ZeroController;
+    use mtg_engine::game::{GameLoop, VerbosityLevel};
+
+    let cardsfolder = require_cardsfolder();
+    let puzzle_path = PathBuf::from("../test_puzzles/whirling_dervish_eot_counter.pzl");
+    let puzzle_contents = std::fs::read_to_string(&puzzle_path)?;
+    let puzzle = PuzzleFile::parse(&puzzle_contents)?;
+
+    let card_db = CardDatabase::new(cardsfolder);
+    let mut game = load_puzzle_into_game(&puzzle, &card_db).await?;
+    game.seed_rng(42);
+
+    let p0_id = game.players[0].id; // Whirling Dervish's controller / active player
+    let p1_id = game.players[1].id;
+
+    let dervish = game
+        .battlefield
+        .cards
+        .iter()
+        .copied()
+        .find(|&id| {
+            game.cards
+                .try_get(id)
+                .is_some_and(|c| c.name.as_str() == "Whirling Dervish")
+        })
+        .expect("Whirling Dervish should be on the battlefield");
+
+    // Sanity: the loader produced exactly one BeginningOfEndStep trigger that
+    // carries the dealtDamageToOppThisTurn intervening-if and a self +1/+1
+    // PutCounter effect (proves all three parse gaps are closed).
+    {
+        let card = game.cards.get(dervish)?;
+        let eot_trigger = card
+            .triggers
+            .iter()
+            .find(|t| t.event == mtg_engine::core::TriggerEvent::BeginningOfEndStep)
+            .expect("Whirling Dervish must have a beginning-of-end-step trigger (spaced 'End of Turn')");
+        assert!(
+            eot_trigger.present_self_dealt_damage_to_opponent,
+            "the end-step trigger must carry the dealtDamageToOppThisTurn intervening-if"
+        );
+        assert!(
+            eot_trigger.effects.iter().any(|e| matches!(
+                e,
+                mtg_engine::core::Effect::PutCounter {
+                    counter_type: CounterType::P1P1,
+                    ..
+                }
+            )),
+            "the end-step trigger must carry a self +1/+1 PutCounter effect"
+        );
+        assert_eq!(
+            card.get_counter(CounterType::P1P1),
+            0,
+            "Dervish starts with no +1/+1 counters"
+        );
+    }
+
+    // Branch (a): NO damage dealt to an opponent this turn -> no counter.
+    {
+        let mut c1 = ZeroController::new(p0_id);
+        let mut c2 = ZeroController::new(p1_id);
+        let mut game_loop = GameLoop::new(&mut game).with_verbosity(VerbosityLevel::Normal);
+        let res = game_loop.end_step_for_test(&mut c1, &mut c2)?;
+        assert!(res.is_none(), "end step should not end the game");
+    }
+    assert_eq!(
+        game.cards.get(dervish)?.get_counter(CounterType::P1P1),
+        0,
+        "no counter may be placed when the Dervish dealt no damage to an opponent (CR 603.4 intervening-if)"
+    );
+
+    // Branch (b): the Dervish dealt damage to an opponent this turn -> one counter.
+    game.cards.get_mut(dervish)?.dealt_damage_to_opponent_this_turn = true;
+    {
+        let mut c1 = ZeroController::new(p0_id);
+        let mut c2 = ZeroController::new(p1_id);
+        let mut game_loop = GameLoop::new(&mut game).with_verbosity(VerbosityLevel::Normal);
+        let res = game_loop.end_step_for_test(&mut c1, &mut c2)?;
+        assert!(res.is_none(), "end step should not end the game");
+    }
+    assert_eq!(
+        game.cards.get(dervish)?.get_counter(CounterType::P1P1),
+        1,
+        "exactly one +1/+1 counter must be placed when the Dervish dealt damage to an opponent this turn"
+    );
+
+    println!("✓ Whirling Dervish end-step +1/+1 counter respects the dealtDamageToOppThisTurn intervening-if (1994 champ compat)");
+    Ok(())
+}
+
 /// Regression (1994 World Championship compat — mtg-713 B12): Kismet's GLOBAL
 /// ETB-tapped replacement — "Artifacts, creatures, and lands your opponents
 /// control enter tapped" (`R:Event$ Moved | ValidCard$ Artifact.OppCtrl,

@@ -917,6 +917,17 @@ pub struct Card {
     #[serde(default)]
     pub prevent_all_combat_damage_this_turn: bool,
 
+    /// Set when this creature has dealt damage to an opponent (a player who is
+    /// not its controller) this turn. Drives intervening-if triggers gated on
+    /// `IsPresent$ Card.Self+dealtDamageToOppThisTurn` — Whirling Dervish's "at
+    /// the beginning of each end step, if CARDNAME dealt damage to an opponent
+    /// this turn, put a +1/+1 counter on it" (CR 603.4 intervening-if). Cleared
+    /// at the cleanup step (CR 514.2). Set+logged in the combat-damage step as a
+    /// reversible `GameAction::MarkDealtDamageToOpponent` so rewind/replay
+    /// restores it exactly (same per-turn-state contract as `damaged_by_this_turn`).
+    #[serde(default)]
+    pub dealt_damage_to_opponent_this_turn: bool,
+
     /// Indices of exhausted activated abilities (can only be activated once per game)
     /// When an exhaust ability resolves, its index is added here to prevent reactivation
     pub exhausted_abilities: SmallVec<[usize; 1]>,
@@ -994,6 +1005,7 @@ pub struct CardStateSnapshot {
     pub x_paid: u8,
     pub exile_if_would_die_this_turn: bool,
     pub prevent_all_combat_damage_this_turn: bool,
+    pub dealt_damage_to_opponent_this_turn: bool,
     pub exhausted_abilities: SmallVec<[usize; 1]>,
     pub definition: CardDefinition,
 }
@@ -1063,6 +1075,7 @@ impl Card {
             x_paid: 0,
             exile_if_would_die_this_turn: false,
             prevent_all_combat_damage_this_turn: false,
+            dealt_damage_to_opponent_this_turn: false,
             exhausted_abilities: SmallVec::new(),
             definition,
         }
@@ -1110,6 +1123,7 @@ impl Card {
             x_paid: self.x_paid,
             exile_if_would_die_this_turn: self.exile_if_would_die_this_turn,
             prevent_all_combat_damage_this_turn: self.prevent_all_combat_damage_this_turn,
+            dealt_damage_to_opponent_this_turn: self.dealt_damage_to_opponent_this_turn,
             exhausted_abilities: self.exhausted_abilities.clone(),
             definition: self.definition.clone(),
         }
@@ -1156,6 +1170,7 @@ impl Card {
         self.x_paid = snapshot.x_paid;
         self.exile_if_would_die_this_turn = snapshot.exile_if_would_die_this_turn;
         self.prevent_all_combat_damage_this_turn = snapshot.prevent_all_combat_damage_this_turn;
+        self.dealt_damage_to_opponent_this_turn = snapshot.dealt_damage_to_opponent_this_turn;
         self.exhausted_abilities = snapshot.exhausted_abilities;
         self.definition = snapshot.definition;
     }
@@ -1337,6 +1352,7 @@ impl Card {
         self.x_paid = 0;
         self.exile_if_would_die_this_turn = false;
         self.prevent_all_combat_damage_this_turn = false;
+        self.dealt_damage_to_opponent_this_turn = false;
         self.exhausted_abilities = SmallVec::new();
     }
 

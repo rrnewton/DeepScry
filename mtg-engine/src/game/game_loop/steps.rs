@@ -218,6 +218,13 @@ impl<'a> GameLoop<'a> {
                         return false;
                     }
                 }
+                // Intervening-if condition (CR 603.4): Whirling Dervish's end-step
+                // counter trigger fires only if the source dealt damage to an
+                // opponent this turn. Without this gate the +1/+1 counter would be
+                // placed unconditionally (mtg-713 B9 TRAP).
+                if t.present_self_dealt_damage_to_opponent && !card.dealt_damage_to_opponent_this_turn {
+                    return false;
+                }
                 true
             })
         };

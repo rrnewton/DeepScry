@@ -116,6 +116,46 @@ mod tests {
     }
 
     #[test]
+    fn test_combat_damage_sets_dealt_damage_to_opponent_flag() {
+        // Whirling Dervish (mtg-713 B9): a creature that deals combat damage to
+        // an opponent must have its `dealt_damage_to_opponent_this_turn` flag set
+        // (drives the end-step intervening-if counter, CR 603.4). Verify it is
+        // unset before combat and set after dealing unblocked damage to a player.
+        use crate::game::zero_controller::ZeroController;
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let players: Vec<_> = game.players.iter().map(|p| p.id).collect();
+        let p1_id = players[0];
+        let p2_id = players[1];
+
+        let attacker_id = game.next_card_id();
+        let mut attacker = Card::new(attacker_id, "Whirling Dervish".to_string(), p1_id);
+        attacker.add_type(CardType::Creature);
+        attacker.set_base_power(Some(1));
+        attacker.set_base_toughness(Some(1));
+        attacker.controller = p1_id;
+        game.cards.insert(attacker_id, attacker);
+        game.battlefield.add(attacker_id);
+
+        assert!(
+            !game.cards.get(attacker_id).unwrap().dealt_damage_to_opponent_this_turn,
+            "flag must start false"
+        );
+
+        game.combat.declare_attacker(attacker_id, p2_id);
+        let mut controller1 = ZeroController::new(p1_id);
+        let mut controller2 = ZeroController::new(p2_id);
+        game.assign_combat_damage(&mut controller1, &mut controller2, false)
+            .unwrap();
+
+        assert_eq!(game.get_player(p2_id).unwrap().life, 19, "P2 takes 1 combat damage");
+        assert!(
+            game.cards.get(attacker_id).unwrap().dealt_damage_to_opponent_this_turn,
+            "dealing combat damage to an opponent must set dealt_damage_to_opponent_this_turn"
+        );
+    }
+
+    #[test]
     fn test_combat_damage_blocked() {
         use crate::game::zero_controller::ZeroController;
 

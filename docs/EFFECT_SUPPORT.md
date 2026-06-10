@@ -231,6 +231,9 @@ workflow, row format, and update rules.
 | RememberChanged$ True + Defined$ Remembered      | WORKING  | 2026-05-28_#2362(f454dccb) | (none)      | All Hallow's Eve |
 | TriggerZones$ Exile (exile-resident phase trig) | WORKING  | 2026-05-28_#2362(f454dccb) | (none)      | All Hallow's Eve |
 | IsPresent$ ...counters_GE/EQ_<TYPE> (interv.-if)| WORKING  | 2026-05-28_#2362(f454dccb) | (none)      | All Hallow's Eve |
+| Phase trigger spaced phase string "End of Turn" / "End Of Turn" → BeginningOfEndStep (was dropped) | WORKING | 2026-06-10_#3136(ff8e2f51) | (fixed mtg-713 B9) | Whirling Dervish |
+| Phase trigger DB$ PutCounter Defined$ Self (self +1/+1 on a phase trigger) | WORKING | 2026-06-10_#3136(ff8e2f51) | (fixed mtg-713 B9) | Whirling Dervish |
+| IsPresent$ Card.Self+dealtDamageToOppThisTurn (interv.-if: dealt damage to an opponent this turn) | WORKING | 2026-06-10_#3136(ff8e2f51) | (fixed mtg-713 B9) | Whirling Dervish |
 | ChangeZone Defined$ Self (non-stack self-move)  | WORKING  | 2026-05-28_#2362(f454dccb) | (none)      | All Hallow's Eve |
 | ConditionDefined$ Self + ConditionPresent$ ctr  | WORKING  | 2026-05-28_#2362(f454dccb) | (none)      | All Hallow's Eve |
 | ChangeZoneAll Graveyard→Battlefield (mass reanim)| WORKING  | 2026-05-28_#2362(f454dccb) | (none)      | All Hallow's Eve |

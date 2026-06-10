@@ -1669,6 +1669,21 @@ impl<'a> GameLoop<'a> {
         self.upkeep_step(controller1, controller2)
     }
 
+    /// Expose the end step for testing beginning-of-end-step triggers (Whirling
+    /// Dervish's intervening-if +1/+1 counter, etc.). Runs the same end_step the
+    /// turn loop runs, including phase-trigger checking and the priority round
+    /// that resolves the triggered ability off the stack.
+    ///
+    /// # Errors
+    /// Returns an error if the end step encounters an invalid game state.
+    pub fn end_step_for_test(
+        &mut self,
+        controller1: &mut dyn crate::game::controller::PlayerController,
+        controller2: &mut dyn crate::game::controller::PlayerController,
+    ) -> crate::Result<Option<crate::game::GameResult>> {
+        self.end_step(controller1, controller2)
+    }
+
     /// Expose cleanup_step for testing discard logic
     ///
     /// # Errors

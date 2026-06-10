@@ -2514,9 +2514,17 @@ impl CardDefinition {
             // Parse phase triggers (Mode$ Phase)
             if mode == Some("Phase") {
                 // Determine which phase/step this triggers on using tokenized params
-                let trigger_event = match params.get("Phase").map(|s| s.as_str()) {
+                // Normalize the phase token: Forge writes the end step as either
+                // "EndOfTurn", "End", or the spaced "End of Turn" / "End Of Turn"
+                // (Whirling Dervish, Berserk's delayed trigger). Strip spaces and
+                // compare case-insensitively so every spelling maps to one event,
+                // instead of silently dropping the spaced variants (mtg-713 B9).
+                let phase_token = params.get("Phase").map(|s| s.replace(' ', ""));
+                let trigger_event = match phase_token.as_deref() {
                     Some("Upkeep") => Some(TriggerEvent::BeginningOfUpkeep),
-                    Some("EndOfTurn" | "End") => Some(TriggerEvent::BeginningOfEndStep),
+                    Some(p) if p.eq_ignore_ascii_case("EndOfTurn") || p.eq_ignore_ascii_case("End") => {
+                        Some(TriggerEvent::BeginningOfEndStep)
+                    }
                     Some("BeginCombat") => Some(TriggerEvent::BeginningOfCombat),
                     Some("Draw") => Some(TriggerEvent::BeginningOfDraw),
                     _ => None, // Other phases not supported yet
@@ -2650,6 +2658,32 @@ impl CardDefinition {
                                 effects.push(Effect::DrawCards {
                                     player,
                                     count: num_cards,
+                                });
+                            }
+                            // DB$ PutCounter | Defined$ Self on a phase trigger.
+                            // Whirling Dervish: "At the beginning of each end step,
+                            // if CARDNAME dealt damage to an opponent this turn, put
+                            // a +1/+1 counter on it." (SVar:TrigPutCounter:DB$
+                            // PutCounter | Defined$ Self | CounterType$ P1P1 |
+                            // CounterNum$ 1). CardId 0 placeholder = the trigger
+                            // source itself, resolved in the firing site. Only
+                            // Defined$ Self is handled here (the self-counter shape);
+                            // other PutCounter targets on phase triggers are out of
+                            // scope.
+                            if svar_params.api_type == ApiType::PutCounter && svar_params.get("Defined") == Some("Self")
+                            {
+                                let counter_num = svar_params
+                                    .get("CounterNum")
+                                    .and_then(|s| s.parse::<u8>().ok())
+                                    .unwrap_or(1);
+                                let counter_type = svar_params
+                                    .get("CounterType")
+                                    .and_then(crate::core::CounterType::parse)
+                                    .unwrap_or(crate::core::CounterType::P1P1);
+                                effects.push(Effect::PutCounter {
+                                    target: CardId::new(0),
+                                    counter_type,
+                                    amount: counter_num,
                                 });
                             }
                             // DB$ Untap on a phase trigger (Paralyze):
@@ -2804,6 +2838,17 @@ impl CardDefinition {
                             .and_then(crate::core::SelfCounterCondition::parse_clause)
                     });
 
+                    // Intervening-if condition (CR 603.4):
+                    //   IsPresent$ Card.Self+dealtDamageToOppThisTurn
+                    // Whirling Dervish — fire only if this creature dealt damage to
+                    // an opponent this turn. Matched as a tokenized clause (no
+                    // substring hacks) against the per-turn engine flag.
+                    let present_self_dealt_damage_to_opponent = params.get("IsPresent").is_some_and(|present| {
+                        present
+                            .split(['.', '+'])
+                            .any(|clause| clause == "dealtDamageToOppThisTurn")
+                    });
+
                     // Create trigger with parsed effects
                     // Set structured filter flag for controller-only triggers
                     let desc_with_flag = if is_controller_only && !effects.is_empty() {
@@ -2824,6 +2869,7 @@ impl CardDefinition {
                     }
                     trigger.trigger_zones = trigger_zones;
                     trigger.present_self_condition = present_self_condition;
+                    trigger.present_self_dealt_damage_to_opponent = present_self_dealt_damage_to_opponent;
                     triggers.push(trigger);
                 }
             }
@@ -5748,6 +5794,60 @@ Oracle:Whenever this creature attacks, put a +1/+1 counter on it.
         // Verify it has a PutCounter effect
         let has_put_counter = trigger.effects.iter().any(|e| matches!(e, Effect::PutCounter { .. }));
         assert!(has_put_counter, "Trigger should have PutCounter effect");
+    }
+
+    /// Parser-shape regression (1994 World Championship compat — mtg-713 B9):
+    /// Whirling Dervish's end-step counter trigger uses the SPACED phase string
+    /// "End of Turn", a `DB$ PutCounter | Defined$ Self` effect on a phase
+    /// trigger, and a `dealtDamageToOppThisTurn` intervening-if — all three of
+    /// which the loader previously dropped (so the trigger either vanished, had
+    /// no effect, or fired unconditionally). Assert the trigger now parses with
+    /// the right event, the +1/+1 self-PutCounter effect, and the intervening-if
+    /// flag set.
+    #[test]
+    fn test_parse_whirling_dervish_end_step_counter_trigger() {
+        use crate::core::{CounterType, Effect, TriggerEvent};
+
+        let content = r#"
+Name:Whirling Dervish
+ManaCost:G G
+Types:Creature Human Monk
+PT:1/1
+K:Protection from black
+T:Mode$ Phase | Phase$ End of Turn | TriggerZones$ Battlefield | Execute$ TrigPutCounter | IsPresent$ Card.Self+dealtDamageToOppThisTurn | TriggerDescription$ At the beginning of each end step, if CARDNAME dealt damage to an opponent this turn, put a +1/+1 counter on it.
+SVar:TrigPutCounter:DB$ PutCounter | Defined$ Self | CounterType$ P1P1 | CounterNum$ 1
+Oracle:Protection from black\nAt the beginning of each end step, if Whirling Dervish dealt damage to an opponent this turn, put a +1/+1 counter on it.
+"#;
+
+        let def = CardLoader::parse(content).unwrap();
+        let triggers = def.parse_triggers();
+
+        let trigger = triggers
+            .iter()
+            .find(|t| t.event == TriggerEvent::BeginningOfEndStep)
+            .expect("spaced 'End of Turn' phase string must parse to a BeginningOfEndStep trigger");
+
+        assert!(
+            trigger.present_self_dealt_damage_to_opponent,
+            "dealtDamageToOppThisTurn intervening-if must be parsed onto the trigger"
+        );
+
+        let put_counter_effect = trigger
+            .effects
+            .iter()
+            .find(|e| matches!(e, Effect::PutCounter { .. }))
+            .expect("trigger must carry a DB$ PutCounter | Defined$ Self effect");
+        let Effect::PutCounter {
+            counter_type, amount, ..
+        } = put_counter_effect
+        else {
+            unreachable!("matched PutCounter above");
+        };
+        assert_eq!(
+            (*counter_type, *amount),
+            (CounterType::P1P1, 1),
+            "must put exactly one +1/+1 counter"
+        );
     }
 
     #[test]

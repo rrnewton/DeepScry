@@ -1,0 +1,44 @@
+---
+title: 'Card Compatibility: Whirling Dervish'
+status: closed
+priority: 2
+issue_type: task
+depends_on:
+  mtg-713: blocks
+  mtg-709: blocks
+created_at: 2026-06-10T17:51:04.822612404+00:00
+updated_at: 2026-06-10T18:27:28.685751087+00:00
+---
+
+# Description
+
+Card Compatibility: Whirling Dervish (1994 Worlds — mtg-709; broken-card backlog mtg-713 item B9).
+
+Oracle: Protection from black. At the beginning of each end step, if Whirling Dervish dealt damage to an opponent this turn, put a +1/+1 counter on it.
+
+CARD STATUS: WORKING (2026-06-10).
+
+== Findings (2026-06-10) ==
+[x] Protection from black: parsed as keyword, honored (pre-existing).
+[x] End-step +1/+1 counter trigger: FIXED. Three stacked loader gaps closed.
+[x] Intervening-if (CR 603.4): counter placed ONLY when the Dervish dealt damage to an opponent this turn; NOT placed otherwise. Verified BOTH branches in a real game.
+
+== Root cause (loader/card.rs Phase-trigger block) ==
+1. Spaced phase string 'End of Turn' was unmatched ('EndOfTurn'|'End' only) -> whole trigger dropped. Now normalized (strip spaces, case-insensitive).
+2. DB$ PutCounter | Defined$ Self not parsed on a phase trigger (only DealDamage/GainLife shapes were). Now parsed -> Effect::PutCounter self-placeholder.
+3. IsPresent$ Card.Self+dealtDamageToOppThisTurn intervening-if unmodeled -> would fire UNCONDITIONALLY. Added per-card dealt_damage_to_opponent_this_turn flag (set in combat-damage step when a creature deals damage to an opponent player), gated at the CR 603.4 firing site (game_loop/steps.rs).
+
+== Rewind-safety ==
+New flag is serialized (#[serde(default)]), cleared at cleanup (CR 514.2) and on zone reset, and set via reversible GameAction::MarkDealtDamageToOpponent{card,prev}. Logged UNCONDITIONALLY (no skip-if-set guard) so the undo-log length is identical on a forward server pass and a WASM/native rewind+replay pass — a guard caused an action-count desync (caught by the rogerbrand seed3 canary; fixed by always-log-with-prev, mirroring SetCommanderDamage).
+
+== Tests ==
+- Parser-shape unit: loader::card::tests::test_parse_whirling_dervish_end_step_counter_trigger
+- Combat unit: game::actions::tests::combat::tests::test_combat_damage_sets_dealt_damage_to_opponent_flag
+- E2E puzzle: tests/puzzle_e2e.rs::test_whirling_dervish_end_step_counter (BOTH intervening-if branches)
+- Puzzle file: test_puzzles/whirling_dervish_eot_counter.pzl
+
+== Reproducer (real game) ==
+mtg tui --start-state test_puzzles/whirling_dervish_eot_counter.pzl --p1 heuristic --p2 heuristic --seed 2 -v 3
+Expected: turn 1 Dervish deals 1 to P2, end step -> 2/2; on P2's end step (no damage by Dervish) NO counter; turn 3 attacks as 2/2.
+
+CR: 603.4 intervening-if; 122 counters; 514.2 cleanup; 702.16 protection.

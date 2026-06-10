@@ -1034,6 +1034,55 @@ impl GameState {
             }
         }
 
+        // Mark every attacker that dealt combat damage to an OPPONENT this turn
+        // (a player who is not the attacker's controller). This drives Whirling
+        // Dervish's intervening-if end-step trigger ("if CARDNAME dealt damage to
+        // an opponent this turn, put a +1/+1 counter on it" — CR 603.4).
+        //
+        // NETWORK-DETERMINISM: the mark is logged UNCONDITIONALLY for every
+        // distinct attacker that dealt damage to an opponent here (no
+        // skip-if-already-set guard), carrying the previous flag value so undo
+        // restores it exactly. A guard keyed on the live flag value would make
+        // whether the action is emitted depend on prior per-turn state, which can
+        // legitimately differ between a forward server pass and a WASM/native
+        // rewind+replay pass — yielding an undo-log-length (action-count) desync.
+        // Always-log-with-prev (the `SetCommanderDamage` pattern just above)
+        // keeps the action stream identical on every platform. Deduped+sorted by
+        // CardId so a creature hitting multiple players in one step is marked
+        // once, deterministically.
+        let mut damage_to_opponent_marks: SmallVec<[CardId; 4]> = SmallVec::new();
+        for (creature_id, target_player, _damage) in &creatures_that_dealt_player_damage {
+            let Some(card) = self.cards.try_get(*creature_id) else {
+                continue;
+            };
+            // "Opponent" = a player other than the source's controller (CR 102.2).
+            if card.controller == *target_player {
+                continue;
+            }
+            if !damage_to_opponent_marks.contains(creature_id) {
+                damage_to_opponent_marks.push(*creature_id);
+            }
+        }
+        damage_to_opponent_marks.sort_by_key(CardId::as_u32);
+        for creature_id in damage_to_opponent_marks {
+            let prev = match self.cards.get_mut(creature_id) {
+                Ok(card) => {
+                    let prev = card.dealt_damage_to_opponent_this_turn;
+                    card.dealt_damage_to_opponent_this_turn = true;
+                    prev
+                }
+                Err(_) => continue,
+            };
+            let prior_log_size = self.logger.log_count();
+            self.undo_log.log(
+                crate::undo::GameAction::MarkDealtDamageToOpponent {
+                    card: creature_id,
+                    prev,
+                },
+                prior_log_size,
+            );
+        }
+
         // Track which creatures should die (MTG Rules 704.5f: State-based actions)
         // Creatures die if:
         // 1. They have lethal damage (damage >= toughness), OR
