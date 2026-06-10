@@ -1100,14 +1100,24 @@ impl GameState {
         // controller sacrifices it." Register a delayed trigger that WATCHES the
         // Aura (`aura_id`) leaving the battlefield (to ANY zone — destroyed,
         // bounced, exiled) and SACRIFICES the reanimated creature (`target_id`).
-        // Empty `to_zones` matches any destination (CR 603: the trigger fires on
-        // the Aura's leave event regardless of where it goes). The creature's
+        // Empty `to_zones` matches any destination (CR 603.7: the trigger fires
+        // on the Aura's leave event regardless of where it goes). The creature's
         // CardId is captured into the delayed-trigger state (serialized), so it
         // reconstructs identically on snapshot/resume and WASM rewind/replay.
         //
         // If the creature dies first, SBA detaches+graveyards the Aura, which
         // fires this trigger — but `SacrificeOther` no-ops when the creature is
         // no longer on the battlefield, so there is no double-sacrifice.
+        //
+        // REWIND SAFETY (mtg-400): the `add` MUST be undo-logged with
+        // `RegisterDelayedTrigger`, exactly like every other delayed-trigger
+        // registration site (the Mana Drain / dies-trigger sites below). Without
+        // it, rewind-to-turn-start (snapshot/resume, WASM rewind/replay, undo
+        // search) does NOT remove the trigger, so the replayed turn-start state
+        // carries an extra `delayed_triggers` entry and the turn-start state hash
+        // diverges across rewinds ("undo log is no longer a faithful inverse").
+        // A reanimator deck (All Hallow's Eve + Animate Dead, rogerbrand seed 3)
+        // hit this as a 100%-deterministic turn-6 rewind desync.
         {
             use crate::core::{DelayedEffect, DelayedTrigger, DelayedTriggerCondition, DelayedTriggerId};
             use smallvec::smallvec;
@@ -1123,7 +1133,12 @@ impl GameState {
                 },
                 DelayedEffect::SacrificeOther { card: target_id },
             );
-            self.delayed_triggers.add(sac_trigger);
+            let prior_log_size = self.logger.log_count();
+            let trigger_id = self.delayed_triggers.add(sac_trigger);
+            self.undo_log.log(
+                crate::undo::GameAction::RegisterDelayedTrigger { id: trigger_id },
+                prior_log_size,
+            );
         }
 
         Ok(())

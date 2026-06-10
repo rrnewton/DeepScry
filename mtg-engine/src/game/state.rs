@@ -3715,6 +3715,23 @@ impl GameState {
         // Fire each trigger (remove it and execute its effect)
         for trigger_id in trigger_ids {
             if let Some(trigger) = self.delayed_triggers.remove(trigger_id) {
+                // Undo-log the removal so rewind-to-turn-start (snapshot/resume,
+                // WASM rewind/replay, undo search) restores the trigger AND rolls
+                // `next_id` back — mirroring the `Mode$ Phase` firing path below
+                // (mtg-519). Without this, a delayed trigger that FIRES during a
+                // turn (e.g. Animate Dead's leave-the-battlefield SacrificeOther
+                // when the Aura is destroyed) is removed via the plain `remove`,
+                // so on rewind its `RegisterDelayedTrigger` undo finds nothing to
+                // roll back and `delayed_triggers.next_id` drifts — diverging the
+                // turn-start state hash across rewinds (mtg-400 rogerbrand seed-3
+                // turn-6 desync).
+                let prior_log_size = self.logger.log_count();
+                self.undo_log.log(
+                    crate::undo::GameAction::FireDelayedTrigger {
+                        trigger: Box::new(trigger.clone()),
+                    },
+                    prior_log_size,
+                );
                 self.fire_delayed_trigger(trigger)?;
                 fired_count += 1;
             }
