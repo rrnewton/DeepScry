@@ -21,7 +21,7 @@ const { chromium } = require('playwright');
 const { spawn } = require('child_process');
 const path = require('path');
 const { getRandomPorts } = require('./test_network_utils');
-const { firstBuiltinDeck, localGameUrl } = require('./game_boot_params');
+const { pickBuiltinDeck, localGameUrl } = require('./game_boot_params');
 
 const projectRoot = path.join(__dirname, '..');
 
@@ -60,7 +60,16 @@ function log(msg) {
 
         // mtg-35z3s page 3: native_game.html is a PURE renderer — boot via URL params.
         const base = `http://localhost:${HTTP_PORT}`;
-        const deck = await firstBuiltinDeck(base);
+        // This test needs a deck where the heuristic AI reliably ATTACKS (and
+        // thus taps a creature) within 30 turns at seed 42. Prefer a creature-
+        // aggro "zoo" deck rather than `firstBuiltinDeck` (whatever sorts first
+        // alphabetically) — the alphabetical-first deck is NOT guaranteed to be
+        // aggressive (e.g. a control/discard deck like a B/W "Rack" build never
+        // taps an attacker by turn 30), which made this test depend on the
+        // exact built-in deck list. `pickBuiltinDeck` falls back to the first
+        // deck if no "zoo" deck exists, so behaviour is unchanged when one is
+        // not bundled.
+        const deck = await pickBuiltinDeck(base, /zoo/);
         await page.goto(localGameUrl(base, 'native_game.html', {
             deck, p1: 'heuristic', p2: 'heuristic', seed: 42,
         }), { waitUntil: 'networkidle', timeout: 30000 });

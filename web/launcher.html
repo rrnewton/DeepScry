@@ -167,14 +167,9 @@
     <!-- Deck collection + deck picker (generalized from tui_game.html, one player) -->
     <div class="field">
         <label class="field-label" for="deck-collection">Deck Collection</label>
-        <select id="deck-collection">
-            <option value="old_school">Old School 1994</option>
-            <option value="booster_draft">Booster Draft</option>
-            <option value="commander">Commander</option>
-            <option value="championship_1994">1994 World Championship</option>
-            <option value="championship_2025">2025 World Championship</option>
-            <option value="custom">Custom Decks (Local)</option>
-        </select>
+        <!-- Populated programmatically from COLLECTION_ORDER (incl. one entry
+             per World Championship year) — see fillCollectionSelect() below. -->
+        <select id="deck-collection"></select>
     </div>
 
     <div class="field">
@@ -428,6 +423,24 @@ import { buildRedirectQuery, IMAGE_SOURCE_IDS, forwardStickyParamsOnAnchor, forw
     // Lifted from tui_game.html's built-in launcher and generalized to one
     // player. The filters partition the WASM-free `deck_names` list (from
     // data/sets/index.json) into named collections; 'custom' reads localStorage.
+    // World Championship deck sets, keyed by year → the EXACT deck-name keys
+    // (file stems) the WASM export bundles into data/sets/index.json. Match by
+    // exact membership, NOT surname substring: champion surnames repeat across
+    // years (e.g. "manfield" plays 2015, 2020 AND 2025; "pvddr" plays 2010 and
+    // 2020), so a substring filter would mis-file decks. Mirrored in
+    // web/solo_launcher.html and the export-wasm deck-glob default
+    // (mtg-engine/src/main.rs).
+    const CHAMPIONSHIP_DECKS = {
+        1994: ['01_dolan_wug_stasis', '02_lestree_rg_zoo', '03_symens_zoo', '04_defoucaud_zoo'],
+        1995: ['01_blumke_bw_rack', '02_hernandez_rw_vise_orb', '03_justice_red_artifact', '04_stern_rg_burn'],
+        2000: ['01_finkel_tinker', '02_maher_tinker', '03_vandelogt_replenish', '04_labarre_chimera'],
+        2005: ['01_mori_ghazi_glare', '02_karsten_greater_gift', '03_asahara_enduring_ideal', '04_kaji_ghazi_glare'],
+        2010: ['01_matignon_ub_control', '02_wafotapa_ub_control', '03_pvddr_ub_control', '04_janse_eldrazi_green'],
+        2015: ['01_manfield_abzan_control', '02_turtenwald_abzan_control', '03_rietzl_abzan_aggro', '04_black_mono_white'],
+        2020: ['01_pvddr_azorius_control', '02_carvalho_jeskai_fires', '03_manfield_mono_red', '04_nassif_jeskai_fires'],
+        2025: ['01_manfield_izzet_lessons', '02_shibata_izzet_lessons', '03_davis_izzet_lessons', '04_henry_temur_otters'],
+    };
+
     const DECK_COLLECTIONS = {
         old_school: {
             name: 'Old School 1994',
@@ -450,21 +463,25 @@ import { buildRedirectQuery, IMAGE_SOURCE_IDS, forwardStickyParamsOnAnchor, forw
             name: 'Commander',
             filter: (deckName) => deckName.includes('chandra_tokens'),
         },
-        championship_1994: {
-            name: '1994 World Championship',
-            filter: (deckName) => deckName.includes('dolan') || deckName.includes('lestree') ||
-                                  deckName.includes('symens') || deckName.includes('defoucaud'),
-        },
-        championship_2025: {
-            name: '2025 World Championship',
-            filter: (deckName) => deckName.includes('manfield') || deckName.includes('shibata') ||
-                                  deckName.includes('davis_izzet') || deckName.includes('henry_temur'),
-        },
         custom: {
             name: 'Custom Decks (Local)',
             filter: () => false, // handled separately from localStorage
         },
     };
+    // One "<year> World Championship" collection per year (exact-match filter),
+    // ordered oldest → newest, inserted before `custom`.
+    for (const year of Object.keys(CHAMPIONSHIP_DECKS).sort()) {
+        const stems = CHAMPIONSHIP_DECKS[year];
+        DECK_COLLECTIONS['championship_' + year] = {
+            name: year + ' World Championship',
+            filter: (deckName) => stems.includes(deckName),
+        };
+    }
+    const COLLECTION_ORDER = [
+        'old_school', 'booster_draft', 'commander',
+        ...Object.keys(CHAMPIONSHIP_DECKS).sort().map((y) => 'championship_' + y),
+        'custom',
+    ];
 
     // Shared with deck_editor.html / the game pages.
     const CUSTOM_DECKS_KEY = 'mtg-forge-custom-decks';
@@ -494,6 +511,17 @@ import { buildRedirectQuery, IMAGE_SOURCE_IDS, forwardStickyParamsOnAnchor, forw
     const collectionSelect = document.getElementById('deck-collection');
     const deckSelect = document.getElementById('deck-select');
     const playBtn = document.getElementById('btn-play');
+
+    /** Populate the collection <select> from the fixed COLLECTION_ORDER list. */
+    function fillCollectionSelect() {
+        collectionSelect.innerHTML = '';
+        for (const key of COLLECTION_ORDER) {
+            if (DECK_COLLECTIONS[key]) {
+                collectionSelect.appendChild(new Option(DECK_COLLECTIONS[key].name, key));
+            }
+        }
+    }
+    fillCollectionSelect();
 
     /** Populate the deck dropdown from the selected collection. */
     function updateDeckDropdown() {

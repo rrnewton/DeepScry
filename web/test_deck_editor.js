@@ -457,58 +457,78 @@ function check(cond, msg) {
             await editCtx.close();
         }
 
-        // ── 10. 1994 World Championship collection in the launcher ──────
-        // Asserts (a) the solo launcher offers a "1994 World Championship"
-        // collection in the dropdown, and (b) selecting it populates the deck
-        // picker with at least one 1994 championship deck. (b) only passes if
-        // the .dck files were actually bundled into web/data (their file-stem
-        // names appear in index.json's deck_names), so this single check
-        // covers BOTH the dropdown wiring AND the decks being served.
-        log('\n=== 10. 1994 World Championship collection (solo launcher) ===');
+        // ── 10. World Championship collections (all years) in the launcher ──
+        // For EVERY championship year we expect:
+        //   (a) all four of its decks are bundled/served (their file-stem names
+        //       appear in index.json deck_names — so the .dck files actually
+        //       reached web/data, not just referenced), AND
+        //   (b) the solo launcher dropdown offers a "<year> World Championship"
+        //       collection, AND
+        //   (c) selecting it fills the deck picker with EXACTLY that year's four
+        //       decks — no more, no less. (c) is the collision guard: champion
+        //       surnames repeat across years (manfield: 2015/2020/2025; pvddr:
+        //       2010/2020), so a sloppy substring filter would leak decks
+        //       between years. Exact-set membership must keep them separated.
+        log('\n=== 10. World Championship collections — all years (solo launcher) ===');
         {
-            // Confirm the export bundled the 1994 deck names (served, not just listed).
-            const idx1994 = JSON.parse(fs.readFileSync(
+            // Expected year → exact deck stems (mirror of CHAMPIONSHIP_DECKS in
+            // the launchers and the export-wasm globs in mtg-engine/src/main.rs).
+            const CHAMP = {
+                1994: ['01_dolan_wug_stasis', '02_lestree_rg_zoo', '03_symens_zoo', '04_defoucaud_zoo'],
+                1995: ['01_blumke_bw_rack', '02_hernandez_rw_vise_orb', '03_justice_red_artifact', '04_stern_rg_burn'],
+                2000: ['01_finkel_tinker', '02_maher_tinker', '03_vandelogt_replenish', '04_labarre_chimera'],
+                2005: ['01_mori_ghazi_glare', '02_karsten_greater_gift', '03_asahara_enduring_ideal', '04_kaji_ghazi_glare'],
+                2010: ['01_matignon_ub_control', '02_wafotapa_ub_control', '03_pvddr_ub_control', '04_janse_eldrazi_green'],
+                2015: ['01_manfield_abzan_control', '02_turtenwald_abzan_control', '03_rietzl_abzan_aggro', '04_black_mono_white'],
+                2020: ['01_pvddr_azorius_control', '02_carvalho_jeskai_fires', '03_manfield_mono_red', '04_nassif_jeskai_fires'],
+                2025: ['01_manfield_izzet_lessons', '02_shibata_izzet_lessons', '03_davis_izzet_lessons', '04_henry_temur_otters'],
+            };
+
+            // (a) all championship decks bundled/served in index.json deck_names.
+            const idxJson = JSON.parse(fs.readFileSync(
                 path.join(WEB_SRC, 'data', 'sets', 'index.json'), 'utf8'));
-            const champ1994Stems = ['01_dolan_wug_stasis', '02_lestree_rg_zoo',
-                '03_symens_zoo', '04_defoucaud_zoo'];
-            const servedNames = Array.isArray(idx1994.deck_names) ? idx1994.deck_names : [];
-            const servedChamp = champ1994Stems.filter((s) => servedNames.includes(s));
-            check(servedChamp.length === champ1994Stems.length,
-                'all four 1994 championship decks are bundled/served in index.json deck_names ' +
-                '(found ' + JSON.stringify(servedChamp) + ')');
+            const servedNames = new Set(Array.isArray(idxJson.deck_names) ? idxJson.deck_names : []);
+            for (const [year, stems] of Object.entries(CHAMP)) {
+                const missing = stems.filter((s) => !servedNames.has(s));
+                check(missing.length === 0,
+                    'all four ' + year + ' championship decks are bundled/served in index.json ' +
+                    (missing.length ? '(MISSING ' + JSON.stringify(missing) + ')' : ''));
+            }
 
             const lctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
             const lpage = await lctx.newPage();
             lpage.on('pageerror', (e) => check(false, 'solo_launcher JS error: ' + e.message));
             await lpage.goto(BASE + '/solo_launcher.html', { timeout: 20000 });
             await lpage.waitForLoadState('domcontentloaded');
-            // Wait for the collection dropdown to be populated from index.json.
             await lpage.waitForFunction(
                 () => document.getElementById('p1-collection') &&
                       document.getElementById('p1-collection').options.length > 0,
                 { timeout: 15000 }).catch(() => {});
 
-            const hasGroup = await lpage.evaluate(() => {
-                const sel = document.getElementById('p1-collection');
-                if (!sel) return false;
-                return Array.from(sel.options).some((o) => o.value === 'championship_1994');
-            });
-            check(hasGroup, 'solo launcher dropdown offers the "1994 World Championship" collection');
+            for (const [year, stems] of Object.entries(CHAMP)) {
+                const key = 'championship_' + year;
+                // (b) dropdown offers the year's collection.
+                const hasGroup = await lpage.evaluate((k) => {
+                    const sel = document.getElementById('p1-collection');
+                    return !!sel && Array.from(sel.options).some((o) => o.value === k);
+                }, key);
+                check(hasGroup, 'solo launcher dropdown offers the "' + year + ' World Championship" collection');
 
-            // Select it and confirm the deck picker fills with a 1994 deck.
-            const filledDecks = await lpage.evaluate(() => {
-                const col = document.getElementById('p1-collection');
-                const deck = document.getElementById('p1-deck');
-                if (!col || !deck) return [];
-                col.value = 'championship_1994';
-                col.dispatchEvent(new Event('change'));
-                return Array.from(deck.options).map((o) => o.value).filter((v) => v);
-            });
-            const sawChampDeck = filledDecks.some((v) =>
-                ['dolan', 'lestree', 'symens', 'defoucaud'].some((s) => v.includes(s)));
-            check(sawChampDeck,
-                'selecting "1994 World Championship" populates the deck picker with a 1994 deck ' +
-                '(got ' + JSON.stringify(filledDecks) + ')');
+                // (c) selecting it fills the picker with EXACTLY this year's decks.
+                const filledDecks = await lpage.evaluate((k) => {
+                    const col = document.getElementById('p1-collection');
+                    const deck = document.getElementById('p1-deck');
+                    if (!col || !deck) return [];
+                    col.value = k;
+                    col.dispatchEvent(new Event('change'));
+                    return Array.from(deck.options).map((o) => o.value).filter((v) => v);
+                }, key);
+                const filledSet = new Set(filledDecks);
+                const exact = filledDecks.length === stems.length && stems.every((s) => filledSet.has(s));
+                check(exact,
+                    'selecting "' + year + ' World Championship" lists EXACTLY its four decks ' +
+                    '(got ' + JSON.stringify(filledDecks) + ')');
+            }
             await lctx.close();
         }
 

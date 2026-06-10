@@ -591,7 +591,17 @@ enum Commands {
             "decks/old_school2/**/*.dck".to_string(),
             "decks/booster_draft/**/*.dck".to_string(),
             "decks/commander/**/*.dck".to_string(),
+            // World Championship deck sets, one glob per year on disk
+            // (decks/championship/<year>/). Each year is surfaced as its own
+            // selectable collection in the web launchers (see DECK_COLLECTIONS
+            // in web/solo_launcher.html / web/launcher.html).
             "decks/championship/1994/**/*.dck".to_string(),
+            "decks/championship/1995/**/*.dck".to_string(),
+            "decks/championship/2000/**/*.dck".to_string(),
+            "decks/championship/2005/**/*.dck".to_string(),
+            "decks/championship/2010/**/*.dck".to_string(),
+            "decks/championship/2015/**/*.dck".to_string(),
+            "decks/championship/2020/**/*.dck".to_string(),
             "decks/championship/2025/**/*.dck".to_string(),
         ])]
         deck_globs: Vec<String>,
