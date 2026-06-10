@@ -2333,10 +2333,17 @@
                 window.__showWasmEngineError(state.error_message);
             }
 
-            // mtg-grofw: once the game is over, tell the network client so the
-            // server's normal post-game socket close (a non-clean 1006) is NOT
-            // mistaken for a lost connection — no spurious red banner / reconnect.
-            if (state.game_over && networkClient) {
+            // mtg-grofw / mtg-redo-fix: once the game CLEANLY concludes, tell the
+            // network client so the server's normal post-game socket close (a
+            // non-clean 1006) is not mistaken for a lost connection (no spurious
+            // red banner / reconnect). Backstop to the authoritative message-level
+            // check in network.js (isLegitimateGameEnd). IMPORTANT: only a CLEAN
+            // game-over — NOT an error/disconnect teardown, which surfaces as
+            // `error_message` ("GAME OVER due to error … Game exit requested by
+            // controller" on a peer drop). An error game-over must keep the
+            // normal connection-lost handling so the survivor reports a clean
+            // peer-drop instead of silently freezing.
+            if (state.game_over && !state.error_message && networkClient) {
                 networkClient.gameEnded = true;
             }
 
