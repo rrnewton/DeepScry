@@ -391,7 +391,7 @@ impl ManaEngine {
 
                 // Resolve reflected-mana sources (Fellwar Stone) to their actual
                 // current colour set so this from-scratch classification matches
-                // the cache path's `effective_production_for_resolution` (mtg-xmw97).
+                // the cache path's `effective_production_for_resolution` (mtg-893).
                 // Only override when the card has no granted abilities driving the
                 // production (the reflected helper reads the card's own cached
                 // production); a granted-ability merge takes precedence.
@@ -976,7 +976,7 @@ impl ManaEngine {
                 // (Fellwar Stone) this collapses the static all-colour upper
                 // bound to the colours opponents' lands can actually produce
                 // right now, so the resolver's affordability decision matches
-                // what the activation path will produce (mtg-xmw97). For all
+                // what the activation path will produce (mtg-893). For all
                 // other sources it returns the cached production unchanged.
                 let production = game.effective_production_for_resolution(card_id, player_id);
                 self.mana_sources.push(ManaSource {

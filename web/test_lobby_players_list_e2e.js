@@ -1,5 +1,5 @@
 // test_lobby_players_list_e2e.js — logged-in PLAYERS list acceptance gate
-// (mtg-eesvz; design mtg-595/mtg-594).
+// (mtg-890; design mtg-595/mtg-594).
 //
 // Asserts the lobby's two-list contract for the Logged-in Players list, which
 // mirrors the existing Open Games list (ListPlayers/PlayerList ↔ ListGames/
@@ -141,7 +141,7 @@ async function main() {
     const browser = await chromium.launch();
 
     try {
-        console.log('\n=== Test: lobby logged-in PLAYERS list (mtg-eesvz) ===');
+        console.log('\n=== Test: lobby logged-in PLAYERS list (mtg-890) ===');
 
         // Two browsers register distinct names.
         const alice = await enterLobbyAs(browser, base, ws, 'alice-' + Date.now());

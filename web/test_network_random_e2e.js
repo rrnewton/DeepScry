@@ -249,7 +249,7 @@ async function runTest() {
 
             for (const logEntry of newLogs) {
                 // Check for game ended. The clean "[Network] Game ended" notice
-                // (mtg-grofw) is debug-INDEPENDENT; the legacy
+                // (mtg-891) is debug-INDEPENDENT; the legacy
                 // `"type":"game_ended"` match only fires when the full per-message
                 // "[Network] Received:" dump is enabled (debug tracing on).
                 if (logEntry.text.includes('[Network] Game ended') ||

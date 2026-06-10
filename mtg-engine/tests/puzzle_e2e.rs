@@ -4527,7 +4527,7 @@ async fn test_fellwar_stone_reflected_mana() -> Result<()> {
         stone.definition.cache.mana_production.kind
     );
 
-    // (a2) RESOLVER AGREEMENT (mtg-xmw97 regression). The payment resolver must
+    // (a2) RESOLVER AGREEMENT (mtg-893 regression). The payment resolver must
     // treat Fellwar Stone as a source over its ACTUAL reflected colours
     // ({G, U} here from Forest + Island), NOT the unconstrained AnyColor upper
     // bound. Before the fix the resolver believed Fellwar Stone could pay any
@@ -4557,7 +4557,7 @@ async fn test_fellwar_stone_reflected_mana() -> Result<()> {
         assert!(
             !engine.can_pay(&r),
             "Fellwar Stone must NOT be able to pay {{R}} — no opponent land produces red, so the \
-             resolver must not offer a red cost the activation can't pay (mtg-xmw97 loop)"
+             resolver must not offer a red cost the activation can't pay (mtg-893 loop)"
         );
     }
 

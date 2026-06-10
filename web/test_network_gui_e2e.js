@@ -494,7 +494,7 @@ async function runRandomMode(page, browserLogs, serverErrors, screenshotDir, pre
         lastLogCount = browserLogs.length;
 
         for (const logEntry of newLogs) {
-            // The clean terminal "[Network] Game ended" notice (mtg-grofw) is the
+            // The clean terminal "[Network] Game ended" notice (mtg-891) is the
             // reliable, debug-INDEPENDENT completion signal collected by the
             // continuous console listener. The legacy `"type":"game_ended"` match
             // still works when debug tracing is on (full "[Network] Received:"
@@ -520,12 +520,12 @@ async function runRandomMode(page, browserLogs, serverErrors, screenshotDir, pre
         // "type":"game_ended"/"choice_seq") is now gated behind debug tracing
         // (web/network.js this.debug), so we must NOT depend on it. The view
         // model exposes game_over + turn_number directly — the robust source of
-        // truth that works whether or not debug logging is on. (mtg-grofw)
+        // truth that works whether or not debug logging is on. (mtg-891)
         const probe = await page.evaluate(() => {
             try {
                 const vm = window.__mtg ? window.__mtg.getViewModel() : null;
                 // The network client records game end the instant the server's
-                // `game_ended` message arrives (mtg-grofw) — the authoritative,
+                // `game_ended` message arrives (mtg-891) — the authoritative,
                 // debug-log-independent completion signal (the browser's own
                 // view-model game_over can lag a losing seat's teardown).
                 const client = window.__mtg && window.__mtg.getNetworkClient
@@ -582,7 +582,7 @@ async function runRandomMode(page, browserLogs, serverErrors, screenshotDir, pre
     } else if (choiceCount > 0 || turnCount > 1) {
         // Progress is proven by EITHER the (debug-gated) choice_seq logs OR the
         // view-model turn advancing past turn 1 — so this gate no longer depends
-        // on the now-gated [Network] traffic logs. (mtg-grofw)
+        // on the now-gated [Network] traffic logs. (mtg-891)
         log(`Random game progressed: ${choiceCount} choices, ${turnCount} turns in ${elapsed}s (partial success)`);
     } else {
         throw new Error('Random game did not progress');

@@ -64,7 +64,7 @@ struct WasmAiHarness {
     /// rewind+replay resume model (the gfr2a fix) work here.
     controller: Box<dyn PlayerController>,
     /// The turn number whose forward run we have already started (mtg-610 /
-    /// mtg-gfr2a). When a `run_network_ai_step` entry finds the game on this
+    /// mtg-885). When a `run_network_ai_step` entry finds the game on this
     /// same turn, it is a mid-turn RE-ENTRY (the loop blocked awaiting a
     /// choice and JS re-called us) → rewind to the turn start and replay. When
     /// the turn number differs it is the FIRST forward run of a new turn → run
@@ -76,7 +76,7 @@ struct WasmAiHarness {
     /// that logs an action BEFORE its priority round (`end_combat_step` logs
     /// `ClearCombat`) the action was logged a SECOND time, advancing the
     /// shadow's `action_count` by one with no state change — a fatal
-    /// `compute_view_hash` desync at the next state-hash check (mtg-gfr2a).
+    /// `compute_view_hash` desync at the next state-hash check (mtg-885).
     forward_run_turn: Option<u32>,
 }
 
@@ -208,7 +208,7 @@ fn init_harness(client: &SharedNetworkClient, controller_type: &str, seed: u32) 
 // ═══════════════════════════════════════════════════════════════════════════
 
 /// Run a single step of the AI game loop via the PRINCIPLED rewind+replay
-/// resume model (mtg-610 / mtg-gfr2a), unified with the `fancy_tui` network
+/// resume model (mtg-610 / mtg-885), unified with the `fancy_tui` network
 /// path's resume mechanism.
 ///
 /// On the FIRST forward run of a turn we run the game loop straight through.
@@ -218,7 +218,7 @@ fn init_harness(client: &SharedNetworkClient, controller_type: &str, seed: u32) 
 /// persistent inner controller — so no begin-of-step / combat action is
 /// re-applied. The old NO-REWIND model re-executed the current step from the
 /// top on resume, double-logging `end_combat_step`'s `ClearCombat` and
-/// desyncing `action_count` (mtg-gfr2a).
+/// desyncing `action_count` (mtg-885).
 ///
 /// Turn 1 now carries a clean post-setup `ChangeTurn` boundary marker
 /// (`GameState::ensure_turn_one_boundary`), so a turn-1 rewind stops there just
@@ -365,7 +365,7 @@ fn step_replay(harness: &mut WasmAiHarness, client: SharedNetworkClient) -> crat
 /// `(our_choices, opponent_choices)` in forward chronological order. Undoes
 /// every action back to the turn's `ChangeTurn` boundary (which is also what
 /// removes any in-flight `ClearCombat` logged by a forward run that blocked at
-/// the EndCombat priority — the mtg-gfr2a fix) and unwinds the reveal-history
+/// the EndCombat priority — the mtg-885 fix) and unwinds the reveal-history
 /// buffer to the rewound position so the rewound `cards` set is deterministic.
 fn rewind_and_partition(
     harness: &mut WasmAiHarness,

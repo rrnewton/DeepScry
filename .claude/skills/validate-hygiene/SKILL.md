@@ -218,7 +218,7 @@ forbidden (e.g. a locked-down corp box):
 
 `make validate` is **memory-capped by default** (a two-level cgroup: an outer
 scope `MemoryMax` + per-step inner caps, `swap=0`, so a runaway is OOM-killed at
-its cap instead of wedging the box — mtg-5jn7z). The baselines are constants in
+its cap instead of wedging the box — mtg-887). The baselines are constants in
 `scripts/validate.py` (`VALIDATE_TOTAL_RSS_BASELINE_BYTES`,
 `PER_STEP_RSS_BASELINE`, `MEM_CAP_FACTOR`) — the single source of truth.
 

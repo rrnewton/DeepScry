@@ -34,7 +34,7 @@ export class MTGNetworkClient {
         // isDebugMode()`. Genuine errors (console.error) are NOT gated and are
         // additionally surfaced to the UI via onError.
         this.debug = false;
-        // mtg-grofw: set true by the page when the game has CONCLUDED (view
+        // mtg-891: set true by the page when the game has CONCLUDED (view
         // model game_over). The server closes the socket with a non-clean 1006
         // close right after a game ends — that is NORMAL, not a lost connection,
         // so onclose/onerror must NOT escalate it to the red banner or attempt a
@@ -121,7 +121,7 @@ export class MTGNetworkClient {
                 // Non-JSON messages still flow into WASM for normal handling/error reporting
             }
 
-            // mtg-grofw: when the game CONCLUDES legitimately, the server sends a
+            // mtg-891: when the game CONCLUDES legitimately, the server sends a
             // `game_ended` and then closes the socket (non-clean 1006); we mark
             // the game ended so that ensuing close is not mis-escalated as a lost
             // connection. (The page also sets this from its view-model game_over.)

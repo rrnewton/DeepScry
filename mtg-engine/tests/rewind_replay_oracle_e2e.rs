@@ -396,7 +396,7 @@ async fn rewind_replay_oracle_round_trips_at_every_decision_point() -> Result<()
         // consensus value (mtg-752), but `compute_state_hash` deliberately
         // EXCLUDES the undo log — so a divergence that touches ONLY the undo-log
         // length (e.g. an extra no-op action) is invisible to the hash check
-        // above yet FATAL on the wire. mtg-gfr2a was exactly this: a no-rewind
+        // above yet FATAL on the wire. mtg-885 was exactly this: a no-rewind
         // resume re-executed `end_combat_step` and double-logged a (state-no-op)
         // `ClearCombat`, advancing `action_count` by one. Asserting the action
         // count round-trips through rewind+replay guards that whole class.
@@ -467,7 +467,7 @@ async fn rewind_replay_oracle_round_trips_at_every_decision_point() -> Result<()
         );
 
         // action_count (undo-log length) MUST also round-trip — the network
-        // view-hash invariant that `compute_state_hash` cannot see (mtg-gfr2a).
+        // view-hash invariant that `compute_state_hash` cannot see (mtg-885).
         let action_count_after_replay = game.undo_log.len();
         assert_eq!(
             action_count_after_replay, action_count_after_forward,
@@ -476,7 +476,7 @@ async fn rewind_replay_oracle_round_trips_at_every_decision_point() -> Result<()
              ({action_count_after_replay} != {action_count_after_forward}). The full-state hash \
              may match (compute_state_hash excludes the undo log) while the NETWORK \
              compute_view_hash — which hashes action_count as a cross-replica consensus value \
-             (mtg-752) — diverges. This is the mtg-gfr2a class: an action logged twice (or not \
+             (mtg-752) — diverges. This is the mtg-885 class: an action logged twice (or not \
              reversed) across the resume boundary. See docs/NETWORK_ARCHITECTURE.md."
         );
 

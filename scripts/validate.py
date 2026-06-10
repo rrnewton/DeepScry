@@ -78,7 +78,7 @@ NPM = os.environ.get("NPM") or "npm"
 
 
 # ===========================================================================
-# MEMORY-CAP BASELINES  (THE single source of truth — mtg-5jn7z)
+# MEMORY-CAP BASELINES  (THE single source of truth — mtg-887)
 # ===========================================================================
 # `make validate` runs under cgroup memory caps BY DEFAULT so a runaway test
 # (e.g. the 2026-06-09 Return-the-Favor infinite self-copy that ballooned one
@@ -94,7 +94,7 @@ NPM = os.environ.get("NPM") or "npm"
 #     Observed ~22 GiB on the 16-core dev box (2026-06-09).
 #   * Per-step peaks read from each step's child-cgroup `memory.peak` at step
 #     teardown (printed in the per-step detail + the VALIDATE STATS block).
-# CAVEAT (mtg-5jn7z item 3) — RESOLVED 2026-06-09: a baseline measured while the
+# CAVEAT (mtg-887 item 3) — RESOLVED 2026-06-09: a baseline measured while the
 # commander runaway (Return-the-Favor self-copy loop) was live would be GARBAGE.
 # That loop is now FIXED on integration (slot01 @2c9d1808 — the chandra_tokens/
 # seed-42 game that spawned 419,145 copies completes with ZERO copy events), so
@@ -440,7 +440,7 @@ def build_registry():
         ("landing", "landing-page UX e2e", "cd web && node test_landing_page_ux.js"),
         ("redo-reload", "lobby-redo multiturn + mid-game reload (mtg-682 4+5)", "cd web && node test_redo_multiturn_reload_e2e.js"),
         ("redo-lobby", "lobby-flow-fixes e2e (mtg-682 1-4)", "cd web && node test_redo_lobby_e2e.js"),
-        ("players-list", "lobby logged-in players list e2e (mtg-eesvz)", "cd web && node test_lobby_players_list_e2e.js"),
+        ("players-list", "lobby logged-in players list e2e (mtg-890)", "cd web && node test_lobby_players_list_e2e.js"),
         ("smoke", "hermetic CAS web-asset smoke (mtg-571)", "cd web && node test_web_server_smoke.js"),
         ("deploy-nav", "hashed deploy-tree navigation gate (mtg-682)", "cd web && node test_deploy_tree_nav.js"),
     ]
@@ -684,7 +684,7 @@ class Runner:
         if self.cgroups is not None:
             # Per-step INNER cgroup MemoryMax from the characterized baseline (or
             # None for an un-characterized / deliberately-excluded step like
-            # determ.commander — then only the OUTER cap protects it). mtg-5jn7z.
+            # determ.commander — then only the OUTER cap protects it). mtg-887.
             run_cmd = self.cgroups.prepare_command(
                 step.tag, step.cmd, mem_max=step_mem_cap_bytes(step.tag))
         proc = subprocess.Popen(["bash", "-c", run_cmd], cwd=PROJECT_DIR, env=env,
@@ -756,7 +756,7 @@ class Runner:
         ok = (proc.returncode == 0) and not timed_out
         if step_peak is not None:
             # Record per-step peak RSS into the detail (baseline characterization
-            # — compare against PER_STEP_RSS_BASELINE to retune caps; mtg-5jn7z).
+            # — compare against PER_STEP_RSS_BASELINE to retune caps; mtg-887).
             try:
                 with open(detail, "ab") as f2:
                     cap = step_mem_cap_bytes(step.tag)
@@ -800,7 +800,7 @@ class Runner:
                 why = f"exit {proc.returncode}"
             self._emit(f"[{step.tag}] ✗ FAIL   {step.desc} ({dur}s, {why})")
             if oomed:
-                # ACTIONABLE OOM message (mtg-5jn7z item 4): (a) which step, (b)
+                # ACTIONABLE OOM message (mtg-887 item 4): (a) which step, (b)
                 # WHERE the baseline lives, (c) how to SAFELY raise it.
                 cap = step_mem_cap_bytes(step.tag)
                 peak = _fmt_bytes(step_peak) if step_peak else "?"
@@ -1499,7 +1499,7 @@ def _maybe_reexec_in_scope(args):
         # MemoryMax = hard cap (cgroup OOM-kills the run if exceeded — contains a
         # runaway validate); MemoryHigh = soft throttle at 90% (reclaim pressure
         # before the hard kill). Together they keep concurrent cross-slot
-        # validates from OOM-thrashing the host. APPLIED BY DEFAULT (mtg-5jn7z).
+        # validates from OOM-thrashing the host. APPLIED BY DEFAULT (mtg-887).
         # MemorySwapMax=0: OOM-KILL a runaway at the cap, do NOT let it swap (a
         # 40 GB runaway swapping into 18 GB still thrashes the host — the exact
         # wedge this guards against).

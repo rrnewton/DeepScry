@@ -94,7 +94,7 @@ impl GameState {
     /// honestly intersects with the reflected set and produces a *different*
     /// colour when red is not reflected. The coloured pip is never paid, the
     /// spell stays unpayable, and a heuristic/zero AI that keeps re-attempting it
-    /// loops until the 1000-action priority guard trips (mtg-xmw97).
+    /// loops until the 1000-action priority guard trips (mtg-893).
     ///
     /// Resolving the reflected set HERE — to a concrete `Choice(colors)` over the
     /// colours opponents' lands could currently produce — makes the resolver's
@@ -383,7 +383,7 @@ impl GameState {
                         // empty reflected set as `Colorless`: the resolver never
                         // counts an empty-reflected Fellwar Stone toward a coloured
                         // pip, so it never commits to a cost the activation can't
-                        // pay (the mtg-xmw97 Lightning Bolt loop).
+                        // pay (the mtg-893 Lightning Bolt loop).
                         if let Some(hint) = hint_mana_color {
                             if set.contains(hint) {
                                 to_color(hint)

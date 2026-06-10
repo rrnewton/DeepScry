@@ -368,7 +368,7 @@ async function runTest() {
             }
 
             // Check game_ended messages. The clean "[Network] Game ended" notice
-            // (mtg-grofw) is debug-INDEPENDENT; the `"type":"game_ended"` /
+            // (mtg-891) is debug-INDEPENDENT; the `"type":"game_ended"` /
             // `choice_seq` matches above only fire when the full per-message
             // "[Network] Received:" dump is enabled (debug tracing on).
             const endedIn = (logs) => logs.some(e =>

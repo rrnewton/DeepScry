@@ -2635,7 +2635,7 @@ impl CardDefinition {
                             // controller can't or won't pay, the creature stays
                             // tapped (the doesn't-untap lock holds). This reuses
                             // the determinism-safe in-engine pay/don't-pay decision
-                            // (tracked under mtg-rpmpg) rather than re-implementing
+                            // (tracked under mtg-884) rather than re-implementing
                             // it. Only handled for the Enchanted-controller phase
                             // trigger; a naive unconditional untap would make
                             // Paralyze free to escape and is explicitly avoided

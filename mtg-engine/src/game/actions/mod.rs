@@ -3397,7 +3397,7 @@ impl GameState {
                 // own resolution site (resolve_top_spell_with_discard_hook /
                 // priority_round / check_triggers_inner) by calling
                 // `execute_discard_effect` directly with the forcing
-                // spell/ability's controller — see mtg-648 / mtg-54n3b.
+                // spell/ability's controller — see mtg-648 / mtg-894.
                 self.execute_discard_effect(effect, None)?;
             }
             Effect::GainLife { player, amount } => {
@@ -7033,7 +7033,7 @@ impl GameState {
     /// interactive spell/ability paths in `priority.rs` pass the spell owner /
     /// priority holder. Threading the cause as an explicit argument (never
     /// mutable `GameState` state) keeps it out of serialized / rewound state
-    /// entirely (mtg-648 / mtg-54n3b).
+    /// entirely (mtg-648 / mtg-894).
     ///
     /// Returns `true` if `effect` was a discard-producing effect this helper
     /// handled, `false` otherwise (so a caller can fall back to the generic
@@ -7955,7 +7955,7 @@ impl GameState {
                 // Discarded self-trigger on the discarded card (Psychic Purge's
                 // opponent punisher) fires when an opponent's ability caused it.
                 // Route DiscardCards/Loot through the cause-aware helper; every
-                // other effect uses the generic path (mtg-648 / mtg-54n3b).
+                // other effect uses the generic path (mtg-648 / mtg-894).
                 if !self.execute_discard_effect(&effect, Some(controller))? {
                     self.execute_effect(&effect)?;
                 }
