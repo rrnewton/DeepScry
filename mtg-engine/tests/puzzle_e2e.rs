@@ -4527,6 +4527,40 @@ async fn test_fellwar_stone_reflected_mana() -> Result<()> {
         stone.definition.cache.mana_production.kind
     );
 
+    // (a2) RESOLVER AGREEMENT (mtg-xmw97 regression). The payment resolver must
+    // treat Fellwar Stone as a source over its ACTUAL reflected colours
+    // ({G, U} here from Forest + Island), NOT the unconstrained AnyColor upper
+    // bound. Before the fix the resolver believed Fellwar Stone could pay any
+    // coloured pip, so `can_pay({R})` returned true; the AI then committed to a
+    // red cost (Lightning Bolt {R}) it could never actually pay, looping until
+    // the 1000-action priority guard. With the fix the resolver's affordability
+    // exactly matches what `tap_for_mana_for_cost` will produce.
+    {
+        use mtg_engine::core::ManaCost;
+        use mtg_engine::game::mana_engine::ManaEngine;
+        let mut engine = ManaEngine::new();
+        engine.update_mut(&mut game, p0_id);
+        let g = ManaCost {
+            green: 1,
+            ..ManaCost::default()
+        };
+        let u = ManaCost {
+            blue: 1,
+            ..ManaCost::default()
+        };
+        let r = ManaCost {
+            red: 1,
+            ..ManaCost::default()
+        };
+        assert!(engine.can_pay(&g), "Fellwar Stone can pay {{G}} (Forest reflected)");
+        assert!(engine.can_pay(&u), "Fellwar Stone can pay {{U}} (Island reflected)");
+        assert!(
+            !engine.can_pay(&r),
+            "Fellwar Stone must NOT be able to pay {{R}} — no opponent land produces red, so the \
+             resolver must not offer a red cost the activation can't pay (mtg-xmw97 loop)"
+        );
+    }
+
     // (b) Reflected set = {G, U} from Forest + Island. Tap for a GREEN cost hint
     // and confirm it produces green (in the reflected set).
     let _ = p1_id; // opponent referenced via reflected-set derivation

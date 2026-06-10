@@ -386,8 +386,18 @@ impl ManaEngine {
                 let cached_production = &card.definition.cache.mana_production;
 
                 // Check for granted mana abilities (e.g., from Chromatic Lantern)
-                let effective_production =
+                let mut effective_production =
                     get_effective_mana_production(game, card_id, cached_production).unwrap_or(*cached_production);
+
+                // Resolve reflected-mana sources (Fellwar Stone) to their actual
+                // current colour set so this from-scratch classification matches
+                // the cache path's `effective_production_for_resolution` (mtg-xmw97).
+                // Only override when the card has no granted abilities driving the
+                // production (the reflected helper reads the card's own cached
+                // production); a granted-ability merge takes precedence.
+                if get_effective_mana_production(game, card_id, cached_production).is_none() {
+                    effective_production = game.effective_production_for_resolution(card_id, player_id);
+                }
 
                 // Creatures with mana abilities are always complex sources
                 // (due to summoning sickness and other creature-specific rules)
@@ -962,8 +972,13 @@ impl ManaEngine {
                     false
                 };
 
-                // Get production from card's cached mana_production
-                let production = card.definition.cache.mana_production;
+                // Resolve the effective production. For reflected-mana sources
+                // (Fellwar Stone) this collapses the static all-colour upper
+                // bound to the colours opponents' lands can actually produce
+                // right now, so the resolver's affordability decision matches
+                // what the activation path will produce (mtg-xmw97). For all
+                // other sources it returns the cached production unchanged.
+                let production = game.effective_production_for_resolution(card_id, player_id);
                 self.mana_sources.push(ManaSource {
                     card_id,
                     production,

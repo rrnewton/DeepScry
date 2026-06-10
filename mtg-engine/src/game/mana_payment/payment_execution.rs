@@ -41,7 +41,7 @@ impl GameState {
     /// A land that itself produces "any color" contributes all five colors. A
     /// land that produces only colorless contributes nothing (colorless is not a
     /// color; CR 105.1). The result is the union across all matching lands.
-    fn reflected_mana_colors(&self, player_id: PlayerId) -> crate::game::mana_colors::ManaColors {
+    pub(crate) fn reflected_mana_colors(&self, player_id: PlayerId) -> crate::game::mana_colors::ManaColors {
         use crate::core::{ManaColor, ManaProductionKind};
         use crate::game::mana_colors::ManaColors;
 
@@ -77,6 +77,70 @@ impl GameState {
             }
         }
         colors
+    }
+
+    /// Compute the mana production a source effectively offers *for payment
+    /// resolution*, resolving the dynamic colour set of reflected-mana sources
+    /// (Fellwar Stone) to the colours they can actually produce right now.
+    ///
+    /// The static `CardCache` models Fellwar Stone's `AB$ ManaReflected` ability
+    /// as an unconstrained `AnyColor` upper bound, because the producible colour
+    /// set depends on what lands opponents control at activation time and cannot
+    /// be baked into the per-card cache. That upper bound is fine for a quick
+    /// "could this ever produce colour X" check, but it makes the payment
+    /// resolver (`GreedyManaResolver`) believe a Fellwar Stone can pay *any*
+    /// coloured pip. The resolver then commits to a tap order that taps Fellwar
+    /// Stone for, say, `{R}` — but the activation path (`tap_for_mana_for_cost`)
+    /// honestly intersects with the reflected set and produces a *different*
+    /// colour when red is not reflected. The coloured pip is never paid, the
+    /// spell stays unpayable, and a heuristic/zero AI that keeps re-attempting it
+    /// loops until the 1000-action priority guard trips (mtg-xmw97).
+    ///
+    /// Resolving the reflected set HERE — to a concrete `Choice(colors)` over the
+    /// colours opponents' lands could currently produce — makes the resolver's
+    /// affordability decision exactly match what execution will produce, so the
+    /// AI never commits to an unpayable cost and the loop cannot occur. It is
+    /// derived purely from public battlefield state, so it is identical on the
+    /// server and every client (no information leakage; CLAUDE.md network
+    /// invariant) and is deterministic (canonical WUBRG bitset ordering).
+    ///
+    /// For non-reflected sources this returns the card's cached production
+    /// unchanged.
+    pub(crate) fn effective_production_for_resolution(
+        &self,
+        card_id: CardId,
+        player_id: PlayerId,
+    ) -> crate::core::ManaProduction {
+        use crate::core::{ManaProduction, ManaProductionKind};
+
+        let Some(card) = self.cards.try_get(card_id) else {
+            return ManaProduction::default();
+        };
+        let cached = card.definition.cache.mana_production;
+
+        let is_reflected = card
+            .activated_abilities
+            .iter()
+            .any(|ab| ab.is_mana_ability && ab.produces_reflected_mana);
+        if !is_reflected {
+            return cached;
+        }
+
+        // Resolve the reflected colour set from the current board and model the
+        // source as a `Choice` over exactly those colours. We deliberately keep
+        // the `Choice` kind (rather than collapsing a single colour to `Fixed`
+        // or an empty set to `Colorless`) so the source's complex/simple
+        // CLASSIFICATION is unchanged from the static `AnyColor` cache — both the
+        // live `read_from_cache` path and the debug `compute_from_scratch`
+        // verifier agree on which bucket the source falls in. The resolver's
+        // `GreedyManaResolver` handles `Choice` (including the empty set, which
+        // simply produces no colour and therefore cannot pay a coloured pip)
+        // exactly as it would any dual/multi source.
+        let reflected = self.reflected_mana_colors(player_id);
+        ManaProduction {
+            kind: ManaProductionKind::Choice(reflected),
+            ..cached
+        }
     }
 
     /// Tap a permanent for mana with a cost hint to guide color production
@@ -312,16 +376,22 @@ impl GameState {
                     Some(set) => {
                         // Prefer the hinted color if the reflected set allows it,
                         // else the first reflected color in canonical WUBRG order,
-                        // else green as a harmless default (set was empty — e.g.
-                        // opponents control only colorless lands or none).
+                        // else colorless when the set is empty (opponents control
+                        // only colorless lands or none). Producing COLORLESS rather
+                        // than a fabricated green keeps this consistent with
+                        // `effective_production_for_resolution`, which models an
+                        // empty reflected set as `Colorless`: the resolver never
+                        // counts an empty-reflected Fellwar Stone toward a coloured
+                        // pip, so it never commits to a cost the activation can't
+                        // pay (the mtg-xmw97 Lightning Bolt loop).
                         if let Some(hint) = hint_mana_color {
                             if set.contains(hint) {
                                 to_color(hint)
                             } else {
-                                set.iter().next().map(to_color).unwrap_or(crate::core::Color::Green)
+                                set.iter().next().map(to_color).unwrap_or(crate::core::Color::Colorless)
                             }
                         } else {
-                            set.iter().next().map(to_color).unwrap_or(crate::core::Color::Green)
+                            set.iter().next().map(to_color).unwrap_or(crate::core::Color::Colorless)
                         }
                     }
                     // Non-reflected any-color source: honor hint, default green.

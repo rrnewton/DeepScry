@@ -1,0 +1,85 @@
+---
+title: Intermittent robots42 failure — AI commits to a {R} cost a Fellwar Stone can't pay (mana-tap loop)
+status: closed
+priority: 1
+issue_type: task
+created_at: 2026-06-10T02:36:41.491425574+00:00
+updated_at: 2026-06-10T03:10:00.000000000+00:00
+---
+
+# Description
+
+## RESOLVED 2026-06-09 (claude/fix-robots42-determinism, off integration b3281a33)
+
+### Root cause — resolver/execution disagreement on Fellwar Stone's colors
+
+Fellwar Stone (`AB$ ManaReflected`, "Add one mana of any color that a land an
+opponent controls could produce") has a DYNAMIC color set: it can only make the
+colors that opponents' lands can currently produce. The static per-card
+`CardCache` cannot enumerate that, so it models Fellwar Stone as an unconstrained
+`AnyColor` upper bound (all five colors), in `effect_converter.rs`
+(`ApiType::ManaReflected`).
+
+The payment resolver (`GreedyManaResolver`, via `ManaEngine`) consumed that
+static `AnyColor` and therefore believed Fellwar Stone could pay ANY colored pip.
+So `ManaEngine::can_pay({R})` returned `true` even on a board where no opponent
+land produces red. The AI (heuristic AND zero controllers) then committed to
+casting a red spell (Lightning Bolt, `{R}`) and asked the resolver for a tap
+order, which tapped Fellwar Stone for `{R}`.
+
+But the ACTIVATION path (`tap_for_mana_for_cost` in
+`mana_payment/payment_execution.rs`) is honest: it intersects with the real
+reflected set (`reflected_mana_colors`) and produced a DIFFERENT color (the first
+reflected color, or — pre-fix — a fabricated green on an empty set). The `{R}`
+pip was never satisfied, the spell stayed unpayable, the AI re-attempted it every
+priority window, and the game looped until the 1000-action priority guard tripped.
+
+### Why it presented as "non-deterministic within one commit"
+
+The reflected set depends on which lands opponents control at the loop point. In
+the robots42 mirror that board state can differ between two CI processes (an
+upstream per-process iteration-order effect), so the SAME SHA could reach the
+unpayable-Bolt state in one process and not the other — `network.robots42` PASS
+while nextest `shell_scripts__robots42_state_sync_e2e` FAIL in the same run. The
+fix removes the defect for ALL board states (the resolver never offers an
+unpayable colored cost), so the loop is structurally impossible regardless of the
+upstream ordering — i.e. it is now deterministic-by-construction, not merely
+"didn't repro this time."
+
+### The fix (no hacks, single chokepoint)
+
+Added `GameState::effective_production_for_resolution(card_id, player_id)` in
+`mana_payment/payment_execution.rs`: for reflected-mana sources it resolves the
+static `AnyColor` to a concrete `Choice(reflected_colors)` over the colors
+opponents' lands can currently produce (derived purely from public battlefield
+state → information-independent + identical on server/client + deterministic
+WUBRG bitset order). Non-reflected sources are returned unchanged.
+
+`ManaEngine::read_from_cache` (live path) and `compute_from_scratch` (debug
+verifier) both build the `ManaSource` for a reflected source through this helper,
+so the resolver's affordability now exactly matches what the activation will
+produce. `Choice` (not `Fixed`/`Colorless`) is deliberately kept so the
+complex/simple CLASSIFICATION is unchanged and both engine paths agree.
+
+Also made the empty-reflected-set activation fallback produce `Colorless` instead
+of a fabricated green, so an empty set is consistent between model and execution.
+
+### Proof
+
+- New regression assertion in `mtg-engine/tests/puzzle_e2e.rs`
+  `test_fellwar_stone_reflected_mana` (fixture: Fellwar Stone vs Forest+Island,
+  reflected = {G,U}, no red): `can_pay({G})` and `can_pay({U})` true,
+  `can_pay({R})` FALSE. Confirmed RED-fails on the pre-fix source (test fails),
+  passes with the fix.
+- robots42 state-sync e2e: 25/25 green in a row (was intermittent).
+- heuristic robots42 mirror: 20/20 seeds (1..20) complete cleanly.
+- network-vs-local equivalence (heuristic + zero): public-zone events agree.
+- Full `make validate`: see validate_logs/validate_<sha>.log on the branch.
+
+## Historical context (filing)
+
+Observed 3× across branches/seeds/harnesses: b3281a33 run 27248463211
+network.robots42 FAIL seed=3; ef853204 run 27248544560 nextest
+shell_scripts__robots42_state_sync_e2e FAIL seed=42 while same-run network.robots42
+PASSED. robots42 runs in TWO validate steps (network.robots42 seeds 3/7/19/42 and
+the nextest shell_scripts__robots42_state_sync_e2e); the fix stabilizes both.
