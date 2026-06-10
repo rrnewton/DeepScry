@@ -2611,18 +2611,16 @@ impl WasmFancyTuiState {
         let result = {
             let sync_callback = Self::make_ai_sync_callback(network_client.clone(), our_id);
             let searched_card_lookup = Self::make_ai_searched_card_lookup(network_client);
-            let mut game_loop = GameLoop::new(&mut self.game)
-                .with_verbosity(VerbosityLevel::Normal)
-                .with_sync_callback(sync_callback)
-                .with_searched_card_lookup(searched_card_lookup)
-                .skip_opening_hands()
-                .with_deferred_game_end();
-
-            if we_are_p1 {
-                game_loop.run_until_input(our_controller.as_mut(), remote_controller)
-            } else {
-                game_loop.run_until_input(remote_controller, our_controller.as_mut())
-            }
+            // Shared shadow-driver core (DRY with ai_harness's network forward
+            // run). fancy_tui wires the authoritative library-search lookup.
+            crate::game::replay_controller::run_shadow_until_input(
+                &mut self.game,
+                we_are_p1,
+                our_controller.as_mut(),
+                remote_controller,
+                sync_callback,
+                Some(searched_card_lookup),
+            )
         };
 
         // Restore the persistent controller so its RNG carries forward.
@@ -2693,18 +2691,16 @@ impl WasmFancyTuiState {
         let result = {
             let sync_callback = Self::make_ai_sync_callback(network_client.clone(), our_id);
             let searched_card_lookup = Self::make_ai_searched_card_lookup(network_client);
-            let mut game_loop = GameLoop::new(&mut self.game)
-                .with_verbosity(VerbosityLevel::Normal)
-                .with_sync_callback(sync_callback)
-                .with_searched_card_lookup(searched_card_lookup)
-                .skip_opening_hands()
-                .with_deferred_game_end();
-
-            if we_are_p1 {
-                game_loop.run_until_input(&mut our_replay, &mut opponent_replay)
-            } else {
-                game_loop.run_until_input(&mut opponent_replay, &mut our_replay)
-            }
+            // Shared shadow-driver core (DRY with ai_harness's network replay
+            // run). fancy_tui wires the authoritative library-search lookup.
+            crate::game::replay_controller::run_shadow_until_input(
+                &mut self.game,
+                we_are_p1,
+                &mut our_replay,
+                &mut opponent_replay,
+                sync_callback,
+                Some(searched_card_lookup),
+            )
         };
 
         // Recover the persistent inner so its RNG carries forward to the next

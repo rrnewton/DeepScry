@@ -32,8 +32,8 @@ use super::{WasmNetworkLocalController, WasmRemoteController};
 use crate::core::PlayerId;
 use crate::game::replay_controller::ReplayChoice;
 use crate::game::{
-    derive_player_seed, GameLoop, GameLoopState, GameState, HeuristicController, PlayerController, PlayerSlot,
-    RandomController, ReplayController, VerbosityLevel, ZeroController,
+    derive_player_seed, GameLoopState, GameState, HeuristicController, PlayerController, PlayerSlot, RandomController,
+    ReplayController, ZeroController,
 };
 use std::cell::RefCell;
 use wasm_bindgen::prelude::*;
@@ -284,17 +284,17 @@ fn step_forward(harness: &mut WasmAiHarness, client: SharedNetworkClient) -> cra
     let mut remote = WasmRemoteController::new(opponent_id, client.clone());
     let sync_callback = make_sync_callback(client, our_id);
 
-    let mut game_loop = GameLoop::new(&mut harness.game)
-        .with_verbosity(VerbosityLevel::Normal)
-        .with_sync_callback(sync_callback)
-        .skip_opening_hands()
-        .with_deferred_game_end();
-
-    if we_are_p1 {
-        game_loop.run_until_input(harness.controller.as_mut(), &mut remote)
-    } else {
-        game_loop.run_until_input(&mut remote, harness.controller.as_mut())
-    }
+    // Shared shadow-driver core (DRY with fancy_tui's network forward run). The
+    // headless harness wires no authoritative library-search lookup (mtg-728 is
+    // a fancy_tui-only concern), so pass `None` with a concrete type.
+    crate::game::replay_controller::run_shadow_until_input(
+        &mut harness.game,
+        we_are_p1,
+        harness.controller.as_mut(),
+        &mut remote,
+        sync_callback,
+        no_searched_card_lookup(),
+    )
 }
 
 /// Mid-turn re-entry: rewind to the turn start and replay both players'
@@ -341,17 +341,14 @@ fn step_replay(harness: &mut WasmAiHarness, client: SharedNetworkClient) -> crat
 
     let result = {
         let sync_callback = make_sync_callback(client, our_id);
-        let mut game_loop = GameLoop::new(&mut harness.game)
-            .with_verbosity(VerbosityLevel::Normal)
-            .with_sync_callback(sync_callback)
-            .skip_opening_hands()
-            .with_deferred_game_end();
-
-        if we_are_p1 {
-            game_loop.run_until_input(&mut our_replay, &mut opponent_replay)
-        } else {
-            game_loop.run_until_input(&mut opponent_replay, &mut our_replay)
-        }
+        crate::game::replay_controller::run_shadow_until_input(
+            &mut harness.game,
+            we_are_p1,
+            &mut our_replay,
+            &mut opponent_replay,
+            sync_callback,
+            no_searched_card_lookup(),
+        )
     };
 
     // Recover the persistent inner so its RNG carries forward to the next
@@ -386,6 +383,16 @@ fn rewind_and_partition(
         },
         |_game, _log_size_at_turn| {},
     )
+}
+
+/// A concretely-typed `None` for the shared `run_shadow_until_input`'s optional
+/// `searched_card_lookup` generic. The headless harness wires no authoritative
+/// library-search lookup (mtg-728 is a `fancy_tui`-only concern), but the shared
+/// helper's `L` type parameter still needs to be inferable — this names a
+/// concrete closure type so `None::<L>` resolves without a turbofish at the call
+/// site.
+fn no_searched_card_lookup() -> Option<impl Fn(&GameState, PlayerId) -> Option<crate::core::CardId> + 'static> {
+    None::<fn(&GameState, PlayerId) -> Option<crate::core::CardId>>
 }
 
 /// A throwaway controller used to temporarily fill `harness.controller` while

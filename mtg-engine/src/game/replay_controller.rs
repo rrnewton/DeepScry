@@ -177,6 +177,65 @@ where
     partition_choices_by_player(choice_actions, our_id)
 }
 
+/// Shared "build the shadow `GameLoop` and run it to the next input frontier"
+/// core for every WASM rewind+replay driver (the network AI harness
+/// `wasm::network::ai_harness` and the human-vs-AI `fancy_tui` path). Both their
+/// FORWARD-run and REPLAY-run bodies built the SAME `GameLoop` builder chain
+/// (`with_verbosity(Normal)` → optional `with_searched_card_lookup` →
+/// `with_sync_callback` → `skip_opening_hands` → `with_deferred_game_end`) and
+/// then dispatched `run_until_input` on the `we_are_p1` seat order — four
+/// near-verbatim copies that drifted. DRY'd here so the builder chain + the seat
+/// dispatch live in exactly ONE place.
+///
+/// The two genuine differences between the call sites are threaded as
+/// parameters, NOT branched inside:
+///
+/// - `sync_callback` — the network AI harness applies deltas bounded by the
+///   GameLoop's sync target (`apply_state_sync_at`, mtg-752 L3); the `fancy_tui`
+///   AI path applies reveal-only up to the frontier
+///   (`apply_state_sync_reveals_up_to_frontier`). Each caller passes its own.
+/// - `searched_card_lookup` — `fancy_tui` wires the authoritative
+///   library-search-result lookup (mtg-728); the headless harness passes `None`.
+///
+/// `our_controller` / `opponent_controller` are prepared by the caller (a
+/// persistent inner for a forward run, or a `ReplayController` wrapper for a
+/// replay run) and borrowed mutably for the duration of the loop. Behaviour is
+/// bit-identical to the open-coded copies: the same builder options in the same
+/// order, the same seat dispatch.
+///
+/// # Errors
+///
+/// Propagates any error from [`crate::game::GameLoop::run_until_input`] (a fatal
+/// game-loop error other than the `NeedInput` frontier, which is surfaced as
+/// `Ok(GameLoopState::AwaitingInput)`).
+#[allow(clippy::too_many_arguments)]
+pub fn run_shadow_until_input<S, L>(
+    game: &mut crate::game::GameState,
+    we_are_p1: bool,
+    our_controller: &mut dyn PlayerController,
+    opponent_controller: &mut dyn PlayerController,
+    sync_callback: S,
+    searched_card_lookup: Option<L>,
+) -> crate::Result<crate::game::GameLoopState>
+where
+    S: Fn(&mut crate::game::GameState, u64) + 'static,
+    L: Fn(&crate::game::GameState, PlayerId) -> Option<CardId> + 'static,
+{
+    let mut game_loop = crate::game::GameLoop::new(game)
+        .with_verbosity(crate::game::VerbosityLevel::Normal)
+        .with_sync_callback(sync_callback)
+        .skip_opening_hands()
+        .with_deferred_game_end();
+    if let Some(lookup) = searched_card_lookup {
+        game_loop = game_loop.with_searched_card_lookup(lookup);
+    }
+    if we_are_p1 {
+        game_loop.run_until_input(our_controller, opponent_controller)
+    } else {
+        game_loop.run_until_input(opponent_controller, our_controller)
+    }
+}
+
 /// Controller that replays a sequence of choices then delegates to another controller
 ///
 /// This is used for snapshot resume. The replay controller:
