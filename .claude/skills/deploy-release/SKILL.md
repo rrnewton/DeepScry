@@ -58,6 +58,21 @@ scripts/deploy-cloud.sh deploy
 #       immutable, logical→hashed resolution, and EVERY fixed name — incl.
 #       /data/sets/index.json — 404s on the hashed tree, i.e. index.html is
 #       the sole mutable file — mtg-727). ABORTS before any rsync if it fails.
+#     - PRE-DEPLOY GATE: headless WASM-boot smoke (deserialize tokens+decks+
+#       sets against the fresh glue, launch a game). ABORTS on any deserialize
+#       error. (Chromium-gated: SKIPS with a loud warning if Playwright absent.)
+#     - PRE-DEPLOY GATE: networked-game desync smoke (mtg-703). Plays ONE
+#       short, fully-deterministic NETWORK game — native `mtg server` + two
+#       `mtg connect` clients, avatar-draft mirror, seed=3, zero controllers —
+#       reusing tests/network_vs_local_equivalence_e2e.sh, and asserts
+#       local↔server gamelogs are byte-identical AND the perspective-aware
+#       server↔client public-zone oracle finds ZERO divergence. A desyncing
+#       build ABORTS here, BEFORE any rsync. This is the leg that catches a
+#       network-desync regression the web-asset/WASM-boot gates cannot see
+#       (the failure mode behind 7b235b32 shipping despite an open ~30%
+#       desync). NATIVE-only (no Node/WASM/Chromium) so it is NOT env-gated
+#       and cannot be silently skipped. Override the seed for debugging with
+#       DEPLOY_NET_SMOKE_SEED=<n>.
 #     - stage web/ + `mtg hash-web-assets` (content-address the pkg pair +
 #       rewrite HTML import specifiers), rsync web/ + cardsfolder + binary
 #     - restart the systemd (user) service

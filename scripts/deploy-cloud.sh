@@ -547,6 +547,42 @@ EOF
         echo "warning: python3+playwright not available; SKIPPING WASM-boot smoke (install: pip install playwright && playwright install chromium)" >&2
     fi
 
+    # --- 4d. PRE-RSYNC NETWORKED-GAME SMOKE (mtg-703) ---
+    # The two gates above prove the WEB ASSET pipeline (HTTP/cache headers) and
+    # the WASM BOOT (deserialize bins, launch a game) — but NEITHER plays an
+    # actual NETWORK game, so a server↔client DESYNC regression could ship
+    # undetected (this is exactly how 7b235b32 deployed despite an open ~30%
+    # desync). Now that the netarch rewind/replay work has landed and a
+    # login/cloud-deck deploy is imminent, we close that gap: play ONE short,
+    # fully-deterministic networked game (native `mtg server` + two `mtg connect`
+    # clients) with ALL debug/desync checks ON, and ABORT the deploy if it
+    # desyncs, info-leaks, panics, or fails to complete — BEFORE anything is
+    # rsynced to the VM.
+    #
+    # We reuse the existing, validate-wired harness
+    # tests/network_vs_local_equivalence_e2e.sh (no duplicated network plumbing).
+    # It runs the SAME game LOCALLY and over the NETWORK at a fixed seed, then
+    # asserts (a) local↔server gamelogs are byte-identical and (b) the
+    # perspective-aware server↔client public-zone oracle finds ZERO divergence —
+    # the sharpest desync detector we have. We pass it the SEED-3 canary (the
+    # same seed make validate's network-equiv leg uses) and the already-built
+    # release-deploy binary via MTG_BIN, so no second build is triggered.
+    #
+    # NATIVE-only: needs just the release-deploy `mtg` binary — no Node, no WASM,
+    # no Chromium/Playwright. So unlike 4b/4c it is NOT env-gated and cannot be
+    # silently skipped; the only inputs are the binary (already built above) and
+    # the avatar-draft decks the script ships with. FAIL-CLOSED: any non-zero
+    # exit aborts the deploy.
+    local NET_SMOKE_SEED="${DEPLOY_NET_SMOKE_SEED:-3}"
+    echo "→ PRE-DEPLOY GATE: networked-game desync smoke (native server↔client, seed=$NET_SMOKE_SEED, zero controllers)"
+    if MTG_BIN="$REPO_ROOT/$native_bin" \
+            bash "$REPO_ROOT/tests/network_vs_local_equivalence_e2e.sh" "$NET_SMOKE_SEED" zero; then
+        echo "✓ networked-game smoke passed (no desync at seed=$NET_SMOKE_SEED)"
+    else
+        echo "✗ PRE-DEPLOY GATE FAILED: networked game DESYNCED / errored at deck-pair avatar-draft seed=$NET_SMOKE_SEED; ABORTING deploy (nothing rsynced to the VM)." >&2
+        exit 1
+    fi
+
     # --- 5. Rsync web/ (content-addressed, mtg-571) ---
     # Stage web/ into a temp dir, then CONTENT-ADDRESS the wasm-bindgen pkg
     # pair there via `mtg hash-web-assets`: mtg_engine.js +

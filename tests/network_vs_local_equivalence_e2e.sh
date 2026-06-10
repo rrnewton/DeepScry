@@ -54,8 +54,15 @@ NC='\033[0m' # No Color
 echo "=== Network vs Local Game Equivalence E2E Test ==="
 echo
 
-# Use pre-built binary if available, otherwise build
-if [ -f "$WORKSPACE_ROOT/target/release/mtg" ]; then
+# Use pre-built binary if available, otherwise build.
+# An explicit MTG_BIN in the environment WINS (e.g. the pre-deploy gate in
+# scripts/deploy-cloud.sh hands us the already-built `release-deploy` binary so
+# the gate does not trigger a second `target/release` build). Fall back to the
+# conventional release path, then to a fresh build.
+if [ -n "${MTG_BIN:-}" ] && [ -x "$MTG_BIN" ]; then
+    export MTG_BIN
+    echo "Using caller-provided binary: $MTG_BIN"
+elif [ -f "$WORKSPACE_ROOT/target/release/mtg" ]; then
     export MTG_BIN="$WORKSPACE_ROOT/target/release/mtg"
     echo "Using pre-built binary: $MTG_BIN"
 else
