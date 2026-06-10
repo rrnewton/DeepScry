@@ -1,0 +1,21 @@
+---
+title: 'Bug: mono-red 2020 scry/library perspective divergence (server-vs-client GAMELOG, pre-existing)'
+status: open
+priority: 3
+issue_type: bug
+created_at: 2026-06-10T21:46:24.185994778+00:00
+updated_at: 2026-06-10T21:46:24.185994778+00:00
+---
+
+# Description
+
+DISCOVERED 2026-06-10 by agent compat-2020-adventure (slot03) while desync-testing the Adventure mechanic against decks/championship/2020/03_manfield_mono_red.dck.
+
+SYMPTOM: the perspective-aware server-vs-client GAMELOG oracle (tests/network_vs_local_equivalence_e2e.sh) reports public-zone divergences on the mono-red 2020 deck with the random controller (seed 3 random: 55-70 divergences; seed 11: 0). Root single divergence is a scry/bottom-of-library event logged differently by perspective:
+  SERVER:  'Gabriel puts 1 card on the bottom of their library'
+  CLIENT1: 'Gabriel puts <CardName> into Exile'
+which misaligns the line stream (server 80 vs client1 81 entries) and cascades into many counted divergences.
+
+PRE-EXISTING — NOT caused by the Adventure work: confirmed by stashing the Adventure changes, rebuilding the integration-baseline binary, and reproducing the SAME divergence (70 lines, seed 3 random) on the same deck. local-vs-server gamelogs are IDENTICAL in all cases (authoritative determinism holds); divergence is in per-perspective log rendering / a hidden-library event logged as a different public event on one side plus an off-by-one alignment cascade.
+
+NOT exercised by make-validate equivalence legs (they use avatar draft decks -> 0 divergences). Root-cause candidates: a scry-land / Castle Embereth scry or a put-on-bottom library effect whose public log line differs between full-info server and shadow client. Needs focused investigation: minimal scry repro, decide benign-rendering vs real public-event mismatch. Rolls up under 2020 tracker mtg-901.

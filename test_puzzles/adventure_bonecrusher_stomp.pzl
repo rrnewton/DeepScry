@@ -1,0 +1,21 @@
+[metadata]
+Name=Adventure: Bonecrusher Giant / Stomp
+Goal=Win
+Turns=3
+Difficulty=Medium
+Description=P1 has Bonecrusher Giant in hand and 4 Mountains. P1 first casts the Adventure half (Stomp) dealing 2 damage to a target; Stomp is then exiled "on an adventure". P1 then casts Bonecrusher Giant (the creature half) from exile, putting it onto the battlefield. Verifies the full Adventure flow (CR 715): hand-cast adventure -> exile -> cast creature from exile -> battlefield.
+
+[state]
+turn=4
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Bonecrusher Giant
+p0battlefield=Mountain;Mountain;Mountain;Mountain;Mountain;Mountain
+p0library=Mountain;Mountain;Mountain
+p0graveyard=
+p1life=20
+p1hand=
+p1battlefield=Grizzly Bears
+p1library=Forest;Forest;Forest
+p1graveyard=

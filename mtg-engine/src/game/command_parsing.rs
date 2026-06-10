@@ -126,10 +126,38 @@ pub fn parse_spell_ability_choice(
                         }
                     }
                 }
-                SpellAbility::PlayLand { .. }
-                | SpellAbility::ActivateAbility { .. }
-                | SpellAbility::CastFromExile { .. }
-                | SpellAbility::Cycle { .. } => {}
+                // Adventure cast matches against the ADVENTURE-face name
+                // (e.g. "cast Stomp (Adventure)"), keeping it distinct from the
+                // creature-half cast that matches the creature name. The
+                // " (Adventure)" disambiguator suffix is stripped before the
+                // name comparison.
+                SpellAbility::CastAdventure { card_id } => {
+                    // `card_pattern` is already lowercased; strip the lowercase
+                    // " (adventure)" disambiguator suffix before name matching.
+                    let adv_pattern = card_pattern
+                        .trim_end()
+                        .strip_suffix("(adventure)")
+                        .unwrap_or(card_pattern)
+                        .trim_end();
+                    if let Some(adv_name) = view.adventure_name(*card_id) {
+                        if card_matches(&adv_name, adv_pattern) {
+                            return Some(ability.clone());
+                        }
+                    }
+                }
+                // A `cast <name>` command also matches a from-exile cast of a
+                // card by that name (Adventure creature half from exile, Suspend,
+                // Airbend, ...) so fixed-input scripts can drive it. The exile
+                // form is matched after the in-hand forms above, so a same-named
+                // hand card is preferred when both are offered.
+                SpellAbility::CastFromExile { card_id, .. } => {
+                    if let Some(card_name) = view.card_name(*card_id) {
+                        if card_matches(&card_name, card_pattern) {
+                            return Some(ability.clone());
+                        }
+                    }
+                }
+                SpellAbility::PlayLand { .. } | SpellAbility::ActivateAbility { .. } | SpellAbility::Cycle { .. } => {}
             }
         }
     } else if let Some(card_pattern) = cmd.strip_prefix("equip ") {

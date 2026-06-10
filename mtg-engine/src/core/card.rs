@@ -958,6 +958,20 @@ pub struct Card {
     /// When an exhaust ability resolves, its index is added here to prevent reactivation
     pub exhausted_abilities: SmallVec<[usize; 1]>,
 
+    /// Set while this card is being cast as its Adventure (instant/sorcery) half
+    /// (CR 715). When `true`, the card's live `name`/`mana_cost`/`types`/`effects`
+    /// have been swapped to the Adventure face (the creature face is preserved in
+    /// the `RestoreCardState` snapshot logged at swap time). On resolution
+    /// (`resolve_spell_finalize`) an Adventure spell is EXILED "on an adventure"
+    /// instead of going to the graveyard, the creature face is restored, and the
+    /// owner is granted permission to cast the creature half from exile.
+    ///
+    /// Serialized (`#[serde(default)]`) so the network-shadow / snapshot / WASM
+    /// rewind paths reconstruct the in-flight Adventure cast identically — this
+    /// is real, choice-spanning game state, never `#[serde(skip)]` scratch.
+    #[serde(default)]
+    pub cast_as_adventure: bool,
+
     /// Original card definition this was instantiated from
     /// Stored as owned copy for name-based card evaluation (library search, etc.)
     /// Inline storage avoids pointer indirection when accessing definition fields
@@ -1034,6 +1048,8 @@ pub struct CardStateSnapshot {
     pub dealt_damage_to_opponent_this_turn: bool,
     pub attacked_this_turn: bool,
     pub exhausted_abilities: SmallVec<[usize; 1]>,
+    #[serde(default)]
+    pub cast_as_adventure: bool,
     pub definition: CardDefinition,
 }
 
@@ -1105,6 +1121,7 @@ impl Card {
             dealt_damage_to_opponent_this_turn: false,
             attacked_this_turn: false,
             exhausted_abilities: SmallVec::new(),
+            cast_as_adventure: false,
             definition,
         }
     }
@@ -1154,6 +1171,7 @@ impl Card {
             dealt_damage_to_opponent_this_turn: self.dealt_damage_to_opponent_this_turn,
             attacked_this_turn: self.attacked_this_turn,
             exhausted_abilities: self.exhausted_abilities.clone(),
+            cast_as_adventure: self.cast_as_adventure,
             definition: self.definition.clone(),
         }
     }
@@ -1202,6 +1220,7 @@ impl Card {
         self.dealt_damage_to_opponent_this_turn = snapshot.dealt_damage_to_opponent_this_turn;
         self.attacked_this_turn = snapshot.attacked_this_turn;
         self.exhausted_abilities = snapshot.exhausted_abilities;
+        self.cast_as_adventure = snapshot.cast_as_adventure;
         self.definition = snapshot.definition;
     }
 
@@ -1385,6 +1404,7 @@ impl Card {
         self.prevent_all_combat_damage_this_turn = false;
         self.dealt_damage_to_opponent_this_turn = false;
         self.exhausted_abilities = SmallVec::new();
+        self.cast_as_adventure = false;
     }
 
     pub fn is_type(&self, card_type: &CardType) -> bool {

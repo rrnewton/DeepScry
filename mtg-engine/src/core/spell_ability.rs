@@ -106,6 +106,21 @@ pub enum SpellAbility {
         /// If true, the creature enters with a finality counter
         add_finality_counter: bool,
     },
+
+    /// Cast the Adventure (instant/sorcery) half of an Adventurer card from hand.
+    ///
+    /// Adventurer cards (CR 715) are creatures that also have an Adventure — an
+    /// alternate instant/sorcery spell. The card is held in hand as the creature;
+    /// this ability casts the Adventure face instead. When the Adventure spell
+    /// resolves it is EXILED with an "on an adventure" marker (rather than going
+    /// to the graveyard); while exiled that way, the owner may cast the CREATURE
+    /// half from exile (offered as a `MayPlayFromExile` cast).
+    ///
+    /// Dispatch reuses the normal `CastSpell` casting pipeline: the priority loop
+    /// swaps the card's spell-relevant characteristics (name, cost, types,
+    /// effects, ...) to the Adventure face before running the standard 8-step
+    /// cast, so targeting / cost / modal / X handling are shared, not duplicated.
+    CastAdventure { card_id: CardId },
 }
 
 impl SpellAbility {
@@ -119,6 +134,7 @@ impl SpellAbility {
             | SpellAbility::Cycle { card_id, .. } => *card_id,
             SpellAbility::ActivateAbility { card_id, .. } => *card_id,
             SpellAbility::CastFromGraveyard { card_id, .. } => *card_id,
+            SpellAbility::CastAdventure { card_id } => *card_id,
         }
     }
 
@@ -135,7 +151,13 @@ impl SpellAbility {
                 | SpellAbility::CastFromExile { .. }
                 | SpellAbility::CastFromCommand { .. }
                 | SpellAbility::CastFromGraveyard { .. }
+                | SpellAbility::CastAdventure { .. }
         )
+    }
+
+    /// Check if this is casting the Adventure (instant/sorcery) face from hand.
+    pub fn is_cast_adventure(&self) -> bool {
+        matches!(self, SpellAbility::CastAdventure { .. })
     }
 
     /// Check if this is casting from the command zone

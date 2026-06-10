@@ -409,24 +409,30 @@ impl<'a> GameLoop<'a> {
                 self.log_effect_execution(&card_name, spell_id, &effect_to_log, card_owner);
             }
 
-            // Check if it's a permanent entering battlefield
-            if let Some(card) = self.game.cards.try_get(spell_id) {
-                if card.is_creature() {
-                    // Get effective P/T applying all continuous effects (CR 613)
-                    let power = self
-                        .game
-                        .get_effective_power(spell_id)
-                        .unwrap_or_else(|_| i32::from(card.current_power()));
-                    let toughness = self
-                        .game
-                        .get_effective_toughness(spell_id)
-                        .unwrap_or_else(|_| i32::from(card.current_toughness()));
-                    let message = format!(
-                        "{} ({}) enters the battlefield as a {}/{} creature",
-                        card_name, spell_id, power, toughness
-                    );
-                    // Use gamelog for official game action
-                    self.game.logger.gamelog(&message);
+            // Check if it's a permanent entering battlefield. Guard on the card
+            // actually being on the battlefield: an Adventure (instant/sorcery)
+            // spell that just resolved is a creature card now sitting in EXILE
+            // (CR 715.3d), so `is_creature()` is true but it did NOT enter the
+            // battlefield — without this guard it would be mis-logged as entering.
+            if self.game.battlefield.contains(spell_id) {
+                if let Some(card) = self.game.cards.try_get(spell_id) {
+                    if card.is_creature() {
+                        // Get effective P/T applying all continuous effects (CR 613)
+                        let power = self
+                            .game
+                            .get_effective_power(spell_id)
+                            .unwrap_or_else(|_| i32::from(card.current_power()));
+                        let toughness = self
+                            .game
+                            .get_effective_toughness(spell_id)
+                            .unwrap_or_else(|_| i32::from(card.current_toughness()));
+                        let message = format!(
+                            "{} ({}) enters the battlefield as a {}/{} creature",
+                            card_name, spell_id, power, toughness
+                        );
+                        // Use gamelog for official game action
+                        self.game.logger.gamelog(&message);
+                    }
                 }
             }
 
@@ -849,6 +855,24 @@ impl<'a> GameLoop<'a> {
                         // Controller chose an ability to play
                         consecutive_passes = 0; // Reset pass counter
                         self.game.turn.consecutive_passes = 0;
+
+                        // Adventure cast (CR 715): the player chose to cast the
+                        // instant/sorcery half of an Adventurer card from hand.
+                        // Swap the card's spell-relevant characteristics to the
+                        // Adventure face (snapshot-logged for rewind safety) and
+                        // mark it "cast as adventure", then fall through to the
+                        // standard `CastSpell` casting pipeline — no duplication
+                        // of the modal/target/X/cost handling. On resolution the
+                        // card is exiled (not graveyarded) and the creature half
+                        // becomes castable from exile (`resolve_spell_finalize`).
+                        let ability = if let crate::core::SpellAbility::CastAdventure { card_id } = ability {
+                            if let Err(e) = self.game.begin_adventure_cast(card_id) {
+                                log::warn!(target: "priority", "Failed to begin Adventure cast: {}", e);
+                            }
+                            crate::core::SpellAbility::CastSpell { card_id }
+                        } else {
+                            ability
+                        };
 
                         match ability {
                             crate::core::SpellAbility::PlayLand { card_id } => {
@@ -2350,8 +2374,12 @@ impl<'a> GameLoop<'a> {
                                     .unwrap_or_else(|_| "Unknown".to_string());
 
                                 if self.verbosity >= VerbosityLevel::Normal && !self.replaying {
+                                    // Generic from-exile cast message — covers
+                                    // Airbend, Suspend, and the Adventure creature
+                                    // half (CR 715.3d), all of which route through
+                                    // the MayPlayFromExile machinery.
                                     let message = format!(
-                                        "{} casts {} from exile for {} (was airbended)",
+                                        "{} casts {} from exile for {}",
                                         self.get_player_name(current_priority),
                                         card_name,
                                         alternative_cost
@@ -2979,6 +3007,13 @@ impl<'a> GameLoop<'a> {
                                 }
 
                                 // Spell is now on the stack - will resolve when both players pass
+                            }
+
+                            // CastAdventure is converted to CastSpell (with the
+                            // card swapped to its Adventure face) BEFORE this
+                            // match, so it is never reached here.
+                            crate::core::SpellAbility::CastAdventure { .. } => {
+                                unreachable!("CastAdventure is rewritten to CastSpell before dispatch")
                             }
                         }
 
@@ -4088,21 +4123,27 @@ impl<'a> GameLoop<'a> {
                 self.log_effect_execution(&card_name, spell_id, &effect_to_log, card_owner);
             }
 
-            if let Some(card) = self.game.cards.try_get(spell_id) {
-                if card.is_creature() {
-                    let power = self
-                        .game
-                        .get_effective_power(spell_id)
-                        .unwrap_or_else(|_| i32::from(card.current_power()));
-                    let toughness = self
-                        .game
-                        .get_effective_toughness(spell_id)
-                        .unwrap_or_else(|_| i32::from(card.current_toughness()));
-                    let message = format!(
-                        "{} ({}) enters the battlefield as a {}/{} creature",
-                        card_name, spell_id, power, toughness
-                    );
-                    self.game.logger.gamelog(&message);
+            // Guard on battlefield membership: an Adventure spell resolves to a
+            // creature card in EXILE (CR 715.3d), not the battlefield. (Mirrors
+            // the guard in the other resolution path so both log identically —
+            // log divergence between paths is a desync risk.)
+            if self.game.battlefield.contains(spell_id) {
+                if let Some(card) = self.game.cards.try_get(spell_id) {
+                    if card.is_creature() {
+                        let power = self
+                            .game
+                            .get_effective_power(spell_id)
+                            .unwrap_or_else(|_| i32::from(card.current_power()));
+                        let toughness = self
+                            .game
+                            .get_effective_toughness(spell_id)
+                            .unwrap_or_else(|_| i32::from(card.current_toughness()));
+                        let message = format!(
+                            "{} ({}) enters the battlefield as a {}/{} creature",
+                            card_name, spell_id, power, toughness
+                        );
+                        self.game.logger.gamelog(&message);
+                    }
                 }
             }
 

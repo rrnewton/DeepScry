@@ -110,6 +110,10 @@ pub fn format_choice_menu(view: &GameStateView, available: &[SpellAbility], want
                     display_idx, name
                 ));
             }
+            SpellAbility::CastAdventure { card_id } => {
+                let name = view.adventure_name(*card_id).unwrap_or_default();
+                output.push_str(&format!("  [{}] cast {} (Adventure)\n", display_idx, name));
+            }
         }
     }
 
@@ -295,6 +299,8 @@ fn spell_ability_sort_key(ability: &SpellAbility) -> u8 {
         SpellAbility::ActivateAbility { .. } => 4,
         SpellAbility::Cycle { .. } => 5,
         SpellAbility::CastFromGraveyard { .. } => 6,
+        // Adventure cast is a hand cast; order it next to CastSpell.
+        SpellAbility::CastAdventure { .. } => 7,
     }
 }
 
@@ -438,6 +444,12 @@ pub fn format_spell_ability_choice(view: &GameStateView, ability: &SpellAbility)
         SpellAbility::CastFromGraveyard { card_id, .. } => {
             let name = view.card_name(*card_id).unwrap_or_default();
             format!("cast from graveyard {} (with finality)", name)
+        }
+        SpellAbility::CastAdventure { card_id } => {
+            // Use the Adventure-face name so this is distinct from the
+            // creature-half cast (`cast <CreatureName>`) for fixed-inputs.
+            let name = view.adventure_name(*card_id).unwrap_or_default();
+            format!("cast {} (Adventure)", name)
         }
     }
 }
@@ -748,6 +760,16 @@ impl<'a> GameStateView<'a> {
             return Some(self.game.player_display_name(pid));
         }
         self.game.cards.try_get(card_id).map(|c| c.name.to_string())
+    }
+
+    /// Get the Adventure-face name of an Adventurer card (CR 715), e.g. "Stomp"
+    /// for Bonecrusher Giant. Returns `None` if the card has no Adventure face.
+    pub fn adventure_name(&self, card_id: CardId) -> Option<String> {
+        self.game
+            .cards
+            .try_get(card_id)
+            .and_then(|c| c.definition.adventure.as_ref())
+            .map(|adv| adv.name.to_string())
     }
 
     /// Get the display verb for an activated ability ("equip" for equipment, "activate" otherwise)

@@ -337,6 +337,93 @@ impl GameState {
         Ok(())
     }
 
+    /// Begin casting the Adventure (instant/sorcery) half of an Adventurer card
+    /// (CR 715). Swaps the card's live spell-relevant characteristics — name,
+    /// mana cost, types, subtypes, colors, P/T, oracle text, parsed effects /
+    /// triggers / abilities, and the embedded definition — to the Adventure
+    /// face, then sets `cast_as_adventure`. The standard `CastSpell` pipeline
+    /// runs next on the swapped card, so cost / targeting / modal / X / resolution
+    /// are all shared with normal spell casting.
+    ///
+    /// REWIND SAFETY: the creature face is captured in a `CardStateSnapshot` and
+    /// logged as `GameAction::RestoreCardState` BEFORE the swap, exactly like a
+    /// card leaving the battlefield. A rewind that unwinds past this point
+    /// restores the creature face (and `cast_as_adventure = false`) bit-identically.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the card is not found or has no Adventure face.
+    pub fn begin_adventure_cast(&mut self, card_id: CardId) -> Result<()> {
+        // Pull the Adventure-face definition out of the card's definition.
+        let adventure_def = {
+            let card = self.cards.get(card_id)?;
+            match card.definition.adventure.as_deref() {
+                Some(def) => def.clone(),
+                None => {
+                    return Err(MtgError::InvalidAction("Card has no Adventure face".to_string()));
+                }
+            }
+        };
+
+        // Instantiate the Adventure face transiently to obtain its parsed spell
+        // characteristics (effects/triggers/abilities) without duplicating the
+        // ability-parsing logic. Owner is copied from the live card.
+        let owner = self.cards.get(card_id)?.owner;
+        let adventure_card = adventure_def.instantiate(card_id, owner);
+
+        // Snapshot the CURRENT (creature) state and log it for undo BEFORE the
+        // swap (same contract as a battlefield-leave reset).
+        let card = self.cards.get_mut(card_id)?;
+        let snapshot = card.capture_state_snapshot();
+        let prior_log_size = self.logger.log_count();
+        self.undo_log.log(
+            crate::undo::GameAction::RestoreCardState {
+                card_id,
+                snapshot: Box::new(snapshot),
+            },
+            prior_log_size,
+        );
+
+        // Preserve the creature (front) definition so the resolution path can
+        // restore it WITHOUT depending on a `card_definitions` lookup (puzzles and
+        // tests do not always populate that map). We stash it on the Adventure
+        // face's own `adventure` slot — symmetric to the creature carrying the
+        // Adventure face — so the swapped card is fully self-describing.
+        let creature_definition = self.cards.get(card_id)?.definition.clone();
+        let mut adventure_definition = adventure_card.definition.clone();
+        adventure_definition.adventure = Some(Box::new(creature_definition));
+
+        // Apply the Adventure face's spell-relevant characteristics. The creature
+        // face is preserved only in the snapshot above; on resolution the card is
+        // exiled and the creature face restored via that snapshot's `definition`.
+        let card = self.cards.get_mut(card_id)?;
+        // Move the Adventure face's fields onto the live card (adventure_card is
+        // owned and discarded after this, so no clones are needed).
+        card.name = adventure_card.name;
+        card.mana_cost = adventure_card.mana_cost;
+        card.types = adventure_card.types;
+        card.subtypes = adventure_card.subtypes;
+        card.colors = adventure_card.colors;
+        card.text = adventure_card.text;
+        card.keywords = adventure_card.keywords;
+        card.effects = adventure_card.effects;
+        card.triggers = adventure_card.triggers;
+        card.activated_abilities = adventure_card.activated_abilities;
+        card.static_abilities = adventure_card.static_abilities;
+        card.svars = adventure_card.svars;
+        // The creature's printed P/T must not show while on the Adventure (the
+        // Adventure face is an instant/sorcery with no P/T).
+        card.set_base_power(adventure_def.power);
+        card.set_base_toughness(adventure_def.toughness);
+        // Swap the embedded definition so cost/cache/target lookups read the
+        // Adventure face. `is_adventure_face` is already true on adventure_def;
+        // `adventure_definition.adventure` carries the creature def for restore.
+        card.definition = adventure_definition;
+        card.cast_as_adventure = true;
+
+        Ok(())
+    }
+
     /// Cast a spell (put it on the stack)
     ///
     /// This validates mana payment and deducts the cost from the player's mana pool.
@@ -700,6 +787,18 @@ impl GameState {
     pub fn resolve_spell_finalize(&mut self, card_id: CardId, chosen_targets: &[CardId]) -> Result<()> {
         let card_owner = self.cards.get(card_id)?.owner;
 
+        // CR 715.3d: when an Adventure (instant/sorcery) spell resolves, instead
+        // of going to the graveyard it is EXILED "on an adventure", and its owner
+        // may cast the creature half from exile. Handled here as a dedicated
+        // finalize path that reuses the exile + MayPlayFromExile machinery.
+        let is_adventure_spell = {
+            let card = self.cards.get(card_id)?;
+            card.cast_as_adventure
+        };
+        if is_adventure_spell && self.stack.contains(card_id) {
+            return self.finalize_adventure_spell(card_id);
+        }
+
         // Determine destination based on card type
         let destination = {
             let card = self.cards.get(card_id)?;
@@ -818,6 +917,71 @@ impl GameState {
             // Check for ETB triggers on all permanents (including the one that just entered)
             self.check_triggers(TriggerEvent::EntersBattlefield, card_id)?;
         }
+
+        Ok(())
+    }
+
+    /// Finalize an Adventure spell that has finished resolving (CR 715.3d):
+    /// exile the card "on an adventure" instead of sending it to the graveyard,
+    /// restore the creature face (so the exiled card is the creature card), and
+    /// grant the owner permission to cast the creature half from exile for its
+    /// printed mana cost. The permission ends when the card leaves exile (cast
+    /// to the stack, or removed by another effect) via `TrackedCardLeavesZone`.
+    ///
+    /// Reuses the same exile + `MayPlayFromExile` machinery as Airbend/Suspend.
+    fn finalize_adventure_spell(&mut self, card_id: CardId) -> Result<()> {
+        let owner = self.cards.get(card_id)?.owner;
+
+        // Restore the creature face from the creature definition stashed on the
+        // Adventure face during `begin_adventure_cast` (self-contained; no
+        // dependency on a populated `card_definitions` map). Falls back to the
+        // printed-name lookup if for some reason the stash is absent.
+        let creature_def = self
+            .cards
+            .get(card_id)?
+            .definition
+            .adventure
+            .as_deref()
+            .cloned()
+            .or_else(|| {
+                self.card_definitions
+                    .get(&self.cards.get(card_id).ok()?.printed_name)
+                    .cloned()
+            });
+        let creature_cost = {
+            let card = self.cards.get_mut(card_id)?;
+            card.reset_transient_state(creature_def.as_ref());
+            card.cast_as_adventure = false;
+            card.mana_cost
+        };
+
+        let card_name = self.cards.get(card_id)?.name.to_string();
+
+        // Move the card from the stack to exile (public zone; logged by move_card).
+        self.sub_action_scratch.spell_targets.retain(|(id, _)| *id != card_id);
+        self.move_card(card_id, Zone::Stack, Zone::Exile, owner)?;
+
+        // Grant "you may cast the creature half from exile for its mana cost".
+        // The permission is cleaned up when the card leaves exile (CR 715.3e).
+        self.persistent_effects.add(
+            crate::core::PersistentEffectKind::MayPlayFromExile {
+                tracked_card: card_id,
+                alternative_cost: creature_cost,
+                owner,
+            },
+            card_id,
+            owner,
+            crate::core::persistent_effect::CleanupCondition::TrackedCardLeavesZone {
+                card: card_id,
+                zone: Zone::Exile,
+            },
+        );
+
+        self.logger.gamelog(&format!(
+            "{} goes on an adventure (exiled; {} may cast the creature from exile)",
+            card_name,
+            self.player_display_name(owner)
+        ));
 
         Ok(())
     }

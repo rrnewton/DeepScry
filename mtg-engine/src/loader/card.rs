@@ -133,6 +133,10 @@ impl CardLoader {
         let mut etb_choose_player_svar: Option<String> = None;
         let mut is_legendary = false;
         let mut loyalty: Option<u8> = None;
+        // Set when the front face carries `AlternateMode:Adventure` — the
+        // `ALTERNATE` block below is then parsed as the Adventure spell face
+        // (CR 715) rather than ignored as a generic DFC back face.
+        let mut alternate_mode_adventure = false;
 
         for (line_num, line) in content.lines().enumerate() {
             let line = line.trim();
@@ -187,6 +191,16 @@ impl CardLoader {
                     }
                     "Loyalty" => {
                         loyalty = value.trim().parse().ok();
+                    }
+                    // AlternateMode:Adventure marks the front (creature) face of an
+                    // Adventurer card (CR 715). Record it so the ALTERNATE block is
+                    // parsed as the Adventure instant/sorcery face. Other
+                    // AlternateMode values (Modal_DFC, etc.) are not Adventure and
+                    // fall through to the generic DFC handling (back face ignored).
+                    "AlternateMode" => {
+                        if value.trim() == "Adventure" {
+                            alternate_mode_adventure = true;
+                        }
                     }
                     "Oracle" => oracle = value.replace("\\n", "\n"),
                     // Keyword lines (K:)
@@ -321,6 +335,30 @@ impl CardLoader {
             .and_then(|svar_name| parsed_svars.get(svar_name))
             .is_some_and(|p| p.api_type == super::ability_parser::ApiType::ChoosePlayer);
 
+        // Parse the Adventure (instant/sorcery) face from the ALTERNATE block,
+        // when the front face declared `AlternateMode:Adventure` (CR 715). The
+        // block after the `ALTERNATE` separator is itself a complete card script,
+        // so we parse it recursively into a nested CardDefinition and flag it as
+        // an Adventure face. Failures to parse the face are non-fatal: the
+        // creature half still loads (it just won't offer the Adventure cast).
+        let adventure = if alternate_mode_adventure {
+            match Self::extract_alternate_block(content) {
+                Some(block) => match Self::parse(&block) {
+                    Ok(mut face) => {
+                        face.is_adventure_face = true;
+                        Some(Box::new(face))
+                    }
+                    Err(e) => {
+                        log::warn!("Failed to parse Adventure face for {}: {}", name.as_str(), e);
+                        None
+                    }
+                },
+                None => None,
+            }
+        } else {
+            None
+        };
+
         // Build cache BEFORE constructing struct (avoids borrow-after-move)
         let cache = CardCache::new(&oracle, name.as_str());
 
@@ -349,7 +387,27 @@ impl CardLoader {
             // Stamped post-parse by CardDatabase (native) or the WASM exporter,
             // both from the editions/ data. The parser has no set context.
             origin_set: None,
+            adventure,
+            is_adventure_face: false,
         })
+    }
+
+    /// Extract the text of the `ALTERNATE` block (everything after the first
+    /// standalone `ALTERNATE` line) so it can be parsed as the Adventure face.
+    /// Returns `None` if there is no `ALTERNATE` separator.
+    fn extract_alternate_block(content: &str) -> Option<String> {
+        let mut lines = content.lines();
+        // Advance past the front face until the ALTERNATE separator.
+        let found = lines.by_ref().any(|l| l.trim() == "ALTERNATE");
+        if !found {
+            return None;
+        }
+        let block: String = lines.collect::<Vec<_>>().join("\n");
+        if block.trim().is_empty() {
+            None
+        } else {
+            Some(block)
+        }
     }
 }
 
@@ -550,6 +608,31 @@ pub struct CardDefinition {
     /// path round-trips it deterministically.
     #[serde(default)]
     pub origin_set: Option<crate::core::SetCode>,
+
+    /// The Adventure (instant/sorcery) face of an Adventurer card (CR 715).
+    ///
+    /// Adventure cards (Bonecrusher Giant / Stomp, Brazen Borrower / Petty Theft,
+    /// ...) are creatures whose script carries `AlternateMode:Adventure` followed
+    /// by an `ALTERNATE` block describing a second, instant/sorcery face. That
+    /// block is parsed here as a full nested `CardDefinition` (with
+    /// `is_adventure_face = true`). The creature half is THIS definition; the
+    /// Adventure spell half is `adventure`. The owner may cast either face from
+    /// hand; when the Adventure spell resolves the card is exiled "on an
+    /// adventure" and the creature half becomes castable from exile.
+    ///
+    /// `None` for every non-Adventurer card. Boxed to keep `CardDefinition` from
+    /// recursively ballooning in size. Serialized so the WASM per-set `.bin` and
+    /// the snapshot/network paths round-trip the Adventure face.
+    #[serde(default)]
+    pub adventure: Option<Box<CardDefinition>>,
+
+    /// True if THIS definition is the Adventure (instant/sorcery) face nested
+    /// under a creature's `adventure` field. The face itself has no further
+    /// Adventure. Drives the "exile on resolution instead of graveyard" path
+    /// (`resolve_spell_finalize`) and prevents offering an Adventure cast of an
+    /// Adventure face.
+    #[serde(default)]
+    pub is_adventure_face: bool,
 }
 
 impl Default for CardDefinition {
@@ -577,6 +660,8 @@ impl Default for CardDefinition {
             loyalty: None,
             cache: CardCache::default(),
             origin_set: None,
+            adventure: None,
+            is_adventure_face: false,
         }
     }
 }
@@ -6574,6 +6659,107 @@ Oracle:{2}: Jade Statue becomes a 3/6 Golem artifact creature until end of comba
         assert_eq!(window.end, Step::EndCombat);
         assert!(window.contains(Step::DeclareBlockers));
         assert!(!window.contains(Step::Main1));
+    }
+
+    /// mtg-902 B2 (Adventure mechanic, CR 715): the front face parses as the
+    /// creature and the `ALTERNATE` block parses as a nested instant Adventure
+    /// face with its own name, cost, types, and a castable damage effect.
+    #[test]
+    fn test_parse_bonecrusher_giant_adventure_face() {
+        use crate::core::CardType;
+
+        // Bonecrusher Giant / Stomp — the canonical Adventure card.
+        let content = r#"
+Name:Bonecrusher Giant
+ManaCost:2 R
+Types:Creature Giant
+PT:4/3
+T:Mode$ BecomesTarget | ValidTarget$ Card.Self | ValidSource$ Spell | TriggerZones$ Battlefield | Execute$ TrigDmg | TriggerDescription$ When CARDNAME becomes the target of a spell, CARDNAME deals 2 damage to that spell's controller.
+SVar:TrigDmg:DB$ DealDamage | Defined$ TriggeredSourceController | NumDmg$ 2
+AlternateMode:Adventure
+Oracle:Whenever Bonecrusher Giant becomes the target of a spell, Bonecrusher Giant deals 2 damage to that spell's controller.
+
+ALTERNATE
+
+Name:Stomp
+ManaCost:1 R
+Types:Instant Adventure
+A:SP$ Effect | StaticAbilities$ STCantPrevent | AILogic$ Burn | SubAbility$ DBDamage | SpellDescription$ Damage can't be prevented this turn. CARDNAME deals 2 damage to any target.
+SVar:STCantPrevent:Mode$ CantPreventDamage | Description$ Damage can't be prevented.
+SVar:DBDamage:DB$ DealDamage | ValidTgts$ Any | NumDmg$ 2 | NoPrevention$ True
+Oracle:Damage can't be prevented this turn. Stomp deals 2 damage to any target.
+"#;
+
+        let def = CardLoader::parse(content).unwrap();
+
+        // Front (creature) face.
+        assert_eq!(def.name.as_str(), "Bonecrusher Giant");
+        assert!(def.types.contains(&CardType::Creature));
+        assert_eq!(def.power, Some(4));
+        assert_eq!(def.toughness, Some(3));
+        assert!(!def.is_adventure_face, "front face is not the adventure face");
+
+        // The Adventure face must be present and be a castable instant spell.
+        let adventure = def
+            .adventure
+            .as_deref()
+            .expect("Bonecrusher Giant must parse an Adventure face (Stomp)");
+        assert_eq!(adventure.name.as_str(), "Stomp");
+        assert!(
+            adventure.types.contains(&CardType::Instant),
+            "Stomp is an Instant Adventure. Types: {:?}",
+            adventure.types
+        );
+        assert!(adventure.is_adventure_face, "Stomp is flagged as the adventure face");
+        assert_eq!(adventure.mana_cost, ManaCost::from_string("1 R"));
+
+        // The Adventure spell instantiates to a card whose effects include the
+        // 2-damage DealDamage (so it is a real castable spell, not a no-op).
+        let adv_card = adventure.instantiate(crate::core::EntityId::new(1), crate::core::PlayerId::new(0));
+        assert!(
+            !adv_card.effects.is_empty(),
+            "Stomp should instantiate with at least one castable effect. Got: {:?}",
+            adv_card.effects
+        );
+        // "any target" oracle text drives the target cache flag used to offer the cast.
+        assert!(
+            adv_card.definition.cache.spell_targets_any,
+            "Stomp targets 'any target'; cache flag must be set so the cast is offered"
+        );
+    }
+
+    /// A bounce Adventure (Brazen Borrower / Petty Theft) parses its instant
+    /// face with a permanent-targeting effect, confirming the ALTERNATE-block
+    /// parsing generalizes beyond the damage shape.
+    #[test]
+    fn test_parse_brazen_borrower_adventure_face() {
+        use crate::core::CardType;
+
+        let content = r#"
+Name:Brazen Borrower
+ManaCost:1 U U
+Types:Creature Faerie Rogue
+PT:3/1
+K:Flash
+K:Flying
+AlternateMode:Adventure
+Oracle:Flash\nFlying
+
+ALTERNATE
+
+Name:Petty Theft
+ManaCost:1 U
+Types:Instant Adventure
+A:SP$ ChangeZone | ValidTgts$ Permanent.nonLand+OppCtrl | TgtPrompt$ Select target nonland permanent an opponent controls | Origin$ Battlefield | Destination$ Hand | SpellDescription$ Return target nonland permanent an opponent controls to its owner's hand.
+Oracle:Return target nonland permanent an opponent controls to its owner's hand.
+"#;
+
+        let def = CardLoader::parse(content).unwrap();
+        assert_eq!(def.name.as_str(), "Brazen Borrower");
+        let adventure = def.adventure.as_deref().expect("Petty Theft Adventure face must parse");
+        assert_eq!(adventure.name.as_str(), "Petty Theft");
+        assert!(adventure.types.contains(&CardType::Instant));
+        assert_eq!(adventure.mana_cost, ManaCost::from_string("1 U"));
     }
 
     #[test]

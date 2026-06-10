@@ -154,7 +154,9 @@ pub enum PersistentEffectKind {
     // - Delay (cast spell at next upkeep)
     // - Cascade (exile until you hit a cheaper spell)
     // - Hideaway (look at cards, exile one face-down)
-    // - Adventure (in exile, can cast creature half)
+    // Note: Adventure (CR 715, "in exile, can cast creature half") is now
+    // implemented by reusing `MayPlayFromExile` above — see
+    // `GameState::finalize_adventure_spell`.
     /// MayPlayFromGraveyard: Grants permission to cast creature spells from graveyard.
     ///
     /// Created by: Leonardo, Sewer Samurai (static continuous ability)

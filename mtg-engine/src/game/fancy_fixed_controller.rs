@@ -234,6 +234,10 @@ impl PlayerController for FancyFixedController {
                     let name = view.card_name(*card_id).unwrap_or_default();
                     format!("Cast from graveyard: {} (finality)", name)
                 }
+                SpellAbility::CastAdventure { card_id } => {
+                    let name = view.adventure_name(*card_id).unwrap_or_default();
+                    format!("Cast Adventure: {}", name)
+                }
             }))
             .collect();
 

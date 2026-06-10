@@ -199,6 +199,14 @@ workflow, row format, and update rules.
 |--------------------------|----------|----------------------------|-----------|--------------|
 | DB$ Clone (CR 707 copy)  | WORKING  | 2026-05-27_#2354(dbf857a7) | (none)    | Copy Artifact |
 
+## Card-shape / alternative cast faces
+
+| Construct                                          | Status   | Last verified              | Bug issue | Sample cards |
+|----------------------------------------------------|----------|----------------------------|-----------|--------------|
+| AlternateMode:Adventure (CR 715 Adventurer cards)  | WORKING  | 2026-06-10_#3149            | (none)    | Bonecrusher Giant / Stomp, Brazen Borrower / Petty Theft, Rimrock Knight / Boulder Rush, Giant Killer / Chop Down |
+
+Adventure: the ALTERNATE block parses into `CardDefinition.adventure`; the instant/sorcery half is offered as `SpellAbility::CastAdventure` from hand; on resolution the card is exiled "on an adventure" (715.3d) and the creature half is castable from exile for its printed cost, reusing the `MayPlayFromExile` machinery. Rewind-safe (snapshot-logged face swap + serialized `Card.cast_as_adventure`).
+
 ## Mana production
 
 | Produced$ form                  | Status  | Last verified              | Bug issue | Sample cards        |
