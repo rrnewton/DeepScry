@@ -1,46 +1,127 @@
 ---
 title: 'Bug: Discarded opponent-cause not threaded through triggered-ability discard path (Hypnotic Specter)'
-status: open
+status: closed
 priority: 3
 issue_type: bug
 created_at: 2026-06-10T02:45:59.325567218+00:00
-updated_at: 2026-06-10T02:45:59.325567218+00:00
+updated_at: 2026-06-10T03:19:14.566512361+00:00
 ---
 
 # Description
 
-Bug/Gap: TriggerEvent::Discarded opponent-cause is plumbed for the SPELL-resolution discard path but NOT the triggered-ability discard path.
+Bug/Gap: TriggerEvent::Discarded opponent-cause is plumbed for the SPELL-resolution and activated-ability discard paths but NOT the opponent-TRIGGERED-ability discard path.
 
 Context: implementing Psychic Purge's opponent-forced-discard punisher
 (mtg-648, 2026-06-09_#3106) threaded an explicit `cause: Option<PlayerId>`
-through `GameState::discard_card`. The cause is correctly supplied from:
+through `GameState::discard_card`. Cause is correctly supplied from:
 - resolve_top_spell_with_discard_hook (spell controller = spell_owner) — the
-  Mind Twist / Hymn to Tourach / Mind Rot family.
-- priority_round activated-ability discard/loot (current_priority).
+  Mind Twist / Hymn to Tourach / Mind Rot family (discard SPELLS).
+- priority_round activated-ability discard + loot (current_priority).
 
 NOT yet supplied (defaults to cause=None): forced discards that resolve through
-the generic GameState::execute_effect(Effect::DiscardCards { .. }) path invoked
+the generic GameState::execute_effect(Effect::DiscardCards { .. }) when invoked
 from a TRIGGERED ability — e.g. Hypnotic Specter:
   T:Mode$ DamageDone | ValidSource$ Card.Self | ValidTarget$ Opponent
     | Execute$ TrigDiscard
   SVar:TrigDiscard:DB$ Discard | Defined$ TriggeredTarget | NumCards$ 1 | Mode$ Random
-If Hypnotic Specter's random discard happens to hit Psychic Purge, the
-punisher SHOULD fire (an opponent's ABILITY caused the discard) but currently
-does not, because the trigger-resolution discard goes through execute_effect
-with cause=None.
+If Hypnotic Specter's random discard hits Psychic Purge, the punisher SHOULD
+fire (an opponent's ABILITY caused the discard) but currently does not. Current
+behavior is strictly STRICTER-than-printed (punisher silently absent), never
+wrong-direction, never a desync.
 
-Why deferred: execute_effect is a shared chokepoint with 52 callers; threading
-cause through all of them (or adding a cause to the DiscardCards/Loot Effect
-variants, ~90 match sites) is out of proportion to closing this narrow gap for
-one card. The DOMINANT 1994 opponent-discard vector (discard SPELLS) is
-covered. The current behavior is STRICTER-than-printed only for the
-triggered-ability sub-case (punisher silently absent), never wrong-direction.
+=== DESIGN (chosen): scoped cause-aware discard helper, NO execute_effect signature change ===
 
-Proper fix (future): route the trigger-resolution forced-discard through a
-cause-aware path. Either (a) extract execute_effect's DiscardCards/Loot arms
-into a helper that takes `cause` and have check_triggers_for_controller pass
-the trigger's controller, or (b) give the trigger-execution path a cause-aware
-discard entry point. Add an e2e (Hypnotic Specter random-discards Psychic Purge
--> caster loses 5 life).
+The cause is already in scope at the trigger-execution site:
+  mtg-engine/src/game/actions/mod.rs::check_triggers_inner
+    let controller = trigger_card.controller;   // ~L7576  == the discard CAUSE
+    ...
+    for effect in trigger_to_exec.effects { ... self.execute_effect(&effect)?; }  // ~L7905
 
-Tracked under Card Compatibility: Psychic Purge (mtg-534).
+execute_effect itself is a 52-caller shared chokepoint; we do NOT add a `cause`
+parameter to it (would touch all callers) and we do NOT add a cause field to the
+DiscardCards/DiscardCardsXPaid/Loot Effect variants (~90 match sites). Instead:
+
+1. Extract the discard-bearing arms of execute_effect into ONE private helper
+   that takes an explicit cause:
+     fn execute_discard_effect(&mut self, effect: &Effect, cause: Option<PlayerId>) -> Result<bool>
+   It handles exactly Effect::DiscardCards, Effect::DiscardCardsXPaid, and
+   Effect::Loot (the only discard-producing effects), returning Ok(true) if it
+   consumed the effect, Ok(false) otherwise. All the existing discard logic
+   (entire-hand / fixed-count / loot, the mtg-589 deterministic lowest-CardId
+   selection) MOVES verbatim into this helper; the internal discard_card calls
+   take `cause` instead of the hardcoded None.
+
+2. execute_effect's three discard arms become a thin delegate:
+     Effect::DiscardCards { .. } | Effect::DiscardCardsXPaid { .. } | Effect::Loot { .. }
+         => { self.execute_discard_effect(effect, None)?; }
+   i.e. the DEFAULT cause stays None (correct for costs / self-initiated paths),
+   so every one of the 52 execute_effect callers is unchanged.
+
+3. At the trigger-execution site (check_triggers_inner ~L7905) and ONLY there,
+   route discard effects through the helper with the trigger's controller as the
+   cause, before falling back to the generic execute_effect:
+     if self.execute_discard_effect(&effect, Some(controller))? {
+         // consumed: a triggered-ability discard, cause = trigger controller
+     } else {
+         self.execute_effect(&effect)?;
+     }
+   (Equivalently: pre-check `matches!(effect, DiscardCards|DiscardCardsXPaid|Loot)`
+   and dispatch.) This is the surgical injection — the cause is supplied exactly
+   where a triggered ability forces the discard, with no change to the shared
+   execute_effect contract.
+
+Determinism: identical shape to the spell-path fix — cause is an immutable
+function argument, never stored in GameState, nothing to serialize/rewind. The
+trigger's controller is public information. No new desync surface.
+
+Note on cleanup-step: the cleanup over-limit discard uses move_card directly
+(not discard_card), so it neither fires CardDiscarded watchers nor this
+punisher — correct for Psychic Purge (no spell/ability cause) and out of scope
+here.
+
+=== TEST ===
+Add tests/psychic_purge_triggered_discard_punisher_e2e.sh: an opponent's
+Hypnotic Specter (or any DamageDone->random-discard creature) connects while the
+defender holds ONLY Psychic Purge, so the random discard is deterministic; assert
+the Specter's controller loses 5 life. Plus a unit test that a triggered
+DiscardCards routes through the cause-aware helper.
+
+=== EFFORT === small/medium: one helper extraction (pure code-move) + one
+2-line dispatch at the trigger site + one e2e + one unit test. No enum changes,
+no execute_effect signature change.
+
+Tracked under Card Compatibility: Psychic Purge (mtg-534). DECISION POINT for
+the orchestrator: approve this scoped-helper approach (recommended) vs. a
+broader execute_effect cause-threading, before implementation.
+
+=== REFINEMENT (verified in code) ===
+execute_effect has NO separate DiscardCardsXPaid arm — DiscardCardsXPaid is
+lowered to DiscardCards earlier by resolve_x_paid_effect. So the helper only
+needs to handle Effect::DiscardCards and Effect::Loot. The remembered_cards /
+remembered_players bookkeeping lives entirely inside the DiscardCards arm and
+moves into the helper unchanged.
+
+=== RESOLVED (2026-06-09, claude/compat-psychic-purge) ===
+Implemented exactly as designed above:
+- Extracted execute_effect's DiscardCards/Loot arms into
+  GameState::execute_discard_effect(effect, cause) -> Result<bool> (the discard
+  logic moved verbatim; discard_card calls take `cause`).
+- execute_effect's arm is now a thin delegate passing cause=None -> all 52
+  execute_effect callers unchanged.
+- check_triggers_inner routes trigger effects through
+  execute_discard_effect(&effect, Some(controller)) before falling back to
+  execute_effect, so an opponent's TRIGGERED ability forcing a discard
+  (Hypnotic Specter) attributes the cause to the trigger's controller.
+- The interactive spell/ability discard paths in priority.rs already supply the
+  cause (spell_owner / current_priority) from mtg-648.
+
+Tests:
+- E2E: tests/psychic_purge_triggered_discard_punisher_e2e.sh — Hypnotic Specter
+  deals combat damage, random-discards the defender's only card (Psychic
+  Purge), and the Specter's controller loses 5 life (20 -> 15). seed 42.
+  Evidence:
+    Hypnotic Specter (3) deals 2 damage to Player 2 (life: 18)
+    Player 2 discards Psychic Purge
+    Player 1 loses 5 life (life: 15)
+- Spell-discard e2e (Mind Rot) and the 14 discard lib tests still green
+  (no regression from the helper extraction).

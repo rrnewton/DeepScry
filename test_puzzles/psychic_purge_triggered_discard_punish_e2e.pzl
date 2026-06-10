@@ -1,0 +1,14 @@
+[metadata]
+Name:Psychic Purge punishes an opponent TRIGGERED-ability discard (Hypnotic Specter)
+Turns:2
+[state]
+turn=3
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0battlefield=Hypnotic Specter; Swamp; Swamp; Swamp
+p0library=Swamp; Swamp; Swamp; Swamp; Swamp
+
+p1life=20
+p1hand=Psychic Purge
+p1library=Mountain; Mountain; Mountain; Mountain; Mountain

@@ -3388,116 +3388,17 @@ impl GameState {
                     }
                 }
             }
-            Effect::DiscardCards {
-                player,
-                count,
-                remember_discarded,
-                optional,
-                remember_discarding_players,
-            } => {
-                // Optional discard: AI decides whether to discard.
-                // For "discard hand, draw 7" patterns, always choose to discard.
-                if *optional {
-                    let hand_size = self
-                        .get_player_zones(*player)
-                        .map(|zones| zones.hand.cards.len())
-                        .unwrap_or(0);
-                    // AI heuristic: always discard when optional (the draw is typically worth it)
-                    // A smarter heuristic could compare hand quality vs expected draw value
-                    if hand_size == 0 {
-                        // Nothing to discard - skip but still remember if discarding players
-                        // (per rules: choosing to discard 0 cards is still choosing to discard)
-                        return Ok(());
-                    }
-                }
-
-                if *count == u8::MAX {
-                    // Mode$ Hand: discard ENTIRE hand unconditionally.
-                    // We collect all card IDs first (can't borrow zones during mutation).
-                    // Unlike the choose_card_to_discard path, this doesn't filter by card
-                    // properties, so it works even for face-down/hidden cards on network clients.
-                    // Sort by CardId for deterministic graveyard ordering across server/clients
-                    // (hand iteration order can differ after WASM rewind+replay).
-                    let mut hand_cards: smallvec::SmallVec<[CardId; 16]> = self
-                        .get_player_zones(*player)
-                        .map(|zones| zones.hand.cards.iter().copied().collect())
-                        .unwrap_or_default();
-                    hand_cards.sort_by_key(|id| id.as_u32());
-                    let did_discard = !hand_cards.is_empty();
-                    for card_id in hand_cards {
-                        if *remember_discarded {
-                            self.remembered_cards.push(card_id);
-                        }
-                        self.discard_card(*player, card_id, None)?;
-                    }
-                    if *remember_discarding_players && did_discard {
-                        self.remembered_players.push(*player);
-                    }
-                } else {
-                    // Fixed count: forced discard chosen by the engine (e.g.
-                    // Hypnotic Specter's "discards a card at random" trigger, or
-                    // any non-interactive "discards a card" effect).
-                    //
-                    // mtg-589: This MUST be information-independent for network
-                    // determinism. The previous heuristic (`choose_card_to_discard`)
-                    // scored cards by card properties (lands / CMC), which requires
-                    // the card identity to be materialized. On the server every
-                    // hand card is materialized, but on a client's shadow state the
-                    // OPPONENT's hand cards are reserved-but-unrevealed
-                    // (`cards.get` → Err), so the heuristic saw an empty candidate
-                    // set and discarded nothing — while the server discarded a
-                    // card. Result: hand/graveyard counts diverged → FATAL desync
-                    // (same hidden-info class as the library-search bug).
-                    //
-                    // Fix: select deterministically by CardId, which is synced
-                    // across server + both clients (the hand zone's CardId list is
-                    // identical even when identities are hidden). Lowest CardId is
-                    // an arbitrary-but-stable rule; both views pick the same card,
-                    // and move_card's Hand→Graveyard auto-reveal materializes it on
-                    // the shadow. This applies to all forced discards (local and
-                    // network) so behaviour stays identical across modes.
-                    let mut did_discard = false;
-                    for _ in 0..*count {
-                        let card_to_discard = self
-                            .get_player_zones(*player)
-                            .and_then(|zones| zones.hand.cards.iter().copied().min_by_key(|id| id.as_u32()));
-                        if let Some(card_id) = card_to_discard {
-                            did_discard = true;
-                            if *remember_discarded {
-                                self.remembered_cards.push(card_id);
-                            }
-                            self.discard_card(*player, card_id, None)?;
-                        } else {
-                            // No cards in hand to discard
-                            break;
-                        }
-                    }
-                    if *remember_discarding_players && did_discard {
-                        self.remembered_players.push(*player);
-                    }
-                }
-            }
-            Effect::Loot {
-                player,
-                discard_count,
-                draw_count,
-            } => {
-                // Looting: discard first, then draw
-                // Use AI to choose what to discard
-                for _ in 0..*discard_count {
-                    let card_to_discard = self.choose_card_to_discard(*player)?;
-                    if let Some(card_id) = card_to_discard {
-                        self.discard_card(*player, card_id, None)?;
-                    } else {
-                        // No cards to discard, can't complete the loot
-                        break;
-                    }
-                }
-                for _ in 0..*draw_count {
-                    let (_, draw_num) = self.draw_card(*player)?;
-                    // Check for "second card drawn" triggers
-                    self.check_card_drawn_triggers(*player, draw_num)?;
-                }
+            Effect::DiscardCards { .. } | Effect::Loot { .. } => {
+                // Discard-producing effects route through the shared
+                // `execute_discard_effect` helper. The generic execute_effect
+                // path supplies NO cause (None) — correct for self-initiated
+                // discards (cost payments, your own looting/rummaging). A
+                // discard FORCED by a spell or ability supplies the cause at its
+                // own resolution site (resolve_top_spell_with_discard_hook /
+                // priority_round / check_triggers_inner) by calling
+                // `execute_discard_effect` directly with the forcing
+                // spell/ability's controller — see mtg-648 / mtg-54n3b.
+                self.execute_discard_effect(effect, None)?;
             }
             Effect::GainLife { player, amount } => {
                 // Capture log size before life gain
@@ -7119,6 +7020,152 @@ impl GameState {
         Ok(candidates.first().map(|(id, _)| *id))
     }
 
+    /// Execute a discard-producing effect (`Effect::DiscardCards` or
+    /// `Effect::Loot`) with an explicit discard `cause`: the controller of the
+    /// spell/ability forcing the discard, or `None` for a self-initiated one.
+    ///
+    /// This is the single home for the (engine-chosen, non-interactive) discard
+    /// and loot resolution logic. `GameState::execute_effect` delegates here
+    /// with a `None` cause (so all of its other callers are unaffected). The
+    /// forced-discard resolution sites that DO know the cause call this directly
+    /// with `Some(cause)`: `check_triggers_inner` passes the trigger's
+    /// controller (a triggered ability like Hypnotic Specter), and the
+    /// interactive spell/ability paths in `priority.rs` pass the spell owner /
+    /// priority holder. Threading the cause as an explicit argument (never
+    /// mutable `GameState` state) keeps it out of serialized / rewound state
+    /// entirely (mtg-648 / mtg-54n3b).
+    ///
+    /// Returns `true` if `effect` was a discard-producing effect this helper
+    /// handled, `false` otherwise (so a caller can fall back to the generic
+    /// `execute_effect`).
+    ///
+    /// # Errors
+    ///
+    /// Propagates any error from the underlying discard / draw operations.
+    // Intentional wildcard: this helper handles exactly the discard-producing
+    // effects (DiscardCards / Loot) and reports `false` for everything else so
+    // the caller falls back to the generic execute_effect.
+    #[allow(clippy::wildcard_enum_match_arm)]
+    pub fn execute_discard_effect(&mut self, effect: &Effect, cause: Option<PlayerId>) -> Result<bool> {
+        match effect {
+            Effect::DiscardCards {
+                player,
+                count,
+                remember_discarded,
+                optional,
+                remember_discarding_players,
+            } => {
+                // Optional discard: AI decides whether to discard.
+                // For "discard hand, draw 7" patterns, always choose to discard.
+                if *optional {
+                    let hand_size = self
+                        .get_player_zones(*player)
+                        .map(|zones| zones.hand.cards.len())
+                        .unwrap_or(0);
+                    // AI heuristic: always discard when optional (the draw is typically worth it)
+                    // A smarter heuristic could compare hand quality vs expected draw value
+                    if hand_size == 0 {
+                        // Nothing to discard - skip but still remember if discarding players
+                        // (per rules: choosing to discard 0 cards is still choosing to discard)
+                        return Ok(true);
+                    }
+                }
+
+                if *count == u8::MAX {
+                    // Mode$ Hand: discard ENTIRE hand unconditionally.
+                    // We collect all card IDs first (can't borrow zones during mutation).
+                    // Unlike the choose_card_to_discard path, this doesn't filter by card
+                    // properties, so it works even for face-down/hidden cards on network clients.
+                    // Sort by CardId for deterministic graveyard ordering across server/clients
+                    // (hand iteration order can differ after WASM rewind+replay).
+                    let mut hand_cards: smallvec::SmallVec<[CardId; 16]> = self
+                        .get_player_zones(*player)
+                        .map(|zones| zones.hand.cards.iter().copied().collect())
+                        .unwrap_or_default();
+                    hand_cards.sort_by_key(|id| id.as_u32());
+                    let did_discard = !hand_cards.is_empty();
+                    for card_id in hand_cards {
+                        if *remember_discarded {
+                            self.remembered_cards.push(card_id);
+                        }
+                        self.discard_card(*player, card_id, cause)?;
+                    }
+                    if *remember_discarding_players && did_discard {
+                        self.remembered_players.push(*player);
+                    }
+                } else {
+                    // Fixed count: forced discard chosen by the engine (e.g.
+                    // Hypnotic Specter's "discards a card at random" trigger, or
+                    // any non-interactive "discards a card" effect).
+                    //
+                    // mtg-589: This MUST be information-independent for network
+                    // determinism. The previous heuristic (`choose_card_to_discard`)
+                    // scored cards by card properties (lands / CMC), which requires
+                    // the card identity to be materialized. On the server every
+                    // hand card is materialized, but on a client's shadow state the
+                    // OPPONENT's hand cards are reserved-but-unrevealed
+                    // (`cards.get` → Err), so the heuristic saw an empty candidate
+                    // set and discarded nothing — while the server discarded a
+                    // card. Result: hand/graveyard counts diverged → FATAL desync
+                    // (same hidden-info class as the library-search bug).
+                    //
+                    // Fix: select deterministically by CardId, which is synced
+                    // across server + both clients (the hand zone's CardId list is
+                    // identical even when identities are hidden). Lowest CardId is
+                    // an arbitrary-but-stable rule; both views pick the same card,
+                    // and move_card's Hand→Graveyard auto-reveal materializes it on
+                    // the shadow. This applies to all forced discards (local and
+                    // network) so behaviour stays identical across modes.
+                    let mut did_discard = false;
+                    for _ in 0..*count {
+                        let card_to_discard = self
+                            .get_player_zones(*player)
+                            .and_then(|zones| zones.hand.cards.iter().copied().min_by_key(|id| id.as_u32()));
+                        if let Some(card_id) = card_to_discard {
+                            did_discard = true;
+                            if *remember_discarded {
+                                self.remembered_cards.push(card_id);
+                            }
+                            self.discard_card(*player, card_id, cause)?;
+                        } else {
+                            // No cards in hand to discard
+                            break;
+                        }
+                    }
+                    if *remember_discarding_players && did_discard {
+                        self.remembered_players.push(*player);
+                    }
+                }
+                Ok(true)
+            }
+            Effect::Loot {
+                player,
+                discard_count,
+                draw_count,
+            } => {
+                // Looting: discard first, then draw
+                // Use AI to choose what to discard
+                for _ in 0..*discard_count {
+                    let card_to_discard = self.choose_card_to_discard(*player)?;
+                    if let Some(card_id) = card_to_discard {
+                        self.discard_card(*player, card_id, cause)?;
+                    } else {
+                        // No cards to discard, can't complete the loot
+                        break;
+                    }
+                }
+                for _ in 0..*draw_count {
+                    let (_, draw_num) = self.draw_card(*player)?;
+                    // Check for "second card drawn" triggers
+                    self.check_card_drawn_triggers(*player, draw_num)?;
+                }
+                Ok(true)
+            }
+            // Not a discard-producing effect — caller falls back to execute_effect.
+            _ => Ok(false),
+        }
+    }
+
     /// Discard a specific card from the player's hand.
     ///
     /// Moves the card from hand to graveyard and logs the action.
@@ -7902,7 +7949,16 @@ impl GameState {
                     _ => {}
                 }
 
-                self.execute_effect(&effect)?;
+                // A discard FORCED by this triggered ability (Hypnotic Specter's
+                // "that player discards a card at random", The Rack-family, etc.)
+                // carries the trigger's CONTROLLER as the discard cause, so a
+                // Discarded self-trigger on the discarded card (Psychic Purge's
+                // opponent punisher) fires when an opponent's ability caused it.
+                // Route DiscardCards/Loot through the cause-aware helper; every
+                // other effect uses the generic path (mtg-648 / mtg-54n3b).
+                if !self.execute_discard_effect(&effect, Some(controller))? {
+                    self.execute_effect(&effect)?;
+                }
             }
         }
 
