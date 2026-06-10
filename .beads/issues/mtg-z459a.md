@@ -8,6 +8,7 @@ labels:
 - web
 created_at: 2026-06-10T02:01:22.147487784+00:00
 updated_at: 2026-06-10T02:01:22.147487784+00:00
+updated_at: 2026-06-10T02:55:16.081782869+00:00
 ---
 
 # Description
@@ -129,3 +130,5 @@ RELATED: mtg-grofw (slot05 reload-freeze isLegitimateGameEnd fix), mtg-682
 (BufferedFact catch-up protocol / ActionLog), mtg-176 (network tracking),
 mtg-212/218 (reveal/hidden-info). Refs: docs/NETWORK_ARCHITECTURE.md,
 docs/NETWORK_ACTION_LOG.md.
+
+STATUS: GATED ON HUMAN APPROVAL — record only; do NOT implement any reconnect phase (including Phase 0 keepalive) without explicit human sign-off. Phase 0 (keepalive ping/pong + honest reconnect banner + the network_ping wasmExports wiring fix) is implemented-but-UNLANDED on branch claude/reconnect-phase0-keepalive @26b1d8dc for reference if approved. Full design: ai_docs/RECONNECT_STATE_RECOVERY_DESIGN_20260609.md.
