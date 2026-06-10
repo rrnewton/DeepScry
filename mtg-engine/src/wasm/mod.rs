@@ -496,7 +496,7 @@ pub struct WasmGame {
 
 /// Long-lived owner of the durable per-step state for the local (non-network)
 /// AI-vs-AI step-through driven by [`WasmGame::run_one_turn`] — the
-/// WASM-legal "long-lived GameLoop" (mtg-vpjru / mtg-677 / mtg-610).
+/// WASM-legal "long-lived GameLoop" (mtg-896 / mtg-677 / mtg-610).
 ///
 /// WASM cannot suspend a Rust call stack across a JS return, so a `GameLoop`
 /// struct cannot itself persist mid-`run_turn`; instead this driver persists
@@ -775,7 +775,7 @@ impl WasmGame {
     }
 
     /// Run the AI-vs-AI step-through until it next yields (needs input) or the
-    /// game completes, driven by the LONG-LIVED [`LocalAiDriver`] (mtg-vpjru /
+    /// game completes, driven by the LONG-LIVED [`LocalAiDriver`] (mtg-896 /
     /// mtg-677 / mtg-610).
     ///
     /// Returns `true` if the game is still ongoing, `false` if it has ended —
@@ -932,7 +932,7 @@ impl LocalAiDriver {
         // the rewind back at a clean turn boundary this is a no-op in practice
         // — these fields are only ever non-empty mid-sub-action — but we keep it
         // for parity and defence in depth until the stash is removed entirely
-        // (mtg-vpjru).
+        // (mtg-896).
         game.sub_action_scratch.spell_targets.clear();
         game.sub_action_scratch.pending_activation = None;
         game.sub_action_scratch.pending_activation_effect_idx = None;
@@ -963,7 +963,7 @@ impl LocalAiDriver {
 /// `true` iff every transient sub-action scratch field is empty/`None` — the
 /// invariant that must hold at every `run_one_turn` yield boundary (proving the
 /// `sub_action_scratch` stash is unnecessary for this non-network path, the
-/// mtg-vpjru elimination prerequisite).
+/// mtg-896 elimination prerequisite).
 fn scratch_is_empty(game: &GameState) -> bool {
     let s = &game.sub_action_scratch;
     s.pending_cycling_search.is_none()

@@ -257,7 +257,7 @@ pub struct GameState {
     // ║  `#[serde(skip)]`, matching the previous per-field `#[serde(skip)]`).  ║
     // ║                                                                        ║
     // ║  *** CANDIDATE TO MOVE OUT of GameState entirely ***                   ║
-    // ║  These fields are a known desync hazard (mtg-vpjru / mtg-677 /         ║
+    // ║  These fields are a known desync hazard (mtg-896 / mtg-677 /         ║
     // ║  mtg-610): a `#[serde(skip)]` field holding real game-loop state       ║
     // ║  across a choice point is dropped on snapshot/rewind/reconnect. The    ║
     // ║  netarch plan eliminates them by re-reaching the intra-turn frontier   ║
@@ -278,7 +278,7 @@ pub struct GameState {
 /// and therefore cannot carry continuation state on its Rust call stack.
 /// It is reset between sub-actions and is intentionally NOT serialized.
 ///
-/// **Candidate to move out of `GameState` entirely** (mtg-vpjru / mtg-677 /
+/// **Candidate to move out of `GameState` entirely** (mtg-896 / mtg-677 /
 /// mtg-610): a `#[serde(skip)]` field holding real game-loop state across a
 /// choice point is a desync hazard (dropped on snapshot/rewind/reconnect).
 /// The netarch plan eliminates these fields by re-reaching the intra-turn
@@ -375,7 +375,7 @@ pub struct SubActionScratch {
     /// `NetworkController` carries this ac onto the `ServerMessage::LibraryReordered`
     /// so the shadow can key the new order in its game-ac-indexed state-sync log.
     ///
-    /// NOTE (mtg-vpjru / §6 of the netarch design): this field is a
+    /// NOTE (mtg-896 / §6 of the netarch design): this field is a
     /// *partially separate* concern from the pure continuation fields above —
     /// it is a network scry/surveil side-channel, not suspended-stack residue.
     /// Its eventual elimination folds into mtg-752, not the long-lived-GameLoop
