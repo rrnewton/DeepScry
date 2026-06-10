@@ -666,6 +666,7 @@ impl CardDefinition {
             .update_from_subtypes(&card.subtypes, card.name.as_str());
         card.definition.cache.enters_tapped = self.enters_tapped;
         card.definition.cache.skips_untap_step = self.skips_untap_step();
+        card.definition.cache.limits_land_untap = self.limits_land_untap();
         card.definition.cache.etb_choose_color = self.etb_choose_color;
         card.definition.cache.etb_exclude_colors = SmallVec::from_slice(&self.etb_exclude_colors);
         card.definition.cache.etb_choose_player = self.etb_choose_player;
@@ -5212,6 +5213,56 @@ impl CardDefinition {
         false
     }
 
+    /// Detect Winter Orb's "players can't untap more than one land during their
+    /// untap steps" lock, expressed as the static ability
+    /// `S:Mode$ Continuous | Affected$ Player | AddKeyword$ UntapAdjust:Land:N |
+    /// IsPresent$ Card.Self+untapped`. Parsed structurally (tokenize on `|` then
+    /// `$`, then `:` inside the `UntapAdjust:<type>:<n>` value), never via
+    /// substring matching.
+    ///
+    /// Returns `Some(n)` where `n` is the per-untap-step land allowance (1 for
+    /// Winter Orb). The `IsPresent$ Card.Self+untapped` self-condition is NOT
+    /// baked in here; it is re-evaluated at the untap step against current board
+    /// state so the lock toggles correctly when Winter Orb is tapped (and stays
+    /// rewind-safe — see `CardCache::limits_land_untap`).
+    pub(crate) fn limits_land_untap(&self) -> Option<u8> {
+        for ability in &self.raw_abilities {
+            // Static-ability lines are stored as "S:<body>" in raw_abilities.
+            let Some(body) = ability.strip_prefix("S:") else {
+                continue;
+            };
+            let mut is_continuous = false;
+            let mut affects_player = false;
+            let mut land_allowance: Option<u8> = None;
+            for token in body.split('|') {
+                let token = token.trim();
+                let Some((key, value)) = token.split_once('$') else {
+                    continue;
+                };
+                match (key.trim(), value.trim()) {
+                    ("Mode", "Continuous") => is_continuous = true,
+                    ("Affected", "Player") => affects_player = true,
+                    ("AddKeyword", v) => {
+                        // UntapAdjust:<restriction>:<count>, e.g. "UntapAdjust:Land:1".
+                        let mut parts = v.split(':');
+                        if parts.next() == Some("UntapAdjust") && parts.next() == Some("Land") {
+                            if let Some(n) = parts.next().and_then(|n| n.parse::<u8>().ok()) {
+                                land_allowance = Some(n);
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            if is_continuous && affects_player {
+                if let Some(n) = land_allowance {
+                    return Some(n);
+                }
+            }
+        }
+        None
+    }
+
     /// Parse an SVar body as an activated ability
     ///
     /// Used by AddAbility$ to convert an SVar like:
@@ -7485,6 +7536,54 @@ Oracle:First strike\nCreatures and nonbasic lands your opponents control enter t
         assert!(
             !thalia.enters_tapped,
             "the gated card must not fall back to self-tap either"
+        );
+    }
+
+    /// Parser-shape regression for the 1994 World Championship compat sweep
+    /// (mtg-0dzxa / mtg-713 B13). Winter Orb's `S:Mode$ Continuous | Affected$
+    /// Player | AddKeyword$ UntapAdjust:Land:1 | IsPresent$ Card.Self+untapped`
+    /// must lower into a `limits_land_untap = Some(1)` lock. Before the fix the
+    /// `AddKeyword$ UntapAdjust:Land:N` player-keyword was unrecognized, so the
+    /// untap step untapped all lands and Winter Orb was inert.
+    #[test]
+    fn test_winter_orb_limits_land_untap_classification() {
+        let winter_orb = CardLoader::parse(
+            r#"
+Name:Winter Orb
+ManaCost:2
+Types:Artifact
+S:Mode$ Continuous | Affected$ Player | AddKeyword$ UntapAdjust:Land:1 | IsPresent$ Card.Self+untapped | Description$ As long as CARDNAME is untapped, players can't untap more than one land during their untap steps.
+SVar:NonStackingEffect:True
+Oracle:As long as Winter Orb is untapped, players can't untap more than one land during their untap steps.
+"#,
+        )
+        .unwrap();
+        assert_eq!(
+            winter_orb.limits_land_untap(),
+            Some(1),
+            "Winter Orb must classify into a one-land untap limit"
+        );
+        let instance = winter_orb.instantiate(crate::core::CardId::new(1), crate::core::PlayerId::new(0));
+        assert_eq!(
+            instance.definition.cache.limits_land_untap,
+            Some(1),
+            "the limits_land_untap lock must reach the per-instance CardCache"
+        );
+
+        // A plain artifact with no UntapAdjust static must NOT carry the lock.
+        let plain = CardLoader::parse(
+            r#"
+Name:Plain Artifact
+ManaCost:2
+Types:Artifact
+Oracle:A vanilla artifact.
+"#,
+        )
+        .unwrap();
+        assert_eq!(
+            plain.limits_land_untap(),
+            None,
+            "a vanilla artifact must not classify as a land-untap lock"
         );
     }
 

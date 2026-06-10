@@ -4024,6 +4024,107 @@ async fn test_stasis_skips_untap_step() -> Result<()> {
     Ok(())
 }
 
+/// Regression (1994 World Championship compat — mtg-0dzxa / mtg-713 B13): Winter
+/// Orb's "As long as Winter Orb is untapped, players can't untap more than one
+/// land during their untap steps" (`S:Mode$ Continuous | Affected$ Player |
+/// AddKeyword$ UntapAdjust:Land:1 | IsPresent$ Card.Self+untapped`). The
+/// AddKeyword$ UntapAdjust:Land:N player-keyword was unrecognized, so the untap
+/// step untapped EVERY land and Winter Orb was inert. With an untapped Winter Orb
+/// in play, the active player untaps at most ONE land; non-land permanents untap
+/// normally. Tapping the Winter Orb lifts the lock (the `IsPresent$
+/// Card.Self+untapped` self-condition), so all lands untap again — the check
+/// being re-derived from current board state at the untap step is what keeps the
+/// lock rewind-safe (no per-turn flag).
+#[tokio::test]
+async fn test_winter_orb_limits_land_untap() -> Result<()> {
+    let cardsfolder = require_cardsfolder();
+    let puzzle_path = PathBuf::from("../test_puzzles/winter_orb_one_land_untap.pzl");
+    let puzzle_contents = std::fs::read_to_string(&puzzle_path)?;
+    let puzzle = PuzzleFile::parse(&puzzle_contents)?;
+
+    let card_db = CardDatabase::new(cardsfolder);
+    let mut game = load_puzzle_into_game(&puzzle, &card_db).await?;
+    game.seed_rng(42);
+
+    let p0_id = game.players[0].id;
+    let p1_id = game.players[1].id;
+    let find = |game: &mtg_engine::game::GameState, name: &str| -> mtg_engine::core::CardId {
+        game.battlefield
+            .cards
+            .iter()
+            .copied()
+            .find(|&id| {
+                game.cards
+                    .try_get(id)
+                    .is_some_and(|c| c.name.as_str() == name && c.controller == p0_id)
+            })
+            .unwrap_or_else(|| panic!("{} should be on the battlefield", name))
+    };
+    let forest = find(&game, "Forest");
+    let mountain = find(&game, "Mountain");
+    let plains = find(&game, "Plains");
+    let bears = find(&game, "Grizzly Bears");
+    let winter_orb = find(&game, "Winter Orb");
+
+    // The loader must have recognized the Winter Orb land-untap lock (one land).
+    assert_eq!(
+        game.cards.get(winter_orb)?.definition.cache.limits_land_untap,
+        Some(1),
+        "Winter Orb must parse into a limits_land_untap = Some(1) lock"
+    );
+
+    // Tap all three lands and the creature (as if used the prior turn). Leave the
+    // Winter Orb UNTAPPED so its lock is active.
+    for id in [forest, mountain, plains, bears] {
+        game.cards.get_mut(id)?.tapped = true;
+    }
+    assert!(!game.cards.get(winter_orb)?.tapped, "Winter Orb must start untapped");
+
+    // Run P0's untap step. The ZeroController makes no not-untap selection, so the
+    // engine caps the land untap to one (lowest battlefield order = Forest) and
+    // forces the other two lands to stay tapped. The non-land creature untaps.
+    let mut c1 = ZeroController::new(p0_id);
+    let mut c2 = ZeroController::new(p1_id);
+    {
+        let mut game_loop = GameLoop::new(&mut game).with_verbosity(VerbosityLevel::Normal);
+        let res = game_loop.untap_step_for_test(&mut c1, &mut c2)?;
+        assert!(res.is_none(), "untap step should not end the game");
+    }
+    let untapped_lands = [forest, mountain, plains]
+        .into_iter()
+        .filter(|&id| !game.cards.get(id).unwrap().tapped)
+        .count();
+    assert_eq!(
+        untapped_lands, 1,
+        "Winter Orb must allow exactly ONE land to untap (got {} untapped)",
+        untapped_lands
+    );
+    assert!(
+        !game.cards.get(bears)?.tapped,
+        "Grizzly Bears is not a land and must untap normally under Winter Orb"
+    );
+
+    // Control leg: tap the Winter Orb. The `IsPresent$ Card.Self+untapped`
+    // self-condition is now false, so the lock lifts and ALL lands untap.
+    for id in [forest, mountain, plains] {
+        game.cards.get_mut(id)?.tapped = true;
+    }
+    game.cards.get_mut(winter_orb)?.tapped = true;
+    {
+        let mut game_loop = GameLoop::new(&mut game);
+        let _ = game_loop.untap_step_for_test(&mut c1, &mut c2)?;
+    }
+    assert!(
+        [forest, mountain, plains]
+            .into_iter()
+            .all(|id| !game.cards.get(id).unwrap().tapped),
+        "a TAPPED Winter Orb does not lock; all lands untap normally"
+    );
+
+    println!("✓ Winter Orb limits land untap to one while untapped; lock lifts when tapped (1994 champ compat)");
+    Ok(())
+}
+
 /// Regression (1994 World Championship compat — Flashfires/Tsunami SB pieces):
 /// `SP$ DestroyAll | ValidCards$ Plains` ("Destroy all Plains") must hit ONLY
 /// permanents with the Plains subtype (basic Plains and Plains-typed duals like

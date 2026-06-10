@@ -1,0 +1,66 @@
+---
+title: 'Card Compatibility: Winter Orb'
+status: closed
+priority: 2
+issue_type: task
+created_at: 2026-06-10T21:23:40.791759893+00:00
+updated_at: 2026-06-10T21:43:01.968416068+00:00
+closed_at: 2026-06-10T21:43:01.968415985+00:00
+---
+
+# Description
+
+Test all behavioral aspects of Winter Orb in MTG Forge-rs.
+
+Card: cardsfolder/w/winter_orb.txt
+Set: 4ED/LEA (1994 World Championship compat — mtg-709)
+Deck: championship/1994 (deck 01 Dolan WUG Stasis lock package)
+Test puzzle: test_puzzles/winter_orb_one_land_untap.pzl
+
+Card text:
+  {2} Artifact
+  As long as Winter Orb is untapped, players can't untap more than one
+  land during their untap steps.
+  Script: S:Mode$ Continuous | Affected$ Player | AddKeyword$ UntapAdjust:Land:1
+          | IsPresent$ Card.Self+untapped
+
+Findings (2026-06-10_#3149(ca114a55), claude/compat-1994-wave9):
+
+1. [x] Parses as cost {2}, Artifact.
+2. [x] limits_land_untap = Some(1) lock classified from the static
+   (was B13: AddKeyword$ UntapAdjust:Land:N player-keyword unrecognized ->
+   untap step untapped ALL lands -> Winter Orb inert).
+3. [x] Untap-step enforcement: while an UNTAPPED Winter Orb is on the
+   battlefield, the active player untaps AT MOST one land; remaining tapped
+   lands stay tapped. Non-land permanents untap normally.
+4. [x] Self-condition (IsPresent$ Card.Self+untapped): a TAPPED Winter Orb
+   does NOT lock -> all lands untap. The lock is re-derived at the untap step
+   from current board state (untapped lock permanent present), so there is no
+   per-turn flag and the behavior is rewind-safe.
+5. [x] Decision authority: when over budget the active player is asked which
+   lands to keep tapped (reuses choose_permanents_to_not_untap, routed through
+   the network choice hook); the engine then deterministically caps the untap
+   count so server and client agree regardless of controller selection.
+6. [N/A] Casting from non-hand zones, triggers, replacement effects — Winter
+   Orb has no T:/A:/R: lines beyond the single continuous static.
+
+Reproducer:
+
+```sh
+cargo test --features network --test puzzle_e2e \
+  test_winter_orb_limits_land_untap -- --nocapture
+```
+
+Expected log evidence:
+
+```
+--- Upkeep Step ---
+  Player 1 can't untap Mountain (untap limited to 1 land)
+  Player 1 can't untap Plains (untap limited to 1 land)
+✓ Winter Orb limits land untap to one while untapped; lock lifts when tapped
+```
+
+Unit test:  test_winter_orb_limits_land_untap_classification in mtg-engine/src/loader/card.rs
+E2E test:   test_winter_orb_limits_land_untap in mtg-engine/tests/puzzle_e2e.rs
+
+CARD STATUS: WORKING — one-land untap limit enforced; lock lifts when Winter Orb is tapped; rewind-safe.

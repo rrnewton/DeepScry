@@ -1,0 +1,30 @@
+[metadata]
+Name:Winter Orb limits land untap to one
+Goal:Win
+Difficulty:Easy
+
+# Regression for the 1994 World Championship compat sweep (mtg-0dzxa / mtg-713
+# B13). Winter Orb: "As long as Winter Orb is untapped, players can't untap more
+# than one land during their untap steps." Script:
+#   S:Mode$ Continuous | Affected$ Player | AddKeyword$ UntapAdjust:Land:1
+#     | IsPresent$ Card.Self+untapped
+# Before the fix the AddKeyword$ UntapAdjust:Land:N player-keyword was not
+# recognized anywhere, so the untap step untapped ALL of the active player's
+# lands -> Winter Orb did nothing.
+#
+# Setup: P0 controls three tapped lands (Forest, Mountain, Plains), a tapped
+# Grizzly Bears (a NON-land permanent, which must untap normally), and an
+# untapped Winter Orb. The e2e test runs P0's untap step and asserts that exactly
+# ONE land untaps (the rest stay tapped) while the creature untaps normally.
+# A control leg taps the Winter Orb and confirms the lock lifts (all lands untap).
+[state]
+turn=2
+activeplayer=p0
+activephase=Upkeep
+p0life=20
+p0battlefield=Forest; Mountain; Plains; Grizzly Bears; Winter Orb
+p0library=Island; Island; Island
+
+p1life=20
+p1battlefield=
+p1library=Forest; Forest; Forest

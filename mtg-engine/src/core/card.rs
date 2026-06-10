@@ -190,6 +190,18 @@ pub struct CardCache {
     /// engine picks the chosen player deterministically at ETB (see
     /// `GameState::set_card_zone`) and stores it in `Card::chosen_player`.
     pub etb_choose_player: bool,
+
+    /// Precomputed: While this permanent is UNTAPPED on the battlefield, players
+    /// can't untap more than one land during their untap steps (Winter Orb).
+    /// Derived from the static ability
+    /// `S:Mode$ Continuous | Affected$ Player | AddKeyword$ UntapAdjust:Land:N |
+    /// IsPresent$ Card.Self+untapped`. The runtime untap-limit lives in the
+    /// untap step; the `IsPresent$ ...+untapped` self-condition is re-checked
+    /// there against current board state, so the lock is rewind-safe (it is a
+    /// pure function of which permanents are on the battlefield and tapped, with
+    /// no per-turn flag). `N` is the per-untap-step land allowance (1 for
+    /// Winter Orb).
+    pub limits_land_untap: Option<u8>,
 }
 
 impl Default for CardCache {
@@ -263,6 +275,7 @@ impl CardCache {
             etb_choose_color: false,
             etb_exclude_colors: SmallVec::new(),
             etb_choose_player: false,
+            limits_land_untap: None,
         }
     }
 
@@ -1214,6 +1227,7 @@ impl Card {
                 .update_from_subtypes(&self.subtypes, self.name.as_str());
             self.definition.cache.enters_tapped = def.enters_tapped;
             self.definition.cache.skips_untap_step = def.skips_untap_step();
+            self.definition.cache.limits_land_untap = def.limits_land_untap();
             self.definition.cache.etb_choose_color = def.etb_choose_color;
             self.definition.cache.etb_exclude_colors = SmallVec::from_slice(&def.etb_exclude_colors);
             self.definition.cache.etb_choose_player = def.etb_choose_player;

@@ -61,6 +61,27 @@ impl<'a> GameLoop<'a> {
             return Ok(None);
         }
 
+        // Winter Orb (CR 502 untap-restriction): while an UNTAPPED permanent
+        // with the `UntapAdjust:Land:N` lock is on the battlefield, a player may
+        // untap at most N lands during their untap step. The lock is re-derived
+        // here from current board state (an untapped lock permanent), so it is a
+        // pure function of the battlefield — no per-turn flag, hence rewind-safe.
+        // A *tapped* Winter Orb does not lock (the `IsPresent$ Card.Self+untapped`
+        // self-condition), which is exactly why it is checked at this site.
+        let land_untap_limit: Option<u8> = self
+            .game
+            .battlefield
+            .cards
+            .iter()
+            .filter_map(|&id| {
+                let card = self.game.cards.try_get(id)?;
+                if card.tapped {
+                    return None;
+                }
+                card.definition.cache.limits_land_untap
+            })
+            .min();
+
         // Collect tapped permanents controlled by active player
         // Separate into: normal permanents and MayNotUntap permanents
         let mut normal_to_untap: SmallVec<[CardId; 8]> = SmallVec::new();
@@ -72,15 +93,25 @@ impl<'a> GameLoop<'a> {
         // GrantKeyword(DoesNotUntap) static — so consult granted keywords too.
         let mut forced_stay_tapped: SmallVec<[CardId; 8]> = SmallVec::new();
 
+        // Normal-untap tapped LANDS, set aside when the Winter Orb lock is active
+        // so the controller picks which (up to N) actually untap.
+        let mut limited_lands: SmallVec<[CardId; 8]> = SmallVec::new();
+
         for &card_id in &self.game.battlefield.cards {
             if let Some(card) = self.game.cards.try_get(card_id) {
                 if card.controller == active_player && card.tapped {
                     if self.game.has_keyword_with_effects(card_id, Keyword::DoesNotUntap) {
                         // Forced not to untap — does not even reach the
-                        // MayNotUntap optional-choice path.
+                        // MayNotUntap optional-choice path. (A doesn't-untap land
+                        // can't untap anyway, so it never consumes the Winter Orb
+                        // land budget.)
                         forced_stay_tapped.push(card_id);
                     } else if card.keywords.contains(Keyword::MayNotUntap) {
                         may_not_untap.push(card_id);
+                    } else if land_untap_limit.is_some() && card.definition.cache.is_land {
+                        // Untap-limited land: resolved below via a count-capped
+                        // controller choice instead of unconditional untap.
+                        limited_lands.push(card_id);
                     } else {
                         normal_to_untap.push(card_id);
                     }
@@ -141,6 +172,82 @@ impl<'a> GameLoop<'a> {
                     if let Some(card) = self.game.cards.try_get(card_id) {
                         let player_name = self.get_player_name(active_player);
                         self.log_normal(&format!("{} chooses not to untap {}", player_name, card.name));
+                    }
+                }
+            }
+        }
+
+        // Winter Orb land-untap limit (CR 502 / CR 102.4-style restriction): the
+        // active player untaps AT MOST `limit` of their tapped lands. If they
+        // hold no more tapped lands than the budget, all untap normally; only
+        // when over budget do we solicit a choice.
+        if let Some(limit) = land_untap_limit {
+            let limit = limit as usize;
+            if limited_lands.len() <= limit {
+                // Within budget: untap all of them.
+                for card_id in limited_lands {
+                    let _ = self.game.untap_permanent(card_id);
+                }
+            } else {
+                // Over budget: the controller chooses which lands to keep TAPPED
+                // (CR 502.3 — the active player decides which of their permanents
+                // untap). Reuse the existing not-untap choice on the land set;
+                // the engine then ENFORCES the cap deterministically so the
+                // result is controller-agnostic and rewind-safe regardless of how
+                // many the controller tried to untap.
+                let controller: &mut dyn PlayerController = if active_player == self.game.players[0].id {
+                    controller1
+                } else {
+                    controller2
+                };
+                let choice = self.choose_not_untap_with_hook(controller, active_player, &limited_lands);
+                let chosen_stay_tapped: SmallVec<[CardId; 8]> = match choice {
+                    ChoiceResult::Ok(ids) => ids,
+                    ChoiceResult::ExitGame => {
+                        return Ok(Some(GameResult {
+                            winner: self.game.get_other_player_id(active_player),
+                            turns_played: self.turns_elapsed,
+                            end_reason: super::GameEndReason::Manual,
+                            action_count: self.game.action_count(),
+                        }));
+                    }
+                    ChoiceResult::Error(e) => {
+                        log::error!("Error in choose_permanents_to_not_untap (land limit): {}", e);
+                        SmallVec::new()
+                    }
+                    ChoiceResult::UndoRequest(_) => SmallVec::new(),
+                    ChoiceResult::NeedInput(_) => SmallVec::new(),
+                };
+
+                // Lands the controller wants to untap (not chosen to stay tapped),
+                // in stable battlefield order.
+                let mut untap_candidates: SmallVec<[CardId; 8]> = limited_lands
+                    .iter()
+                    .copied()
+                    .filter(|id| !chosen_stay_tapped.contains(id))
+                    .collect();
+                // Enforce the cap: at most `limit` lands untap. If the controller
+                // selected too many (or made no selection at all), keep the lowest
+                // battlefield-order lands and force the rest to stay tapped. This
+                // is deterministic and identical on server and client.
+                if untap_candidates.len() > limit {
+                    untap_candidates.truncate(limit);
+                }
+
+                for &card_id in &limited_lands {
+                    if untap_candidates.contains(&card_id) {
+                        let _ = self.game.untap_permanent(card_id);
+                    } else if self.verbosity >= VerbosityLevel::Normal {
+                        if let Some(card) = self.game.cards.try_get(card_id) {
+                            let player_name = self.get_player_name(active_player);
+                            self.log_normal(&format!(
+                                "{} can't untap {} (untap limited to {} land{})",
+                                player_name,
+                                card.name,
+                                limit,
+                                if limit == 1 { "" } else { "s" }
+                            ));
+                        }
                     }
                 }
             }
