@@ -1942,9 +1942,9 @@ impl UndoLog {
         game.turn.consecutive_passes = 0;
 
         // Clear pending activation state (not tracked by undo log)
-        game.pending_activation = None;
-        game.pending_cycling_search = None;
-        game.spell_targets.clear();
+        game.sub_action_scratch.pending_activation = None;
+        game.sub_action_scratch.pending_cycling_search = None;
+        game.sub_action_scratch.spell_targets.clear();
 
         // Clear the server-side library-reorder broadcast queue (not tracked by
         // the undo log). `pending_library_reorders` is a transient `RefCell<Vec>`
@@ -1966,7 +1966,7 @@ impl UndoLog {
         // drains the queue at every ChoiceRequest within the turn, so it is
         // already empty at any turn boundary. It only matters once server-side
         // rewind+replay (or MCTS rollouts on the golden state) drive this path.
-        game.pending_library_reorders.borrow_mut().clear();
+        game.sub_action_scratch.pending_library_reorders.borrow_mut().clear();
 
         // Clear combat state (not tracked by undo log).
         // CombatState is modified directly by declare_attacker/declare_blocker and
@@ -2787,9 +2787,12 @@ mod tests {
         // Simulate a scry/surveil having queued a library-reorder broadcast for
         // P1 (as `scry_apply_decision` does on the golden state). This is the
         // stale-side-queue entry that a rewind must not leave behind.
-        game.pending_library_reorders.borrow_mut().push((p1, 0));
+        game.sub_action_scratch
+            .pending_library_reorders
+            .borrow_mut()
+            .push((p1, 0));
         assert_eq!(
-            game.pending_library_reorders.borrow().len(),
+            game.sub_action_scratch.pending_library_reorders.borrow().len(),
             1,
             "precondition: one reorder queued before rewind"
         );
@@ -2800,7 +2803,7 @@ mod tests {
         assert!(result.is_some(), "rewind_to_turn_start should succeed");
 
         assert!(
-            game.pending_library_reorders.borrow().is_empty(),
+            game.sub_action_scratch.pending_library_reorders.borrow().is_empty(),
             "rewind_to_turn_start must clear pending_library_reorders so a replay \
              re-derives the reorder broadcast from a clean queue (no double-broadcast). \
              See mtg-610 / docs/NETWORK_ACTION_LOG.md § 3.2."

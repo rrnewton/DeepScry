@@ -44,6 +44,7 @@ impl<'a> GameLoop<'a> {
         // Look up the targets for this spell (already stored as SmallVec)
         let targets: SmallVec<[CardId; 2]> = self
             .game
+            .sub_action_scratch
             .spell_targets
             .iter()
             .find(|(id, _)| *id == spell_id)
@@ -491,7 +492,10 @@ impl<'a> GameLoop<'a> {
         }
 
         // Remove the spell from our targets tracking
-        self.game.spell_targets.retain(|(id, _)| *id != spell_id);
+        self.game
+            .sub_action_scratch
+            .spell_targets
+            .retain(|(id, _)| *id != spell_id);
 
         Ok(())
     }
@@ -597,7 +601,9 @@ impl<'a> GameLoop<'a> {
                 // call `choose_from_library_with_hook` directly. Without this, the queued
                 // LibrarySearchByName OpponentChoice would be mistakenly consumed by
                 // `choose_spell_ability_to_play`, corrupting the RNG and causing a desync.
-                if let Some((search_player, ref land_type)) = self.game.pending_cycling_search.clone() {
+                if let Some((search_player, ref land_type)) =
+                    self.game.sub_action_scratch.pending_cycling_search.clone()
+                {
                     if search_player == current_priority {
                         let land_type = land_type.clone();
                         log::debug!(
@@ -635,7 +641,7 @@ impl<'a> GameLoop<'a> {
                         let chosen_card_opt = handle_choice_result_break!(lib_choice, self.game, search_player);
 
                         // Library search succeeded — clear the pending state.
-                        self.game.pending_cycling_search = None;
+                        self.game.sub_action_scratch.pending_cycling_search = None;
 
                         // Log this choice point for undo/replay (mirrors the cycling handler).
                         // Record the AUTHORITATIVE fetched CardId (not a shadow-fragile
@@ -680,7 +686,7 @@ impl<'a> GameLoop<'a> {
                 // misroute the queued target ChoiceRequest) and resume directly in the
                 // ActivateAbility arm where the target choice is completed.
                 let choice = 'ability_choice: {
-                    if let Some((act_player, act_card, act_idx)) = self.game.pending_activation {
+                    if let Some((act_player, act_card, act_idx)) = self.game.sub_action_scratch.pending_activation {
                         if act_player == current_priority {
                             log::debug!(
                                 "[WASM RESUME] Resuming pending activation of {:?} ability {} for player {:?}",
@@ -1247,7 +1253,10 @@ impl<'a> GameLoop<'a> {
                                     continue;
                                 } else {
                                     // Store targets for this spell (will be used when it resolves)
-                                    self.game.spell_targets.push((card_id, chosen_targets_vec));
+                                    self.game
+                                        .sub_action_scratch
+                                        .spell_targets
+                                        .push((card_id, chosen_targets_vec));
 
                                     // Spell is now on the stack - it will resolve later
                                     // when both players pass priority
@@ -1268,14 +1277,15 @@ impl<'a> GameLoop<'a> {
 
                                 // On WASM resumption, pending_activation is already set.
                                 // Don't log the "activates ability" message again on re-entry.
-                                let is_activation_resumption = self.game.pending_activation.is_some();
+                                let is_activation_resumption =
+                                    self.game.sub_action_scratch.pending_activation.is_some();
 
                                 // Check if we're resuming mid-effects (e.g., after NeedInput from
                                 // DiscardCards routing). If so, skip target selection, cost payment,
                                 // and already-executed effects. This prevents double-draws when
                                 // abilities like Bazaar of Baghdad (draw 2, discard 3) have their
                                 // DrawCards effects executed before DiscardCards returns NeedInput.
-                                let effect_resume = self.game.pending_activation_effect_idx.take();
+                                let effect_resume = self.game.sub_action_scratch.pending_activation_effect_idx.take();
 
                                 if let Some(ability) = ability {
                                     // Log "activates ability" only on first entry (not WASM resumption)
@@ -1294,7 +1304,8 @@ impl<'a> GameLoop<'a> {
                                     // If target selection below returns NeedInput, the next
                                     // step_harness() call will see this flag and bypass
                                     // choose_spell_ability_to_play, resuming here instead.
-                                    self.game.pending_activation = Some((current_priority, card_id, ability_index));
+                                    self.game.sub_action_scratch.pending_activation =
+                                        Some((current_priority, card_id, ability_index));
 
                                     // When resuming mid-effects, use saved targets and skip
                                     // target selection + cost payment (already done on first entry).
@@ -1449,8 +1460,8 @@ impl<'a> GameLoop<'a> {
                                                     e
                                                 );
                                                 // Clear pending_activation — ability failed, no resumption needed
-                                                self.game.pending_activation = None;
-                                                self.game.pending_activation_effect_idx = None;
+                                                self.game.sub_action_scratch.pending_activation = None;
+                                                self.game.sub_action_scratch.pending_activation_effect_idx = None;
                                                 // Treat failed ability activation like passing priority to prevent infinite loops
                                                 consecutive_passes += 1;
                                                 self.game.turn.consecutive_passes = consecutive_passes;
@@ -1751,7 +1762,7 @@ impl<'a> GameLoop<'a> {
                                                 // Handle NeedInput: save effect index for resumption
                                                 let chosen_card_opt = match choice {
                                                     crate::game::controller::ChoiceResult::NeedInput(ctx) => {
-                                                        self.game.pending_activation_effect_idx =
+                                                        self.game.sub_action_scratch.pending_activation_effect_idx =
                                                             Some((effect_idx, chosen_targets_vec));
                                                         return Err(crate::MtgError::NeedInput(Box::new(ctx)));
                                                     }
@@ -1914,7 +1925,7 @@ impl<'a> GameLoop<'a> {
                                                 let cards_to_discard = match choice {
                                                     crate::game::controller::ChoiceResult::NeedInput(ctx) => {
                                                         // Save effect index and targets for resumption
-                                                        self.game.pending_activation_effect_idx =
+                                                        self.game.sub_action_scratch.pending_activation_effect_idx =
                                                             Some((effect_idx, chosen_targets_vec));
                                                         return Err(crate::MtgError::NeedInput(Box::new(ctx)));
                                                     }
@@ -2014,7 +2025,9 @@ impl<'a> GameLoop<'a> {
                                                         // Handle NeedInput: save effect index for resumption
                                                         let cards_to_discard = match choice {
                                                             crate::game::controller::ChoiceResult::NeedInput(ctx) => {
-                                                                self.game.pending_activation_effect_idx =
+                                                                self.game
+                                                                    .sub_action_scratch
+                                                                    .pending_activation_effect_idx =
                                                                     Some((effect_idx, chosen_targets_vec));
                                                                 return Err(crate::MtgError::NeedInput(Box::new(ctx)));
                                                             }
@@ -2112,7 +2125,7 @@ impl<'a> GameLoop<'a> {
                                                 let decision = match choice {
                                                     crate::game::controller::ChoiceResult::Ok(d) => d,
                                                     crate::game::controller::ChoiceResult::NeedInput(ctx) => {
-                                                        self.game.pending_activation_effect_idx =
+                                                        self.game.sub_action_scratch.pending_activation_effect_idx =
                                                             Some((effect_idx, chosen_targets_vec));
                                                         return Err(crate::MtgError::NeedInput(Box::new(ctx)));
                                                     }
@@ -2163,7 +2176,7 @@ impl<'a> GameLoop<'a> {
                                                 let decision = match choice {
                                                     crate::game::controller::ChoiceResult::Ok(d) => d,
                                                     crate::game::controller::ChoiceResult::NeedInput(ctx) => {
-                                                        self.game.pending_activation_effect_idx =
+                                                        self.game.sub_action_scratch.pending_activation_effect_idx =
                                                             Some((effect_idx, chosen_targets_vec));
                                                         return Err(crate::MtgError::NeedInput(Box::new(ctx)));
                                                     }
@@ -2299,8 +2312,8 @@ impl<'a> GameLoop<'a> {
                                     }
 
                                     // Clear pending_activation — ability executed successfully
-                                    self.game.pending_activation = None;
-                                    self.game.pending_activation_effect_idx = None;
+                                    self.game.sub_action_scratch.pending_activation = None;
+                                    self.game.sub_action_scratch.pending_activation_effect_idx = None;
                                 } else {
                                     log::warn!(
                                         "ActivateAbility: ability not found for card {:?} '{}' ability_index={} (player {:?})",
@@ -2472,7 +2485,10 @@ impl<'a> GameLoop<'a> {
 
                                 // Store targets for resolution
                                 if !chosen_targets_vec.is_empty() {
-                                    self.game.spell_targets.push((card_id, chosen_targets_vec));
+                                    self.game
+                                        .sub_action_scratch
+                                        .spell_targets
+                                        .push((card_id, chosen_targets_vec));
                                 }
 
                                 // Remove the persistent effect that granted this cast permission
@@ -2580,7 +2596,10 @@ impl<'a> GameLoop<'a> {
 
                                 // Store targets for resolution
                                 if !chosen_targets_vec.is_empty() {
-                                    self.game.spell_targets.push((card_id, chosen_targets_vec));
+                                    self.game
+                                        .sub_action_scratch
+                                        .spell_targets
+                                        .push((card_id, chosen_targets_vec));
                                 }
 
                                 // Record commander cast for commander tax tracking
@@ -2679,7 +2698,7 @@ impl<'a> GameLoop<'a> {
                                         current_priority,
                                         cost
                                     );
-                                    self.game.pending_activation = None;
+                                    self.game.sub_action_scratch.pending_activation = None;
                                     consecutive_passes += 1;
                                     self.game.turn.consecutive_passes = consecutive_passes;
                                     current_priority = if current_priority == active_player {
@@ -2725,7 +2744,7 @@ impl<'a> GameLoop<'a> {
                                         tap_ok,
                                         e
                                     );
-                                    self.game.pending_activation = None;
+                                    self.game.sub_action_scratch.pending_activation = None;
                                     consecutive_passes += 1;
                                     self.game.turn.consecutive_passes = consecutive_passes;
                                     current_priority = if current_priority == active_player {
@@ -2807,7 +2826,8 @@ impl<'a> GameLoop<'a> {
                                         // priority_round() will resume the search directly instead
                                         // of routing the LibrarySearchByName OpponentChoice through
                                         // choose_spell_ability_to_play (which would misroute it).
-                                        self.game.pending_cycling_search = Some((current_priority, land_type.clone()));
+                                        self.game.sub_action_scratch.pending_cycling_search =
+                                            Some((current_priority, land_type.clone()));
 
                                         let prior_log_size = self.game.logger.log_count();
                                         log::debug!("[TYPECYCLING] About to call choose_from_library_with_hook");
@@ -2824,7 +2844,7 @@ impl<'a> GameLoop<'a> {
                                             handle_choice_result_break!(choice, self.game, current_priority);
 
                                         // Library search succeeded — clear the pending state.
-                                        self.game.pending_cycling_search = None;
+                                        self.game.sub_action_scratch.pending_cycling_search = None;
 
                                         // Log the choice for replay — record the AUTHORITATIVE
                                         // fetched CardId (not a shadow-fragile positional index).
@@ -3123,6 +3143,7 @@ impl<'a> GameLoop<'a> {
         // Look up targets
         let targets: SmallVec<[CardId; 2]> = self
             .game
+            .sub_action_scratch
             .spell_targets
             .iter()
             .find(|(id, _)| *id == spell_id)

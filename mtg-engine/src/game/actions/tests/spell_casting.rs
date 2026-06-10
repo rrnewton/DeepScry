@@ -937,10 +937,13 @@ mod tests {
         assert!(game.stack.contains(spell_id), "Spell should be on stack");
 
         // Step 3: Store targets in spell_targets (like priority.rs line 519)
-        game.spell_targets.push((spell_id, smallvec::smallvec![creature_id]));
+        game.sub_action_scratch
+            .spell_targets
+            .push((spell_id, smallvec::smallvec![creature_id]));
 
         // Step 4: Look up targets and resolve (like resolve_top_spell_from_stack does)
         let targets: smallvec::SmallVec<[CardId; 2]> = game
+            .sub_action_scratch
             .spell_targets
             .iter()
             .find(|(id, _)| *id == spell_id)
@@ -1060,10 +1063,13 @@ mod tests {
         assert!(cast_result.is_ok(), "Should cast spell");
 
         // Store targets (like WASM flow)
-        game.spell_targets.push((spell_id, smallvec::smallvec![creature_id]));
+        game.sub_action_scratch
+            .spell_targets
+            .push((spell_id, smallvec::smallvec![creature_id]));
 
         // Resolve the spell
         let targets: smallvec::SmallVec<[CardId; 2]> = game
+            .sub_action_scratch
             .spell_targets
             .iter()
             .find(|(id, _)| *id == spell_id)

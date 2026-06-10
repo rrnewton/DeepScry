@@ -317,10 +317,10 @@ fn step_replay(harness: &mut WasmAiHarness, client: SharedNetworkClient) -> crat
 
     // Clear transient game-loop state not tracked by the undo log so the replay
     // starts clean (mirrors the fancy_tui replay branch).
-    harness.game.spell_targets.clear();
-    harness.game.pending_activation = None;
-    harness.game.pending_activation_effect_idx = None;
-    harness.game.pending_cycling_search = None;
+    harness.game.sub_action_scratch.spell_targets.clear();
+    harness.game.sub_action_scratch.pending_activation = None;
+    harness.game.sub_action_scratch.pending_activation_effect_idx = None;
+    harness.game.sub_action_scratch.pending_cycling_search = None;
 
     log::debug!(
         "ai_harness REPLAY: after rewind turn {}, undo_log={}, {} our + {} opponent choices",

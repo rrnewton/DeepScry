@@ -988,7 +988,7 @@ impl<'a> GameStateView<'a> {
     ///
     /// See `mtg-420` for the bug this plumbing fixes.
     pub fn take_pending_library_reorders(&self) -> Vec<(PlayerId, Vec<crate::core::CardId>, u64)> {
-        let mut queue = self.game.pending_library_reorders.borrow_mut();
+        let mut queue = self.game.sub_action_scratch.pending_library_reorders.borrow_mut();
         if queue.is_empty() {
             return Vec::new();
         }

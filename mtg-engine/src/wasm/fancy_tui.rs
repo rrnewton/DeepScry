@@ -2170,10 +2170,10 @@ impl WasmFancyTuiState {
                 // Clear spell_targets and other transient game loop state after rewind.
                 // These fields are not tracked in the undo log, so they'd be stale
                 // from the previous run and could cause incorrect behavior on replay.
-                self.game.spell_targets.clear();
-                self.game.pending_activation = None;
-                self.game.pending_activation_effect_idx = None;
-                self.game.pending_cycling_search = None;
+                self.game.sub_action_scratch.spell_targets.clear();
+                self.game.sub_action_scratch.pending_activation = None;
+                self.game.sub_action_scratch.pending_activation_effect_idx = None;
+                self.game.sub_action_scratch.pending_cycling_search = None;
 
                 // Add the new choice if we have one
                 if let Some(choice) = new_choice {
@@ -2718,10 +2718,10 @@ impl WasmFancyTuiState {
 
         // Clear transient game-loop state not tracked by the undo log so the
         // replay starts clean (mirrors the human replay branch).
-        self.game.spell_targets.clear();
-        self.game.pending_activation = None;
-        self.game.pending_activation_effect_idx = None;
-        self.game.pending_cycling_search = None;
+        self.game.sub_action_scratch.spell_targets.clear();
+        self.game.sub_action_scratch.pending_activation = None;
+        self.game.sub_action_scratch.pending_activation_effect_idx = None;
+        self.game.sub_action_scratch.pending_cycling_search = None;
 
         log::debug!(
             target: "wasm_tui",

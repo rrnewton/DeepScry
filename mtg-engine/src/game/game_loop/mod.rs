@@ -266,7 +266,7 @@ pub struct GameLoop<'a> {
     pub verbosity: VerbosityLevel,
     /// Track if current step header has been printed (for lazy printing)
     step_header_printed: bool,
-    // spell_targets is now in GameState (game.spell_targets) to survive WASM step_harness() re-entry.
+    // spell_targets is now in GameState (game.sub_action_scratch.spell_targets) to survive WASM step_harness() re-entry.
     /// Global choice counter for tracking all player choices
     /// Increments each time a controller makes any decision
     choice_counter: u32,
@@ -385,7 +385,7 @@ impl<'a> GameLoop<'a> {
             turns_elapsed: 0,
             verbosity,
             step_header_printed: false,
-            // spell_targets lives in game.spell_targets
+            // spell_targets lives in game.sub_action_scratch.spell_targets
             choice_counter: 0,
             mana_engine: crate::game::mana_engine::ManaEngine::new(),
             abilities_buffer: Vec::with_capacity(16), // Pre-allocate for typical game (lands + spells + abilities)
@@ -870,7 +870,7 @@ impl<'a> GameLoop<'a> {
     pub fn reset(&mut self) {
         self.turns_elapsed = 0;
         self.step_header_printed = false;
-        self.game.spell_targets.clear();
+        self.game.sub_action_scratch.spell_targets.clear();
         self.choice_counter = 0;
         self.game.logger.reset_step_header();
     }

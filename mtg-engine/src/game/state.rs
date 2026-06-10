@@ -245,6 +245,51 @@ pub struct GameState {
     #[serde(default)]
     pub is_commander_game: bool,
 
+    // ╔══════════════════════════════════════════════════════════════════════╗
+    // ║  TRANSIENT SUB-ACTION SCRATCH STATE — NOT durable game state.          ║
+    // ║                                                                        ║
+    // ║  Everything reachable through `sub_action_scratch` is per-sub-action   ║
+    // ║  continuation/scratch state that exists ONLY to bridge a WASM          ║
+    // ║  step_harness()/JS yield: the GameLoop is recreated on every call, so  ║
+    // ║  state that would normally live on the GameLoop's Rust call stack is   ║
+    // ║  stashed here instead. It is reset between sub-actions and is NOT part ║
+    // ║  of the durable, serialized game state (the whole sub-struct is        ║
+    // ║  `#[serde(skip)]`, matching the previous per-field `#[serde(skip)]`).  ║
+    // ║                                                                        ║
+    // ║  *** CANDIDATE TO MOVE OUT of GameState entirely ***                   ║
+    // ║  These fields are a known desync hazard (mtg-vpjru / mtg-677 /         ║
+    // ║  mtg-610): a `#[serde(skip)]` field holding real game-loop state       ║
+    // ║  across a choice point is dropped on snapshot/rewind/reconnect. The    ║
+    // ║  netarch plan eliminates them by re-reaching the intra-turn frontier   ║
+    // ║  via rewind+replay (so they never persist across a yield). They are    ║
+    // ║  grouped here, clearly delimited, as the first step toward moving      ║
+    // ║  them off GameState. Do NOT add new durable state to this sub-struct.  ║
+    // ╚══════════════════════════════════════════════════════════════════════╝
+    #[serde(skip)]
+    pub sub_action_scratch: SubActionScratch,
+}
+
+/// Transient sub-action scratch / continuation state grouped off of
+/// [`GameState`].
+///
+/// **This is NOT durable game state.** Every field here is per-sub-action
+/// continuation/scratch state that exists only to bridge a WASM
+/// `step_harness()` / JS yield, where `GameLoop` is recreated on every call
+/// and therefore cannot carry continuation state on its Rust call stack.
+/// It is reset between sub-actions and is intentionally NOT serialized.
+///
+/// **Candidate to move out of `GameState` entirely** (mtg-vpjru / mtg-677 /
+/// mtg-610): a `#[serde(skip)]` field holding real game-loop state across a
+/// choice point is a desync hazard (dropped on snapshot/rewind/reconnect).
+/// The netarch plan eliminates these fields by re-reaching the intra-turn
+/// frontier via rewind+replay instead of stashing them across a yield.
+///
+/// The whole struct is `#[serde(skip)]` on `GameState`, which preserves the
+/// exact (per-field) `#[serde(skip)]` behaviour each field had before being
+/// grouped — so rewind/replay hashing stays bit-identical. It deliberately
+/// does NOT derive `Serialize`/`Deserialize`; it is never serialized.
+#[derive(Debug, Default)]
+pub struct SubActionScratch {
     /// Pending typecycling library search (WASM game loop resumption).
     ///
     /// When the WASM game loop is interrupted (NeedInput) during the library
@@ -256,7 +301,6 @@ pub struct GameState {
     ///
     /// Not serialized — this is transient game loop state that only persists
     /// across WASM step_harness() invocations within the same session.
-    #[serde(skip)]
     pub pending_cycling_search: Option<(PlayerId, crate::core::Subtype)>,
 
     /// Pending activated ability (WASM game loop resumption).
@@ -271,7 +315,6 @@ pub struct GameState {
     /// Stores (player_id, card_id, ability_index).
     ///
     /// Not serialized — transient game loop state for WASM resumption only.
-    #[serde(skip)]
     pub pending_activation: Option<(PlayerId, CardId, usize)>,
 
     /// Effect resume index for interrupted activated ability execution (WASM).
@@ -285,7 +328,6 @@ pub struct GameState {
     /// selection happens before cost payment and effects.
     ///
     /// Not serialized — transient game loop state for WASM resumption only.
-    #[serde(skip)]
     pub pending_activation_effect_idx: Option<(usize, Vec<CardId>)>,
 
     /// Targets chosen for spells currently on the stack (spell_id -> chosen_targets).
@@ -303,7 +345,6 @@ pub struct GameState {
     /// Uses SmallVec for targets since most spells have 0-2 targets.
     ///
     /// Not serialized — transient game loop state for WASM resumption only.
-    #[serde(skip)]
     pub spell_targets: Vec<(CardId, smallvec::SmallVec<[CardId; 2]>)>,
 
     /// Player IDs whose library order changed via a hidden-info-dependent
@@ -333,7 +374,13 @@ pub struct GameState {
     /// which the post-reorder order is in effect (mtg-752). The
     /// `NetworkController` carries this ac onto the `ServerMessage::LibraryReordered`
     /// so the shadow can key the new order in its game-ac-indexed state-sync log.
-    #[serde(skip)]
+    ///
+    /// NOTE (mtg-vpjru / §6 of the netarch design): this field is a
+    /// *partially separate* concern from the pure continuation fields above —
+    /// it is a network scry/surveil side-channel, not suspended-stack residue.
+    /// Its eventual elimination folds into mtg-752, not the long-lived-GameLoop
+    /// change; it is grouped here only because it shares the
+    /// `#[serde(skip)]`-on-GameState smell.
     pub pending_library_reorders: std::cell::RefCell<Vec<(PlayerId, u64)>>,
 }
 
@@ -416,11 +463,8 @@ impl GameState {
             extra_combat_phases: 0,
             is_shadow_game: false, // Default: not a shadow game
             is_commander_game: false,
-            pending_cycling_search: None,
-            pending_activation: None,
-            pending_activation_effect_idx: None,
-            spell_targets: Vec::new(),
-            pending_library_reorders: std::cell::RefCell::new(Vec::new()),
+            // Transient sub-action scratch/continuation state (see SubActionScratch).
+            sub_action_scratch: SubActionScratch::default(),
         }
     }
 
@@ -833,7 +877,10 @@ impl GameState {
             // identity, so broadcasting the order to the opponent leaks nothing.
             if !self.skip_reveals && !self.is_shadow_game {
                 let reorder_ac = self.undo_log.len() as u64;
-                self.pending_library_reorders.borrow_mut().push((player_id, reorder_ac));
+                self.sub_action_scratch
+                    .pending_library_reorders
+                    .borrow_mut()
+                    .push((player_id, reorder_ac));
             }
         }
     }
@@ -994,13 +1041,14 @@ impl GameState {
         let targets: SmallVec<[CardId; 2]> = match new_targets {
             Some(t) => t,
             None => self
+                .sub_action_scratch
                 .spell_targets
                 .iter()
                 .find(|(id, _)| *id == original_id)
                 .map(|(_, t)| t.clone())
                 .unwrap_or_default(),
         };
-        self.spell_targets.push((copy_id, targets));
+        self.sub_action_scratch.spell_targets.push((copy_id, targets));
 
         let controller_name = self.get_player(new_controller)?.name.clone();
         self.logger.gamelog(&format!(
@@ -2260,7 +2308,10 @@ impl GameState {
             // `ReorderLibrary` action (the raw reorder ops below log nothing), i.e.
             // the position at which the post-reorder order is in effect (mtg-752).
             let reorder_ac = self.undo_log.len() as u64;
-            self.pending_library_reorders.borrow_mut().push((player_id, reorder_ac));
+            self.sub_action_scratch
+                .pending_library_reorders
+                .borrow_mut()
+                .push((player_id, reorder_ac));
         }
 
         Ok(())
@@ -2348,7 +2399,10 @@ impl GameState {
         if library_actually_changed && !self.skip_reveals && !self.is_shadow_game {
             // ac = undo-log length after `log_library_reorder` (mtg-752).
             let reorder_ac = self.undo_log.len() as u64;
-            self.pending_library_reorders.borrow_mut().push((player_id, reorder_ac));
+            self.sub_action_scratch
+                .pending_library_reorders
+                .borrow_mut()
+                .push((player_id, reorder_ac));
         }
 
         Ok(())
@@ -3610,10 +3664,10 @@ impl GameState {
             // re-entry started resuming via rewind+replay, so there is no longer a
             // guard family to reset here.)
             if self.undo_log.is_empty() {
-                self.pending_activation = None;
-                self.pending_activation_effect_idx = None;
-                self.pending_cycling_search = None;
-                self.spell_targets.clear();
+                self.sub_action_scratch.pending_activation = None;
+                self.sub_action_scratch.pending_activation_effect_idx = None;
+                self.sub_action_scratch.pending_cycling_search = None;
+                self.sub_action_scratch.spell_targets.clear();
             }
 
             Ok(Some(prior_log_size))
@@ -4116,14 +4170,11 @@ impl Clone for GameState {
             extra_combat_phases: self.extra_combat_phases,
             is_shadow_game: self.is_shadow_game,
             is_commander_game: self.is_commander_game,
-            // pending_cycling_search, pending_activation, and spell_targets are transient game loop state — not cloned (reset to empty).
-            pending_cycling_search: None,
-            pending_activation: None,
-            pending_activation_effect_idx: None,
-            spell_targets: Vec::new(),
-            // Network sync queue is intentionally NOT cloned — clones are used
-            // for snapshots/replays which must not re-emit network messages.
-            pending_library_reorders: std::cell::RefCell::new(Vec::new()),
+            // Transient sub-action scratch/continuation state (pending_*, spell_targets,
+            // pending_library_reorders) is NOT cloned — clones are used for
+            // snapshots/replays and must reset to empty (and must not re-emit network
+            // messages). A fresh default() preserves the previous per-field reset.
+            sub_action_scratch: SubActionScratch::default(),
         }
     }
 }
@@ -4415,7 +4466,7 @@ mod tests {
         assert_eq!(lib[0], top_land, "the Mountain should have moved to the bottom");
 
         // And the server must have queued a LibraryReordered for P1.
-        let queued: Vec<(PlayerId, u64)> = game.pending_library_reorders.borrow().clone();
+        let queued: Vec<(PlayerId, u64)> = game.sub_action_scratch.pending_library_reorders.borrow().clone();
         assert_eq!(queued.len(), 1, "exactly one pending LibraryReorder (mtg-420)");
         assert_eq!(
             queued[0].0, p1_id,
@@ -4450,7 +4501,7 @@ mod tests {
             .expect("scry_apply_decision must not error");
 
         assert!(
-            game.pending_library_reorders.borrow().is_empty(),
+            game.sub_action_scratch.pending_library_reorders.borrow().is_empty(),
             "no library reorder => no broadcast (mtg-420)"
         );
     }

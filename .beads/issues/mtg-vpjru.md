@@ -1,0 +1,81 @@
+---
+title: 'WASM: long-lived GameLoop + durable turn-commit + rewind/replay intra-turn (eliminate serde-skip continuation state) [GATED ON HUMAN APPROVAL]'
+status: in_progress
+priority: 1
+issue_type: task
+created_at: 2026-06-10T03:09:37.133858577+00:00
+updated_at: 2026-06-10T14:47:43.050295349+00:00
+---
+
+# Description
+
+═══════════════════════════════════════════════════════════════════════════
+STATUS 2026-06-10 (slot03, branch claude/netarch-longlived-gameloop) — read first
+═══════════════════════════════════════════════════════════════════════════
+USER-APPROVED 2026-06-10 (no longer gated). Implementation is proceeding in
+three increments on branch claude/netarch-longlived-gameloop:
+
+  INCREMENT 1 — GROUP the sub-action scratch state (DONE this commit):
+    All 5 serde-skip continuation fields (pending_cycling_search,
+    pending_activation, pending_activation_effect_idx, spell_targets,
+    pending_library_reorders) are now grouped under ONE clearly-delimited
+    sub-struct `SubActionScratch`, exposed as the single GameState field
+    `sub_action_scratch` (mtg-engine/src/game/state.rs). The whole sub-struct
+    is `#[serde(skip)]`, preserving the exact per-field skip behaviour, so
+    rewind/replay hashing is BIT-IDENTICAL — purely mechanical/structural,
+    zero behavioural change. A loud delimited comment block marks it TRANSIENT
+    / NOT durable / CANDIDATE TO MOVE OUT. All `game.<field>` accesses across
+    17 files rewritten to `game.sub_action_scratch.<field>`. rewind/replay
+    oracle + whole-game oracle GREEN; full make validate cited in the commit.
+
+  INCREMENT 2 — long-lived GameLoop (run_turn returns NeedsInput/Yield, the
+    GameLoop object persists across step_harness calls; mine PR #11). PENDING.
+
+  INCREMENT 3 — unify the ~33 non-rewind WASM exports + delete the remaining
+    re-entry/TurnStructure guards + unify the WasmHumanController path onto the
+    single rewind/replay path (mtg-677/mtg-680). PENDING — large; may be split.
+
+The §9 phased plan below is the original Phase-1..6 design; the three
+increments above are the user's re-cut of that same work. Increment 1
+corresponds to a new "group first" step preceding the design's Phase 1.
+═══════════════════════════════════════════════════════════════════════════
+
+**ORIGINAL DESIGN (was GATED ON HUMAN APPROVAL — now approved 2026-06-10):**
+
+Full design: ai_docs/WASM_LONGLIVED_GAMELOOP_DESIGN_20260609.md (parent-harness ai_docs).
+Cross-ref: mtg-677 (netarch rewind/replay PRIMARY), mtg-680 (live WASM step_harness re-entry must rewind), mtg-708 (undo-log completeness — 8 hole classes), mtg-752/mtg-559 (reveal-actionlog unification → the pending_library_reorders track), reconnect work (same replay primitive), docs/NETWORK_ARCHITECTURE.md.
+
+## Problem
+WASM reconstructs `GameLoop::new(&mut self.game)` on every step_harness/per-turn JS call. Because the GameLoop can't carry continuation state across a JS yield, that state is stashed on GameState as 5 `#[serde(skip)]` fields (state.rs): pending_cycling_search (260), pending_activation (275), pending_activation_effect_idx (289), spell_targets (307), pending_library_reorders (337). These are mutable game-loop state that is NOT serialized and NOT in the undo log → a latent desync hazard if a snapshot/rewind/reconnect fires while one is non-empty.
+
+## Key findings
+- The WASM/JS boundary CANNOT suspend a Rust call stack mid-run_turn (single JS thread, synchronous export, NeedInput unwinds the stack; no stackful coroutines without unsafe — ruled out). So "long-lived GameLoop" must mean a long-lived owner of DURABLE state (GameState + undo log + persistent controller + small re-entry bookkeeping), re-reaching the intra-turn frontier by REWIND+REPLAY, not by a paused stack. Recreating the GameLoop struct per call is fine; cross-yield continuation state on GameState is not.
+- The network path (wasm/network/ai_harness.rs step_harness/step_forward/step_replay) and the human-vs-AI path (wasm/fancy_tui.rs in_rewind_replay/high_water_*) ALREADY implement the user's intended model. The paths that still depend on the serde-skip stash are the NON-rewinding ones: run_one_turn (wasm/mod.rs:741) and the non-network fancy_tui helpers.
+- FEASIBILITY CONFIRMED: rewind_to_turn_start (undo.rs:1870) + ReplayController re-reaches an ARBITRARY intra-turn NeedInput point. tests/rewind_replay_oracle_e2e.rs proves state-hash + view-hash (incl action_count) round-trip at EVERY choice class (SpellAbility/Attackers/Blockers/DamageOrder/Discard/ManaSources); whole_game_rewind_replay_e2e.rs also round-trips the gamelog. Both are FATAL gates. So the serde-skip fields are redundant in principle — they exist only because the non-rewinding paths skip the replay step.
+
+## Elimination
+spell_targets, pending_cycling_search, pending_activation, pending_activation_effect_idx become in-call scratch (or deleted): replay re-populates them from recorded ChoicePoints within a single run_until_input call. pending_library_reorders is a SEPARATE concern (network scry/surveil side-channel) → folds into mtg-752, scope OUT.
+
+## Hardest edges
+- O(N^2) replay cost on turns with many sequential choices (worst case WASM-on-phone).
+- pending_activation_effect_idx resumes mid-effect-list AFTER cost payment — must not land until activated-ability effect classes are undo-log-complete (mtg-708).
+- DRY: unify forward_run_turn (ai_harness) and net_forward_run_turn/high_water_* (fancy_tui) re-entry bookkeeping.
+- Network shadow reveal-timing residuals (mtg-677/752) must stay green; keep robots seeds 2&5 out of the network gate until mtg-752.
+
+No fundamental obstacle. This is consolidation + residue-elimination, not greenfield.
+
+## Phased plan (each phase gated, human checkpoint between)
+- P1 (smallest safe first increment): convert run_one_turn (wasm/mod.rs:741) to the rewind/replay step model + assert the 5 fields are empty at every yield boundary. Isolated, no network shadow, oracle-covered.
+- P2: demote spell_targets to in-call scratch across all paths.
+- P3: eliminate pending_cycling_search + pending_activation via replayed activation choices.
+- P4 (hardest): eliminate pending_activation_effect_idx — only after mtg-708 audit; add effect-loop-resume oracle case.
+- P5: DRY the re-entry bookkeeping into one shared helper.
+- P6 (separate track): pending_library_reorders via mtg-752.
+
+Each phase: full capped make validate + network multideck e2e + rewind/replay oracles, validate-log path cited, human sign-off before next phase.
+
+## Smallest safe first increment
+P1: convert run_one_turn (wasm/mod.rs:741) + yield-boundary emptiness assertion.
+
+## Prior art: PR #11 wasm-rewind-replay (SUPERSEDED)
+GitHub DeepScryAI/DeepScry#11 (RFC, author rrnewton, commits fd4eca1e/8af0a087/7d222e7d) was the original rewind/replay-in-WASM attempt (mtg-610/mtg-j4128): delete 9 TurnStructure guard fields + rewrite ai_harness step_harness onto rewind/replay. It stalled RED on the network e2e — NOT a rewind-faithfulness failure but undo-log INCOMPLETENESS for network-consumed inputs (drain_library_reorders + WasmRemoteController.last_*). VERIFIED 2026-06-09: PR #11's program ALREADY LANDED via the netarch line — the 9 guards are gone (phase.rs grep _turn: = 0), ai_harness::step_harness IS the rewind/replay path, and its open question was resolved option (A) = record consumed inputs keyed by game action_count (apply_state_sync_at/mtg-752 + last_library_search_result on WasmRemoteController). This design SUPERSEDES PR #11 (do NOT revive the stale branch); the network-incompleteness residual it hit is the mtg-752/559/708 class, which is why pending_library_reorders is scoped OUT here. Decision: stay on answer (A) action-log source of truth, NO new full-state per-turn snapshots — 'durable turn-commit' means the undo/action log reconstructs turn start, not serializing GameState each turn.

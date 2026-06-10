@@ -746,7 +746,7 @@ impl GameState {
                 "resolve_spell_finalize: spell copy {} ceases to exist (CR 707.10c) -> Exile",
                 card_id.as_u32()
             );
-            self.spell_targets.retain(|(id, _)| *id != card_id);
+            self.sub_action_scratch.spell_targets.retain(|(id, _)| *id != card_id);
             let owner = self.cards.get(card_id)?.owner;
             self.move_card(card_id, Zone::Stack, Zone::Exile, owner)?;
             return Ok(());
