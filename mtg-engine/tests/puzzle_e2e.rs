@@ -2611,7 +2611,7 @@ async fn test_juggernaut_must_attack() -> Result<()> {
     let mut controller0 = ZeroController::new(p0_id);
     let mut controller1 = ZeroController::new(p1_id);
 
-    // Run for 1 turn
+    // Run for 1 turn (combat is reached on the puzzle's own turn 5).
     let mut game_loop = GameLoop::new(&mut game).with_verbosity(VerbosityLevel::Normal);
     let _result = game_loop.run_turns(&mut controller0, &mut controller1, 1)?;
 
@@ -2619,13 +2619,20 @@ async fn test_juggernaut_must_attack() -> Result<()> {
 
     println!("P1 life before: {p1_life_before}, after: {p1_life_after}");
 
-    // Note: "Must attack" is a static ability that may not be implemented yet
-    // For now, just verify the game runs
-    if p1_life_after < p1_life_before {
-        println!("✓ Juggernaut successfully attacked (must attack working)");
-    } else {
-        println!("⚠ Juggernaut did not attack (must attack ability not yet implemented)");
-    }
+    // mtg-jbdgu / mtg-713 B20: Juggernaut's `S:Mode$ MustAttack | ValidCreature$
+    // Card.Self` must be ENFORCED (CR 508.1a "attacks each combat if able").
+    // Both controllers are ZeroController (which declares NO attackers), so the
+    // only way P1 takes damage is the engine force-declaring the must-attack
+    // Juggernaut. A 5/3 hitting an open board deals exactly 5.
+    assert_eq!(
+        p1_life_after,
+        p1_life_before - 5,
+        "Juggernaut (must attack, 5/3) must be force-declared as an attacker even \
+         though ZeroController declared none; expected P1 to drop from {p1_life_before} \
+         to {} but got {p1_life_after}",
+        p1_life_before - 5
+    );
+    println!("✓ Juggernaut force-attacked under ZeroController (MustAttack enforced)");
 
     Ok(())
 }

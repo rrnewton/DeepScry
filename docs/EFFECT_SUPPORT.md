@@ -186,6 +186,7 @@ workflow, row format, and update rules.
 | ↳ Old Man tapped+powerLEX control DURATION (LoseControl$ Untap,...,StaticCommandCheck) — approximated by while-control-source | PARTIAL | 2026-06-03_#2713(compat-1994-sweep) | (follow-up mtg-741) | Old Man of the Sea |
 | AB$ GainControl LoseControl$ EOT (until-end-of-turn return) | BROKEN | 2026-06-03_#2713(compat-1994-sweep) | (TODO mtg-77) | Threaten, Act of Treason |
 | GrantKeyword Affected$ Creature (AllCreatures)  | WORKING | 2026-05-30_#2487(30dd3c20) | (none)    | Concordant Crossroads |
+| S:Mode$ MustAttack ValidCreature$ Card.Self (self-keyword "attacks each combat if able", CR 508.1a — surfaced as Keyword::MustAttack, force-declared at declare-attackers) | WORKING | 2026-06-10_#3132(823cc1c6) | (fixed mtg-713 B20) | Juggernaut |
 
 ## Replacement effects (R:)
 

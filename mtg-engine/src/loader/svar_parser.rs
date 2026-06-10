@@ -104,6 +104,10 @@ pub enum StaticAbilityMode {
     /// Mode$ Sacrificed - Triggers when permanents are sacrificed
     Sacrificed,
 
+    /// Mode$ MustAttack - the affected creature attacks each combat if able
+    /// (CR 508.1a). Juggernaut: `Mode$ MustAttack | ValidCreature$ Card.Self`.
+    MustAttack,
+
     /// Unknown mode (for forward compatibility)
     Unknown(String),
 }
@@ -122,6 +126,7 @@ impl StaticAbilityMode {
             "SpellCast" => Self::SpellCast,
             "LandPlayed" => Self::LandPlayed,
             "Sacrificed" => Self::Sacrificed,
+            "MustAttack" => Self::MustAttack,
             other => Self::Unknown(other.to_string()),
         }
     }
@@ -139,6 +144,7 @@ impl StaticAbilityMode {
             Self::SpellCast => "SpellCast",
             Self::LandPlayed => "LandPlayed",
             Self::Sacrificed => "Sacrificed",
+            Self::MustAttack => "MustAttack",
             Self::Unknown(s) => s,
         }
     }

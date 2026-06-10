@@ -3074,6 +3074,47 @@ mod tests {
         );
     }
 
+    /// Card compat: Juggernaut (cardsfolder/j/juggernaut.txt) — mtg-jbdgu / mtg-713 B20.
+    ///
+    /// Script:
+    ///   ManaCost:4
+    ///   Types:Artifact Creature Juggernaut
+    ///   PT:5/3
+    ///   S:Mode$ MustAttack | ValidCreature$ Card.Self  (attacks each combat if able)
+    ///   S:Mode$ CantBlockBy | ValidAttacker$ Creature.Self | ValidBlocker$ Creature.Wall
+    ///
+    /// Verifies the `S:Mode$ MustAttack | ValidCreature$ Card.Self` self-static
+    /// surfaces as Keyword::MustAttack on the instantiated card (CR 508.1a). The
+    /// declare-attackers enforcement that consumes this keyword is exercised
+    /// end-to-end in tests/puzzle_e2e.rs::test_juggernaut_must_attack.
+    #[test]
+    fn test_card_compat_juggernaut() {
+        use crate::core::Keyword;
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("../cardsfolder/j/juggernaut.txt");
+        if !path.exists() {
+            eprintln!("Skipping: cardsfolder not present at {:?}", path);
+            return;
+        }
+        let def = crate::loader::CardLoader::load_from_file(&path).expect("Juggernaut should load");
+
+        assert_eq!(def.name.as_str(), "Juggernaut");
+        assert_eq!(def.mana_cost.generic, 4, "Cost should be {{4}}");
+        assert!(def.types.contains(&CardType::Artifact));
+        assert!(def.types.contains(&CardType::Creature));
+        assert_eq!(def.power, Some(5));
+        assert_eq!(def.toughness, Some(3));
+
+        let card = def.instantiate(CardId::new(1), PlayerId::new(0));
+        assert!(
+            card.keywords.contains(Keyword::MustAttack),
+            "Juggernaut's `S:Mode$ MustAttack | ValidCreature$ Card.Self` must surface \
+             as Keyword::MustAttack. Keywords: {:?}",
+            card.keywords
+        );
+    }
+
     /// Build a bare vanilla creature with the given base power for filter tests.
     fn make_creature_with_power(power: i8) -> crate::core::Card {
         let mut c = crate::core::Card::new(CardId::new(99), "FilterTarget", PlayerId::new(1));

@@ -101,7 +101,43 @@ impl<'a> GameLoop<'a> {
             // Capture log size BEFORE asking controller (before controller logs its choice)
             let prior_log_size = self.game.logger.log_count();
             let choice = self.choose_attackers_with_hook(controller, active_player, &available_creatures);
-            let attackers = handle_choice_result_break!(choice, self.game, active_player);
+            let mut attackers = handle_choice_result_break!(choice, self.game, active_player);
+
+            // CR 508.1a: a creature that "attacks each combat if able"
+            // (Keyword::MustAttack, e.g. Juggernaut) MUST be declared as an
+            // attacker whenever it is ABLE to attack. `available_creatures` is
+            // exactly the set of creatures that can legally attack this combat
+            // (untapped, not summoning-sick, no Defender, not already
+            // attacking), so it already encodes the "if able" clause. Any such
+            // creature the controller chose to leave back is force-added here.
+            //
+            // This enforcement lives in the engine (not the controller) so it
+            // is controller-agnostic and information-independent: it depends
+            // only on visible battlefield state, producing identical results on
+            // server and client. It must run BEFORE the choice point is logged
+            // so rewind/replay reconstructs the same forced attacker set.
+            for &must_id in &available_creatures {
+                if attackers.contains(&must_id) {
+                    continue;
+                }
+                if self
+                    .game
+                    .has_keyword_with_effects(must_id, crate::core::Keyword::MustAttack)
+                {
+                    if self.verbosity >= VerbosityLevel::Normal && !self.replaying {
+                        let card_name = self
+                            .game
+                            .cards
+                            .get(must_id)
+                            .map(|c| c.name.as_str())
+                            .unwrap_or("Unknown");
+                        self.game
+                            .logger
+                            .gamelog(&format!("{} ({}) must attack this combat if able", card_name, must_id));
+                    }
+                    attackers.push(must_id);
+                }
+            }
 
             // Log this choice point for snapshot/replay
             let replay_choice = crate::game::ReplayChoice::Attackers(attackers.clone());

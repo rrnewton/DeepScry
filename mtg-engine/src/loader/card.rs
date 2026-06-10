@@ -1775,6 +1775,40 @@ impl CardDefinition {
             }
         }
 
+        // ---------------------------------------------------------------
+        // Self-referential static keywords expressed as `S:Mode$ ...` lines.
+        //
+        // Some intrinsic combat-restriction keywords are printed on cards as
+        // a static ability targeting the card itself rather than as a bare
+        // `K:` line. The canonical example is Juggernaut's
+        //   S:Mode$ MustAttack | ValidCreature$ Card.Self
+        // which is Oracle "attacks each combat if able" (CR 508.1a). We
+        // surface it as Keyword::MustAttack so the engine's declare-attackers
+        // enforcement (and the heuristic eval) treat it uniformly with any
+        // creature that gained the keyword by other means.
+        //
+        // Only the SELF shape (`ValidCreature$ Card.Self`) becomes a keyword
+        // on this card. A MustAttack static that forces OTHER creatures to
+        // attack (e.g. a global "all creatures attack each combat") is a
+        // different mechanic and is intentionally left for a separate static
+        // path — keywording it here would wrongly tag the source itself.
+        for ability in &self.raw_abilities {
+            let Some(body) = ability.strip_prefix("S:") else {
+                continue;
+            };
+            let params = tokenize_pipe_dollar(body);
+            if params.get("Mode").map(String::as_str) != Some("MustAttack") {
+                continue;
+            }
+            let is_self = params
+                .get("ValidCreature")
+                .map(|v| v.trim() == "Card.Self")
+                .unwrap_or(false);
+            if is_self {
+                keyword_set.insert(Keyword::MustAttack);
+            }
+        }
+
         keyword_set
     }
 

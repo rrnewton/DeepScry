@@ -1,0 +1,61 @@
+---
+title: 'Card Compatibility: Juggernaut'
+status: closed
+priority: 2
+issue_type: task
+depends_on:
+  mtg-713: parent-child
+created_at: 2026-06-10T17:01:33.863311925+00:00
+updated_at: 2026-06-10T17:25:10.147790486+00:00
+---
+
+# Description
+
+Test all behavioral aspects of Juggernaut in MTG Forge-rs.
+
+Card: cardsfolder/j/juggernaut.txt
+Set: 1994 Championship decks (mtg-709, backlog mtg-713 B20)
+Test puzzle: test_puzzles/juggernaut_must_attack.pzl
+
+Card text:
+  {4} 5/3 Artifact Creature - Juggernaut
+  S:Mode$ MustAttack | ValidCreature$ Card.Self  (attacks each combat if able)
+  S:Mode$ CantBlockBy | ValidAttacker$ Creature.Self | ValidBlocker$ Creature.Wall (can't be blocked by Walls)
+
+Findings (2026-06-10_#3132(823cc1c6), claude/compat-1994-wave4):
+
+1. [x] Parses as {4} 5/3 Artifact Creature - Juggernaut.
+2. [x] S:Mode$ MustAttack | ValidCreature$ Card.Self now ENFORCED (CR 508.1a,
+   B20 FIXED). Three-part fix:
+   - svar_parser.rs: added StaticAbilityMode::MustAttack (was Unknown-dropped).
+   - loader/card.rs parse_keywords: the SELF-shape MustAttack static (ValidCreature$
+     Card.Self) now surfaces as Keyword::MustAttack on the instantiated card
+     (tokenized parse, no string hacks).
+   - game_loop/combat.rs declare_attackers_step: after the controller returns its
+     chosen attackers, any creature in available_creatures (= the legal-to-attack
+     set, which already encodes 'if able') that has Keyword::MustAttack and was not
+     chosen is force-declared. Engine-side, controller-agnostic, info-independent.
+   Verified: ZeroController declares NO attackers; engine force-attacks Juggernaut
+   (5/3), opponent drops 20->15. Rewind/replay safe (no new persistent state; the
+   forced set is captured in ReplayChoice::Attackers).
+3. [unverified] CantBlockBy Walls — out of scope this run (separate B20-sibling).
+
+Reproducer:
+
+```sh
+cargo test --release --features network --test puzzle_e2e test_juggernaut_must_attack -- --nocapture
+```
+
+Expected log evidence:
+
+```
+Juggernaut (N) must attack this combat if able
+... declares Juggernaut (N) (5/3) as attacker
+Juggernaut (N) deals 5 damage to Player 2 (life: 15)
+P1 life before: 20, after: 15
+```
+
+Unit test:    test_card_compat_juggernaut in mtg-engine/src/game/actions/tests/effects.rs
+E2E test:     tests/puzzle_e2e.rs::test_juggernaut_must_attack (asserts P1 20->15 under ZeroController)
+
+CARD STATUS: WORKING — MustAttack (CR 508.1a) parsed + keyworded + enforced at declare-attackers.

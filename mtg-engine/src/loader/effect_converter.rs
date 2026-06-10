@@ -2040,6 +2040,19 @@ pub fn params_to_effect_with_svars(params: &AbilityParams, svars: &HashMap<Strin
                             }
                         }
                         // Trigger modes are handled by parse_triggers(), not effect conversion
+                        StaticAbilityMode::MustAttack => {
+                            // SP$ Effect granting a temporary MustAttack static
+                            // (Siren's Call B16 — mtg-713). Not yet wired through
+                            // this temporary-effect path; the intrinsic
+                            // self-keyword form (Juggernaut) is handled at card
+                            // load in parse_keywords instead.
+                            // TODO(mtg-713): grant temporary MustAttack via SP$ Effect.
+                            log::debug!(
+                                target: "effect_converter",
+                                "Mode$ MustAttack via SP$ Effect not yet implemented (SVar: {})",
+                                static_ability_name
+                            );
+                        }
                         StaticAbilityMode::Attacks
                         | StaticAbilityMode::ChangesZone
                         | StaticAbilityMode::Phase
