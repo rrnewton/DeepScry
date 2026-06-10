@@ -768,6 +768,83 @@ async function scenarioWaitingRoomAndParamContract() {
     await browser.close();
 }
 
+// Seed-persistence regression: the RNG-seed field must round-trip across
+// navigation (set -> reload -> value restored) via localStorage. Previously the
+// seed field was wired to NO storage and was empty again every time the user
+// navigated away and back. Covers BOTH launcher.html (#mp-seed, gated behind
+// role=create&advanced_options=true) and solo_launcher.html (#seed). Also
+// verifies the empty/random case: clearing the field removes the stored key so
+// the "(random)"/"(server default)" placeholder semantics are preserved.
+async function scenarioSeedPersistence() {
+    console.log('\n=== Scenario: RNG-seed persists across navigation (set -> reload -> restored) ===');
+    const browser = await chromium.launch();
+    const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+    const page = await ctx.newPage();
+    page.setDefaultNavigationTimeout(90000); page.setDefaultTimeout(90000);
+    page.on('pageerror', (e) => record('major', 'seed-persist pageerror', e.message));
+
+    // --- launcher.html: #mp-seed (creator + advanced gate makes it visible) ---
+    const launcherUrl = BASE + '/launcher.html?game=seed-test&role=create&advanced_options=true' +
+        '&name=seeder&ws=' + encodeURIComponent(WS_OVERRIDE || 'ws://localhost:17810');
+    await page.goto(launcherUrl, NAV);
+    await page.waitForLoadState('domcontentloaded');
+    await page.waitForSelector('#mp-seed', { state: 'attached', timeout: 5000 }).catch(() =>
+        record('major', 'seed-persist launcher', '#mp-seed field not present'));
+    // Field should start empty (no stored value yet).
+    const mpInitial = await page.inputValue('#mp-seed').catch(() => null);
+    if (mpInitial) record('minor', 'seed-persist launcher', 'expected empty #mp-seed on first load, got ' + mpInitial);
+    // Type a seed (fire input so the change handler writes localStorage).
+    await page.fill('#mp-seed', '12345');
+    await page.dispatchEvent('#mp-seed', 'input');
+    const mpStored = await page.evaluate(() => { try { return localStorage.getItem('mtg.mpSeed'); } catch (e) { return null; } });
+    if (mpStored !== '12345') record('major', 'seed-persist launcher', 'mtg.mpSeed not written to localStorage, got ' + JSON.stringify(mpStored));
+    // Reload — the seed must be restored.
+    await page.goto(launcherUrl, NAV);
+    await page.waitForLoadState('domcontentloaded');
+    await page.waitForSelector('#mp-seed', { state: 'attached', timeout: 5000 }).catch(() => {});
+    const mpAfter = await page.inputValue('#mp-seed').catch(() => null);
+    console.log('  launcher #mp-seed after reload:', JSON.stringify(mpAfter));
+    if (mpAfter !== '12345') record('major', 'seed-persist launcher', 'seed NOT restored after reload: got ' + JSON.stringify(mpAfter));
+    // Empty/random case: clearing the field must remove the stored key.
+    await page.fill('#mp-seed', '');
+    await page.dispatchEvent('#mp-seed', 'input');
+    const mpCleared = await page.evaluate(() => { try { return localStorage.getItem('mtg.mpSeed'); } catch (e) { return 'ERR'; } });
+    if (mpCleared !== null) record('major', 'seed-persist launcher', 'clearing the field must remove mtg.mpSeed (placeholder semantics), got ' + JSON.stringify(mpCleared));
+
+    // --- solo_launcher.html: #seed (always visible) + Random button ---
+    const soloUrl = BASE + '/solo_launcher.html';
+    await page.goto(soloUrl, NAV);
+    await page.waitForLoadState('domcontentloaded');
+    await page.waitForSelector('#seed', { state: 'attached', timeout: 5000 }).catch(() =>
+        record('major', 'seed-persist solo', '#seed field not present'));
+    await page.fill('#seed', '67890');
+    await page.dispatchEvent('#seed', 'input');
+    const soloStored = await page.evaluate(() => { try { return localStorage.getItem('mtg.rngSeed'); } catch (e) { return null; } });
+    if (soloStored !== '67890') record('major', 'seed-persist solo', 'mtg.rngSeed not written to localStorage, got ' + JSON.stringify(soloStored));
+    await page.goto(soloUrl, NAV);
+    await page.waitForLoadState('domcontentloaded');
+    await page.waitForSelector('#seed', { state: 'attached', timeout: 5000 }).catch(() => {});
+    const soloAfter = await page.inputValue('#seed').catch(() => null);
+    console.log('  solo #seed after reload:', JSON.stringify(soloAfter));
+    if (soloAfter !== '67890') record('major', 'seed-persist solo', 'seed NOT restored after reload: got ' + JSON.stringify(soloAfter));
+    // The Random button must also update the stored value.
+    await page.click('#btn-random-seed');
+    const rolled = await page.inputValue('#seed');
+    const rolledStored = await page.evaluate(() => { try { return localStorage.getItem('mtg.rngSeed'); } catch (e) { return null; } });
+    if (!rolled || rolledStored !== rolled) {
+        record('major', 'seed-persist solo', 'Random button did not persist rolled seed: field=' + JSON.stringify(rolled) + ' stored=' + JSON.stringify(rolledStored));
+    }
+    // Empty case clears the key.
+    await page.fill('#seed', '');
+    await page.dispatchEvent('#seed', 'input');
+    const soloCleared = await page.evaluate(() => { try { return localStorage.getItem('mtg.rngSeed'); } catch (e) { return 'ERR'; } });
+    if (soloCleared !== null) record('major', 'seed-persist solo', 'clearing the field must remove mtg.rngSeed (placeholder semantics), got ' + JSON.stringify(soloCleared));
+
+    console.log('  seed-persistence: launcher + solo round-trip + empty/random cases checked');
+    await ctx.close();
+    await browser.close();
+}
+
 async function scenarioAccessibility() {
     console.log('\n=== Scenario: accessibility / form labels ===');
     const browser = await chromium.launch();
@@ -880,6 +957,7 @@ async function startSelfManagedServers() {
         await scenarioGameListFilterAndPager();
         await scenarioNativeGuiLaunch();
         await scenarioWaitingRoomAndParamContract();
+        await scenarioSeedPersistence();
         await scenarioAccessibility();
     } catch (e) {
         console.error('UNCAUGHT', e);

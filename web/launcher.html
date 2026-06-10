@@ -908,6 +908,29 @@ import { buildRedirectQuery, IMAGE_SOURCE_IDS, forwardStickyParamsOnAnchor, forw
     if (advancedSeedField && isCreator && advancedOptions) {
         advancedSeedField.style.display = '';
     }
+    // Persist the RNG-seed value across navigation. A seed the creator
+    // deliberately typed is a durable preference (like the deck/renderer prefs
+    // above), so it lives in localStorage under a clear namespaced key —
+    // survives a tab close, unlike the session-scoped advanced-options gate.
+    // Empty/blank clears the key so the "(server default)" placeholder behavior
+    // is preserved. localStorage can throw in private mode, so guard every
+    // access (matching the SETTINGS_KEY / sessionStorage helpers above).
+    const MP_SEED_KEY = 'mtg.mpSeed';
+    const mpSeedInput = document.getElementById('mp-seed');
+    if (mpSeedInput) {
+        function saveMpSeed() {
+            const v = mpSeedInput.value.trim();
+            try {
+                if (v) localStorage.setItem(MP_SEED_KEY, v);
+                else localStorage.removeItem(MP_SEED_KEY);
+            } catch (e) { /* ignore */ }
+        }
+        let storedSeed = null;
+        try { storedSeed = localStorage.getItem(MP_SEED_KEY); } catch (e) { /* ignore */ }
+        if (storedSeed) mpSeedInput.value = storedSeed;
+        mpSeedInput.addEventListener('input', saveMpSeed);
+        mpSeedInput.addEventListener('change', saveMpSeed);
+    }
     const gameName = qs.get('game') || '';
     const playerName = qs.get('name') || '';
     const lobbyWsUrl = qs.get('ws') || window.MTG_WS_URL;

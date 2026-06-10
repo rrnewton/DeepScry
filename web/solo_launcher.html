@@ -472,9 +472,30 @@ import { IMAGE_SOURCE_IDS, forwardStickyParams, forwardStickyParamsOnAnchor } fr
     showImagesCb.addEventListener('change', refreshImageSourceUI);
 
     // ==================== SEED ====================
+    // Persist the RNG-seed value across navigation. A seed the user deliberately
+    // typed (or rolled via Random) is a durable preference, so it lives in
+    // localStorage under a clear namespaced key — survives a tab close. An
+    // empty/blank field clears the key so the "(random)" placeholder behavior is
+    // preserved. localStorage can throw in private mode, so guard every access
+    // (matching the sessionStorage / custom-decks helpers above).
+    const SEED_KEY = 'mtg.rngSeed';
+    function saveSeed() {
+        const v = seedInput.value.trim();
+        try {
+            if (v) localStorage.setItem(SEED_KEY, v);
+            else localStorage.removeItem(SEED_KEY);
+        } catch (e) { /* ignore */ }
+    }
+    let storedSeed = null;
+    try { storedSeed = localStorage.getItem(SEED_KEY); } catch (e) { /* ignore */ }
+    if (storedSeed) seedInput.value = storedSeed;
+    seedInput.addEventListener('input', saveSeed);
+    seedInput.addEventListener('change', saveSeed);
+
     document.getElementById('btn-random-seed').addEventListener('click', () => {
         // A reasonable u32-ish seed; the engine accepts any u64.
         seedInput.value = String(Math.floor(Math.random() * 0xFFFFFFFF));
+        saveSeed();
     });
 
     // ==================== GAME-PAGE NAVIGATION ====================
