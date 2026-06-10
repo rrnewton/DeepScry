@@ -2183,7 +2183,8 @@ impl CardDefinition {
             | DynamicAmount::TargetManaValue
             | DynamicAmount::DamageDealt
             | DynamicAmount::DamageDealtCappedByTarget { .. }
-            | DynamicAmount::Count(_)) => dynamic,
+            | DynamicAmount::Count(_)
+            | DynamicAmount::SacrificedToughness) => dynamic,
         };
 
         // Resolve the recipient placeholder from the Defined$ selector. The

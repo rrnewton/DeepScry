@@ -198,6 +198,18 @@ pub enum DynamicAmount {
     /// (network determinism). The result is clamped to >= 0 by the resolver
     /// (CR 119.4 — a player cannot gain negative life).
     Count(CountExpression),
+
+    /// The toughness of the creature sacrificed to pay this ability's cost,
+    /// captured via last-known information (CR 608.2g — the creature has already
+    /// left the battlefield by the time the ability resolves). Used by Diamond
+    /// Valley (`{T}, Sacrifice a creature: You gain life equal to the sacrificed
+    /// creature's toughness`), whose `LifeAmount$ X` references
+    /// `SVar:X:Sacrificed$CardToughness`. The `reference` card on the owning
+    /// `GainLifeDynamic` is filled at resolution time from the sacrificed
+    /// permanent recorded during cost payment; reading its retained (LKI)
+    /// toughness is public information, so it is information-independent
+    /// (network determinism). Clamped to >= 0.
+    SacrificedToughness,
 }
 
 impl DynamicAmount {
@@ -225,6 +237,11 @@ impl DynamicAmount {
         match (selector.trim(), characteristic.trim()) {
             ("Targeted", "CardPower") => Some(DynamicAmount::TargetPower),
             ("Targeted", "CardManaCost") => Some(DynamicAmount::TargetManaValue),
+            // Diamond Valley: SVar:X:Sacrificed$CardToughness — gain life equal
+            // to the toughness of the creature sacrificed to pay the cost. The
+            // sacrificed creature is recorded during cost payment and read via
+            // last-known information at resolution (CR 608.2g).
+            ("Sacrificed", "CardToughness") => Some(DynamicAmount::SacrificedToughness),
             // Spirit Link: SVar:X:TriggerCount$DamageAmount — the amount of
             // damage the trigger event just reported.
             ("TriggerCount", "DamageAmount") => Some(DynamicAmount::DamageDealt),

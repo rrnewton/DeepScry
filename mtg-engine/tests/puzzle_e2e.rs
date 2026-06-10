@@ -4,7 +4,10 @@
 //! that controllers make expected decisions and actions.
 
 use mtg_engine::{
-    game::{zero_controller::ZeroController, FixedScriptController, GameLoop, HeuristicController, VerbosityLevel},
+    game::{
+        zero_controller::ZeroController, FixedScriptController, GameLoop, HeuristicController, RichInputController,
+        VerbosityLevel,
+    },
     loader::{require_cardsfolder, AsyncCardDatabase as CardDatabase},
     puzzle::{loader::load_puzzle_into_game, PuzzleFile},
     Result,
@@ -6379,5 +6382,81 @@ async fn test_aladdin_gaincontrol_artifact() -> Result<()> {
     );
 
     println!("✓ Aladdin gains control of an artifact while it controls Aladdin; reverts when Aladdin leaves (1994 champ compat)");
+    Ok(())
+}
+
+/// 1994 World Championship compat (mtg-713 B10): Diamond Valley's
+/// `{T}, Sacrifice a creature: You gain life equal to the sacrificed creature's
+/// toughness` (`A:AB$ GainLife | Cost$ T Sac<1/Creature> | LifeAmount$ X` /
+/// `SVar:X:Sacrificed$CardToughness`).
+///
+/// Pre-fix bug: the GainLife converter only accepted an integer `LifeAmount$`,
+/// so the dynamic `X` -> `Sacrificed$CardToughness` returned None and the whole
+/// activated ability was silently dropped (never offered, no life gained).
+///
+/// Fix routes the dynamic GainLife through `Effect::GainLifeDynamic
+/// (SacrificedToughness)`; the sacrificed creature is recorded during cost
+/// payment and its toughness read via last-known information at resolution
+/// (CR 608.2g / 119.3). P0 controls a Hill Giant (3/3); activating Diamond
+/// Valley sacrifices it and gains P0 exactly 3 life (20 -> 23).
+#[tokio::test]
+async fn test_diamond_valley_sacrifice_lifegain() -> Result<()> {
+    let cardsfolder = require_cardsfolder();
+    let card_db = CardDatabase::new(cardsfolder);
+
+    let puzzle_path = PathBuf::from("../test_puzzles/diamond_valley_sacrifice_lifegain.pzl");
+    let puzzle_contents = std::fs::read_to_string(&puzzle_path)?;
+    let puzzle = PuzzleFile::parse(&puzzle_contents)?;
+    let mut game = load_puzzle_into_game(&puzzle, &card_db).await?;
+
+    let p0_id = game.players[0].id;
+    let p1_id = game.players[1].id;
+
+    let p0_life_before = game.players[0].life;
+    assert_eq!(p0_life_before, 20, "P0 should start at 20 life");
+
+    // Hill Giant (3/3) is on P0's battlefield as sacrifice fodder.
+    let hill_giant_id = game
+        .battlefield
+        .cards
+        .iter()
+        .filter_map(|&id| game.cards.try_get(id).map(|c| (id, c)))
+        .find(|(_, c)| c.name.as_str() == "Hill Giant")
+        .map(|(id, _)| id)
+        .expect("Hill Giant should be on P0's battlefield");
+    assert_eq!(
+        game.cards.get(hill_giant_id)?.current_toughness(),
+        3,
+        "Hill Giant should be a 3/3"
+    );
+
+    // P0 activates Diamond Valley (sacrificing the Hill Giant), then passes.
+    let mut controller0 = RichInputController::new(
+        p0_id,
+        vec![
+            "activate diamond valley".to_string(),
+            "pass".to_string(),
+            "pass".to_string(),
+        ],
+    );
+    let mut controller1 = HeuristicController::new(p1_id);
+
+    let mut game_loop = GameLoop::new(&mut game).with_verbosity(VerbosityLevel::Normal);
+    game_loop.run_turns(&mut controller0, &mut controller1, 1)?;
+
+    // The authoritative check is the life total (the log strings carry ANSI
+    // color codes, so we assert on state, not formatted strings). P0 ended at
+    // 23 life (20 + Hill Giant's toughness 3) and the Hill Giant left play.
+    assert_eq!(
+        game_loop.game.players[0].life, 23,
+        "P0 should be at 23 life (20 + Hill Giant's toughness 3) from Diamond Valley's sacrifice-lifegain"
+    );
+    let hill_giant_on_bf = game_loop.game.battlefield.cards.contains(&hill_giant_id);
+    assert!(
+        !hill_giant_on_bf,
+        "Hill Giant should have been sacrificed off the battlefield"
+    );
+
+    println!("✓ Diamond Valley: sacrifice a 3/3, gain 3 life (1994 champ compat, mtg-713 B10)");
     Ok(())
 }

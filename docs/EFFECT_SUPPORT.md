@@ -122,6 +122,18 @@ workflow, row format, and update rules.
     while controlling a Swamp) are counted before the exile/destroy strips
     them. Info-independent / deterministic (public state only). `DamageDealt`
     (Drain Life) is enum-reserved but NOT yet wired — see the Drain Life row.
+| AB$ GainLife Cost$ T Sac<1/Creature> LifeAmount$ X (X = Sacrificed$CardToughness; activated sacrifice-lifegain) | WORKING | 2026-06-10_#3151(f5bf81eb) | (fixed mtg-713 B10) | Diamond Valley |
+  - 2026-06-10_#3151(f5bf81eb): BROKEN→WORKING. The GainLife converter only
+    accepted an integer `LifeAmount$`, so `LifeAmount$ X` → `Sacrificed$CardToughness`
+    returned None and the whole ACTIVATED ability was silently dropped (never
+    offered). Added `DynamicAmount::SacrificedToughness` + parse of
+    `Sacrificed$CardToughness`; `params_to_effect_with_svars` now routes a
+    non-fixed activated-GainLife through `Effect::GainLifeDynamic`. The creature
+    sacrificed to pay the cost is recorded in `SubActionScratch::sacrificed_for_cost`
+    during cost payment and read via last-known information at resolution
+    (CR 608.2g / 119.3); activated abilities resolve immediately (no choice
+    boundary), so the scratch is provably None at every serialize boundary
+    (rewind-safe). Public state only → info-independent / deterministic.
 | DB$ GainLife LifeAmount$ <SVar with Count$TotalDamageDoneByThisTurn + LimitMax cap> (damage-dealt drain) | BROKEN | 2026-05-30_#2489(1db3e6c7) | mtg-501 | Drain Life |
 | S:Mode$ CantBlockBy ValidBlocker$ Creature.Self (this creature can't block X) | WORKING | 2026-05-31_#2549(221c7867) | (fixed mtg-512) | Ironclaw Orcs |
 | SP$ ChangeZoneAll Origin$ Hand,Graveyard (multi-origin / Hand origin) + Shuffle$ True | WORKING | 2026-05-30_#2533(b052ce01) | (fixed mtg-552) | Timetwister |

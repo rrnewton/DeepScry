@@ -382,6 +382,22 @@ pub struct SubActionScratch {
     /// change; it is grouped here only because it shares the
     /// `#[serde(skip)]`-on-GameState smell.
     pub pending_library_reorders: std::cell::RefCell<Vec<(PlayerId, u64)>>,
+
+    /// The permanent most recently sacrificed to pay an activated-ability cost
+    /// (`Cost$ Sac<N/Type>`), recorded during cost payment and consumed by the
+    /// SAME ability's effects, then cleared.
+    ///
+    /// Used by `Sacrificed$CardToughness`-style dynamic amounts (Diamond Valley:
+    /// "gain life equal to the sacrificed creature's toughness"). Activated
+    /// abilities resolve IMMEDIATELY (cost payment is directly followed by the
+    /// effect loop with no choice/priority boundary in between — see
+    /// `priority.rs`, TODO mtg-70), so this scratch is provably `None` at every
+    /// serialize / choice / game-loop boundary, exactly like
+    /// `current_damage_source`. It carries NO rewind obligation: on rewind+replay
+    /// the same sacrifice re-runs and re-populates it identically.
+    ///
+    /// Not serialized — transient per-sub-action resolution scratch.
+    pub sacrificed_for_cost: Option<CardId>,
 }
 
 impl GameState {

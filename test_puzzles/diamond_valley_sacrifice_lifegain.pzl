@@ -1,0 +1,24 @@
+[metadata]
+Name:Diamond Valley Sacrifice Lifegain Repro
+Goal:Win
+Turns:3
+Difficulty:Easy
+Description:P0 controls Diamond Valley and a Hill Giant (3/3). Activating Diamond Valley ({T}, Sacrifice a creature) should sacrifice the Hill Giant and gain P0 life equal to its toughness (3): 20 -> 23.
+
+[state]
+turn=2
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=
+p0library=Forest; Forest; Forest; Forest; Forest
+p0graveyard=
+p0battlefield=Diamond Valley; Hill Giant
+p0exile=
+
+p1life=20
+p1hand=
+p1library=Island; Island; Island; Island; Island
+p1graveyard=
+p1battlefield=
+p1exile=

@@ -10423,6 +10423,17 @@ impl GameState {
             // cannot gain negative life (CR 119.4), e.g. an empty hand under
             // Ivory Tower yields 0, not -4.
             DynamicAmount::Count(expr) => self.evaluate_count_expression(expr, player).unwrap_or(0).max(0),
+            // Diamond Valley: the toughness of the creature sacrificed to pay the
+            // cost. The creature has already left the battlefield by resolution,
+            // so we read its retained (last-known) toughness from the entity store
+            // (CR 608.2g). Only public characteristics are read, so the result is
+            // identical on server and every client/WASM shadow. Clamp >= 0 (a
+            // creature with negative toughness gives 0 life, CR 119.4).
+            DynamicAmount::SacrificedToughness => self
+                .cards
+                .try_get(reference)
+                .map(|c| i32::from(c.current_toughness()).max(0))
+                .unwrap_or(0),
         }
     }
 

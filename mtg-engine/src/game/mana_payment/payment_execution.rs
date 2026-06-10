@@ -930,6 +930,21 @@ impl GameState {
                     )));
                 }
 
+                // Record the LAST sacrificed permanent so an immediately-following
+                // dynamic effect can read its last-known characteristics (Diamond
+                // Valley: gain life = sacrificed creature's toughness, CR 608.2g).
+                // Set BEFORE the zone move so the card's data is still its
+                // battlefield state; reading is LKI either way. Cleared after the
+                // ability's effects run (priority.rs). Provably None at every
+                // serialize boundary — see SubActionScratch::sacrificed_for_cost.
+                // The last of the `count` permanents we are about to sacrifice
+                // (index count-1; `to_sacrifice` holds at least `count` entries
+                // per the check above). For the single-creature case (Diamond
+                // Valley) this is exactly the sacrificed creature.
+                if let Some(last) = to_sacrifice.get((*count as usize).saturating_sub(1)) {
+                    self.sub_action_scratch.sacrificed_for_cost = Some(*last);
+                }
+
                 // Sacrifice the permanents (move to graveyard or exile if finality) and check triggers
                 for sac_id in to_sacrifice.iter().take(*count as usize) {
                     let owner = self.cards.get(*sac_id)?.owner;

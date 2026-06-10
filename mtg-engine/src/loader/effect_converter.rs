@@ -2141,6 +2141,34 @@ pub fn params_to_effect_with_svars(params: &AbilityParams, svars: &HashMap<Strin
         }
     }
 
+    // GainLife with a non-fixed `LifeAmount$` (a variable resolved through the
+    // card's SVars) must route through GainLifeDynamic — `params_to_effect`
+    // can't resolve the SVar and would drop the whole effect (get_i32 fails on
+    // "X"), silently dropping the ability. This covers the ACTIVATED-ability
+    // path (the trigger path is handled by gain_life_dynamic_from_params in
+    // card.rs). Diamond Valley: `LifeAmount$ X` / `SVar:X:Sacrificed$CardToughness`
+    // -> GainLifeDynamic(SacrificedToughness); the recipient (`Defined$ You` /
+    // absent) is the controller (placeholder, filled at resolution) and the
+    // referenced card (the sacrificed creature) is also a placeholder, filled
+    // from the cost-payment scratch at resolution time.
+    if params.api_type == ApiType::GainLife {
+        if let Some(life_amount) = params.get("LifeAmount") {
+            if let Some(amount) = crate::core::DynamicAmount::parse(life_amount, svars) {
+                if !matches!(amount, crate::core::DynamicAmount::Fixed(_)) {
+                    let player = match params.get("Defined") {
+                        Some("TargetedController") => crate::core::PlayerId::target_controller(),
+                        _ => crate::core::PlayerId::placeholder(),
+                    };
+                    return Some(Effect::GainLifeDynamic {
+                        player,
+                        amount,
+                        reference: CardId::placeholder(),
+                    });
+                }
+            }
+        }
+    }
+
     // For all other types, delegate to the base function
     params_to_effect(params)
 }

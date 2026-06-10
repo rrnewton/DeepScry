@@ -3083,6 +3083,64 @@ mod tests {
     ///   S:Mode$ MustAttack | ValidCreature$ Card.Self  (attacks each combat if able)
     ///   S:Mode$ CantBlockBy | ValidAttacker$ Creature.Self | ValidBlocker$ Creature.Wall
     ///
+    /// Card compat: Diamond Valley (cardsfolder/d/diamond_valley.txt)
+    ///
+    /// Script:
+    ///   Types:Land
+    ///   A:AB$ GainLife | Cost$ T Sac<1/Creature> | LifeAmount$ X
+    ///   SVar:X:Sacrificed$CardToughness
+    ///
+    /// Verifies the activated ability survives loading with a dynamic
+    /// `GainLifeDynamic(SacrificedToughness)` effect (it gains life equal to the
+    /// sacrificed creature's toughness, CR 119.3 / 608.2g last-known information).
+    /// Pre-fix bug (mtg-713 B10): the GainLife converter only accepted an integer
+    /// `LifeAmount$`, so `LifeAmount$ X` -> `Sacrificed$CardToughness` returned
+    /// None and the whole activated ability was dropped (never offered).
+    #[test]
+    fn test_card_compat_diamond_valley() {
+        use crate::core::{DynamicAmount, Effect};
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("../cardsfolder/d/diamond_valley.txt");
+        if !path.exists() {
+            eprintln!("Skipping: cardsfolder not present at {:?}", path);
+            return;
+        }
+        let def = crate::loader::CardLoader::load_from_file(&path).expect("Diamond Valley should load");
+
+        assert_eq!(def.name.as_str(), "Diamond Valley");
+        assert!(def.types.contains(&CardType::Land));
+
+        let card = def.instantiate(CardId::new(1), PlayerId::new(0));
+        let gainlife = card
+            .activated_abilities
+            .iter()
+            .find(|ab| {
+                ab.effects.iter().any(|e| {
+                    matches!(
+                        e,
+                        Effect::GainLifeDynamic {
+                            amount: DynamicAmount::SacrificedToughness,
+                            ..
+                        }
+                    )
+                })
+            })
+            .unwrap_or_else(|| {
+                panic!(
+                    "Diamond Valley must have an activated ability with \
+                     GainLifeDynamic(SacrificedToughness). Abilities: {:?}",
+                    card.activated_abilities
+                )
+            });
+        // And the cost must be {T} + Sacrifice a creature.
+        assert!(
+            matches!(&gainlife.cost, crate::core::Cost::Composite(_)),
+            "Diamond Valley's cost should be composite (Tap + Sacrifice). Cost: {:?}",
+            gainlife.cost
+        );
+    }
+
     /// Verifies the `S:Mode$ MustAttack | ValidCreature$ Card.Self` self-static
     /// surfaces as Keyword::MustAttack on the instantiated card (CR 508.1a). The
     /// declare-attackers enforcement that consumes this keyword is exercised

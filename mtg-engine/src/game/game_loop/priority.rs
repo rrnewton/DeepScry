@@ -1543,6 +1543,38 @@ impl<'a> GameLoop<'a> {
                                                     count: *count,
                                                 }
                                             }
+                                            // Dynamic life gain from an activated ability (Diamond
+                                            // Valley: gain life = sacrificed creature's toughness).
+                                            // The recipient placeholder => the ability's controller;
+                                            // the SacrificedToughness reference => the creature just
+                                            // sacrificed to pay the cost (recorded in
+                                            // sub_action_scratch during cost payment, CR 608.2g LKI).
+                                            crate::core::Effect::GainLifeDynamic {
+                                                player,
+                                                amount,
+                                                reference,
+                                            } => {
+                                                let resolved_player = if player.is_placeholder() {
+                                                    current_priority
+                                                } else {
+                                                    *player
+                                                };
+                                                let resolved_reference = if reference.is_placeholder()
+                                                    && matches!(amount, crate::core::DynamicAmount::SacrificedToughness)
+                                                {
+                                                    self.game
+                                                        .sub_action_scratch
+                                                        .sacrificed_for_cost
+                                                        .unwrap_or(*reference)
+                                                } else {
+                                                    *reference
+                                                };
+                                                crate::core::Effect::GainLifeDynamic {
+                                                    player: resolved_player,
+                                                    amount: amount.clone(),
+                                                    reference: resolved_reference,
+                                                }
+                                            }
                                             // Circle of Protection: resolve the protected player to
                                             // the ability's controller and the chosen source to the
                                             // selected red (etc.) permanent/spell. (CR 615.1)
@@ -2274,6 +2306,11 @@ impl<'a> GameLoop<'a> {
                                             }
                                         }
                                     }
+
+                                    // Clear the cost-payment sacrifice scratch now that this
+                                    // ability's effects have run. Keeps it provably None at
+                                    // every choice / serialize boundary (Diamond Valley).
+                                    self.game.sub_action_scratch.sacrificed_for_cost = None;
 
                                     // Mark exhaust ability as exhausted (can only be activated once per game)
                                     if ability.exhaust {
