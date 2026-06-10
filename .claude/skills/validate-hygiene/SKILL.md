@@ -82,7 +82,23 @@ network-game spew, machine at ~22% of one core).
    Rust work, instead of trailing after it while cores idle. Break up long
    sequential phases; run independent browser tests concurrently; minimise the
    unavoidable start/end fork-join where few cores are busy. The `-j` width
-   should track core count, not a hardcoded 4.
+   should track core count, not a hardcoded 4. Two mechanisms in the scheduler
+   serve this and are the first knobs to reach for when the critical path is a
+   resource-serialized chain:
+   - **`--browser-capacity N`** (default 2) — how many chromium-heavy steps run
+     concurrently. At capacity 1 the ~581s browser e2e chain runs strictly
+     serial and IS the critical path; capacity 2 overlaps it (every networked
+     test uses RANDOM ports, so concurrent runs don't collide, and the two
+     heaviest fit far inside the outer mem cap). Native determinism comparisons
+     are on the separate, still-serial `net` resource (load-stable by design —
+     mtg-586/589), NOT `browser`.
+   - **`STEP_DURATION_HINT` + LPT dispatch** — when a capacity-limited resource
+     frees, the scheduler dispatches the LONGEST ready contended step first
+     (longest-processing-time-first makespan heuristic), so the big poles
+     (multideck/wasm.browser/gui) claim the resource early and never sit exposed
+     on the tail. Hints are advisory typical-second durations; refresh them from
+     a recent run's `✓ PASS (Ns)` lines when they drift, but they affect only
+     dispatch ORDER, never correctness.
 
 6. **Verbose mode is opt-in, terse is default.** `VALIDATE_VERBOSE=1` streams
    tagged detail live; `VALIDATE_VERBOSE_DIR=<dir>` persists every step's detail
@@ -197,3 +213,54 @@ forbidden (e.g. a locked-down corp box):
   coverage`, so a flagged run is never mistaken for a complete one. `make
   validate ARGS=…` forwards straight to `scripts/validate.py`'s argparse, so any
   orchestrator flag is reachable from the standard entry point.
+
+## Memory-aware launch: the GREEDY local protocol (concurrent validates)
+
+`make validate` is **memory-capped by default** (a two-level cgroup: an outer
+scope `MemoryMax` + per-step inner caps, `swap=0`, so a runaway is OOM-killed at
+its cap instead of wedging the box — mtg-5jn7z). The baselines are constants in
+`scripts/validate.py` (`VALIDATE_TOTAL_RSS_BASELINE_BYTES`,
+`PER_STEP_RSS_BASELINE`, `MEM_CAP_FACTOR`) — the single source of truth.
+
+When several agents/worktrees run validates at once, each makes a **greedy,
+independent decision at launch** — no central coordinator needed:
+
+1. **Read available memory** (`MemAvailable` in `/proc/meminfo`) and ask the
+   model how much a run would need:
+   ```sh
+   make validate ARGS=--query-mem-footprint    # prints footprint per -j + a
+                                                # greedy recommendation for THIS host
+   ```
+   The query is read-only (does NOT run validate). It reports the outer cap, the
+   per-step caps, the worst-case footprint at each `-jN`
+   (`-j1` = largest single step cap; `-jN` = min(sum of N largest caps, outer
+   cap)), and which budget picks which `-j`.
+2. **Decide:**
+   - **available ≫ outer cap** → run **full `-j`** (no flag): plenty of headroom.
+   - **available tight** → pass **`--max-mem ≈ available×0.8`**; `-j` is then
+     derived BACKWARDS from the per-step dict to the largest that fits
+     (`make validate ARGS="--max-mem 18G"` → e.g. `-j2`, printed). This lets your
+     run coexist with others instead of OOM-thrashing.
+   - **not even `-j1`'s footprint fits** (the query/`--max-mem` prints
+     `⚠ even -j1 … won't fit`) → **WAIT** for running validates to finish; do
+     NOT launch (a forced `-j1` may OOM-kill its largest step).
+3. This is greedy and independently runnable — every subagent does it locally.
+
+**Fallback (air-traffic-control), if greedy proves troublesome:** the
+coordinator can switch to gated mode — subagents message a *validate intent*
+(worktree + desired footprint) and WAIT for an approved mem-limit / concurrency
+slot before launching. Use this only if greedy contention becomes a problem;
+greedy-local is the default.
+
+## ALWAYS report UNCONTENDED sequential + parallel wall-clock
+
+When you report validate **performance** work, always give BOTH numbers measured
+on a **quiet box** (no other validate running — wait for a clear window):
+
+- **Sequential** (`make validate ARGS="--sequential"`, i.e. `-j1`) — the
+  serial-sum lower bound.
+- **Parallel** (`make validate`, full `-jN`) — the real wall-clock.
+
+A contended number (box shared with other slots' validates) is NOT a benchmark —
+note it as contended if that's all you have, but the headline figure must be the
+uncontended seq + parallel pair so the parallel speedup is meaningful.

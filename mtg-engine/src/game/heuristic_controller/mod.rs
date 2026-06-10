@@ -658,20 +658,6 @@ impl PlayerController for HeuristicController {
             })
             .collect();
 
-        // DEBUG: Log evaluations before sorting to detect divergence
-        if blocker_list.len() > 1 {
-            let attacker_name = view.get_card(attacker).map(|c| c.name.as_str()).unwrap_or("?");
-            eprintln!(
-                "[DEBUG-DAMAGE-ORDER] Player {:?} choosing damage order for {} attacking: {:?}",
-                self.player_id,
-                attacker_name,
-                blocker_list
-                    .iter()
-                    .map(|(id, eval, tough, name)| format!("{} id={:?} eval={} tough={}", name, id, eval, tough))
-                    .collect::<Vec<_>>()
-            );
-        }
-
         // Sort by evaluation (descending - best creatures first)
         blocker_list.sort_by(|a, b| b.1.cmp(&a.1));
 
