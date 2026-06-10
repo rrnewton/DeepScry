@@ -1,0 +1,15 @@
+[metadata]
+Name:Paralyze stays tapped when controller cannot pay 4
+Turns:6
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Paralyze
+p0battlefield=Swamp
+p0library=Swamp; Swamp; Swamp; Swamp; Swamp; Swamp; Swamp; Swamp; Swamp; Swamp
+
+p1life=20
+p1battlefield=Grizzly Bears; Forest
+p1library=Forest; Forest; Forest; Forest; Forest; Forest; Forest; Forest; Forest; Forest

@@ -8276,6 +8276,15 @@ impl GameState {
                     if trigger.chosen_player_turn_only {
                         return card.chosen_player == Some(active_player);
                     }
+                    // ValidPlayer$ Player.EnchantedController (Paralyze): fire only
+                    // on the upkeep of the ENCHANTED permanent's controller. The
+                    // host's controller (not the Aura's) must be the active player.
+                    if trigger.enchanted_controller_turn_only {
+                        return card
+                            .attached_to
+                            .and_then(|host| self.cards.try_get(host))
+                            .is_some_and(|host| host.controller == active_player);
+                    }
                     true
                 })
                 .flat_map(|trigger| trigger.effects.clone())
@@ -8381,6 +8390,40 @@ impl GameState {
                         // No valid land target - skip this trigger
                         continue;
                     }
+                }
+                // Paralyze's optional pay-{4}-to-untap upkeep trigger:
+                // UnlessCostWrapper { UntapPermanent { placeholder }, .. }. The
+                // untap target is the ENCHANTED permanent (Defined$ Enchanted) —
+                // resolve it from the Aura's `attached_to`. The payer
+                // (UnlessPayer$ EnchantedController) is that permanent's
+                // controller. The trigger path does NOT go through
+                // resolve_effect_target (the spell-resolution payer resolver),
+                // so resolve both the target and the payer here.
+                Effect::UnlessCostWrapper {
+                    inner_effect,
+                    unless_cost,
+                } if matches!(
+                    inner_effect.as_ref(),
+                    Effect::UntapPermanent { target } if target.is_placeholder()
+                ) =>
+                {
+                    let Some(host_id) = self.cards.get(card_id)?.attached_to else {
+                        // Aura no longer attached — nothing to untap.
+                        continue;
+                    };
+                    let Some(host_controller) = self.cards.try_get(host_id).map(|h| h.controller) else {
+                        continue;
+                    };
+                    effect = Effect::UnlessCostWrapper {
+                        inner_effect: Box::new(Effect::UntapPermanent { target: host_id }),
+                        unless_cost: crate::core::effects::UnlessCost {
+                            cost: unless_cost.cost.clone(),
+                            // Store the resolved payer as a numeric id string, the
+                            // form the UnlessCostWrapper executor parses.
+                            payer: host_controller.as_u32().to_string(),
+                            switched: unless_cost.switched,
+                        },
+                    };
                 }
                 _ => {}
             }
