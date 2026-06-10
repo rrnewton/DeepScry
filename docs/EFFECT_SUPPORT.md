@@ -234,8 +234,8 @@ workflow, row format, and update rules.
 | Phase trigger spaced phase string "End of Turn" / "End Of Turn" → BeginningOfEndStep (was dropped) | WORKING | 2026-06-10_#3136(ff8e2f51) | (fixed mtg-713 B9) | Whirling Dervish |
 | Phase trigger DB$ PutCounter Defined$ Self (self +1/+1 on a phase trigger) | WORKING | 2026-06-10_#3136(ff8e2f51) | (fixed mtg-713 B9) | Whirling Dervish |
 | IsPresent$ Card.Self+dealtDamageToOppThisTurn (interv.-if: dealt damage to an opponent this turn) | WORKING | 2026-06-10_#3136(ff8e2f51) | (fixed mtg-713 B9) | Whirling Dervish |
-| IsPresent$ Card.untapped/tapped (interv.-if, CR 603.4) | WORKING | 2026-06-10_#3137(ff8e2f51) | (fixed mtg-qkjbe) | Howling Mine |
-| Phase$ Draw trigger + Defined$ TriggeredPlayer draw (each player) | WORKING | 2026-06-10_#3137(ff8e2f51) | (fixed mtg-qkjbe) | Howling Mine |
+| IsPresent$ Card.untapped/tapped (interv.-if, CR 603.4) | WORKING | 2026-06-10_#3137(ff8e2f51) | (fixed mtg-899) | Howling Mine |
+| Phase$ Draw trigger + Defined$ TriggeredPlayer draw (each player) | WORKING | 2026-06-10_#3137(ff8e2f51) | (fixed mtg-899) | Howling Mine |
 | ChangeZone Defined$ Self (non-stack self-move)  | WORKING  | 2026-05-28_#2362(f454dccb) | (none)      | All Hallow's Eve |
 | ConditionDefined$ Self + ConditionPresent$ ctr  | WORKING  | 2026-05-28_#2362(f454dccb) | (none)      | All Hallow's Eve |
 | ChangeZoneAll Graveyard→Battlefield (mass reanim)| WORKING  | 2026-05-28_#2362(f454dccb) | (none)      | All Hallow's Eve |
