@@ -7,10 +7,17 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  # mtg-717 build-once: ONE feature/profile string, referenced by BOTH the
-  # native binary producer AND the nextest-archive producer, so they can never
-  # drift (a nextest archive does NOT re-derive features at run time — a mismatch
-  # would yield binaries the e2e scripts reject). Risk #1 mitigation.
+  # mtg-717 build-once: ONE feature string, referenced by BOTH the native binary
+  # producer AND the nextest-archive producer, so the feature set can never drift
+  # (a nextest archive does NOT re-derive features at run time — a mismatch would
+  # yield binaries the e2e scripts reject). Risk #1 mitigation.
+  #   - BUILD_FLAGS drives the native `mtg` binary (kept on `--release`, whose
+  #     `[profile.release] debug = true` the e2e scripts rely on for backtraces).
+  #   - The nextest-archive job uses the SAME features but the slim `ci-archive`
+  #     cargo profile (release-inherited, line-tables-only debuginfo) so the
+  #     ~37 test binaries don't bloat the archive to ~2.34 GB that every shard
+  #     must download. Same feature set, thinner debuginfo. (mtg-16 / goal d)
+  BUILD_FEATURES: "--features network"
   BUILD_FLAGS: "--release --features network"
 
 # mtg-717: CI is BUILD-ONCE + sharded. Three producer jobs compile the shared
@@ -97,10 +104,16 @@ jobs:
         with:
           save-if: ${{ github.ref == 'refs/heads/integration' || github.ref == 'refs/heads/main' }}
       - uses: taiki-e/install-action@nextest
-      # SAME $BUILD_FLAGS as build-native so the archived test binaries match the
-      # binary + what `cargo nextest run --archive-file` expects (risk #1).
+      # SAME $BUILD_FEATURES as build-native (feature set can't drift — risk #1),
+      # but the slim `ci-archive` cargo profile (release-inherited,
+      # line-tables-only debuginfo) instead of `--release`'s full debuginfo, so
+      # the ~37 archived test binaries don't bloat the archive to ~2.34 GB that
+      # every validate shard downloads. The run shards consume this archive
+      # VERBATIM (cargo nextest run --archive-file, NO rebuild, NO --cargo-profile
+      # on the run side), so there is no profile-name mismatch and the
+      # build-once-test-many contract holds. (mtg-16 / goal d)
       - name: Archive test binaries
-        run: cargo nextest archive ${{ env.BUILD_FLAGS }} --archive-file nextest.tar.zst
+        run: cargo nextest archive --cargo-profile ci-archive ${{ env.BUILD_FEATURES }} --archive-file nextest.tar.zst
       - uses: actions/upload-artifact@v4
         with:
           name: nextest-archive

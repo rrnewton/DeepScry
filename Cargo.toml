@@ -40,6 +40,31 @@ lto = "fat"
 codegen-units = 1
 panic = "abort"
 
+# Slim profile used by the GitHub CI `build-nextest-arch` job (and any local
+# `cargo nextest archive --cargo-profile ci-archive`). Design:
+#   - The default `release` profile intentionally keeps `debug = true` so local
+#     engineers can run flamegraphs / `perf` / `samply`. Across the ~37
+#     integration-test binaries nextest archives, that full-debuginfo bloats the
+#     CI nextest archive to ~2.34 GB, which EVERY validate shard downloads
+#     before testing (~16 GB of transfer across the fan-out). Real CI latency.
+#   - This profile inherits `release` (so optimisation level + codegen match the
+#     `--release` native binary the e2e scripts run) but emits only
+#     line-tables-only debuginfo. That keeps file:line in test backtraces /
+#     panic locations while dropping the heavy variable/type DWARF, cutting the
+#     archive size dramatically. It does NOT touch `[profile.release]`, so
+#     `cargo build --release` and local profiling keep full debug symbols.
+#   - Build-once-test-many is preserved: `cargo nextest archive` embeds the
+#     built binaries + metadata in the archive, and the consuming
+#     `cargo nextest run --archive-file` shards reuse those binaries verbatim
+#     (no rebuild, no `--cargo-profile` on the run side), so there is no
+#     profile-name mismatch between the archive producer and the run shards.
+#   - Cargo profiles cannot enable features, so the CI job passes
+#     `--features network` on the archive invocation explicitly (matching
+#     BUILD_FLAGS' feature set).
+[profile.ci-archive]
+inherits = "release"
+debug = "line-tables-only"
+
 # Workspace-wide lint configuration
 [workspace.lints.clippy]
 # DENY wildcard enum match arms - these can silently fail when new variants are added

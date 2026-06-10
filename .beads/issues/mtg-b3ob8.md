@@ -1,0 +1,29 @@
+---
+title: 'CI: slim nextest archive via ci-archive profile (line-tables-only) — 2.34 GB -> 0.76 GB'
+status: open
+priority: 3
+issue_type: task
+created_at: 2026-06-10T04:07:34.087464456+00:00
+updated_at: 2026-06-10T04:07:34.087464456+00:00
+---
+
+# Description
+
+CI streamlining (mtg-16 / standing goal d): cut the GitHub CI nextest-archive size.
+
+PROBLEM: The `build-nextest-arch` CI job built test binaries with `--release`, and `[profile.release]` deliberately sets `debug = true` (full DWARF symbols, kept so local engineers can run flamegraphs / perf / samply against the same binaries). Across ~37/41 integration-test binaries this bloated the downloadable nextest archive to ~2.34 GB. Every one of the ~7 validate shards downloads that archive before testing (~16 GB of artifact transfer per CI run), a real latency cost.
+
+FIX (no change to local profiling):
+- Added `[profile.ci-archive]` in workspace Cargo.toml: `inherits = "release"`, `debug = "line-tables-only"`. Inherits release's opt-level/codegen so test binaries behave identically; emits only line-table debuginfo (keeps file:line in backtraces / panic locations) while dropping the heavy variable/type DWARF. Does NOT touch `[profile.release]`, so `cargo build --release` and local flamegraphs keep full symbols.
+- Wired `.github/workflows/ci.yml`: split feature flags into `BUILD_FEATURES="--features network"` (shared, prevents feature drift = risk #1) and changed the archive step to `cargo nextest archive --cargo-profile ci-archive ${BUILD_FEATURES} --archive-file nextest.tar.zst`. The native `mtg` binary job stays on `BUILD_FLAGS="--release --features network"` (e2e scripts rely on release backtraces).
+
+BUILD-ONCE-TEST-MANY CONTRACT INTACT: `cargo nextest archive` embeds the built binaries + metadata; the consuming `cargo nextest run --archive-file` shards (Makefile `test:` target, gated on NEXTEST_ARCHIVE) reuse those binaries verbatim with NO rebuild and NO `--cargo-profile` on the run side. So there is no profile-name mismatch between producer and consumer. Verified locally: running tests from the ci-archive showed zero "Compiling" lines and instant execution.
+
+MEASUREMENT (local, slot05, 2026-06-09):
+- release archive   : 2.507 GB (2507105862 B)
+- ci-archive archive: 0.757 GB (757111513 B)  => -69.8% (1.75 GB saved per shard download)
+- per-binary mtg_engine deps: 315 MB -> 99 MB (3.2x)
+- Projected CI transfer: ~17.5 GB -> ~5.3 GB across 7 shards (~12 GB saved/run).
+- Backtraces verified: `.debug_line` present in ci-archive binary; addr2line resolves function + file:line (e.g. .../ast/parse.rs:89).
+
+VALIDATION: full `make validate` green on the branch; artifact cited in the branch commit / report.
