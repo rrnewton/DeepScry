@@ -371,36 +371,21 @@ fn rewind_and_partition(
     our_id: PlayerId,
     client: SharedNetworkClient,
 ) -> (Vec<ReplayChoice>, Vec<ReplayChoice>) {
-    let mut undo_log = std::mem::take(&mut harness.game.undo_log);
-    let rewind = undo_log.rewind_to_turn_start(&mut harness.game);
-    harness.game.undo_log = undo_log;
-
-    // SHADOW UNDO-COMPLETENESS (mtg-610): unwind the reveal-history buffer to
-    // the rewound action_count so any async opponent instance a reveal stamped
-    // past the boundary materialised is removed; the forward replay re-consumes
-    // reveals in lockstep (gated by effective action_count) as it re-advances.
-    let retained_action = harness.game.undo_log.len() as u64;
-    client
-        .borrow_mut()
-        .unwind_state_sync_to(&mut harness.game, retained_action);
-
-    let choice_actions = match rewind {
-        Some((_turn, choice_actions, _rewound, log_size_at_turn)) => {
-            // Truncate game logs to match the rewound state so the replay does
-            // not duplicate log entries generated after the turn started.
-            harness.game.logger.truncate_to(log_size_at_turn);
-            choice_actions
-        }
-        None => {
-            log::warn!("ai_harness REPLAY: rewind_to_turn_start returned None (undo log disabled?)");
-            Vec::new()
-        }
-    };
-
-    // Partition choices by player via the shared helper. `rewind_to_turn_start`
-    // already reverses its collected choices back to FORWARD chronological order
-    // before returning, so the partition preserves replay order.
-    crate::game::replay_controller::partition_choices_by_player(choice_actions, our_id)
+    // The headless harness has no rewind/replay debug verifier, so the
+    // turn-start hook is a no-op; the unwind hook drives the shadow
+    // undo-completeness unwind (mtg-610): any async opponent instance a reveal
+    // stamped past the rewound boundary materialised is removed, and the
+    // forward replay re-consumes reveals in lockstep as it re-advances.
+    // `rewind_to_turn_start` reverses its collected choices back to FORWARD
+    // chronological order, so the partition preserves replay order.
+    crate::game::replay_controller::rewind_partition_truncate(
+        &mut harness.game,
+        our_id,
+        |game, retained_action| {
+            client.borrow_mut().unwind_state_sync_to(game, retained_action);
+        },
+        |_game, _log_size_at_turn| {},
+    )
 }
 
 /// A throwaway controller used to temporarily fill `harness.controller` while

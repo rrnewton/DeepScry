@@ -110,6 +110,73 @@ pub fn partition_choices_by_player(
     (our_choices, opponent_choices)
 }
 
+/// Shared "rewind to turn start" core for every WASM rewind+replay re-entry
+/// driver (the network AI harness `wasm::network::ai_harness`, the human-vs-AI
+/// `fancy_tui` path, and any future unified driver). Previously this exact
+/// sequence — take the undo log, rewind it to the current turn's `ChangeTurn`
+/// boundary, restore it, then truncate the game logger to the rewound size —
+/// was open-coded in each driver, with subtle copy drift between them. DRY'd
+/// here so the rewind skeleton lives in exactly one place.
+///
+/// The two verification-bearing hooks let the `fancy_tui` debug-verifier weave
+/// its pre-/post-rewind snapshot capture into the SAME sequence without that
+/// machinery leaking into the headless harness (which passes no-ops):
+///
+/// - `unwind_reveals(game, retained_action)` runs AFTER the undo-log rewind but
+///   BEFORE the turn-start hash is captured. The network drivers pass a closure
+///   that calls `WasmNetworkClient::unwind_state_sync_to` so any async reveal
+///   that materialised an opponent instance past the rewound `action_count` is
+///   removed (mtg-610 shadow undo-completeness); the local/no-network path
+///   passes a no-op (there is no async reveal stream).
+/// - `on_turn_start(game, log_size_at_turn)` runs AFTER the unwind but BEFORE
+///   the logger truncate (so a verifier can read the post-rewind turn-start
+///   state and the about-to-be-truncated log tail). The headless harness passes
+///   a no-op.
+///
+/// Returns `(our_choices, opponent_choices)` partitioned by player in forward
+/// chronological order, or two empty vecs if the undo log is disabled
+/// (`rewind_to_turn_start` returned `None`).
+pub fn rewind_partition_truncate<U, T>(
+    game: &mut crate::game::GameState,
+    our_id: PlayerId,
+    unwind_reveals: U,
+    on_turn_start: T,
+) -> (Vec<ReplayChoice>, Vec<ReplayChoice>)
+where
+    U: FnOnce(&mut crate::game::GameState, u64),
+    T: FnOnce(&mut crate::game::GameState, usize),
+{
+    let mut undo_log = std::mem::take(&mut game.undo_log);
+    let result = undo_log.rewind_to_turn_start(game);
+    game.undo_log = undo_log;
+
+    // Reveal-history completeness: unwind any async state-sync reveal that
+    // landed past the rewound position (network path) — no-op locally.
+    let retained_action = game.undo_log.len() as u64;
+    unwind_reveals(game, retained_action);
+
+    let (choice_actions, log_size_at_turn) = match result {
+        Some((_turn, choice_actions, _rewound, log_size_at_turn)) => (choice_actions, log_size_at_turn),
+        None => {
+            // Undo log disabled — nothing was rewound and nothing to replay. The
+            // turn-start hook is NOT invoked (there is no valid turn-start state
+            // to snapshot); the caller is responsible for clearing any stashed
+            // pre-capture it set up before the call.
+            return (Vec::new(), Vec::new());
+        }
+    };
+
+    // Verifier hook: observe post-rewind turn-start state + the log tail that is
+    // about to be truncated, BEFORE the truncate destroys it.
+    on_turn_start(game, log_size_at_turn);
+
+    // Truncate the game logs to the rewound state so the forward replay does not
+    // duplicate log entries generated after the turn started.
+    game.logger.truncate_to(log_size_at_turn);
+
+    partition_choices_by_player(choice_actions, our_id)
+}
+
 /// Controller that replays a sequence of choices then delegates to another controller
 ///
 /// This is used for snapshot resume. The replay controller:

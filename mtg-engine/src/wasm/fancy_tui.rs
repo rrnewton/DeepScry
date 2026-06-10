@@ -44,7 +44,6 @@ use super::rich_input_controller::WasmRichInputController;
 use super::{WasmCardDatabase, WasmControllerType};
 use crate::game::replay_controller::ReplayChoice;
 use crate::game::ReplayController;
-use crate::undo::GameAction;
 
 // Network controller imports (conditional on wasm-network feature)
 #[cfg(feature = "wasm-network")]
@@ -1751,101 +1750,87 @@ impl WasmFancyTuiState {
             None
         };
 
-        let mut undo_log = std::mem::take(&mut self.game.undo_log);
-        let result = undo_log.rewind_to_turn_start(&mut self.game);
-        self.game.undo_log = undo_log;
+        // Default to "no pending verification": the turn-start hook overwrites
+        // this when a capture is taken, but if the undo log is disabled the
+        // helper returns early WITHOUT calling the hook, and this cleared default
+        // must stand (matching the legacy early-return behaviour).
+        self.pending_verification = None;
 
-        // SHADOW UNDO-COMPLETENESS (mtg-610): unwind the reveal-history buffer
-        // to the rewound game position. Every async state-sync `RevealCard`
-        // whose bound effective `action_count` is greater than the rewound
-        // action_count had not yet taken effect at the turn boundary, so the
-        // opponent instance it materialised (a non-undo-logged `cards.insert`)
-        // must be removed — otherwise the rewound `cards` set is a function of
-        // which async reveals had arrived by THIS rewind, not of game position,
-        // and the full-state turn-start hash drifts across repeated rewinds.
-        // This runs BEFORE the turn-start hash capture below, so the captured
-        // hash reflects the deterministic (position-keyed) instance set. The
-        // forward replay re-materialises each unwound reveal in lockstep, gated
-        // by its effective `action_count`, as the replay re-advances. Replaces
-        // the older perspective-based `clear_shadow_hidden_hand_leaks` (which
-        // missed async opponent instances that landed in graveyard/battlefield,
-        // e.g. a resolved opponent Counterspell — mtg-610 counterspells gate).
-        let retained_action = self.game.undo_log.len() as u64;
-        #[cfg(feature = "wasm-network")]
-        ensure_client()
-            .borrow_mut()
-            .unwind_state_sync_to(&mut self.game, retained_action);
+        // Split a DISJOINT `&mut` to `pending_verification` so the turn-start
+        // hook can write it without conflicting with the helper's `&mut
+        // self.game` borrow (the two are distinct struct fields).
+        let pending_verification = &mut self.pending_verification;
 
-        let log_len_after = self.game.undo_log.len();
-
-        // rewind_to_turn_start returns None only if undo log is disabled
-        // (which shouldn't happen for WASM TUI, but handle gracefully)
-        let (turn_number, choice_actions, actions_rewound, log_size_at_turn) = match result {
-            Some(r) => r,
-            None => {
-                log::warn!(target: "wasm_tui", "REWIND: Undo log disabled!");
-                // Drop any stashed pre-capture: if rewind didn't happen, there's
-                // nothing to verify. Avoid leaving stale state on `self`.
-                self.pending_verification = None;
-                return (Vec::new(), Vec::new());
-            }
-        };
-
-        // Phase 2 of debug capture: snapshot the log tail that's about to be
-        // truncated, then record the post-rewind turn-start hash. Order matters:
-        // finish_capture must run BEFORE truncate_to (otherwise the tail is
-        // gone), and record_turn_start_hash captures state-at-turn-boundary.
-        // REVEAL-HISTORY COMPLETENESS GATE (mtg-610): only cache/compare the
-        // turn-start full-state hash once the shadow has RECEIVED every reveal
-        // that takes effect at or before this turn boundary. The shadow advances
-        // by replaying its own recorded choices and can race ahead of the
-        // server's in-flight reveal stream; a reveal bundled with a choice at
-        // action_count ≤ R has arrived iff the shadow has received a choice at
-        // action_count ≥ R (reveals precede their choice on the wire). Skipping
-        // the capture when reveals are still in flight prevents a premature,
-        // under-materialised turn-start snapshot from being cached and then
-        // mismatching a later (fully-arrived) rewind to the same turn — the
-        // `cards[id]` PRIOR-null / CURRENT-present drift. Determinism is NOT
-        // weakened: every snapshot that IS compared is taken against the
-        // complete position-R reveal set.
-        // In non-network (local) mode there is no async reveal stream, so the
-        // reveal-history is trivially complete and every rewind may be verified.
-        #[cfg(feature = "wasm-network")]
-        let reveals_complete = ensure_client().borrow().max_received_choice_ac() >= retained_action;
-        #[cfg(not(feature = "wasm-network"))]
-        let reveals_complete = {
-            let _ = retained_action;
-            true
-        };
-        if let (Some(pre), true) = (pre_capture, reveals_complete) {
-            let mut verification = finish_capture(pre, &self.game, log_size_at_turn);
-            record_turn_start_hash_with_snapshot(&mut verification, &self.game);
-            self.pending_verification = Some(verification);
-        } else {
-            self.pending_verification = None;
-        }
-
-        // Truncate game logs to match the rewound state
-        // This removes log entries generated after the turn started, preventing duplicates
-        // when we replay the choices
-        self.game.logger.truncate_to(log_size_at_turn);
-
-        // Count total choices for logging
-        let total_choices = choice_actions
-            .iter()
-            .filter(|a| matches!(a, GameAction::ChoicePoint { choice: Some(_), .. }))
-            .count();
-
-        log::debug!(
-            target: "wasm_tui",
-            "REWIND: Rewound to turn {}, {} actions undone, log now {} actions, {} total choice points",
-            turn_number, actions_rewound, log_len_after, total_choices
+        // The rewind skeleton (take undo log → rewind → restore → unwind reveals
+        // → truncate logger → partition) is DRY'd into the shared
+        // `replay_controller::rewind_partition_truncate`. The two hooks weave the
+        // debug verifier's snapshot capture into the SAME sequence:
+        //
+        //  • unwind hook — SHADOW UNDO-COMPLETENESS (mtg-610): unwind the
+        //    reveal-history buffer to the rewound game position. Every async
+        //    state-sync `RevealCard` whose bound effective `action_count` is
+        //    greater than the rewound action_count had not yet taken effect at
+        //    the turn boundary, so the opponent instance it materialised (a
+        //    non-undo-logged `cards.insert`) must be removed — otherwise the
+        //    rewound `cards` set is a function of which async reveals had arrived
+        //    by THIS rewind, not of game position, and the full-state turn-start
+        //    hash drifts across repeated rewinds. Runs BEFORE the turn-start hash
+        //    capture so the hash reflects the deterministic (position-keyed)
+        //    instance set. The forward replay re-materialises each unwound reveal
+        //    in lockstep, gated by its effective `action_count`. (No-op in
+        //    non-network builds: there is no async reveal stream.)
+        //
+        //  • turn-start hook — Phase 2 of debug capture: snapshot the log tail
+        //    about to be truncated, then record the post-rewind turn-start hash.
+        //    The hook runs AFTER the unwind and BEFORE the truncate, so the tail
+        //    is still present. REVEAL-HISTORY COMPLETENESS GATE (mtg-610): only
+        //    cache/compare the turn-start full-state hash once the shadow has
+        //    RECEIVED every reveal that takes effect at or before this turn
+        //    boundary. The shadow advances by replaying its own recorded choices
+        //    and can race ahead of the server's in-flight reveal stream; a reveal
+        //    bundled with a choice at action_count ≤ R has arrived iff the shadow
+        //    has received a choice at action_count ≥ R (reveals precede their
+        //    choice on the wire). Skipping the capture when reveals are still in
+        //    flight prevents a premature, under-materialised turn-start snapshot
+        //    from being cached and then mismatching a later (fully-arrived)
+        //    rewind to the same turn. Determinism is NOT weakened: every snapshot
+        //    that IS compared is taken against the complete position-R reveal
+        //    set. In non-network (local) mode there is no async reveal stream, so
+        //    the reveal-history is trivially complete and every rewind may be
+        //    verified.
+        // Threaded from the unwind hook to the turn-start hook via a `Cell` so
+        // both closures can capture it by shared reference (the unwind hook runs
+        // first and records the rewound `retained_action`; the turn-start hook
+        // reads it for the reveal-completeness gate).
+        let captured_retained_action = std::cell::Cell::new(0u64);
+        let (our_choices, opponent_choices) = crate::game::replay_controller::rewind_partition_truncate(
+            &mut self.game,
+            our_id,
+            |_game, retained_action| {
+                captured_retained_action.set(retained_action);
+                #[cfg(feature = "wasm-network")]
+                ensure_client()
+                    .borrow_mut()
+                    .unwind_state_sync_to(_game, retained_action);
+            },
+            |game, log_size_at_turn| {
+                #[cfg(feature = "wasm-network")]
+                let reveals_complete =
+                    ensure_client().borrow().max_received_choice_ac() >= captured_retained_action.get();
+                #[cfg(not(feature = "wasm-network"))]
+                let reveals_complete = {
+                    let _ = captured_retained_action.get();
+                    true
+                };
+                if let (Some(pre), true) = (pre_capture, reveals_complete) {
+                    let mut verification = finish_capture(pre, game, log_size_at_turn);
+                    record_turn_start_hash_with_snapshot(&mut verification, game);
+                    *pending_verification = Some(verification);
+                } else {
+                    *pending_verification = None;
+                }
+            },
         );
-
-        // Partition choices by player (our choices vs opponent choices) via the
-        // shared helper — same loop the network AI harness uses (DRY).
-        let (our_choices, opponent_choices) =
-            crate::game::replay_controller::partition_choices_by_player(choice_actions, our_id);
 
         log::debug!(
             target: "wasm_tui",
