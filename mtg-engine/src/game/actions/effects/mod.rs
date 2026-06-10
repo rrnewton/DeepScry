@@ -14,5 +14,7 @@
 //! Families landed so far:
 //! - [`damage`] — DealDamage / DealDamageDivided / EachDamage / DamageAll /
 //!   PreventDamage / PreventDamageFromSource / PreventAllCombatDamageThisTurn.
+//! - [`life`] — GainLife / GainLifeDynamic / LoseLife / SetLife / DrainMana.
 
 mod damage;
+mod life;

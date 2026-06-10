@@ -3569,82 +3569,13 @@ impl GameState {
                 // spell/ability's controller — see mtg-648 / mtg-894.
                 self.execute_discard_effect(effect, None)?;
             }
-            Effect::GainLife { player, amount } => {
-                // Capture log size before life gain
-                let prior_log_size = self.logger.log_count();
-
-                let p = self.get_player_mut(*player)?;
-                let player_name = p.name.clone();
-                p.gain_life(*amount);
-                let new_life = p.life;
-
-                // Emit a gamelog line so reproducers can verify the life gain
-                // (CR 119.3). A zero-life gain still resolved but changed nothing;
-                // skip the line in that case to avoid noisy "gains 0 life" output.
-                if *amount > 0 {
-                    self.logger
-                        .gamelog(&format!("{} gains {} life (life: {})", player_name, amount, new_life));
-                }
-
-                // Log the life gain
-                self.undo_log.log(
-                    crate::undo::GameAction::ModifyLife {
-                        player_id: *player,
-                        delta: *amount,
-                    },
-                    prior_log_size,
-                );
-            }
+            Effect::GainLife { player, amount } => self.execute_gain_life(*player, *amount)?,
             Effect::GainLifeDynamic {
                 player,
                 amount,
                 reference,
-            } => {
-                // Resolve the dynamic amount from public, last-known game state
-                // at resolution time (CR 608.2g). The referenced card may already
-                // have left the battlefield earlier in this resolution (e.g.
-                // Swords exiled the creature) — its retained characteristics in
-                // the entity store are its last-known information.
-                let resolved_amount = self.resolve_dynamic_amount(amount, *reference, *player);
-                let prior_log_size = self.logger.log_count();
-
-                let p = self.get_player_mut(*player)?;
-                let player_name = p.name.clone();
-                p.gain_life(resolved_amount);
-                let new_life = p.life;
-
-                self.logger.gamelog(&format!(
-                    "{} gains {} life (life: {})",
-                    player_name, resolved_amount, new_life
-                ));
-
-                self.undo_log.log(
-                    crate::undo::GameAction::ModifyLife {
-                        player_id: *player,
-                        delta: resolved_amount,
-                    },
-                    prior_log_size,
-                );
-            }
-            Effect::LoseLife { player, amount } => {
-                let prior_log_size = self.logger.log_count();
-
-                let p = self.get_player_mut(*player)?;
-                let player_name = p.name.clone();
-                p.lose_life(*amount);
-                let new_life = p.life;
-
-                self.logger
-                    .gamelog(&format!("{} loses {} life (life: {})", player_name, amount, new_life));
-
-                self.undo_log.log(
-                    crate::undo::GameAction::ModifyLife {
-                        player_id: *player,
-                        delta: -*amount,
-                    },
-                    prior_log_size,
-                );
-            }
+            } => self.execute_gain_life_dynamic(*player, amount, *reference)?,
+            Effect::LoseLife { player, amount } => self.execute_lose_life(*player, *amount)?,
             Effect::DestroyPermanent {
                 target, no_regenerate, ..
             } => {
@@ -4108,21 +4039,7 @@ impl GameState {
                 // Mill cards from library to graveyard
                 self.mill_cards(*player, *count)?;
             }
-            Effect::DrainMana { player } => {
-                // "Lose all unspent mana" (Power Sink). Empty the player's mana
-                // pool. CR 500.4 empties pools automatically at step/phase end;
-                // this rider forces it immediately so the player can't spend the
-                // mana they floated to cast the countered spell.
-                let (player_name, amount) = self
-                    .get_player(*player)
-                    .map(|p| (p.name.to_string(), p.mana_pool.total()))
-                    .unwrap_or_else(|_| (format!("Player {}", player.as_u32()), 0));
-                if let Some(p) = self.players.iter_mut().find(|p| p.id == *player) {
-                    p.empty_mana_pool();
-                }
-                self.logger
-                    .gamelog(&format!("{} loses all unspent mana ({} drained)", player_name, amount));
-            }
+            Effect::DrainMana { player } => self.execute_drain_mana(*player)?,
             Effect::Scry { player, count } => {
                 // Scry — CR 701.18. The "real" controller-dispatched path
                 // lives in `priority.rs` (see resolve_top_spell_with_discard_hook
@@ -5609,19 +5526,7 @@ impl GameState {
                 }
             }
 
-            Effect::SetLife { player, amount } => {
-                // Set a player's life total to a specific amount
-                // CR 119.5: "If an effect sets a player's life total, the player gains or loses
-                // the necessary amount of life"
-                let p = self.get_player_mut(*player)?;
-                let player_name = p.name.clone();
-                let old_life = p.life;
-                p.life = *amount;
-                self.logger.gamelog(&format!(
-                    "{}'s life total is set to {} (was {})",
-                    player_name, amount, old_life
-                ));
-            }
+            Effect::SetLife { player, amount } => self.execute_set_life(*player, *amount)?,
 
             Effect::CreateDelayedTrigger {
                 tracked_card,
