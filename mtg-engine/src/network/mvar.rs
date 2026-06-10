@@ -20,9 +20,17 @@
 //!       │                                      │
 //!       │ ─── put(ChoiceRequest) ──────────►   │
 //!       │                                      │ ◄─ take() blocks
-//!       │ ─── put(OpponentChoice) ─────────►   │
+//!       │ ─── put(ChoiceRequest) ──────────►   │
 //!       │                                      │ ◄─ take() returns
 //! ```
+//!
+//! NOTE: this MVar carries our OWN `ChoiceRequest` delivery only
+//! (`local_choice_mvar`). The OPPONENT's choices do NOT flow through an MVar —
+//! they ride an append-only `ActionLog<ChoiceEntry>` cursor buffer
+//! (`push_opponent_choice` / `take_opponent_choice`) so a rewind/replay can
+//! reset the cursor and re-hand them in order (the log-as-source-of-truth
+//! model). An earlier revision pushed `OpponentChoice` through this MVar; that
+//! eager path is gone (mtg-786).
 
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};

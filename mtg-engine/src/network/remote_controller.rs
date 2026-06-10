@@ -2,14 +2,19 @@
 //!
 //! This controller represents the opponent from the client's perspective.
 //!
-//! ## Architecture (MVar Design)
+//! ## Architecture (opponent-choice cursor buffer)
 //!
-//! With the MVar architecture:
-//! - Returns `ControllerType::Remote` to identify this as a remote player
-//! - Reads OpponentChoice from SharedNetworkState
+//! - Returns `ControllerType::Remote` to identify this as a remote player.
+//! - Replays the opponent's decisions from an append-only
+//!   `ActionLog<ChoiceEntry>` cursor buffer in `SharedNetworkState`
+//!   (`take_opponent_choice`), the log-as-source-of-truth model — NOT a
+//!   destructive MVar.
 //!
-//! The network reader task populates the MVar with OpponentChoice,
-//! and this controller reads from it when a choice method is called.
+//! The WS reader appends each opponent choice to that buffer (keyed by the
+//! server's monotonic `choice_seq`) via `push_opponent_choice`; this
+//! controller advances a read cursor over it when a choice method is called.
+//! Because the read is non-destructive, a rewind/replay can reset the cursor
+//! and re-hand the same choices in order.
 
 use crate::core::{CardId, ManaCost, PlayerId, SpellAbility};
 use crate::game::controller::{ChoiceResult, GameStateView, PlayerController};
@@ -33,7 +38,8 @@ struct CachedOpponentChoice {
 /// ## Network Sync Protocol (prepare_for_priority_choice)
 ///
 /// Like NetworkLocalController, this controller implements a two-phase protocol:
-/// 1. prepare_for_priority_choice() blocks on MVar to receive OpponentChoice
+/// 1. prepare_for_priority_choice() blocks on the opponent-choice cursor buffer
+///    (`take_opponent_choice`) to receive the next opponent decision and caches it
 /// 2. GameLoop calls sync_to_action() to process any buffered reveals
 /// 3. Abilities are computed (now correct, includes opponent's drawn cards)
 /// 4. choose_spell_ability_to_play() uses cached choice (doesn't block again)
@@ -60,15 +66,16 @@ impl RemoteController {
         }
     }
 
-    /// Block on MVar to receive OpponentChoice and cache it
+    /// Block on the opponent-choice cursor buffer to receive the next opponent
+    /// decision and cache it.
     ///
     /// Called by GameLoop BEFORE computing abilities. This ensures:
-    /// 1. We've received the OpponentChoice from server
+    /// 1. We've received the opponent's choice from the server (via the buffer)
     /// 2. All CardRevealed messages preceding it are now buffered
     /// 3. GameLoop can call sync_to_action() to process those reveals
     /// 4. Abilities can be computed correctly (including opponent's drawn cards)
     ///
-    /// Returns true if an OpponentChoice was received and cached.
+    /// Returns true if an opponent choice was received and cached.
     /// Returns false if game should exit (GameEnded/Error received).
     fn prepare_choice_info(&mut self) -> bool {
         // Already have cached info? Nothing to do.
@@ -103,7 +110,7 @@ impl RemoteController {
         }
     }
 
-    /// Get opponent's choice from MVar with action count validation
+    /// Get opponent's choice from the opponent-choice buffer with action count validation
     ///
     /// Uses cached value from prepare_choice_info() if available.
     ///
@@ -137,7 +144,7 @@ impl RemoteController {
         }
     }
 
-    /// Get opponent's choice from MVar with full info including library_search_result
+    /// Get opponent's choice from the opponent-choice buffer with full info including library_search_result
     ///
     /// Uses cached value from prepare_choice_info() if available.
     /// This is the underlying implementation that returns all choice info.
@@ -215,7 +222,7 @@ impl PlayerController for RemoteController {
     }
 
     fn prepare_for_priority_choice(&mut self) -> bool {
-        // Block on MVar to receive OpponentChoice, cache it for later
+        // Block on the opponent-choice buffer to receive the opponent's choice, cache it for later
         // This ensures CardRevealed messages are buffered before abilities are computed
         self.prepare_choice_info()
     }
