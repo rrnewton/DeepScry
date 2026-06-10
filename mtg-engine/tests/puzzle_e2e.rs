@@ -2619,7 +2619,7 @@ async fn test_juggernaut_must_attack() -> Result<()> {
 
     println!("P1 life before: {p1_life_before}, after: {p1_life_after}");
 
-    // mtg-jbdgu / mtg-713 B20: Juggernaut's `S:Mode$ MustAttack | ValidCreature$
+    // mtg-897 / mtg-713 B20: Juggernaut's `S:Mode$ MustAttack | ValidCreature$
     // Card.Self` must be ENFORCED (CR 508.1a "attacks each combat if able").
     // Both controllers are ZeroController (which declares NO attackers), so the
     // only way P1 takes damage is the engine force-declaring the must-attack

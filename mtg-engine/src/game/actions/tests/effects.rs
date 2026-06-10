@@ -3074,7 +3074,7 @@ mod tests {
         );
     }
 
-    /// Card compat: Juggernaut (cardsfolder/j/juggernaut.txt) — mtg-jbdgu / mtg-713 B20.
+    /// Card compat: Juggernaut (cardsfolder/j/juggernaut.txt) — mtg-897 / mtg-713 B20.
     ///
     /// Script:
     ///   ManaCost:4
