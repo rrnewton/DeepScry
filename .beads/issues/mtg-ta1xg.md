@@ -1,0 +1,56 @@
+---
+title: Consolidate divergent Valid-card-type-filter implementations into ONE shared filter (DRY + correctness)
+status: open
+priority: 3
+issue_type: task
+created_at: 2026-06-10T23:46:23.056174804+00:00
+updated_at: 2026-06-10T23:46:23.056174804+00:00
+---
+
+# Description
+
+## Problem (DRY violation + correctness hazard)
+
+Several DIVERGENT, hand-rolled string-based card-filter implementations each
+re-implement a subset of MTG's Valid$ / ValidTgts type+subtype matching. They
+disagree on edge cases (a latent correctness bug) and violate the "No Hacky
+String Operations On Structured Data" rule by matching raw strings instead of
+the structured TargetRestriction parser/matcher.
+
+## Inventory (2026-06-10, integration base 939ac4c1)
+
+CANONICAL structured matcher (consolidation target):
+- core/effects.rs TargetRestriction::parse(&str) — full ValidTgts grammar
+  (types, subtypes, controller, color, set-origin, powerGE/LE, cmc,
+  nonToken/nonArtifact/nonCreature/Other/HasCounters).
+- core/effects.rs TargetRestriction::matches(&Card) (+ matches_excluding,
+  matches_with_controller).
+- core/effects.rs TargetType::matches, DigFilter::matches (fold/share).
+
+DIVERGENT duplicates to route through the canonical filter:
+1. game/actions/mod.rs card_matches_type_filter_static — Land/Creature/Artifact/
+   Enchantment, Permanent=>true, else subtype.
+2. game/game_loop/actions.rs card_matches_type_filter — NEAR-IDENTICAL copy of #1.
+3. game/actions/mod.rs card_matches_search_filter — comma-lists, dotted
+   Type.Subtype, single-word disambig, Basic group. (callers in priority.rs)
+4. game/actions/mod.rs card_matches_type — known types, else FALSE.
+5. game/actions/mod.rs card_matches_subtype — subtype + Basic.
+
+## Known divergences (rules-accurate behavior wins)
+
+- Permanent: #1/#2 => true (matches instants/sorceries too); DigFilter::Permanent
+  correctly excludes them. Masked today (battlefield-only calls), wrong in general.
+- #4 returns FALSE for unknown tokens; #1/#2 fall through to subtype check, so
+  "Goblin" matches via #1/#2 but not #4.
+- Qualifiers (.Blue, .powerGE4, setARN, .nonArtifact, .Other) handled ONLY by
+  TargetRestriction; the string copies silently ignore them.
+
+## Plan
+
+One canonical entry point (TargetRestriction::parse + matches_excluding, likely
+a thin card_matches_valid wrapper); route all 5 sites through it. Rules-accurate
+behavior wins on disagreement; flag+rules-justify each intentional change; add a
+focused test per deliberate fix. Prove byte-identical vs the Phase-0 baseline
+(debug/refactor_baseline.sh) for non-bugfix slices.
+
+Related: mtg-376, mtg-877. Sibling to mtg-245; both on claude/refactor-execute-effect.

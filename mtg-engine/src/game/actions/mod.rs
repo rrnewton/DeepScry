@@ -1,5 +1,6 @@
 //! Game actions and mechanics
 
+mod effects;
 mod triggers;
 
 pub use targeting::is_legal_target;
@@ -3502,42 +3503,14 @@ impl GameState {
     /// Returns an error if the effect cannot be executed (e.g., invalid target).
     pub fn execute_effect(&mut self, effect: &Effect) -> Result<()> {
         match effect {
-            Effect::DealDamage { target, amount } => match target {
-                TargetRef::Player(player_id) => {
-                    self.deal_damage(*player_id, *amount)?;
-                }
-                TargetRef::Permanent(card_id) => {
-                    self.deal_damage_to_creature(*card_id, *amount)?;
-                }
-                TargetRef::None => {
-                    // Spell fizzles - no valid target (CR 608.2b)
-                    // This happens when triggered damage effects fire with no valid target
-                    log::debug!("DealDamage fizzles - no target specified");
-                }
-            },
+            Effect::DealDamage { target, amount } => self.execute_deal_damage(target, *amount)?,
 
             // DivideEvenly$ RoundedDown resolved form (Fireball): deal amount_each
             // to every chosen target. The source is set via current_damage_source
             // by the caller (resolve_spell_effects), so this is a single source
             // dealing simultaneous damage to N targets (CR 601.2d / 118.5).
             Effect::DealDamageDivided { targets, amount_each } => {
-                if *amount_each <= 0 {
-                    log::debug!("DealDamageDivided: amount_each={}, no damage dealt", amount_each);
-                } else {
-                    for target in targets {
-                        match target {
-                            TargetRef::Player(player_id) => {
-                                self.deal_damage(*player_id, *amount_each)?;
-                            }
-                            TargetRef::Permanent(card_id) => {
-                                self.deal_damage_to_creature(*card_id, *amount_each)?;
-                            }
-                            TargetRef::None => {
-                                log::debug!("DealDamageDivided: skipping unresolved target");
-                            }
-                        }
-                    }
-                }
+                self.execute_deal_damage_divided(targets, *amount_each)?
             }
 
             // DealDamageDynamic is always resolved into a concrete DealDamage by
@@ -3563,63 +3536,7 @@ impl GameState {
                 receiver,
                 use_card_power,
                 fixed_damage,
-            } => {
-                // Each damager deals damage to the receiver
-                // If receiver is placeholder, the effect wasn't resolved - fizzle
-                if receiver.is_placeholder() {
-                    log::debug!("EachDamage: receiver not resolved, fizzling");
-                    return Ok(());
-                }
-
-                // Check if receiver is still valid
-                if !self.battlefield.contains(*receiver) {
-                    log::debug!("EachDamage: receiver {} no longer on battlefield", receiver.as_u32());
-                    return Ok(());
-                }
-
-                for damager_id in damagers {
-                    // Check if damager is still on battlefield
-                    if !self.battlefield.contains(*damager_id) {
-                        log::debug!(
-                            "EachDamage: damager {} no longer on battlefield, skipping",
-                            damager_id.as_u32()
-                        );
-                        continue;
-                    }
-
-                    // Calculate damage amount
-                    let damage = if *use_card_power {
-                        // Get damager's current power (includes counters and bonuses)
-                        self.cards
-                            .get(*damager_id)
-                            .map(|c| i32::from(c.current_power()))
-                            .unwrap_or(0)
-                    } else {
-                        *fixed_damage
-                    };
-
-                    if damage > 0 {
-                        // Get names for logging
-                        let damager_name = self
-                            .cards
-                            .get(*damager_id)
-                            .map(|c| c.name.to_string())
-                            .unwrap_or_else(|_| "creature".to_string());
-                        let receiver_name = self
-                            .cards
-                            .get(*receiver)
-                            .map(|c| c.name.to_string())
-                            .unwrap_or_else(|_| "creature".to_string());
-
-                        self.logger.normal(&format!(
-                            "{} deals {} damage to {}",
-                            damager_name, damage, receiver_name
-                        ));
-
-                        self.deal_damage_to_creature(*receiver, damage)?;
-                    }
-                }
-            }
+            } => self.execute_each_damage(damagers, *receiver, *use_card_power, *fixed_damage)?,
 
             Effect::DrawCards { player, count } => {
                 if player.is_remembered_players() {
@@ -5465,101 +5382,16 @@ impl GameState {
                     .gamelog(&format!("{} ({}) gains a regeneration shield", card_name, target));
             }
 
-            Effect::PreventDamage { target, amount } => {
-                // Prevent damage: Add a damage prevention shield (CR 615.1)
-                // "Prevent the next N damage that would be dealt to [target] this turn."
-                match target {
-                    TargetRef::Permanent(card_id) => {
-                        if card_id.is_placeholder() {
-                            return Ok(());
-                        }
-                        if !self.battlefield.contains(*card_id) {
-                            return Ok(()); // Target left battlefield - fizzle
-                        }
-                        let card = self.cards.get_mut(*card_id)?;
-                        card.damage_prevention += amount;
-                        let card_name = self.cards.get(*card_id).map(|c| c.name.as_str()).unwrap_or("Unknown");
-                        self.logger.gamelog(&format!(
-                            "Prevent the next {} damage that would be dealt to {} ({}) this turn",
-                            amount, card_name, card_id
-                        ));
-                    }
-                    TargetRef::Player(player_id) => {
-                        let player = self.get_player_mut(*player_id)?;
-                        player.damage_prevention += amount;
-                        let player_name = self
-                            .get_player(*player_id)
-                            .map(|p| p.name.to_string())
-                            .unwrap_or_else(|_| "Unknown".to_string());
-                        self.logger.gamelog(&format!(
-                            "Prevent the next {} damage that would be dealt to {} this turn",
-                            amount, player_name
-                        ));
-                    }
-                    TargetRef::None => {
-                        // No target specified - shouldn't happen for PreventDamage
-                        log::warn!("PreventDamage with no target");
-                    }
-                }
-            }
+            Effect::PreventDamage { target, amount } => self.execute_prevent_damage(target, *amount)?,
 
             Effect::PreventDamageFromSource {
                 protected,
                 color,
                 source,
-            } => {
-                // Circle of Protection: install a source-filtered prevention
-                // shield protecting `protected` from the chosen colored
-                // `source` for the rest of the turn (CR 615.1, 615.6). The
-                // shield is consumed by the next matching damage event.
-                if protected.is_placeholder() || source.is_placeholder() {
-                    log::debug!("PreventDamageFromSource unresolved (placeholder), skipping");
-                    return Ok(());
-                }
-                let shield = crate::core::DamagePreventionShield::colored_source_next_event(*color, *source);
-                let source_name = self.cards.get(*source).map(|c| c.name.to_string()).unwrap_or_default();
-                // Snapshot the shield list for undo BEFORE installing the new
-                // shield (mtg-ba6uq #6).
-                self.log_source_prevention_shields(*protected);
-                let player = self.get_player_mut(*protected)?;
-                player.source_prevention_shields.push(shield);
-                let player_name = self
-                    .get_player(*protected)
-                    .map(|p| p.name.to_string())
-                    .unwrap_or_else(|_| "Unknown".to_string());
-                self.logger.gamelog(&format!(
-                    "The next time {} ({}) would deal damage to {} this turn, prevent that damage",
-                    source_name, source, player_name
-                ));
-            }
+            } => self.execute_prevent_damage_from_source(*protected, *color, *source)?,
 
             Effect::PreventAllCombatDamageThisTurn { target } => {
-                // Maze of Ith: prevent all combat damage this creature would deal
-                // or receive this turn (CR 615 replacement, "prevent all combat
-                // damage that would be dealt to and dealt by CARDNAME this turn").
-                //
-                // Sets Card::prevent_all_combat_damage_this_turn; cleared at cleanup.
-                // `assign_combat_damage` checks this flag before dealing or receiving
-                // combat damage.
-                if target.is_placeholder() {
-                    log::debug!(
-                        target: "maze_of_ith",
-                        "PreventAllCombatDamageThisTurn: target is still placeholder, skipping"
-                    );
-                    return Ok(());
-                }
-                let card = self.cards.get_mut(*target)?;
-                card.prevent_all_combat_damage_this_turn = true;
-                let card_name = self
-                    .cards
-                    .get(*target)
-                    .map(|c| c.name.as_str())
-                    .unwrap_or("?")
-                    .to_string();
-                self.logger.gamelog(&format!(
-                    "Prevent all combat damage that would be dealt to and by {} ({}) this turn",
-                    card_name, target
-                ));
+                self.execute_prevent_all_combat_damage_this_turn(*target)?
             }
 
             Effect::DestroyAll {
@@ -5649,50 +5481,7 @@ impl GameState {
                 amount,
                 valid_cards,
                 damage_players,
-            } => {
-                // Deal damage to all creatures matching the filter
-                let targets: Vec<CardId> = self
-                    .battlefield
-                    .cards
-                    .iter()
-                    .copied()
-                    .filter(|&card_id| {
-                        self.cards
-                            .get(card_id)
-                            .map(|card| card.is_creature() && valid_cards.matches(card))
-                            .unwrap_or(false)
-                    })
-                    .collect();
-
-                for card_id in targets {
-                    // Snapshot marked damage for undo BEFORE mutating (mtg-728 sig-2f).
-                    self.log_damage(card_id);
-                    let card = self.cards.get_mut(card_id)?;
-                    card.damage += *amount;
-                    let card_name = card.name.clone();
-                    let total_damage = card.damage;
-                    self.logger.gamelog(&format!(
-                        "{} ({}) takes {} damage (total: {})",
-                        card_name, card_id, amount, total_damage
-                    ));
-                }
-
-                // Optionally damage all players
-                if *damage_players {
-                    let player_ids: Vec<_> = self.players.iter().map(|p| p.id).collect();
-                    for pid in player_ids {
-                        let p = self.get_player_mut(pid)?;
-                        let player_name = p.name.clone();
-                        p.lose_life(*amount);
-                        let new_life = p.life;
-                        self.logger
-                            .gamelog(&format!("{} takes {} damage (life: {})", player_name, amount, new_life));
-                    }
-                }
-
-                // Check for creatures that took lethal damage
-                self.check_lethal_damage()?;
-            }
+            } => self.execute_damage_all(*amount, valid_cards, *damage_players)?,
 
             Effect::ForceSacrifice {
                 player,
