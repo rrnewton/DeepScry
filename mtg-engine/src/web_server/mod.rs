@@ -847,7 +847,7 @@ async fn auth_callback_handler(
             return (StatusCode::BAD_GATEWAY, "login failed talking to the identity provider").into_response();
         }
     };
-    let sid = oauth.create_session(provider, resolved.subject_id, resolved.suggested_name);
+    let sid = oauth.create_session(provider, resolved);
 
     // Redirect home with the session cookie set and the (now-spent) state
     // cookie cleared.
@@ -895,8 +895,14 @@ async fn auth_status_handler(headers: axum::http::HeaderMap, State(state): State
     };
     let logged_in = session.is_some();
     let user_id = session.as_ref().map(|s| s.identity.user_id().to_string());
-    // Non-authoritative display fields for the landing page's logged-in view
-    // ("Signed in via GitHub as octocat") and lobby name pre-fill (mtg-742).
+    // Non-authoritative display fields for the landing page (mtg-742):
+    //   `display_name`   — RECOGNIZABLE account label the user confirms
+    //                      ("Signed in via Google — alice@example.com" /
+    //                      "Signed in via GitHub — @octocat"). Shown only to
+    //                      the user, never to other players.
+    //   `suggested_name` — EDITABLE PUBLIC username default that pre-fills the
+    //                      lobby name box (Google email local-part / GitHub
+    //                      login).
     // Omitted/empty for guests; the stable `user_id` is what identity + R2
     // prefix key on, NEVER any of these display fields.
     let provider = session.as_ref().map(|s| s.provider.slug());
@@ -1044,8 +1050,16 @@ mod auth_session_tests {
     #[tokio::test]
     async fn status_reports_logged_in_with_session_cookie() {
         let oauth = OAuthState::new_for_test();
-        // Simulate a completed login: GitHub subject 999, friendly handle.
-        let sid = oauth.create_session(Provider::GitHub, "999".into(), "octocat".into());
+        // Simulate a completed GitHub login: subject 999, "@octocat" as the
+        // recognizable account label, "octocat" as the editable public default.
+        let sid = oauth.create_session(
+            Provider::GitHub,
+            oauth::ResolvedSubject {
+                subject_id: "999".into(),
+                display_name: "@octocat".into(),
+                suggested_name: "octocat".into(),
+            },
+        );
         let app = test_app(oauth);
 
         // Browser presents the session cookie among others (state already
@@ -1061,6 +1075,10 @@ mod auth_session_tests {
         let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(json["logged_in"], serde_json::json!(true));
         assert_eq!(json["user_id"], serde_json::json!("github-999"));
+        assert_eq!(json["provider"], serde_json::json!("github"));
+        // display_name = recognizable account label; suggested_name = editable
+        // public default. These are now DISTINCT (mtg-742 corrections).
+        assert_eq!(json["display_name"], serde_json::json!("@octocat"));
         assert_eq!(json["suggested_name"], serde_json::json!("octocat"));
     }
 
@@ -1073,6 +1091,7 @@ mod auth_session_tests {
         let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(json["logged_in"], serde_json::json!(false));
         assert_eq!(json["user_id"], serde_json::Value::Null);
+        assert_eq!(json["display_name"], serde_json::Value::Null);
         assert_eq!(json["suggested_name"], serde_json::Value::Null);
     }
 }
