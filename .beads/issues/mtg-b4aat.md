@@ -5,29 +5,31 @@ priority: 2
 issue_type: task
 depends_on:
   mtg-651: related
-  mtg-245: related
+  mtg-aglho: related
   mtg-684: parent-child
+  mtg-245: related
 created_at: 2026-06-11T05:50:28.597118375+00:00
-updated_at: 2026-06-11T05:50:36.395034892+00:00
+updated_at: 2026-06-11T05:55:02.029358047+00:00
 ---
 
 # Description
 
 CROSS-YEAR ROOT-CAUSE CONSOLIDATION of every World Championship broken-card backlog. Compiled by agent compat-rootcause-rollup (slot05), 2026-06-10, STAMP 2026-06-10_#3177(9e100acf). Rolls up under the championship-collections umbrella mtg-684.
 
-PURPOSE: the per-year survey backlogs (1994 mtg-713, 2000 mtg-xxtl0, 2005 mtg-nzozr, 2010 mtg-0oxuk, 2015 mtg-cn0dr, 2020 mtg-902, 2025 mtg-v59ll) each list per-card BROKEN/PARTIAL findings. The SAME handful of missing engine effect-families recurs across years. This bead RE-INDEXES those scattered per-card items by SHARED ENGINE ROOT CAUSE, ranked by how many championship cards each family unblocks — so the post-refactor fix loop can implement effect-families in impact order instead of card-by-card.
+PURPOSE: the per-year survey backlogs (1994 mtg-713, 1995 mtg-aglho, 2000 mtg-xxtl0, 2005 mtg-nzozr, 2010 mtg-0oxuk, 2015 mtg-cn0dr, 2020 mtg-902, 2025 mtg-v59ll) each list per-card BROKEN/PARTIAL findings. The SAME handful of missing engine effect-families recurs across years. This bead RE-INDEXES those scattered per-card items by SHARED ENGINE ROOT CAUSE, ranked by how many championship cards each family unblocks — so the post-refactor fix loop can implement effect-families in impact order instead of card-by-card.
 
 ALL FIXES DEFERRED until the mtg-245 execute_effect dispatch-table refactor lands (it owns the effect/Count resolution paths every item below touches). This is a CONSOLIDATION/INDEX bead — no engine edits. Source backlogs hold the full per-card repro commands + file pointers; this bead is the cross-year map.
 
 SOURCE BACKLOGS (read these for per-card detail):
 - 1994: mtg-713  (B1-B18; MANY already FIXED+landed — see its DONE section; only OPEN items counted below)
+- 1995: mtg-aglho (B1-B5)     [on branch claude/compat-1995-survey, tracker mtg-huyhe] — healthiest year (~8% broken, ALL sideboard/niche; no maindeck breakage)
 - 2000: mtg-xxtl0 (B1-B11)   [on branch claude/compat-2000-survey, tracker mtg-h558o]
 - 2005: mtg-nzozr (B1-B5)     [on branch claude/compat-2005-survey, tracker mtg-a4t4t]
 - 2010: mtg-0oxuk (B1-B6)     [on branch claude/compat-2010-survey, tracker mtg-38g7u]
 - 2015: mtg-cn0dr (B1-B4)     [on branch claude/compat-2015-survey, tracker mtg-8ikty]
 - 2020: mtg-902  (B1-B5; B2 Adventure already DONE)  [tracker mtg-901]
 - 2025: mtg-v59ll (B1-B3)     [on branch claude/compat-2025-survey, tracker mtg-881]
-- 1995: PENDING — slot07 has not filed a 1995 backlog yet (no claude/compat-1995 branch exists as of this stamp). Re-index 1995 into the families below once it lands.
+- 1995 FOLDED IN 2026-06-10_#3177(9e100acf): B2 Lhurgoyf->F5; B3 Orgg->F7; B1 Magical Hack/Sleight of Mind->F11 (new text-change family, merged with 1994 B7); B4 Island Sanctuary->F10 (Draw-replacement verify); B5 Spirit Link/Prismatic Ward->verify list. All 8 years (1994/1995/2000/2005/2010/2015/2020/2025) now covered.
 
 NOTE ON COUNTS: "cards" = distinct championship cards the family unblocks (counted once per card even if it appears in multiple decks/years). "copies" hints at deck weight where the source bead gave it. Already-FIXED items (1994 Berserk/Whirling Dervish/Winter Orb/Jade Statue/Howling Mine/Ivory Tower/Meekstone/Stasis/Kismet/Flashfires/Juggernaut/DestroyAll-subtype; 2020 Adventure) are EXCLUDED from the family counts — they are no longer blocking.
 
@@ -76,13 +78,14 @@ RANKED MISSING EFFECT-FAMILIES (highest leverage first)
   FIX SHAPE: ChooseCard converter arm (choose N cards matching a filter, remember them) + ensure the chained sub-ability (Tap/Sacrifice/ChangeZone) runs on the chosen set. Tracked in mtg-651.
 
 == F5. Continuous characteristic-defining P/T + AddType statics (becomes-a-creature / P/T = some count) ==
-  IMPACT: 2 high-value cards in 2000 (one is a deck's whole win condition) + the Siege-cycle type-discriminator (2015).
+  IMPACT: 3 cards across 2000/1995 (one is a deck's whole win condition) + the Siege-cycle type-discriminator (2015).
   ROOT CAUSE: continuous CharacteristicDefining SetPower/SetToughness is NOT a standalone runtime StaticAbility (only handled inside CopyPermanent); continuous AddType$ Creature/<type> is unsupported.
   CARDS:
     - Opalescence  (2000 B5; 4x vandelogt_replenish) — turns enchantments into P/T-= -mana-value creatures; the Replenish deck's WIN CONDITION. Dead.
     - Serra Avatar (2000 B4; chimera) — */* = your life total; enters as 0/0 and dies instantly.
+    - Lhurgoyf    (1995 B2; 04_stern SB 2x) — */1+* = creature cards in all graveyards; never recomputes P/T, sits at base ~0/1. Sideboard rider — fixed FREE once the CDA static exists.
     - (Related: 2015 B4 Palace Siege ChosenMode* selector + 2025 B2 Multiversal Passage AddType$ ChosenType share the continuous-AddType machinery — see F8.)
-  FIX SHAPE: implement continuous CDA P/T as a real layer-7b static + a layer-4 continuous AddType static.
+  FIX SHAPE: implement continuous CDA P/T as a real layer-7b static (recomputed from a Count$ expression) + a layer-4 continuous AddType static.
 
 == F6. NameCard / "choose a card name" + Card.NamedCard predicate ==
   IMPACT: 3 distinct cards across 2005/2010.
@@ -93,14 +96,15 @@ RANKED MISSING EFFECT-FAMILIES (highest leverage first)
     - Cranial Extraction (2005 B5; SB deck02) — same NameCard exile.
   FIX SHAPE: ApiType::NameCard + name-choice infra + Card.NamedCard wiring. (Pithing Needle also needs F7 CantBeActivated.)
 
-== F7. Activation/attack/block legality statics (CantBeActivated / CantAttack / CantBlock) ==
-  IMPACT: 3+ distinct hate-pieces across 2000 (+ Pithing Needle from F6).
-  ROOT CAUSE: CantBeActivated / CantAttack / CantBlock parse into StaticAbilityMode but are NOT in the runtime StaticAbility enum -> never enforced; the hate-pieces are inert.
+== F7. Activation/attack/block legality statics (CantBeActivated / CantAttack / CantBlock, incl. conditional) ==
+  IMPACT: 4+ distinct hate-pieces/creatures across 2000/1995 (+ Pithing Needle from F6).
+  ROOT CAUSE: CantBeActivated / CantAttack / CantBlock parse into StaticAbilityMode but are NOT in the runtime StaticAbility enum -> never enforced; the hate-pieces are inert. The CONDITIONAL form (CantAttack with an UnlessDefender$ predicate) is also unmodelled.
   CARDS:
     - Cursed Totem  (2000 B6; replenish SB) — creature activated abilities not blocked.
     - Light of Day  (2000 B7; chimera SB) — black creatures still attack/block.
+    - Orgg         (1995 B3; 04_stern 2x) — conditional "can't attack unless defender controls no untapped power>=3 creature" not modelled -> plays as a vanilla-ish 6/6, slightly STRONGER than printed. Needs CantAttack-with-UnlessDefender$-predicate.
     - Pithing Needle CantBeActivated half (2005 B5, with F6).
-  FIX SHAPE: wire these three static modes into the activation-legality + declare-attackers/blockers checks.
+  FIX SHAPE: wire CantBeActivated/CantAttack/CantBlock into the activation-legality + declare-attackers/blockers checks, INCLUDING the conditional UnlessDefender$ predicate form (evaluated against the defending player's board at declare-attackers).
 
 == F8. Mode-choice-on-ETB statics (GenericChoice / ChooseType + ChosenMode/ChosenType selector) ==
   IMPACT: 2 distinct cards across 2015/2025; generalizes to the whole Siege cycle + every basic-land-type-chooser.
@@ -118,16 +122,22 @@ RANKED MISSING EFFECT-FAMILIES (highest leverage first)
     - Summoning Trap      (2010 B6; deck04 4x) — countered-creature tracker never increments -> the {0} alternative-cast never arms.
   FIX SHAPE: a real runtime SVar store (often paired with an ETB "pay any amount of life" replacement for Processor).
 
-== F10. Life-floor / damage-redirect replacement classifier shapes ==
-  IMPACT: 2 distinct cards in 2000 (shares the replacement-classifier layer with F3).
-  ROOT CAUSE: loader/card.rs R: classifier recognizes only narrow shapes (ETB-tapped, CantHappen-untap, prevent-damage). LifeReduced floors and DamageDone redirects are unrecognized -> dropped.
+== F10. Replacement-classifier shapes (life-floor / damage-redirect / draw-replacement) ==
+  IMPACT: 3 distinct cards across 2000/1995 (shares the replacement-classifier layer with F3).
+  ROOT CAUSE: loader/card.rs R: classifier recognizes only narrow shapes (ETB-tapped, CantHappen-untap, prevent-damage). LifeReduced floors, DamageDone redirects, and Event$ Draw skip-replacements are unrecognized -> dropped.
   CARDS:
     - Worship           (2000 B10; chimera SB) — "can't go below 1 while you control a creature" not enforced.
     - Crumbling Sanctuary (2000 B9; also F3) — DamageDone->exile redirect.
-  FIX SHAPE: general replacement-classifier categories for life-loss-floor + damage-redirect (build alongside F3's damage-modification chokepoint).
+    - Island Sanctuary  (1995 B4 VERIFY; 02_hernandez 2x) — Event$ Draw replacement: skip your draw -> until next turn only fliers/islandwalkers can attack you. No support found for a draw-replacement that grants a conditional can't-be-attacked-except-by shield. PARTIAL pending puzzle confirmation.
+  FIX SHAPE: general replacement-classifier categories for life-loss-floor + damage-redirect + draw-skip-with-conditional-evasion-shield (build alongside F3's damage-modification chokepoint).
 
-================================================================
-LONG-TAIL SINGLE-CARD GAPS (one championship card each; lower leverage — fix opportunistically with their family or last)
+== F11. ChangeText / continuous text-modification (swap a basic land type or color word) ==
+  IMPACT: 2 distinct cards across 1994/1995 (the same 2-card pair appears in BOTH years' sideboards).
+  ROOT CAUSE: ApiType ChangeText is NOT in the ApiType enum (ability_parser.rs) -> the spell converts to Effect::Unimplemented; casting it changes no text.
+  CARDS:
+    - Magical Hack    (1994 B7 + 1995 B1; 01_blumke SB 1x) — SP$ ChangeText swap a basic land type.
+    - Sleight of Mind (1994 B7 + 1995 B1; 01_blumke SB 1x) — SP$ ChangeText swap a color word.
+  FIX SHAPE: ApiType::ChangeText + a continuous text-modification effect (replace one basic-land-type / color word with another, Duration$ Permanent). Bigger feature for tiny (sideboard, near-zero metagame) payoff — LOWEST priority despite spanning 2 years. (one championship card each; lower leverage — fix opportunistically with their family or last)
 ================================================================
 - Honden of Cleansing Fire (2005 B1): Count$ '/Times.N' multiplier suffix dropped -> WRONG life math (gains 6 not 4). Count-expression parser. HIGH-VALUE-SMALL (wrong, not merely inert).
 - Sensei's Divining Top (2005 B2): RearrangeTopOfLibrary (look-at-top-N reorder) unimplemented; draw half works. Library-reorder effect family (also Soothsaying/Index).
@@ -138,7 +148,8 @@ LONG-TAIL SINGLE-CARD GAPS (one championship card each; lower leverage — fix o
 - Metalworker (2000 B1, HIGH VALUE): ApiType::Reveal has no converter arm -> the explosive-mana engine of the 1st/2nd-place Tinker decks is a dead {T} ability. (Reveal-then-do-Y-per-X family.)
 - Commence the Endgame (2020 B3): Amass/Army unsupported; draws 2 but makes no Army. Niche.
 - Chandra, Acolyte of Flame -2 (2020 B4): AB$ Play (cast-from-graveyard) no converter arm. Shares the cast-from-other-zone family.
-- 1994 still-OPEN singletons (from mtg-713, non-fixed): Time Elemental (B2 targeted-bounce ChangeZone + B3 Attacks->DelayedTrigger), Vesuvan Doppelganger (B4 AddTriggers upkeep re-copy), Magical Hack/Sleight of Mind (B7 ChangeText), In the Eye of Chaos/Presence of the Master (B8 SpellCast-on-opp-cast global-enchant trigger + TriggeredSpellAbility), Channel (B14 SP$ Effect|Abilities temp mana ability), Reverse Damage (B15 ChooseSource non-CoP prevention), Siren's Call (B16 granted-MustAttack temp effect), Fork (B17 CopySpellAbility, mtg-152), Floral Spuzzem (B21 AttackerUnblocked trigger site), Old Man of the Sea (B1 activated GainControl duration follow-up, mtg-741).
+- 1994 still-OPEN singletons (from mtg-713, non-fixed): Time Elemental (B2 targeted-bounce ChangeZone + B3 Attacks->DelayedTrigger), Vesuvan Doppelganger (B4 AddTriggers upkeep re-copy), Magical Hack/Sleight of Mind (B7 ChangeText — NOW PROMOTED to family F11, spans 1994+1995), In the Eye of Chaos/Presence of the Master (B8 SpellCast-on-opp-cast global-enchant trigger + TriggeredSpellAbility), Channel (B14 SP$ Effect|Abilities temp mana ability), Reverse Damage (B15 ChooseSource non-CoP prevention), Siren's Call (B16 granted-MustAttack temp effect), Fork (B17 CopySpellAbility, mtg-152), Floral Spuzzem (B21 AttackerUnblocked trigger site), Old Man of the Sea (B1 activated GainControl duration follow-up, mtg-741).
+- 1995 VERIFY items (1995 B5; likely-fine, not yet broken): Spirit Link (DamageDealtOnce trigger -> GainLife = damage dealt by enchanted creature) + Prismatic Ward (ETB ChooseColor + colored damage-prevention, infra EXISTS in core/prevention.rs -> LIKELY WORKING). Confirm with puzzles; not counted as broken.
 
 ================================================================
 SUGGESTED EXECUTION ORDER (post-mtg-245-refactor)
@@ -151,8 +162,10 @@ SUGGESTED EXECUTION ORDER (post-mtg-245-refactor)
 6. F8  GenericChoice/ChooseType mode statics (Multiversal Passage 4-of land)
 7. F9  StoreSVar runtime store
 8. F10 replacement-classifier shapes (with F3)
-9. Long-tail singletons, opportunistically.
+9. F11 ChangeText (lowest — sideboard-only despite spanning 1994+1995)
+10. Long-tail singletons, opportunistically.
 
 When a family lands, flip the per-card status in its YEAR backlog + the per-card Card Compatibility issue + docs/EFFECT_SUPPORT.md, and check the box for each card listed here.
 
 Driven by agent compat-rootcause-rollup (slot05), 2026-06-10. SURVEY/CONSOLIDATE/BEADS ONLY — no engine edits.
+UPDATE 2026-06-10_#3177(9e100acf): folded in 1995 backlog mtg-aglho (B2 Lhurgoyf->F5, B3 Orgg->F7, B1 Magical Hack/Sleight of Mind->new family F11 merged w/ 1994 B7, B4 Island Sanctuary->F10, B5 Spirit Link/Prismatic Ward->verify). Now covers all 8 surveyed years.
