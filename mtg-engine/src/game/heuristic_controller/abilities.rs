@@ -114,20 +114,15 @@ impl HeuristicController {
                     if requires_tapped_target {
                         // Royal Assassin: best during/after opponent combat when
                         // attackers are tapped.
-                        // Reference: DestroyAi checks for phase restrictions
-                        if is_combat || is_end_phase || is_main2 {
-                            if self.has_valuable_destroy_target(view, true) {
-                                return true;
-                            }
+                        if (is_combat || is_end_phase || is_main2) && self.has_valuable_destroy_target(view, true) {
+                            return true;
                         }
                     } else {
                         // General destroy (Chaos Orb, etc.): any opponent permanent
                         // is a valid target; prefer main phases to avoid tapping
                         // mana/artefact needed for combat tricks.
-                        if is_main1 || is_main2 || is_end_phase {
-                            if self.has_valuable_destroy_target(view, false) {
-                                return true;
-                            }
+                        if (is_main1 || is_main2 || is_end_phase) && self.has_valuable_destroy_target(view, false) {
+                            return true;
                         }
                     }
                 }
