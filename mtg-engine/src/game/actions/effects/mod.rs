@@ -27,8 +27,11 @@
 //! - [`stack`] — CounterSpell / ConditionalSelfCounter / ModalChoice (routing
 //!   guard) / ImmediateTrigger.
 //! - [`tokens`] — CreateToken / CopyPermanent / CopySpellAbility.
+//! - [`control`] — GainControl / Fight / GrantCantBeBlocked / Regenerate /
+//!   AttachEquipment.
 
 mod cards;
+mod control;
 mod counters;
 mod damage;
 mod life;
