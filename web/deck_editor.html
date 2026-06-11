@@ -39,36 +39,87 @@
         .header .back-link { font-size: 13px; color: var(--muted); }
         .header .back-link:hover { color: var(--accent); }
 
+        /* Three full-height columns:
+             col1 = controls/chrome (deck name, search+filters, saved decks +
+                    buttons, card details), fixed-ish width;
+             col2 = search RESULTS list, flexible width, scrolls full height;
+             col3 = DECK (mana curve on top, deck/sideboard list below), scrolls.
+           Each column is its own flex-column so its inner list region (the one
+           with flex:1) scrolls within the viewport height rather than growing
+           the page. */
         .layout {
             display: grid;
-            grid-template-columns: 1fr 340px;
+            grid-template-columns: 320px minmax(280px, 1fr) 360px;
             grid-template-rows: 1fr;
             height: calc(100vh - 54px);
             gap: 0;
             overflow: hidden;
         }
-        @media (max-width: 900px) {
+        /* Wide-but-not-huge: keep three columns but let the controls/deck
+           columns give a little room back to the results. */
+        @media (max-width: 1200px) {
+            .layout { grid-template-columns: 290px minmax(240px, 1fr) 320px; }
+        }
+        /* Narrow: drop to two columns — controls beside a combined
+           results/deck stack would be cramped, so stack controls on top and let
+           results + deck share the row below. */
+        @media (max-width: 980px) {
+            .layout {
+                grid-template-columns: 1fr 1fr;
+                grid-template-rows: auto 1fr;
+            }
+            .pane-controls { grid-column: 1 / -1; }
+        }
+        /* Phone: single column, everything stacks and the page scrolls. */
+        @media (max-width: 680px) {
             .layout {
                 grid-template-columns: 1fr;
-                grid-template-rows: 1fr 1fr;
+                grid-template-rows: auto auto auto;
                 height: auto;
+                overflow: visible;
             }
+            .pane-controls, .pane-results, .pane-deck { grid-column: 1 / -1; }
+            .card-list-wrap, .deck-list-wrap { max-height: 60vh; }
         }
 
+        /* ── Column 1: controls / chrome ─────────────────────────────────── */
+        .pane-controls {
+            display: flex;
+            flex-direction: column;
+            overflow-y: auto;
+            border-right: 1px solid var(--border);
+            background: var(--surface);
+        }
+        .controls-section {
+            padding: 10px 14px;
+            border-bottom: 1px solid var(--border);
+        }
+        .controls-section h2,
+        .controls-section h3 { margin: 0 0 8px; }
+        .controls-section h2 { font-size: 15px; color: var(--accent); }
+        .controls-section h3 { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.4px; }
+        /* The card-details section in column 1 grows to take the leftover space
+           and scrolls internally, so it doesn't push the page taller. */
+        .controls-section.controls-details { flex: 1 1 auto; min-height: 120px; overflow: hidden; display: flex; flex-direction: column; padding: 0; }
+        .controls-section.controls-details h3 { padding: 10px 14px 0; }
+
         /* ── Left: catalog + search ─────────────────────────────────────── */
-        .pane-catalog {
+        /* ── Column 2: search results list ──────────────────────────────── */
+        .pane-results {
             display: flex;
             flex-direction: column;
             overflow: hidden;
             border-right: 1px solid var(--border);
+            background: var(--bg);
+            min-height: 0;
         }
+        /* The search + filters toolbar now lives INSIDE column 1 (a flex
+           column). Lay the controls out in a wrapping row; the search field
+           gets its own full-width row, the three selects share the row below. */
         .catalog-toolbar {
-            padding: 10px 14px;
-            background: var(--surface);
-            border-bottom: 1px solid var(--border);
             display: flex;
             flex-wrap: wrap;
-            gap: 8px;
+            gap: 8px 10px;
             align-items: flex-end;
         }
         .catalog-toolbar label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.4px; display: block; margin-bottom: 3px; }
@@ -80,14 +131,21 @@
             padding: 6px 9px;
             font-size: 13px;
             font-family: inherit;
+            width: 100%;
         }
         .catalog-toolbar input[type=text]:focus, .catalog-toolbar select:focus { outline: none; border-color: var(--accent); }
-        .search-field { flex: 1 1 160px; min-width: 120px; max-width: 260px; }
-        .catalog-toolbar .filter-group { display: flex; flex-direction: column; }
+        /* Task 1 (search box too TALL): the search <input> is a single-line text
+           box. The bug was `flex: 1 1 160px` on a flex-COLUMN child, which makes
+           160px a HEIGHT (flex-basis on the column main axis) → a ~160px-tall
+           box. The field now simply spans the column width at the input's
+           natural one-line height. */
+        .filter-group { display: flex; flex-direction: column; }
+        .search-group { flex: 1 0 100%; }
+        .catalog-toolbar .filter-group:not(.search-group) { flex: 1 1 90px; min-width: 80px; }
 
-        .catalog-count { font-size: 11px; color: var(--muted); padding: 4px 14px; background: var(--surface); border-bottom: 1px solid var(--border); }
+        .catalog-count { font-size: 11px; color: var(--muted); padding: 6px 14px; background: var(--surface); border-bottom: 1px solid var(--border); flex: none; }
 
-        .card-list-wrap { flex: 1; overflow-y: auto; }
+        .card-list-wrap { flex: 1 1 auto; overflow-y: auto; min-height: 0; }
         .card-list { list-style: none; margin: 0; padding: 4px 0; }
         .card-list li {
             display: flex;
@@ -122,19 +180,15 @@
         /* Oracle text tooltip */
         .oracle-tip { font-size: 11px; color: var(--muted); font-style: italic; max-width: 320px; }
 
-        /* ── Right: deck builder ────────────────────────────────────────── */
+        /* ── Column 3: deck builder (mana curve on top, deck list below) ──── */
         .pane-deck {
             display: flex;
             flex-direction: column;
             overflow: hidden;
             background: var(--surface);
+            border-left: 1px solid var(--border);
+            min-height: 0;
         }
-        .deck-header {
-            padding: 10px 14px;
-            border-bottom: 1px solid var(--border);
-            background: var(--surface-2);
-        }
-        .deck-header h2 { margin: 0 0 8px; font-size: 15px; color: var(--accent); }
         .deck-name-row { display: flex; gap: 6px; align-items: center; }
         .deck-name-input {
             flex: 1;
@@ -149,8 +203,7 @@
         .deck-name-input:focus { outline: none; border-color: var(--accent); }
 
         .deck-stats {
-            padding: 6px 14px;
-            border-bottom: 1px solid var(--border);
+            margin-top: 8px;
             font-size: 12px;
             color: var(--muted);
             display: flex;
@@ -167,10 +220,12 @@
         .cd-G { background: #00733e; }
         .cd-C { background: #888; }
 
-        /* Mana curve mini-chart */
+        /* Mana curve mini-chart — fixed at the top of the deck column. */
         .curve-wrap {
-            padding: 6px 14px 2px;
+            padding: 8px 14px 6px;
             border-bottom: 1px solid var(--border);
+            background: var(--surface-2);
+            flex: none;
         }
         .curve-label { font-size: 10px; color: var(--muted); margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.4px; }
         /* The bar track (fixed height) and the CMC label get SEPARATE rows so a
@@ -183,12 +238,14 @@
         .curve-cmc { font-size: 9px; color: var(--muted); height: 12px; line-height: 12px; margin-top: 2px; }
 
         /* ── Card Details panel (TUI parity, deck_builder/ui.rs) ─────────── */
+        /* Lives at the bottom of column 1; fills the leftover height of the
+           controls-details section and scrolls internally. */
         .card-details {
-            padding: 8px 14px;
-            border-bottom: 1px solid var(--border);
+            padding: 8px 14px 12px;
             background: rgba(0,0,0,0.18);
             font-size: 12px;
-            max-height: 280px;
+            flex: 1 1 auto;
+            min-height: 0;
             overflow-y: auto;
         }
         .card-details .cd-empty { color: var(--muted); font-style: italic; }
@@ -211,7 +268,7 @@
         .card-details .cd-oracle { margin-top: 6px; color: var(--text); white-space: pre-wrap; line-height: 1.4; }
         .card-details .ms { vertical-align: middle; }
 
-        .deck-list-wrap { flex: 1; overflow-y: auto; }
+        .deck-list-wrap { flex: 1 1 auto; overflow-y: auto; min-height: 0; }
         .deck-list { list-style: none; margin: 0; padding: 4px 0; }
         .deck-section-hdr { font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--muted); padding: 6px 12px 2px; }
         .deck-list li {
@@ -230,12 +287,12 @@
         .qty-btn:hover { background: var(--surface-2); border-color: var(--accent); }
 
         .deck-actions {
-            padding: 10px 14px;
-            border-top: 1px solid var(--border);
+            margin-top: 8px;
             display: flex;
             flex-wrap: wrap;
             gap: 6px;
         }
+        .deck-actions button { padding: 6px 11px; }
         button {
             background: var(--accent-3);
             color: white;
@@ -259,12 +316,7 @@
         .status-msg.ok { color: var(--ok); }
         .status-msg.err { color: var(--danger); }
 
-        /* Saved decks panel */
-        .saved-decks-wrap {
-            padding: 8px 14px;
-            border-top: 1px solid var(--border);
-            background: rgba(0,0,0,0.2);
-        }
+        /* Saved decks panel (a controls-section in column 1). */
         .saved-decks-wrap h3 { margin: 0 0 6px; font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.4px; }
         .saved-list { display: flex; flex-wrap: wrap; gap: 5px; }
         .saved-chip {
@@ -341,10 +393,26 @@
 <!-- ── Main layout ─────────────────────────────────────────────────────────── -->
 <div class="layout">
 
-    <!-- Left: card catalog -->
-    <div class="pane-catalog">
-        <div class="catalog-toolbar">
-            <div class="filter-group" style="flex:0 1 260px; min-width:140px;">
+    <!-- ── Column 1: controls / chrome (deck name, search+filters, saved decks
+         + actions, card details) ─────────────────────────────────────────── -->
+    <div class="pane-controls">
+        <!-- Deck name -->
+        <div class="controls-section">
+            <h2>Current Deck</h2>
+            <div class="deck-name-row">
+                <input type="text" id="deck-name" class="deck-name-input" placeholder="Deck name…" value="My Deck">
+            </div>
+            <div class="deck-stats" id="deck-stats">
+                <span>Cards: <span class="stat-val" id="stat-count">0</span></span>
+                <span>Main: <span class="stat-val" id="stat-main">0</span></span>
+                <span>Side: <span class="stat-val" id="stat-side">0</span></span>
+                <span>Colors: <span class="color-dots" id="stat-colors"></span></span>
+            </div>
+        </div>
+
+        <!-- Search + filters -->
+        <div class="controls-section catalog-toolbar">
+            <div class="filter-group search-group">
                 <label for="search-input">Search cards</label>
                 <input type="text" id="search-input" class="search-field" placeholder="Name, text, type…" autocomplete="off">
             </div>
@@ -389,6 +457,41 @@
                 </select>
             </div>
         </div>
+
+        <!-- Saved decks + actions -->
+        <div class="controls-section saved-decks-wrap">
+            <h3>Saved Decks</h3>
+            <div class="saved-list" id="saved-list">
+                <span class="no-saved">No saved decks yet.</span>
+            </div>
+            <div class="deck-actions">
+                <button id="btn-save" class="success">Save</button>
+                <button id="btn-export" class="ghost" title="Export as .dck text">Export .dck</button>
+                <button id="btn-import" class="ghost" title="Import from .dck text">Import .dck</button>
+                <button id="btn-clear" class="danger" title="Clear the current deck">Clear</button>
+                <!-- Cloud deck storage (mtg-742). Hidden unless the cloud feature
+                     flag is on (localStorage['mtg-deck-cloud']='1') or the user is
+                     signed in; shown by the init code below. -->
+                <button id="btn-download-decks" class="ghost" style="display:none"
+                        title="Download all your decks as a .tgz file (data liberation)">Download my decks</button>
+                <span id="action-status" class="status-msg"></span>
+            </div>
+        </div>
+
+        <!-- Card Details: populated on click of a catalog row or a deck-list row
+             (renderCardDetails). Shows the card art (Scryfall exact-name lookup,
+             WASM-free) plus name, mana cost, type line, P/T, and oracle text.
+             Grows to fill the leftover column height and scrolls internally. -->
+        <div class="controls-section controls-details">
+            <h3>Card Details</h3>
+            <div class="card-details" id="card-details">
+                <div class="cd-empty">Click a card to see its details.</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ── Column 2: search RESULTS list (full-height, scrolls) ───────────── -->
+    <div class="pane-results">
         <div class="catalog-count" id="catalog-count">Loading catalog…</div>
         <div class="card-list-wrap">
             <div id="catalog-loading"><span class="spinner"></span>Fetching card catalog…</div>
@@ -396,60 +499,19 @@
         </div>
     </div>
 
-    <!-- Right: deck builder -->
+    <!-- ── Column 3: the DECK — mana curve on top, deck/sideboard below ───── -->
     <div class="pane-deck">
-        <div class="deck-header">
-            <h2>Current Deck</h2>
-            <div class="deck-name-row">
-                <input type="text" id="deck-name" class="deck-name-input" placeholder="Deck name…" value="My Deck">
-            </div>
-        </div>
-
-        <div class="deck-stats" id="deck-stats">
-            <span>Cards: <span class="stat-val" id="stat-count">0</span></span>
-            <span>Main: <span class="stat-val" id="stat-main">0</span></span>
-            <span>Side: <span class="stat-val" id="stat-side">0</span></span>
-            <span>Colors: <span class="color-dots" id="stat-colors"></span></span>
-        </div>
-
         <div class="curve-wrap">
             <div class="curve-label">Mana Curve (main deck)</div>
             <div class="curve-bars" id="curve-bars"></div>
         </div>
 
-        <!-- Card Details: populated on click of a catalog row or a deck-list row
-             (renderCardDetails). Shows the card art (Gatherer, WASM-free) plus
-             name, mana cost, type line, P/T, and oracle text. -->
-        <div class="card-details" id="card-details">
-            <div class="cd-empty">Click a card to see its details.</div>
-        </div>
-
         <div class="deck-list-wrap">
             <ul class="deck-list" id="deck-list">
                 <li style="color: var(--muted); font-style:italic; padding: 12px;">
-                    Add cards from the catalog on the left.
+                    Add cards from the catalog in the middle column.
                 </li>
             </ul>
-        </div>
-
-        <div class="saved-decks-wrap">
-            <h3>Saved Decks</h3>
-            <div class="saved-list" id="saved-list">
-                <span class="no-saved">No saved decks yet.</span>
-            </div>
-        </div>
-
-        <div class="deck-actions">
-            <button id="btn-save" class="success">Save</button>
-            <button id="btn-export" class="ghost" title="Export as .dck text">Export .dck</button>
-            <button id="btn-import" class="ghost" title="Import from .dck text">Import .dck</button>
-            <button id="btn-clear" class="danger" title="Clear the current deck">Clear</button>
-            <!-- Cloud deck storage (mtg-742). Hidden unless the cloud feature
-                 flag is on (localStorage['mtg-deck-cloud']='1'); shown by the
-                 init code below. Lets the user pull their real .tgz collection. -->
-            <button id="btn-download-decks" class="ghost" style="display:none"
-                    title="Download all your decks as a .tgz file (data liberation)">Download my decks</button>
-            <span id="action-status" class="status-msg"></span>
         </div>
     </div>
 </div>
@@ -685,15 +747,27 @@ function escapeHtml(s) {
  * database. The deck editor is deliberately WASM-free (it only fetches two
  * lightweight JSON files), so it cannot use the Scryfall-CDN path the game
  * pages use — that needs the WASM `tui_card_cdn_url` + the binary
- * `card-lookup.bin` table (see tui_game.html, mtg-722). Instead we use the same
- * pure-name Gatherer source the launcher pages (launcher.html / solo_launcher.html)
- * expose as their WASM-free image option. Gatherer only covers older cards and
- * returns a card-back for misses, so the <img> is loaded best-effort: an onerror
- * handler hides it and the text details still render in full.
+ * `card-lookup.bin` table (see tui_game.html, mtg-722).
+ *
+ * WRONG-IMAGE BUG (user live-test): the editor previously used Gatherer's
+ * `Image.ashx?name=<name>` handler, which does a **server-side FUZZY / partial
+ * name match** and returns an arbitrary card — selecting "Lightning Bolt"
+ * rendered the art for an unrelated card ("Thrum of the Vestige") while the
+ * text details (which come straight from the catalog entry) were correct. So
+ * the description matched but the image did not.
+ *
+ * FIX: resolve art through Scryfall's **exact-named** image endpoint
+ * (`/cards/named?exact=<name>&format=image`). `exact=` is a case-insensitive
+ * EXACT name lookup — no fuzzy collisions — so the image is always the SAME
+ * card whose details we render. On a miss Scryfall returns 404 (handled by the
+ * <img> onerror, which hides the art and leaves the text details intact).
+ * `encodeURIComponent` keeps the name a single query value (names with spaces,
+ * commas, apostrophes resolve correctly), so the URL is a deterministic,
+ * collision-free function of the exact card name.
  */
-function gathererArtUrl(cardName) {
-    return 'https://gatherer.wizards.com/Handlers/Image.ashx?name=' +
-        encodeURIComponent(cardName) + '&type=card';
+function cardArtUrl(cardName) {
+    return 'https://api.scryfall.com/cards/named?exact=' +
+        encodeURIComponent(cardName) + '&format=image&version=normal';
 }
 
 /**
@@ -746,8 +820,23 @@ function renderCardDetails(entry) {
     img.className = 'cd-art';
     img.alt = entry.name + ' card art';
     img.loading = 'lazy';
-    img.src = gathererArtUrl(entry.name);
+    // Pin the image to the EXACT card we are rendering: stamp the selection name
+    // on the panel and tag the <img> with the same name. The image URL is an
+    // exact-name lookup (cardArtUrl), so it can never resolve to a different
+    // card the way the old fuzzy Gatherer handler did; the stamp is a belt-and-
+    // braces guard so a slow image that loads after the user has clicked another
+    // card is dropped instead of shown against the wrong details.
+    el.dataset.selectedCard = entry.name;
+    img.dataset.cardName = entry.name;
+    img.src = cardArtUrl(entry.name);
     img.addEventListener('error', () => { img.style.display = 'none'; });
+    img.addEventListener('load', () => {
+        // Stale-load guard: if the user selected a different card before this
+        // image finished loading, do not show it against the newer details.
+        if (el.dataset.selectedCard !== img.dataset.cardName) {
+            img.style.display = 'none';
+        }
+    });
     body.insertBefore(img, body.firstChild);
 }
 
@@ -924,7 +1013,7 @@ function renderDeck() {
         li.style.color = 'var(--muted)';
         li.style.fontStyle = 'italic';
         li.style.padding = '12px';
-        li.textContent = 'Add cards from the catalog on the left.';
+        li.textContent = 'Add cards from the catalog in the middle column.';
         deckListEl.appendChild(li);
     } else {
         if (mainEntries.length > 0) {

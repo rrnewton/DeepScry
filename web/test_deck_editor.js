@@ -263,19 +263,74 @@ function check(cond, msg) {
                 check(!!details.oracle && details.oracle.length > 0,
                     'card-details shows the oracle text');
             }
-            // Card art: the pane builds a Gatherer <img> (WASM-free, computed
-            // from the card name) for the clicked card. The art may be hidden on
-            // an offline/missing-image onerror, but the element + URL must exist.
-            check(!!details.artSrc && details.artSrc.includes('gatherer.wizards.com'),
-                'card-details renders a Gatherer art <img> for the card: "' + details.artSrc + '"');
+            // Card art: the pane builds a Scryfall EXACT-named <img> (WASM-free,
+            // computed from the card name) for the clicked card. The art may be
+            // hidden on an offline/missing-image onerror, but the element + URL
+            // must exist. The previous Gatherer `Image.ashx?name=` handler did a
+            // FUZZY server-side match and could return a DIFFERENT card's art
+            // (user bug: Lightning Bolt rendered "Thrum of the Vestige"); the
+            // exact-name endpoint cannot collide that way.
+            check(!!details.artSrc && details.artSrc.includes('api.scryfall.com/cards/named'),
+                'card-details renders a Scryfall exact-name art <img> for the card: "' + details.artSrc + '"');
             check(!!details.artSrc &&
-                details.artSrc.includes('name=' + encodeURIComponent(detailCard.name)),
-                'card-details art URL is computed from the clicked card name');
+                details.artSrc.includes('exact=' + encodeURIComponent(detailCard.name)),
+                'card-details art URL is an EXACT lookup of the clicked card name');
             // Clear the search so later sections see the full list again.
             await page.fill('#search-input', '');
             await page.waitForTimeout(250);
         } else {
             check(false, 'catalog had no card to exercise the details panel');
+        }
+
+        // ── 4c. WRONG-IMAGE regression: each card maps to ITS OWN art ───
+        // Selecting several specific cards in a row must give each one its own
+        // exact-name image URL (and the panel + <img> name stamps must agree),
+        // so the description and the image can never drift apart the way the old
+        // fuzzy Gatherer lookup allowed.
+        log('\n=== 4c. Card-details image maps to the SELECTED card ===');
+        {
+            // Use real cards from the served catalog so the assertions are stable
+            // regardless of which sets are bundled. Prefer the user's reported
+            // case (Lightning Bolt) + an Adventure card + a basic land when present.
+            const present = (nm) => catalogCards.some((c) => c.name === nm);
+            const probes = ['Lightning Bolt', 'Bonecrusher Giant', 'Forest']
+                .filter(present);
+            // Backfill with arbitrary distinct catalog names if the preferred set
+            // isn't available, so this section always exercises >=2 cards.
+            for (const c of catalogCards) {
+                if (probes.length >= 3) break;
+                if (!probes.includes(c.name)) probes.push(c.name);
+            }
+            for (const nm of probes) {
+                await page.fill('#search-input', nm);
+                await page.waitForTimeout(300);
+                await page.evaluate((n) => {
+                    const li = [...document.querySelectorAll('#card-list li')]
+                        .find((r) => r.querySelector('.card-name') &&
+                            r.querySelector('.card-name').textContent === n);
+                    if (li) li.click();
+                }, nm);
+                await page.waitForTimeout(120);
+                const d = await page.evaluate(() => {
+                    const el = document.getElementById('card-details');
+                    const img = el.querySelector('img.cd-art');
+                    return {
+                        detailName: el.querySelector('.cd-name')
+                            ? el.querySelector('.cd-name').textContent : null,
+                        panelStamp: el.dataset.selectedCard || null,
+                        imgStamp: img ? (img.dataset.cardName || null) : null,
+                        src: img ? img.getAttribute('src') : null,
+                    };
+                });
+                check(d.detailName === nm &&
+                    d.panelStamp === nm &&
+                    d.imgStamp === nm &&
+                    !!d.src && d.src.includes('exact=' + encodeURIComponent(nm)),
+                    'card "' + nm + '": details name, panel/img name-stamps, and art URL all match it ' +
+                    '(name=' + JSON.stringify(d.detailName) + ', src=' + d.src + ')');
+            }
+            await page.fill('#search-input', '');
+            await page.waitForTimeout(250);
         }
 
         // ── 5. Save deck / saved chips ──────────────────────────────────
