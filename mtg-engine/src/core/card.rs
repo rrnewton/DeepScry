@@ -915,6 +915,14 @@ pub struct Card {
     #[serde(default)]
     pub x_paid: u8,
 
+    /// The number of times Multikicker was paid when casting this spell (CR 702.33a).
+    /// Set by the priority loop when the caster opts to pay the Multikicker additional
+    /// cost one or more times. Used at resolution to evaluate `Count$TimesKicked` SVars
+    /// (e.g. Everflowing Chalice `K:etbCounter:CHARGE:XKicked` where
+    /// `SVar:XKicked:Count$TimesKicked`).
+    #[serde(default)]
+    pub times_kicked: u8,
+
     /// If set, a zone-change replacement applies: should this creature die this
     /// turn, it is exiled instead of going to the graveyard (CR 614). Set by
     /// `Effect::ExileIfWouldDieThisTurn` (Disintegrate's
@@ -1043,6 +1051,7 @@ pub struct CardStateSnapshot {
     pub regeneration_shields: u8,
     pub damage_prevention: i32,
     pub x_paid: u8,
+    pub times_kicked: u8,
     pub exile_if_would_die_this_turn: bool,
     pub prevent_all_combat_damage_this_turn: bool,
     pub dealt_damage_to_opponent_this_turn: bool,
@@ -1116,6 +1125,7 @@ impl Card {
             regeneration_shields: 0,
             damage_prevention: 0,
             x_paid: 0,
+            times_kicked: 0,
             exile_if_would_die_this_turn: false,
             prevent_all_combat_damage_this_turn: false,
             dealt_damage_to_opponent_this_turn: false,
@@ -1166,6 +1176,7 @@ impl Card {
             regeneration_shields: self.regeneration_shields,
             damage_prevention: self.damage_prevention,
             x_paid: self.x_paid,
+            times_kicked: self.times_kicked,
             exile_if_would_die_this_turn: self.exile_if_would_die_this_turn,
             prevent_all_combat_damage_this_turn: self.prevent_all_combat_damage_this_turn,
             dealt_damage_to_opponent_this_turn: self.dealt_damage_to_opponent_this_turn,
@@ -1215,6 +1226,7 @@ impl Card {
         self.regeneration_shields = snapshot.regeneration_shields;
         self.damage_prevention = snapshot.damage_prevention;
         self.x_paid = snapshot.x_paid;
+        self.times_kicked = snapshot.times_kicked;
         self.exile_if_would_die_this_turn = snapshot.exile_if_would_die_this_turn;
         self.prevent_all_combat_damage_this_turn = snapshot.prevent_all_combat_damage_this_turn;
         self.dealt_damage_to_opponent_this_turn = snapshot.dealt_damage_to_opponent_this_turn;
@@ -1400,6 +1412,7 @@ impl Card {
         self.regeneration_shields = 0;
         self.damage_prevention = 0;
         self.x_paid = 0;
+        self.times_kicked = 0;
         self.exile_if_would_die_this_turn = false;
         self.prevent_all_combat_damage_this_turn = false;
         self.dealt_damage_to_opponent_this_turn = false;

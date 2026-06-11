@@ -2450,6 +2450,73 @@ mod tests {
         );
     }
 
+    /// Regression test for 2010 Compat Wave 2 B1: Everflowing Chalice
+    /// (K:etbCounter:CHARGE:XKicked, SVar:XKicked:Count$TimesKicked) was entering
+    /// with zero CHARGE counters because `apply_etb_counters` did not resolve
+    /// named SVar amounts via the card's own SVar dictionary.  After the fix,
+    /// `XKicked` resolves to `Count$TimesKicked` → `CountExpression::TimesKicked` →
+    /// `card.times_kicked`, and the Chalice enters with one counter per kick.
+    #[test]
+    fn test_etb_counter_xkicked_svar_uses_times_kicked() {
+        use crate::core::{CardType, CounterType, KeywordArgs, KeywordSet, ManaCost};
+        use std::collections::HashMap;
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+
+        // Build a minimal Everflowing Chalice-like card:
+        //   ManaCost: 0; K:Multikicker:2; K:etbCounter:CHARGE:XKicked
+        //   SVar:XKicked:Count$TimesKicked
+        let chalice_id = game.next_entity_id();
+        let mut chalice = Card::new(chalice_id, "Everflowing Chalice".to_string(), p1_id);
+        chalice.add_type(CardType::Artifact);
+        chalice.mana_cost = ManaCost::new(); // {0}
+        chalice.controller = p1_id;
+
+        // Attach the Multikicker and etbCounter keywords.
+        let mut kws = KeywordSet::default();
+        kws.insert_complex(KeywordArgs::Multikicker {
+            cost: ManaCost::from_string("2"),
+        });
+        kws.insert_complex(KeywordArgs::EtbCounter {
+            counter_type: "CHARGE".to_string(),
+            amount: "XKicked".to_string(),
+            condition: String::new(),
+        });
+        chalice.keywords = kws;
+
+        // Populate the SVar dictionary exactly as the card script specifies.
+        let mut svars: HashMap<String, String> = HashMap::new();
+        svars.insert("XKicked".to_string(), "Count$TimesKicked".to_string());
+        chalice.svars = svars;
+
+        // Simulate paying Multikicker 3 times.
+        chalice.times_kicked = 3;
+
+        // Place the card on the stack and resolve it.
+        game.cards.insert(chalice_id, chalice);
+        game.stack.add(chalice_id);
+        game.resolve_spell(chalice_id, &[]).unwrap();
+
+        // Chalice should be on the battlefield.
+        assert!(
+            game.battlefield.contains(chalice_id),
+            "Everflowing Chalice should be on the battlefield after resolving"
+        );
+
+        // Must have exactly 3 CHARGE counters (= times_kicked).
+        let actual_counters = game
+            .cards
+            .get(chalice_id)
+            .map(|c| c.get_counter(CounterType::Charge))
+            .unwrap_or(0);
+        assert_eq!(
+            actual_counters, 3,
+            "Everflowing Chalice should enter with 3 CHARGE counters when kicked 3 times, \
+             but got {actual_counters}"
+        );
+    }
+
     /// CR 603.6c + CR 608.2g (LKI): Hangarback Walker's death trigger creates
     /// one Thopter for EACH +1/+1 counter on the dying card.
     ///

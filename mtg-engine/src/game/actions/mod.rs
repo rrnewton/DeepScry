@@ -1362,24 +1362,53 @@ impl GameState {
                 );
                 return Ok(());
             };
-            // Resolve the counter amount: numeric literal or the symbolic "X" /
-            // "Y" variables that refer to the X paid when casting the spell
-            // (CR 107.3, CR 614.1c).  For X-cost permanents like Hangarback
-            // Walker the card's `x_paid` field is set by the priority loop
-            // before the spell resolves, so it carries the correct value here.
-            let amt = match amount.parse::<u8>() {
+            // Clone the fields we need before the borrow of `args` ends.
+            let amount_str = amount.clone();
+            let card_name_str = card.name.clone();
+            let x_paid = card.x_paid;
+            let times_kicked = card.times_kicked;
+            // Clone SVars so we can look up SVar expressions without holding
+            // a borrow on `card` (which is borrowed through `args`).
+            let svars = card.svars.clone();
+            // Resolve the counter amount: numeric literal, the symbolic "X"/"Y"
+            // (X-cost spells, CR 107.3), or a named SVar (e.g. "XKicked" for
+            // Multikicker cards, CR 702.33a).  For X-cost permanents like
+            // Hangarback Walker, `x_paid` is set by the priority loop before the
+            // spell resolves.  For Multikicker permanents like Everflowing Chalice,
+            // `times_kicked` is set by the priority loop.
+            let amt = match amount_str.parse::<u8>() {
                 Ok(n) => n,
-                Err(_) if amount.eq_ignore_ascii_case("X") || amount.eq_ignore_ascii_case("Y") => card.x_paid,
+                Err(_) if amount_str.eq_ignore_ascii_case("X") || amount_str.eq_ignore_ascii_case("Y") => x_paid,
                 Err(_) => {
-                    log::warn!(
-                        "apply_etb_counters: non-numeric amount '{}' on {} not yet supported",
-                        amount,
-                        card.name
-                    );
-                    return Ok(());
+                    // Try looking up `amount_str` as a named SVar on the card itself
+                    // (e.g. "XKicked" → SVar:XKicked:Count$TimesKicked).
+                    if let Some(svar) = svars.get(&amount_str) {
+                        let expr = crate::core::CountExpression::parse(&amount_str, &svars);
+                        match expr {
+                            crate::core::CountExpression::TimesKicked => times_kicked,
+                            crate::core::CountExpression::Fixed(n) => n.max(0) as u8,
+                            _ => {
+                                log::warn!(
+                                    "apply_etb_counters: SVar '{}' on {} resolves to unsupported \
+                                     expression '{}' — skipping",
+                                    amount_str,
+                                    card_name_str,
+                                    svar
+                                );
+                                return Ok(());
+                            }
+                        }
+                    } else {
+                        log::warn!(
+                            "apply_etb_counters: non-numeric amount '{}' on {} not yet supported",
+                            amount_str,
+                            card_name_str
+                        );
+                        return Ok(());
+                    }
                 }
             };
-            (ct, amt, card.name.clone())
+            (ct, amt, card_name_str)
         };
 
         if amount == 0 {
@@ -1816,6 +1845,27 @@ impl GameState {
         // x_paid is set by the priority loop before this is called
         if effective_cost.has_x() {
             effective_cost = effective_cost.with_x_value(card.x_paid);
+        }
+
+        // Add Multikicker cost: times_kicked × kick_cost (CR 702.33a).
+        // times_kicked is set by the priority loop (Step 2c) before this is called.
+        if card.times_kicked > 0 {
+            if let Some(crate::core::KeywordArgs::Multikicker { cost }) =
+                card.keywords.get_args(crate::core::Keyword::Multikicker)
+            {
+                let kick_generic = cost.generic * u8::from(card.times_kicked);
+                let kick_white = cost.white * u8::from(card.times_kicked);
+                let kick_blue = cost.blue * u8::from(card.times_kicked);
+                let kick_black = cost.black * u8::from(card.times_kicked);
+                let kick_red = cost.red * u8::from(card.times_kicked);
+                let kick_green = cost.green * u8::from(card.times_kicked);
+                effective_cost.generic = effective_cost.generic.saturating_add(kick_generic);
+                effective_cost.white = effective_cost.white.saturating_add(kick_white);
+                effective_cost.blue = effective_cost.blue.saturating_add(kick_blue);
+                effective_cost.black = effective_cost.black.saturating_add(kick_black);
+                effective_cost.red = effective_cost.red.saturating_add(kick_red);
+                effective_cost.green = effective_cost.green.saturating_add(kick_green);
+            }
         }
 
         effective_cost
@@ -7122,6 +7172,23 @@ impl GameState {
         }
     }
 
+    /// Set a card's `times_kicked` (number of times Multikicker was paid, CR 702.33a),
+    /// snapshotting the prior value for undo first. Mirrors `set_x_paid_logged`.
+    /// No-op if the card is missing.
+    pub(crate) fn set_times_kicked_logged(&mut self, card_id: CardId, count: u8) {
+        let Some(prev) = self.cards.try_get(card_id).map(|c| c.times_kicked) else {
+            return;
+        };
+        let prior_log_size = self.logger.log_count();
+        self.undo_log.log(
+            crate::undo::GameAction::SetTimesKicked { card_id, prev },
+            prior_log_size,
+        );
+        if let Ok(card) = self.cards.get_mut(card_id) {
+            card.times_kicked = count;
+        }
+    }
+
     fn apply_source_prevention_shields(&mut self, target_id: PlayerId, source: Option<CardId>, amount: i32) -> i32 {
         let Some(source) = source else { return amount };
         if amount <= 0 {
@@ -7828,6 +7895,13 @@ impl GameState {
                 // return 0 as fallback (the card's x_paid isn't accessible here
                 // without knowing which card to look at).
                 log::debug!("evaluate_count_expression: XPaid evaluated as 0 (no card context)");
+                Ok(0)
+            }
+            CountExpression::TimesKicked => {
+                // TimesKicked is resolved via apply_etb_counters which passes the
+                // card's times_kicked directly. This path (called from the mana-
+                // ability / pump evaluators) has no card context, so returns 0.
+                log::debug!("evaluate_count_expression: TimesKicked evaluated as 0 (no card context)");
                 Ok(0)
             }
             CountExpression::SpellsCastThisTurn => {

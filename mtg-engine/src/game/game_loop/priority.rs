@@ -1156,6 +1156,72 @@ impl<'a> GameLoop<'a> {
                                     }
                                 }
 
+                                // Step 2c: Multikicker payment (CR 702.33a)
+                                // If the spell has Multikicker, the caster may pay
+                                // the kicker cost any number of additional times.
+                                // Heuristic: pay as many times as mana allows
+                                // (greedy — always kick as much as possible).
+                                {
+                                    let multikicker_cost = self
+                                        .game
+                                        .cards
+                                        .try_get(card_id)
+                                        .and_then(|c| c.keywords.get_args(crate::core::Keyword::Multikicker))
+                                        .and_then(|args| {
+                                            if let crate::core::KeywordArgs::Multikicker { cost } = args {
+                                                Some(crate::core::ManaCost {
+                                                    generic: cost.generic,
+                                                    white: cost.white,
+                                                    blue: cost.blue,
+                                                    black: cost.black,
+                                                    red: cost.red,
+                                                    green: cost.green,
+                                                    colorless: cost.colorless,
+                                                    x_count: cost.x_count,
+                                                })
+                                            } else {
+                                                None
+                                            }
+                                        });
+                                    if let Some(kick_cost) = multikicker_cost {
+                                        let kick_cmc = u8::from(kick_cost.cmc());
+                                        if kick_cmc > 0 {
+                                            self.mana_engine.update_mut(self.game, current_priority);
+                                            let untapped_sources =
+                                                self.mana_engine
+                                                    .all_sources()
+                                                    .iter()
+                                                    .filter(|s| !s.is_tapped && !s.has_summoning_sickness)
+                                                    .count() as u8;
+                                            let pool_mana = self
+                                                .game
+                                                .get_player(current_priority)
+                                                .map(|p| p.total_available_mana().total())
+                                                .unwrap_or(0);
+                                            let total_mana = untapped_sources.saturating_add(pool_mana);
+                                            // Reserve mana for the base spell cost
+                                            let base_cost =
+                                                self.game.cards.get(card_id).map(|c| c.mana_cost.cmc()).unwrap_or(0);
+                                            let available_for_kicker = total_mana.saturating_sub(base_cost);
+                                            let max_kicks = available_for_kicker / kick_cmc;
+                                            if max_kicks > 0 {
+                                                self.game.set_times_kicked_logged(card_id, max_kicks);
+                                                if self.verbosity >= VerbosityLevel::Normal && !self.replaying {
+                                                    let msg = format!(
+                                                        "  → Multikicker paid {} time{}",
+                                                        max_kicks,
+                                                        if max_kicks == 1 { "" } else { "s" }
+                                                    );
+                                                    self.game.logger.gamelog(&msg);
+                                                }
+                                            } else {
+                                                // Ensure times_kicked is 0 (reset from any prior value)
+                                                self.game.set_times_kicked_logged(card_id, 0);
+                                            }
+                                        }
+                                    }
+                                }
+
                                 // Get valid targets BEFORE calling cast_spell_8_step
                                 // (we can't borrow controller inside the closure)
                                 // Note: For modal spells, this runs AFTER mode selection

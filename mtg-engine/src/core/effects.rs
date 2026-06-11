@@ -394,6 +394,15 @@ pub enum CountExpression {
         false_value: i32,
     },
 
+    /// The number of times Multikicker was paid for this spell (Count$TimesKicked).
+    ///
+    /// Corresponds to Forge's `SVar:XKicked:Count$TimesKicked` — e.g. Everflowing
+    /// Chalice uses `K:etbCounter:CHARGE:XKicked` with this SVar so it enters with
+    /// one CHARGE counter per kicker payment. Resolved at effect-execution time from
+    /// `Card::times_kicked`, which is set by the priority loop when the caster pays
+    /// Multikicker one or more times (CR 702.33a).
+    TimesKicked,
+
     /// Conditional value based on whether the spell was kicked (Count$Kicked.true_val.false_val)
     ///
     /// Corresponds to Forge's `Count$Kicked.5.2` = "5 if kicked, 2 if not".
@@ -575,6 +584,8 @@ impl CountExpression {
             if let Some(rest) = svar_value.strip_prefix("Count$") {
                 if rest == "xPaid" {
                     return CountExpression::XPaid;
+                } else if rest == "TimesKicked" {
+                    return CountExpression::TimesKicked;
                 } else if let Some(hand_rest) = rest.strip_prefix("ValidHand ") {
                     // Count$ValidHand <selector>[/Modifier]
                     // (Black Vise: "Count$ValidHand Card.ChosenCtrl/Minus.4").
@@ -4920,6 +4931,7 @@ mod tests {
             | CountExpression::ValidPermanents { .. }
             | CountExpression::CardsDrawnThisTurn
             | CountExpression::XPaid
+            | CountExpression::TimesKicked
             | CountExpression::SpellsCastThisTurn
             | CountExpression::ValidGraveyard { .. }
             | CountExpression::Kicked { .. }
@@ -4968,6 +4980,7 @@ mod tests {
             | CountExpression::CardsDrawnThisTurn
             | CountExpression::CardsInHand { .. }
             | CountExpression::XPaid
+            | CountExpression::TimesKicked
             | CountExpression::SpellsCastThisTurn
             | CountExpression::Compare { .. }
             | CountExpression::TargetedCardPower
@@ -5013,6 +5026,7 @@ mod tests {
                     | CountExpression::CardsDrawnThisTurn
                     | CountExpression::CardsInHand { .. }
                     | CountExpression::XPaid
+                    | CountExpression::TimesKicked
                     | CountExpression::SpellsCastThisTurn
                     | CountExpression::ValidGraveyard { .. }
                     | CountExpression::Kicked { .. }
@@ -5033,6 +5047,7 @@ mod tests {
             | CountExpression::CardsDrawnThisTurn
             | CountExpression::CardsInHand { .. }
             | CountExpression::XPaid
+            | CountExpression::TimesKicked
             | CountExpression::SpellsCastThisTurn
             | CountExpression::ValidGraveyard { .. }
             | CountExpression::Kicked { .. }
