@@ -2295,9 +2295,7 @@ impl<'a> GameLoop<'a> {
                                                     Ok(Some(parts)) => parts,
                                                     Ok(None) => continue, // no library
                                                     Err(e) => {
-                                                        if self.verbosity >= VerbosityLevel::Normal
-                                                            && !self.replaying
-                                                        {
+                                                        if self.verbosity >= VerbosityLevel::Normal && !self.replaying {
                                                             eprintln!("    Failed dig snapshot: {e}");
                                                         }
                                                         continue;
@@ -2315,8 +2313,7 @@ impl<'a> GameLoop<'a> {
                                                 self.sync_to_action();
 
                                                 let prior_log_size = self.game.logger.log_count();
-                                                let view =
-                                                    crate::game::GameStateView::new(self.game, digger);
+                                                let view = crate::game::GameStateView::new(self.game, digger);
                                                 let choice = controller.choose_dig_partition(
                                                     &view,
                                                     &valid_ids,
@@ -2327,29 +2324,19 @@ impl<'a> GameLoop<'a> {
                                                 let decision = match choice {
                                                     crate::game::controller::ChoiceResult::Ok(d) => d,
                                                     crate::game::controller::ChoiceResult::NeedInput(ctx) => {
-                                                        self.game
-                                                            .sub_action_scratch
-                                                            .pending_activation_effect_idx =
+                                                        self.game.sub_action_scratch.pending_activation_effect_idx =
                                                             Some((effect_idx, chosen_targets_vec));
                                                         return Err(crate::MtgError::NeedInput(Box::new(ctx)));
                                                     }
                                                     other => {
-                                                        handle_choice_result_break!(
-                                                            other,
-                                                            self.game,
-                                                            current_priority
-                                                        )
+                                                        handle_choice_result_break!(other, self.game, current_priority)
                                                     }
                                                 };
 
                                                 let replay_choice = crate::game::ReplayChoice::Dig {
                                                     kept: decision.kept.clone(),
                                                 };
-                                                self.log_choice_point(
-                                                    digger,
-                                                    Some(replay_choice),
-                                                    prior_log_size,
-                                                );
+                                                self.log_choice_point(digger, Some(replay_choice), prior_log_size);
 
                                                 let mut moved_cards: Vec<crate::core::CardId> =
                                                     Vec::with_capacity(decision.kept.len());
@@ -2364,9 +2351,7 @@ impl<'a> GameLoop<'a> {
                                                     *rest_random,
                                                     &mut moved_cards,
                                                 ) {
-                                                    if self.verbosity >= VerbosityLevel::Normal
-                                                        && !self.replaying
-                                                    {
+                                                    if self.verbosity >= VerbosityLevel::Normal && !self.replaying {
                                                         eprintln!("    Failed to apply dig decision: {e}");
                                                     }
                                                 }
@@ -3566,8 +3551,7 @@ impl<'a> GameLoop<'a> {
                         change_valid,
                     } => {
                         let digger = self.game.turn.active_player;
-                        let snapshot =
-                            self.game.dig_self_snapshot(digger, *dig_count, change_valid, *reveal);
+                        let snapshot = self.game.dig_self_snapshot(digger, *dig_count, change_valid, *reveal);
                         let (card_ids, valid_ids, invalid_ids) = match snapshot {
                             Ok(Some(parts)) => parts,
                             Ok(None) => continue, // no library
@@ -3606,12 +3590,15 @@ impl<'a> GameLoop<'a> {
                                 return Err(crate::MtgError::InvalidAction("Game exit requested during Dig".into()));
                             }
                             crate::game::controller::ChoiceResult::Error(e) => {
-                                return Err(crate::MtgError::InvalidAction(format!("Controller error during Dig: {e}")));
+                                return Err(crate::MtgError::InvalidAction(format!(
+                                    "Controller error during Dig: {e}"
+                                )));
                             }
                             crate::game::controller::ChoiceResult::UndoRequest(_) => {
                                 // Undo during Dig: fall back to the engine
                                 // heuristic (matches the no-controller path).
-                                self.game.dig_default_decision(&valid_ids, *change_count, *change_all, *optional)
+                                self.game
+                                    .dig_default_decision(&valid_ids, *change_count, *change_all, *optional)
                             }
                         };
 
@@ -3638,12 +3625,8 @@ impl<'a> GameLoop<'a> {
                                 eprintln!("    Failed to apply dig decision: {e}");
                             }
                         }
-                        self.game.dig_apply_may_play(
-                            digger,
-                            *may_play,
-                            *may_play_without_mana_cost,
-                            &mut moved_cards,
-                        );
+                        self.game
+                            .dig_apply_may_play(digger, *may_play, *may_play_without_mana_cost, &mut moved_cards);
                     }
                     // Scry: snapshot top N → controller decides → apply.
                     // Routes through PlayerController instead of the engine

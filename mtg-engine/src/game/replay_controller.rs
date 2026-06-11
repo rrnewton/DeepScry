@@ -619,7 +619,8 @@ impl PlayerController for ReplayController {
         }) {
             return ChoiceResult::Ok(decision);
         }
-        self.inner.choose_dig_partition(view, valid, change_count, change_all, optional)
+        self.inner
+            .choose_dig_partition(view, valid, change_count, change_all, optional)
     }
 
     fn choose_from_library(

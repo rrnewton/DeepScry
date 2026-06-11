@@ -900,48 +900,34 @@ impl PlayerController for HeuristicController {
         valid: &[CardId],
         change_count: u8,
         change_all: bool,
-        optional: bool,
+        _optional: bool,
     ) -> ChoiceResult<crate::game::controller::DigDecision> {
-        // Heuristic Dig keep-ranking — IDENTICAL to the effect-layer fallback
-        // (GameState::dig_default_decision): rank the filter-matched `valid`
-        // cards by the shared `dig_card_score` and keep the best `change_count`
-        // (all when `change_all`), skipping entirely when `optional` and even the
-        // best card scores poorly. Scoring uses ONLY the revealed cards visible
-        // in `view` (information-independent: on a network client this method is
-        // never consulted — the server's decision is shipped over — but it MUST
-        // still avoid hidden info to satisfy the controller contract).
-        use crate::game::actions::effects::dig_card_score;
-
-        let mut ranked: SmallVec<[CardId; 8]> = valid.iter().copied().collect();
-        let max_select = if change_all {
-            ranked.len()
-        } else {
-            (change_count as usize).min(ranked.len())
-        };
-
-        let score = |cid: CardId| -> i32 { view.get_card(cid).map(dig_card_score).unwrap_or(0) };
-
-        if ranked.len() > 1 && max_select < ranked.len() {
-            ranked.sort_by(|&a, &b| score(b).cmp(&score(a))); // Descending: best first
-        }
-
-        let select_count = if optional && max_select > 0 {
-            let best_score = ranked.first().map(|&id| score(id)).unwrap_or(0);
-            if best_score < 30 {
-                0
-            } else {
-                max_select
-            }
-        } else {
-            max_select
-        };
-
-        let kept: SmallVec<[CardId; 8]> = ranked.iter().take(select_count).copied().collect();
+        // mtg-908: keep the first `change_count` valid cards in REVEALED (library
+        // top-down) order — a POSITIONAL, information-INDEPENDENT decision.
+        //
+        // The old heuristic ranked by `dig_card_score` (creature P/T, land, CMC).
+        // That is an information-LEAK: on the server it ranks the real revealed
+        // cards, but on a network client's shadow those top-of-library cards are
+        // HIDDEN (unmaterialised), so the shadow scores them all 0, does NOT
+        // reorder, and keeps a DIFFERENT subset than the server → FATAL state-hash
+        // desync (mtg-908: the user's 2025 04-vs-02 game). CLAUDE.md requires
+        // controllers to "produce identical decisions whether running on the
+        // server (full state) or on a client (shadow state)". A positional
+        // keep-first-N depends only on the server-authoritative library ORDER
+        // (which the shadow learns via LibraryReordered / reveals), so server and
+        // shadow always agree. We delegate to `DigDecision::keep_first_n` so the
+        // default controller, the effect fallback, and the heuristic all share
+        // the one positional rule.
+        let decision = crate::game::controller::DigDecision::keep_first_n(valid, change_count as usize, change_all);
         view.logger().controller_choice(
             "HEURISTIC",
-            &format!("Dig: keep {} of {} valid cards", kept.len(), valid.len()),
+            &format!(
+                "Dig: keep {} of {} valid cards (positional)",
+                decision.kept.len(),
+                valid.len()
+            ),
         );
-        ChoiceResult::Ok(crate::game::controller::DigDecision { kept })
+        ChoiceResult::Ok(decision)
     }
 
     fn choose_cards_to_discard(

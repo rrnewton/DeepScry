@@ -80,7 +80,8 @@ impl GameState {
             // SERVER's controller picks and `dig_apply_self_decision` is called
             // directly with the server-authoritative kept-set — so server and
             // client never re-decide from divergent hidden-library views.
-            let Some((card_ids, valid_ids, invalid_ids)) = self.dig_self_snapshot(digger, dig_count, change_valid, reveal)?
+            let Some((card_ids, valid_ids, invalid_ids)) =
+                self.dig_self_snapshot(digger, dig_count, change_valid, reveal)?
             else {
                 return Ok(());
             };
@@ -277,41 +278,16 @@ impl GameState {
         valid_ids: &[CardId],
         change_count: u8,
         change_all: bool,
-        optional: bool,
+        _optional: bool,
     ) -> crate::game::controller::DigDecision {
-        let mut ranked: smallvec::SmallVec<[CardId; 8]> = valid_ids.iter().copied().collect();
-
-        // Determine how many cards to select
-        let max_select = if change_all {
-            ranked.len()
-        } else {
-            (change_count as usize).min(ranked.len())
-        };
-
-        // AI heuristic: rank valid cards by value, pick best ones.
-        if ranked.len() > 1 && max_select < ranked.len() {
-            ranked.sort_by(|&a, &b| {
-                let score_a = self.dig_card_score(a);
-                let score_b = self.dig_card_score(b);
-                score_b.cmp(&score_a) // Descending: best first
-            });
-        }
-
-        // If optional and no good cards, AI may choose to skip.
-        let select_count = if optional && max_select > 0 {
-            let best_score = ranked.first().map(|&id| self.dig_card_score(id)).unwrap_or(0);
-            if best_score < 30 {
-                0
-            } else {
-                max_select
-            }
-        } else {
-            max_select
-        };
-
-        crate::game::controller::DigDecision {
-            kept: ranked.iter().take(select_count).copied().collect(),
-        }
+        // mtg-908: keep the first `change_count` valid cards in REVEALED order —
+        // POSITIONAL and information-INDEPENDENT. The previous `dig_card_score`
+        // value-ranking read hidden top-of-library identities, which a network
+        // client's shadow cannot see, so server and shadow kept different cards →
+        // FATAL desync. A positional keep depends only on the server-authoritative
+        // library ORDER (synced to the shadow), so both sides agree. Shared with
+        // the heuristic controller via `DigDecision::keep_first_n` (one rule).
+        crate::game::controller::DigDecision::keep_first_n(valid_ids, change_count as usize, change_all)
     }
 
     /// Apply a self-dig `decision` (the server-authoritative kept-set): move the
@@ -355,7 +331,13 @@ impl GameState {
             // INDEPENDENT id form so the presentation asymmetry is not flagged as
             // a fatal desync. Same mechanism as the discard-into-graveyard line.
             let action = if reveal { "reveals and puts" } else { "puts" };
-            let stable = format!("{} {} card#{} into {:?}", digger_name, action, card_id.as_u32(), destination);
+            let stable = format!(
+                "{} {} card#{} into {:?}",
+                digger_name,
+                action,
+                card_id.as_u32(),
+                destination
+            );
             self.logger.gamelog_reveal_stable(
                 &format!("{} {} {} into {:?}", digger_name, action, card_name, destination),
                 &stable,
@@ -449,40 +431,9 @@ impl GameState {
         }
         Ok(())
     }
-
-    /// AI heuristic scoring a card for Dig selection: creatures by P/T + CMC,
-    /// lands at a fixed 100, other cards by CMC. Higher = more desirable to keep.
-    ///
-    /// NOTE (mtg-908): this reads the real (potentially hidden) card identity,
-    /// which is the network-desync hazard. The controller-routed path makes this
-    /// a server-authoritative decision shipped to the client; this scorer is the
-    /// shared ranking used by both the fallback (`dig_default_decision`) and the
-    /// heuristic controller's `choose_dig_partition` — both call the free
-    /// [`dig_card_score`] function so the keep-ranking is IDENTICAL across the
-    /// effect fallback and the controller (DRY; no divergent copies).
-    pub(in crate::game::actions) fn dig_card_score(&self, card_id: CardId) -> i32 {
-        self.cards.try_get(card_id).map(dig_card_score).unwrap_or(0)
-    }
 }
-
-/// Shared AI Dig keep-ranking score for a single card: creatures by
-/// `80 + (power+toughness)*10 + cmc*5`, lands a flat `100`, other cards
-/// `50 + 30*cmc`. Higher = more desirable to keep.
-///
-/// This is the ONE place the Dig keep-heuristic lives. It is shared by the
-/// no-controller fallback ([`GameState::dig_default_decision`]) and the
-/// heuristic controller (`HeuristicController::choose_dig_partition`), so the
-/// server's effect-fallback path and the controller-routed path rank cards
-/// identically — a prerequisite for mtg-908 server/client agreement.
-pub fn dig_card_score(card: &crate::core::Card) -> i32 {
-    let cmc = i32::from(card.definition.mana_cost.cmc());
-    if card.is_creature() {
-        let power = i32::from(card.current_power());
-        let toughness = i32::from(card.current_toughness());
-        80 + (power + toughness) * 10 + cmc * 5
-    } else if card.is_land() {
-        100
-    } else {
-        50 + 30 * cmc
-    }
-}
+// NOTE (mtg-908): the old `dig_card_score` value-ranking heuristic was REMOVED.
+// It read hidden top-of-library card identities to rank which cards to keep,
+// which a network client's shadow cannot reproduce (the cards are unmaterialised
+// there) — the root of the mtg-908 desync. The Dig keep decision is now purely
+// positional (`DigDecision::keep_first_n`), which is information-independent.
