@@ -1204,6 +1204,11 @@
         updateLobbyLogoutControl();
         applyLaunchLinks();
         startRefreshTimer();
+        // Persist the display name so a page refresh can auto-reconnect an
+        // OAuth-authenticated user without forcing them back to the sign-in page.
+        // (Only stored once the user has SUCCESSFULLY entered the lobby, so this
+        // represents a name the server accepted — not a mere pre-fill suggestion.)
+        try { localStorage.setItem('deepscry_display_name', name); } catch (_) {}
     }
 
     // Return to the SIGNED-OUT sign-in page: clear the ephemeral name/session
@@ -1219,6 +1224,9 @@
         nameRegistered = false;
         nameCommitted = false;
         sessionStorage.removeItem('mtg.username');
+        // Clear the persisted display name so an explicit logout prevents
+        // the next page load from auto-reconnecting under the old name.
+        try { localStorage.removeItem('deepscry_display_name'); } catch (_) {}
         document.getElementById('pane-lobby').classList.add('hidden');
         document.getElementById('pane-name').classList.remove('hidden');
         document.getElementById('btn-name').disabled = false;
@@ -1508,24 +1516,44 @@
                 // common case is just "Continue". The field stays editable.
                 try { sessionStorage.setItem('mtg.cloudIdentity', s.user_id || '1'); } catch (_) {}
                 renderSignedIn();
-                // A freshly signed-in user MUST explicitly pick/confirm a lobby
-                // name — never auto-advance. If we have NOT already registered
-                // on the socket, clear any committed-name carryover (e.g. a
-                // stale sessionStorage name from earlier in this tab) so the
-                // name form stays in control until they click Continue.
-                if (!nameRegistered) {
+                // Session persistence: if we have a saved display name from a
+                // prior lobby session AND the OAuth cookie is still valid (we just
+                // confirmed that above), auto-reconnect straight to the lobby
+                // without forcing the user back through the sign-in page. We
+                // restore nameCommitted so maybeAutoRegister() will fire once the
+                // WS is open. This is safe because: (a) the OAuth check just
+                // passed, so the session is genuinely live; (b) the saved name is
+                // one the server ACCEPTED on a prior visit (stored in enterLobby).
+                // If the name is now taken the server returns RegisterResult
+                // failure and the auto-number fallback handles it gracefully.
+                var savedName = null;
+                try { savedName = localStorage.getItem('deepscry_display_name'); } catch (_) {}
+                if (!nameRegistered && savedName) {
+                    // Restore the committed name for auto-register.
+                    currentUsername = savedName;
+                    nameCommitted = true;
+                    sessionStorage.setItem('mtg.username', savedName);
+                } else if (!nameRegistered) {
+                    // No saved name: fresh sign-in — user must explicitly confirm.
+                    // Clear any stale sessionStorage carry-over so the name form
+                    // stays in control until they click "Continue to lobby".
                     nameCommitted = false;
                 }
                 var inp = document.getElementById('username');
                 // PRE-FILL the input value ONLY — do NOT set currentUsername /
-                // nameCommitted. The suggested name is a default the user can
-                // accept or edit; it is committed only when they click
-                // "Continue to lobby" (prevents the auto-proceed bug).
-                if (inp && s.suggested_name && !inp.value) {
-                    inp.value = s.suggested_name;
+                // nameCommitted (beyond the savedName case above). The suggested
+                // name is a default the user can accept or edit; it is committed
+                // only when they click "Continue to lobby" (prevents auto-proceed
+                // bug for truly fresh sign-ins with no saved name).
+                if (inp && !inp.value) {
+                    if (savedName) {
+                        inp.value = savedName;
+                    } else if (s.suggested_name) {
+                        inp.value = s.suggested_name;
+                    }
                 }
                 var ns = document.getElementById('name-status');
-                if (ns) ns.textContent = 'Signed in — your decks save to your account. Pick a lobby name (pre-filled) and continue.';
+                if (ns && !savedName) ns.textContent = 'Signed in — your decks save to your account. Pick a lobby name (pre-filled) and continue.';
             } else {
                 try { sessionStorage.removeItem('mtg.cloudIdentity'); } catch (_) {}
                 renderSignedOut(lastOAuthProviders);
@@ -1615,10 +1643,19 @@
     // -------------------------------------------------------------------------
     // Initialization
     // -------------------------------------------------------------------------
-    // Re-hydrate username from sessionStorage.
+    // Re-hydrate username from sessionStorage (survives same-tab navigation and
+    // normal page refreshes). If sessionStorage has no name, fall back to the
+    // localStorage display name as a pre-fill convenience for returning guests —
+    // they still have to click "Continue" (no auto-connect for ephemeral users),
+    // but at least the field is pre-populated with their last-used name.
     if (currentUsername) {
         document.getElementById('username').value = currentUsername;
     } else {
+        var savedDisplayName = null;
+        try { savedDisplayName = localStorage.getItem('deepscry_display_name'); } catch (_) {}
+        if (savedDisplayName) {
+            document.getElementById('username').value = savedDisplayName;
+        }
         document.getElementById('username').focus();
     }
     applyLaunchLinks();
