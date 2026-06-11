@@ -488,4 +488,177 @@ impl GameState {
         self.move_card(source, origin, destination, owner)?;
         Ok(())
     }
+
+    /// [`Effect::DestroyAll`]: destroy every permanent matching `restriction`
+    /// (Wrath of God), honoring indestructible and regeneration (unless
+    /// `no_regenerate`). CR 701.7.
+    pub(in crate::game::actions) fn execute_destroy_all(
+        &mut self,
+        restriction: &crate::core::effects::TargetRestriction,
+        no_regenerate: bool,
+    ) -> Result<()> {
+        // Destroy all permanents matching the restriction (e.g., Wrath of God)
+        let targets: Vec<CardId> = self
+            .battlefield
+            .cards
+            .iter()
+            .copied()
+            .filter(|&card_id| {
+                self.cards
+                    .get(card_id)
+                    .map(|card| restriction.matches(card))
+                    .unwrap_or(false)
+            })
+            .collect();
+
+        for card_id in targets {
+            let (owner, has_indestructible, has_regen_shield) = {
+                let card = self.cards.get(card_id)?;
+                (card.owner, card.has_indestructible(), card.regeneration_shields > 0)
+            };
+            if has_indestructible {
+                // Indestructible - can't be destroyed
+            } else if has_regen_shield && !no_regenerate {
+                // CR 701.15a: Regeneration replaces destruction
+                self.apply_regeneration_shield(card_id)?;
+            } else {
+                let _ = self.check_death_triggers(card_id);
+                let card_name = self
+                    .cards
+                    .get(card_id)
+                    .map(|c| c.name.to_string())
+                    .unwrap_or_else(|_| "Unknown".to_string());
+                self.move_card(
+                    card_id,
+                    Zone::Battlefield,
+                    self.death_destination_for_card(card_id),
+                    owner,
+                )?;
+                self.logger
+                    .gamelog(&format!("{} ({}) is destroyed", card_name, card_id));
+            }
+        }
+        Ok(())
+    }
+
+    /// [`Effect::SacrificeAll`]: every permanent matching `restriction` is
+    /// sacrificed (All is Dust). Sacrifice bypasses indestructible and
+    /// regeneration (CR 701.17).
+    pub(in crate::game::actions) fn execute_sacrifice_all(
+        &mut self,
+        restriction: &crate::core::effects::TargetRestriction,
+    ) -> Result<()> {
+        // Each player sacrifices all permanents matching the restriction (e.g., All is Dust)
+        // Sacrifice bypasses indestructible and regeneration (CR 701.17)
+        let targets: Vec<(CardId, PlayerId)> = self
+            .battlefield
+            .cards
+            .iter()
+            .copied()
+            .filter_map(|card_id| {
+                let card = self.cards.try_get(card_id)?;
+                if restriction.matches(card) {
+                    Some((card_id, card.owner))
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        for (card_id, owner) in targets {
+            let _ = self.check_death_triggers(card_id);
+            let card_name = self
+                .cards
+                .try_get(card_id)
+                .map(|c| c.name.to_string())
+                .unwrap_or_else(|| "Unknown".to_string());
+            self.move_card(
+                card_id,
+                Zone::Battlefield,
+                self.death_destination_for_card(card_id),
+                owner,
+            )?;
+            self.logger
+                .gamelog(&format!("{} ({}) is sacrificed", card_name, card_id));
+        }
+        Ok(())
+    }
+
+    /// [`Effect::ForceSacrifice`]: force `player` to sacrifice `count`
+    /// permanents matching `sac_type` (CR 701.17). The AI picks the
+    /// least-valuable matching permanents (P/T sum for creatures, CMC otherwise).
+    ///
+    /// NOTE (mtg-907): `sac_type` is matched with a raw `str` comparison
+    /// (`"Creature"`/`"Land"`/… else default-to-creature). Preserved verbatim
+    /// from the inline arm; a candidate for the Valid$/filter consolidation.
+    pub(in crate::game::actions) fn execute_force_sacrifice(
+        &mut self,
+        player: PlayerId,
+        sac_type: &str,
+        count: u8,
+    ) -> Result<()> {
+        // Force a player to sacrifice permanents matching a type
+        // CR 701.17: "sacrifice a permanent" means its controller moves it to graveyard
+        let player_name = self
+            .get_player(player)
+            .map(|p| p.name.clone())
+            .unwrap_or_else(|_| "Unknown".to_string().into());
+
+        // Find matching permanents controlled by the target player
+        let mut candidates: Vec<(CardId, i32)> = self
+            .battlefield
+            .cards
+            .iter()
+            .copied()
+            .filter_map(|card_id| {
+                let card = self.cards.get(card_id).ok()?;
+                if card.controller != player {
+                    return None;
+                }
+                // Match sac_type against card types
+                let type_matches = match sac_type {
+                    "Creature" => card.is_creature(),
+                    "Land" => card.is_land(),
+                    "Artifact" => card.is_artifact(),
+                    "Enchantment" => card.is_enchantment(),
+                    "Permanent" | "" => true, // Any permanent
+                    _ => {
+                        // Try matching as creature subtype or more complex filter
+                        card.is_creature() // Default to creature
+                    }
+                };
+                if type_matches {
+                    // Score: lower value = sacrifice first
+                    // Use P/T sum for creatures, CMC for non-creatures
+                    let value = if card.is_creature() {
+                        i32::from(card.current_power()) + i32::from(card.current_toughness())
+                    } else {
+                        i32::from(card.mana_cost.cmc())
+                    };
+                    Some((card_id, value))
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        // Sort by value ascending (sacrifice least valuable first)
+        candidates.sort_by_key(|&(_, v)| v);
+
+        let to_sac = (count as usize).min(candidates.len());
+        for &(card_id, _) in candidates.iter().take(to_sac) {
+            let card_name = self.cards.get(card_id).map(|c| c.name.to_string()).unwrap_or_default();
+            let owner = self.cards.get(card_id).map(|c| c.owner).unwrap_or(player);
+            let dest = self.death_destination_for_card(card_id);
+            self.move_card(card_id, Zone::Battlefield, dest, owner)?;
+            self.logger
+                .gamelog(&format!("{} sacrifices {} ({})", player_name, card_name, card_id));
+        }
+
+        if to_sac == 0 {
+            self.logger
+                .gamelog(&format!("{} has no {} to sacrifice", player_name, sac_type));
+        }
+        Ok(())
+    }
 }
