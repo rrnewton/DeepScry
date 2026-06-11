@@ -1,0 +1,72 @@
+---
+title: 'TRACK: 1995 World Championship decks — full deck compatibility'
+status: open
+priority: 1
+issue_type: task
+depends_on:
+  mtg-684: parent-child
+created_at: 2026-06-11T05:46:23.017150129+00:00
+updated_at: 2026-06-11T05:47:20.096775514+00:00
+---
+
+# Description
+
+TRACK: full play-tested gameplay compatibility for all 1995 Magic World Championship decks (Seattle, USA, Aug 1995 — the FIRST official MTG World Championship; Type II / "Standard" pool of the era: Revised + Fallen Empires + Ice Age + Homelands + The Dark + Legends/Antiquities cards still legal). Sibling of mtg-709 (1994), mtg-h558o (2000), mtg-901 (2020), mtg-881 (2025); rolls up under the championship-collections umbrella mtg-684. Broken-card backlog: mtg-aglho.
+
+This is the LAST un-surveyed championship year (1994 + 2020 are in dedicated fix loops; 2000/2025 surveyed).
+
+User goal: each 1995 World Championship deck plays COMPLETE games with NO engine errors, and every card's abilities/keywords/effects classified WORKING (or PARTIAL/BROKEN then FIXED) per the targeted_compatibility + compatibility_tracking SKILLs.
+
+== Scope ==
+decks/championship/1995/ (4 decks incl sideboards):
+- 01_blumke_bw_rack         (1st, Alexander Blumke CH — B/W Rack discard-control w/ blue splash)
+- 02_hernandez_rw_vise_orb  (2nd, Marc Hernandez FR — W/R Artifact Prison: Black Vise + Winter Orb + Howling Mine)
+- 03_justice_red_artifact   (3rd-4th, Mark Justice USA — Red Artifact Control) *** LOW-CONFIDENCE RECONSTRUCTION: the deck's README flags it as an APPROXIMATE SKELETON; the full list was never published. Treat results for THIS deck as illustrative only. ***
+- 04_stern_rg_burn          (3rd-4th, Henry Stern USA — R/G Direct-Damage Burn)
+
+Classic early "prison/control/burn" metagame; the marquee cards are Black Vise, The Rack, Winter Orb, Howling Mine, Dance of the Dead (reanimation), Hypnotic Specter, Sengir Vampire, plus a wide burn suite.
+
+== Baseline survey (2026-06-10_#3177(9e100acf), agent compat-1995-survey slot07) ==
+- 66 unique cards across all 4 decks (union, incl sideboards). ALL 66 resolve to a single cardsfolder/<x>/<name>.txt script (cardsfolder is a symlink -> forge-java/.../cardsfolder; use `find -L`). Basic lands present.
+- `mtg tourney <deck> --mirror-only --games 200 --seed 7` for each of the 4 decks (800 games total): ALL completed, ZERO crashes / panics / Unimplemented runtime warnings — and (unlike the Tinker decks) ZERO warnings of ANY kind. Decks load (Blumke 67 incl SB... main 66/Hernandez 66/Justice 49/Stern 65) and play end-to-end; 0 draws.
+- NOTE the deck-02 result: 100% P1 wins. NOT a bug — it is a pure CONTROL MIRROR that ends by DECKING (109 turns, P2 decks out first). In a deck that wins only by library exhaustion, going first is decisive every game (P1 is always one card ahead on the deck-out race). Correct engine behaviour.
+- Per-deck verbosity-3 AI-vs-AI games captured (gitignored debug/compat1995/v3_*.log) for Blumke(+seeds 3/13/29/41), Hernandez(+seeds 3/13/29), Stern. Plus 3 targeted PUZZLE reproducers (blackvise_test.pzl, rack_test.pzl, lhurgoyf_test.pzl).
+
+KEY NUANCE: zero runtime errors does NOT mean every ability works — but for 1995 the picture is unusually GOOD. A static script-vs-converter + static-ability-enum scan of all 66 scripts found only a handful of genuinely unsupported constructs, and TWO cards the static scan first flagged (Black Vise, The Rack — ApiType::ChoosePlayer has no generic converter arm) turned out to be SPECIAL-CASED and WORKING (see B-notes). So the static scan OVER-counted gaps here; targeted puzzles corrected it.
+
+== ApiType / static / replacement survey (all 66 scripts) ==
+GENUINELY UNSUPPORTED constructs found:
+- ApiType::ChangeText -> NO parser variant at all (not even an ApiType) -> Effect::Unimplemented. MAGICAL HACK + SLEIGHT OF MIND (both Blumke sideboard 1-ofs) do nothing (B1). Niche text-changing tech, low value.
+- Continuous CharacteristicDefining SetPower/SetToughness (P/T defined by a count) -> UNSUPPORTED (the same engine gap as 2000's Serra Avatar / Opalescence, backlog mtg-xxtl0). LHURGOYF (Stern sideboard) -> its "P/T = creature cards in all graveyards" never applies; it sits at its printed */1+* base (effectively 0/1) (B2). Sideboard-only, low value.
+- Static S:Mode$ CantAttack with a conditional UnlessDefender$ clause -> the simple CantAttackOrBlock keyword + CantBlockBy special-case exist, but the conditional "can't attack IF defender controls an untapped power>=3 creature" form is not modelled as a runtime static. ORGG (Stern) -> its conditional attack restriction is likely not enforced (B3). PARTIAL, niche.
+VERIFY-needed (infra exists, not exercised this pass): ISLAND SANCTUARY (R:Event$ Draw skip-draw-for-protection replacement — no clear support found), PRISMATIC WARD (R:DamageDone prevent by chosen color — color-prevention infra EXISTS in core/prevention.rs, likely WORKING), SPIRIT LINK (T:Mode$ DamageDealtOnce lifegain — confirm the trigger mode fires), PESTILENCE (DamageAll+Sacrifice both IMPL — never cast in games).
+
+SPECIAL-CASED + CONFIRMED WORKING (static scan first flagged as gaps, puzzles cleared them):
+- BLACK VISE (in decks 2,3,4): ETB "choose an opponent" (K:ETBReplacement:Other:ChooseP -> stored as Card::chosen_player in state.rs) + upkeep "deal handsize-4 damage to chosen player" trigger. PUZZLE CONFIRMED: blackvise_test.pzl — at P2 upkeep with 6 cards, "Black Vise deals 2 damage to Player 2", P2 20->18. WORKING.
+- THE RACK (deck 1 namesake): same ChooseP path; "3 minus handsize" damage. PUZZLE CONFIRMED: rack_test.pzl fires and deals hand-scaled damage. WORKING.
+- WINTER ORB (decks 2,3): AddKeyword$ UntapAdjust:Land:1 player-lock is SPECIAL-CASED (game_loop/steps.rs enforces one-land-untap, with a dedicated regression test). WORKING.
+(In all the AI games these three were repeatedly DRAWN-then-DISCARDED, never cast — a heuristic-AI valuation quirk, not an engine bug. Their 0-damage in 800 tourney games was the AI declining to play them, which the puzzles disproved.)
+
+== HEADLINE METRIC (2026-06-10_#3177(9e100acf)) ==
+66 unique cards (union of all 4 decks incl sideboards).
+- EVIDENCE-BACKED WORKING (verified by quoted game-log or puzzle this pass): ~22/66 = ~33%. Black Vise + The Rack (puzzles), Winter Orb (code+test), Dance of the Dead (reanimates Sengir/Hippie/Royal Assassin from graveyard), Hypnotic Specter (flying + discard-on-damage trigger), Sengir Vampire (flying + grows via +1/+1 counter, counterable), Royal Assassin (tap: destroy tapped creature), Armageddon + Wrath of God + Jokulhaups + Anarchy (DestroyAll), Hymn to Tourach + Mind Twist + Disrupting Scepter (discard), Howling Mine (symmetric Draw), Lightning Bolt + Incinerate + Fireball + Earthquake + Pyroclasm (damage), Llanowar Elves + Dark Ritual (mana), Power Sink (Counter+DrainMana), Land Tax (search), basic lands.
+- LIKELY-FINE-UNVALIDATED (constructs IMPL, no per-card game-log this pass): ~38 cards (most mana rocks/lands, the burn/counter/destroy suite, Zuran Orb, Ivory Tower, Fellwar Stone, Icy Manipulator, Mishra's Factory man-land, the Circles of Protection, Disenchant/Terror/Crumble removal, Pestilence, Stormbind, Spirit Link, Prismatic Ward, etc.).
+- KNOWN BROKEN/PARTIAL: 5/66 = ~8% — all SIDEBOARD or niche (B1 Magical Hack + Sleight of Mind, B2 Lhurgoyf, B3 Orgg, + Island Sanctuary VERIFY). NONE is a maindeck combo engine.
+So: evidence-backed WORKING ~22/66 (~33%); estimated functional (WORKING + likely-fine) ~61/66 (~92%); known broken/partial 5/66 (~8%). 1995 is the HEALTHIEST championship year surveyed so far — the core archetypes (Rack/Vise prison, Dance-of-the-Dead reanimation, mono-burn) are all functional.
+
+== BROKEN / PARTIAL summary (detail in backlog mtg-aglho) ==
+B1 [BROKEN, low value] Magical Hack + Sleight of Mind (Blumke SB) — ApiType ChangeText unimplemented (no parser variant). Text-changing does nothing.
+B2 [BROKEN, low value] Lhurgoyf (Stern SB) — continuous CharacteristicDefining P/T unsupported (shared engine gap with 2000 Serra Avatar/Opalescence, mtg-xxtl0). Stuck at base P/T.
+B3 [PARTIAL, niche] Orgg (Stern) — conditional CantAttack (UnlessDefender$) static not enforced; may attack when it shouldn't.
+B4 [VERIFY] Island Sanctuary (Hernandez) — skip-draw-for-protection R:Event$ Draw replacement; no clear support found, needs a targeted puzzle.
+B5 [VERIFY] Spirit Link / Prismatic Ward — DamageDealtOnce lifegain trigger + color-based damage-prevention; infra exists, confirm with puzzles.
+
+== Definition of done ==
+1. Every per-card issue for these 4 decks reaches CARD STATUS: WORKING (or accepted PARTIAL w/ bug followup).
+2. Each deck has a captured end-to-end log with each non-vanilla ability verified by targeted puzzle.
+3. The 4-deck tournament reaches 0% engine-failure rate (ALREADY MET: 800 games, 0 failures).
+
+== How agents pick work ==
+Open this umbrella -> pick from backlog mtg-aglho. 1995 has NO high-value maindeck breakage — B1-B3 are sideboard/niche, and B2 (CharacteristicDefining P/T) is a SHARED engine feature better driven from the 2000 backlog (mtg-xxtl0) where it blocks the Replenish/Chimera combos. Fixes DEFERRED until the effects/actions refactor lands (this was a SURVEY-ONLY pass; NO source edited). Verify B4/B5 with puzzles before classifying. Never duplicate.
+
+Driven by agent compat-1995-survey (slot07), 2026-06-10 overnight survey pass. Gitignored evidence: debug/compat1995/{unique_cards.txt,cardpaths.txt,supported_apis.txt,tourney_*.log,v3_*.log,blackvise_test.pzl,rack_test.pzl,lhurgoyf_test.pzl,*_out.log} on branch claude/compat-1995-survey.
