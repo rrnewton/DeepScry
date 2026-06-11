@@ -6,10 +6,316 @@ issue_type: task
 depends_on:
   mtg-684: parent-child
 created_at: 2026-06-11T04:04:18.693069651+00:00
-updated_at: 2026-06-11T04:04:40.910398217+00:00
+updated_at: 2026-06-11T14:22:15.030957069+00:00
 ---
 
 # Description
+
+## PER-CARD ASPECT ENUMERATION (2026-06-11_#3228(be5112e3), agent beads-enumerate-2015)
+
+PURPOSE: an ACCURATE, SCRIPT-DERIVED checklist of every behavioral aspect each
+unique card exhibits — the true surface area to verify, irrespective of current
+compatibility. Each `- [ ]` is an UNCHECKED aspect; gameplay-evidence ticking is
+a LATER phase (do NOT read these as WORKING). Derived by reading each card's
+Forge-style script in cardsfolder/. Known BROKEN / status history is preserved in
+the STATUS NOTES section that follows; the checkboxes here describe what the card
+is SUPPOSED to do per its printed text + script.
+
+FORMAT per card:
+  ### <Card> — <mana cost> <type line> [decks] (cardsfolder/<file>.txt)
+  - [ ] (<tag>) <one aspect per printed ability / mode / keyword / notable interaction> (<raw script construct>)
+Legend tags: (A)=activated, (T)=triggered, (S)=static, (R)=replacement, (K)=keyword,
+(cast)=cast-time/targeting, (cost)=cost/additional-cost, (mode)=modal mode,
+(int)=interaction/scaling/oddity.
+Deck codes: [01]=Manfield Abzan Control, [02]=Turtenwald Abzan Control,
+[03]=Rietzl Abzan Aggro, [04]=S.Black Mono-White Devotion.
+
+Scope: 59 unique non-basic-distinct cards (union of decks/championship/2015/*.dck
+main+SB). Kytheon and Nissa are flip-walker DFC combined files. Basic lands
+(Forest, Plains) are vanilla mana sources and not enumerated.
+
+---
+
+### Abzan Charm — {W}{B}{G} Instant [01,02,03] (a/abzan_charm.txt)
+- [ ] (cast) Modal "choose one" instant (SP$ Charm | Choices$ DBExile,DBDraw,DBCounters).
+- [ ] (mode) Mode 1: exile target creature with power 3+ (DBExile: ChangeZone Battlefield→Exile, ValidTgts Creature.powerGE3).
+- [ ] (mode) Mode 2: draw two, then lose 2 life (DBDraw NumCards 2 → SubAbility DBLoseLife LifeAmount 2).
+- [ ] (mode) Mode 3: distribute two +1/+1 counters among one or two target creatures (DBCounters CounterNum 2, DividedAsYouChoose 2, TargetMin 1 TargetMax 2).
+- [ ] (int) Mode 3 divided-counter targeting: 1 or 2 targets, all 2 counters allocated.
+
+### Ajani, Mentor of Heroes — {3}{G}{W} Legendary Planeswalker [01,03] (a/ajani_mentor_of_heroes.txt)
+- [ ] (A) +1: distribute three +1/+1 counters among 1–3 target creatures you control (AB$ PutCounter, CounterNum 3, DividedAsYouChoose 3, TargetMin 1 TargetMax 3, AddCounter<1/LOYALTY>).
+- [ ] (A) +1: dig top 4, may reveal an Aura/creature/planeswalker to hand, rest to bottom (AB$ Dig, DigNum 4 ChangeNum 1, ChangeValid Aura,Creature,Planeswalker, Optional).
+- [ ] (A) -8 ultimate: gain 100 life (AB$ GainLife LifeAmount 100, SubCounter<8/LOYALTY>, Ultimate).
+- [ ] (int) Loyalty starts at 4; planeswalker loyalty-cost activation, once per turn.
+
+### Anafenza, Kin-Tree Spirit — {W}{W} Legendary Creature [04] (a/anafenza_kin_tree_spirit.txt)
+- [ ] (T) Whenever another nontoken creature you control enters, bolster 1 (T:ChangesZone→Battlefield, ValidCard Creature.YouCtrl+!token+Other → PutCounter Bolster 1).
+- [ ] (int) Bolster targets the creature with least toughness among your creatures (Bolster mechanic, tie-break choice).
+- [ ] (int) Excludes tokens and itself (!token+Other).
+
+### Anafenza, the Foremost — {W}{B}{G} Legendary Creature 4/4 [03] (a/anafenza_the_foremost.txt)
+- [ ] (T) On attack, put +1/+1 counter on another target tapped creature you control (T:Attacks → PutCounter ValidTgts Creature.tapped+Other+YouCtrl).
+- [ ] (R) Replacement: nontoken creature an opponent owns that would die, or creature card going to opp graveyard, is exiled instead (R:Event Moved → Graveyard, ValidCard Card.Creature+!token+OppOwn, ReplaceWith Exile).
+- [ ] (int) Replacement is graveyard-hate that also covers creature cards moving from other zones to an opponent's graveyard (Hidden$ True, Origin$ All).
+
+### Arashin Cleric — {1}{W} Creature 1/3 [02] (a/arashin_cleric.txt)
+- [ ] (T) ETB: gain 3 life (T:ChangesZone→Battlefield Self → GainLife 3).
+
+### Archangel of Tithes — {1}{W}{W}{W} Creature 3/5 [04] (a/archangel_of_tithes.txt)
+- [ ] (K) Flying.
+- [ ] (S) While untapped, creatures can't attack you or your planeswalkers unless controller pays {1} per attacker (S:CantAttackUnless, IsPresent Card.Self+untapped, Cost 1).
+- [ ] (S) While attacking, creatures can't block unless controller pays {1} per blocker (S:CantBlockUnless, IsPresent Card.Self+attacking, Cost 1).
+- [ ] (int) Both taxes gated on its own tapped/attacking state (dynamic IsPresent condition).
+
+### Banishing Light — {2}{W} Enchantment [04] (b/banishing_light.txt)
+- [ ] (T) ETB: exile target nonland permanent an opponent controls until this leaves (T:ChangesZone→Battlefield → ChangeZone Battlefield→Exile, ValidTgts Permanent.nonLand+OppCtrl, Duration UntilHostLeavesPlay).
+- [ ] (int) O-Ring style: exiled permanent returns when Banishing Light leaves (OblivionRing SVar, UntilHostLeavesPlay linkage).
+
+### Bile Blight — {B}{B} Instant [01,02,03] (b/bile_blight.txt)
+- [ ] (cast) Target creature gets -3/-3 EOT (SP$ Pump NumAtt -3 NumDef -3, RememberTargets).
+- [ ] (int) All OTHER creatures with the same name as the target also get -3/-3 (DBPumpAll ValidCards Remembered.sameName+Other+Creature) — token-sweeper.
+
+### Brimaz, King of Oreskos — {1}{W}{W} Legendary Creature 3/4 [04] (b/brimaz_king_of_oreskos.txt)
+- [ ] (K) Vigilance.
+- [ ] (T) On attack, create a 1/1 white Cat Soldier (vigilance) token attacking (T:Attacks → Token TokenAttacking).
+- [ ] (T) When it blocks a creature, create a 1/1 white Cat Soldier (vigilance) token blocking that creature (T:AttackerBlocked, ValidBlocker Card.Self → Token TokenBlocking TriggeredAttacker).
+- [ ] (int) Tokens enter directly into combat (attacking / blocking the triggered attacker).
+
+### Caves of Koilos — Land [01,02,03] (c/caves_of_koilos.txt)
+- [ ] (A) {T}: Add {C} (AB$ Mana Produced C).
+- [ ] (A) {T}: Add {W} or {B}, deals 1 damage to you (AB$ Mana Produced Combo W B → DBPain DealDamage 1 to You).
+
+### Celestial Flare — {W}{W} Instant [04] (c/celestial_flare.txt)
+- [ ] (cast) Target player sacrifices an attacking or blocking creature (SP$ Sacrifice ValidTgts Player, SacValid Creature.attacking,Creature.blocking) — defender chooses which, bypasses hexproof/protection.
+
+### Courser of Kruphix — {1}{G}{G} Enchantment Creature 2/4 [01,02] (c/courser_of_kruphix.txt)
+- [ ] (S) Play with the top card of your library revealed (S:Continuous Affected Card.TopLibrary+YouCtrl, MayLookAt Player).
+- [ ] (S) You may play lands from the top of your library (S:Continuous Affected Land.TopLibrary+YouCtrl, MayPlay).
+- [ ] (T) Landfall: whenever a land you control enters, gain 1 life (T:ChangesZone→Battlefield ValidCard Land.YouCtrl → GainLife 1).
+
+### Den Protector — {1}{G} Creature 2/1 [01,02,03] (d/den_protector.txt)
+- [ ] (S) Creatures with power less than its power can't block it (S:CantBlockBy ValidBlocker Creature.powerLTX, X=Count$CardPower).
+- [ ] (K) Megamorph {1}{G} (K:Megamorph:1 G) — cast face-down 2/2 for {3}, flip for cost + a +1/+1 counter.
+- [ ] (T) When turned face up, return target card from your graveyard to your hand (T:TurnFaceUp → ChangeZone Graveyard→Hand, ValidTgts Card.YouOwn).
+- [ ] (int) Megamorph adds a +1/+1 counter on flip (megamorph vs morph distinction); the dynamic-X unblockable scales with that counter.
+
+### Dragonlord Dromoka — {4}{G}{W} Legendary Creature Elder Dragon 5/7 [02] (d/dragonlord_dromoka.txt)
+- [ ] (R) This spell can't be countered (R:Event Counter ValidSA Spell, Layer CantHappen).
+- [ ] (K) Flying.
+- [ ] (K) Lifelink.
+- [ ] (S) Opponents can't cast spells during your turn (S:CantBeCast Caster Opponent, Condition PlayerTurn).
+
+### Dromoka's Command — {G}{W} Instant [01,02,03] (d/dromokas_command.txt)
+- [ ] (cast) Modal "choose two" instant (SP$ Charm Choices DBPrevent,DBSacrifice,DBPutCounter,DBPump, CharmNum 2).
+- [ ] (mode) Mode A: prevent all damage from target instant/sorcery spell this turn (DBPrevent Effect, StaticAbilities PreventDmg, TgtZone Stack).
+- [ ] (mode) Mode B: target player sacrifices an enchantment (DBSacrifice SacValid Enchantment).
+- [ ] (mode) Mode C: put a +1/+1 counter on target creature (DBPutCounter CounterNum 1).
+- [ ] (mode) Mode D: target creature you control fights target creature you don't control (DBPump → DBFight, two targets).
+- [ ] (int) Choose-two with distinct modes; mode D pairs two targets (your creature + opponent's) for the fight.
+
+### Drown in Sorrow — {1}{B}{B} Sorcery [01,02] (d/drown_in_sorrow.txt)
+- [ ] (cast) All creatures get -2/-2 until end of turn (SP$ PumpAll ValidCards Creature, NumAtt -2 NumDef -2, IsCurse).
+- [ ] (int) Then scry 1 (SubAbility DBScry ScryNum 1).
+
+### Duress — {B} Sorcery [01,02] (d/duress.txt)
+- [ ] (cast) Target opponent reveals hand; you choose a noncreature, nonland card; they discard it (SP$ Discard ValidTgts Opponent, Mode RevealYouChoose, DiscardValid Card.nonCreature+nonLand).
+
+### Elspeth, Sun's Champion — {4}{W}{W} Legendary Planeswalker [01,02,03,04] (e/elspeth_suns_champion.txt)
+- [ ] (A) +1: create three 1/1 white Soldier tokens (AB$ Token TokenAmount 3, AddCounter<1/LOYALTY>).
+- [ ] (A) -3: destroy all creatures with power 4+ (AB$ DestroyAll ValidCards Creature.powerGE4, SubCounter<3/LOYALTY>).
+- [ ] (A) -7 ultimate: emblem "Creatures you control get +2/+2 and have flying" (AB$ Effect, StaticAbilities STFlying, Duration Permanent).
+- [ ] (int) Loyalty starts 4; emblem is a permanent static buff in the command zone.
+
+### End Hostilities — {3}{W}{W} Sorcery [02] (e/end_hostilities.txt)
+- [ ] (cast) Destroy all creatures and all permanents attached to creatures (SP$ DestroyAll ValidCards Creature,Permanent.AttachedTo Creature) — also kills Auras/Equipment on creatures.
+
+### Fleecemane Lion — {G}{W} Creature 3/3 [01,03] (f/fleecemane_lion.txt)
+- [ ] (A) {3}{G}{W}: Monstrosity 1 (AB$ PutCounter Monstrosity 1) — +1/+1 counter and becomes monstrous.
+- [ ] (S) While monstrous, has hexproof and indestructible (S:Continuous Affected Card.Self+IsMonstrous, AddKeyword Hexproof & Indestructible).
+
+### Foundry of the Consuls — Land [04] (f/foundry_of_the_consuls.txt)
+- [ ] (A) {T}: Add {C} (AB$ Mana Produced C).
+- [ ] (A) {5},{T},Sacrifice: create two 1/1 colorless Thopter artifact tokens with flying (AB$ Token TokenAmount 2 c_1_1_a_thopter_flying, Cost 5 T Sac<1/CARDNAME>).
+
+### Glare of Heresy — {1}{W} Sorcery [01,04] (g/glare_of_heresy.txt)
+- [ ] (cast) Exile target white permanent (SP$ ChangeZone Battlefield→Exile, ValidTgts Permanent.White) — hits any white permanent incl. lands/walkers.
+
+### Hangarback Walker — {X}{X} Artifact Creature Construct 0/0 [03,04] (h/hangarback_walker.txt)
+- [ ] (K) Enters with X +1/+1 counters (K:etbCounter:P1P1:X, X=Count$xPaid).
+- [ ] (T) On death, create a 1/1 colorless Thopter (flying) token for each +1/+1 counter on it (T:ChangesZone Battlefield→Graveyard → Token TokenAmount Y, Y=TriggeredCard$CardCounters.P1P1).
+- [ ] (A) {1},{T}: put a +1/+1 counter on it (AB$ PutCounter CounterNum 1, Cost 1 T).
+- [ ] (int) X-valued etbCounter scaling — known BROKEN (B1): non-numeric X amount not yet applied, enters 0/0 and dies (see STATUS NOTES).
+
+### Herald of Torment — {1}{B}{B} Enchantment Creature Demon 3/3 [03] (h/herald_of_torment.txt)
+- [ ] (K) Bestow {3}{B}{B} (K:Bestow:3 B B) — cast as Aura, reverts to creature if unattached.
+- [ ] (K) Flying.
+- [ ] (S) Enchanted creature gets +3/+3 and has flying (S:Continuous Affected Card.EnchantedBy, AddPower 3 AddToughness 3 AddKeyword Flying) — when bestowed.
+- [ ] (T) At the beginning of your upkeep, you lose 1 life (T:Phase Upkeep ValidPlayer You → LoseLife 1).
+
+### Hero's Downfall — {1}{B}{B} Instant [01,02,03] (h/heros_downfall.txt)
+- [ ] (cast) Destroy target creature or planeswalker (SP$ Destroy ValidTgts Creature,Planeswalker).
+
+### High Sentinels of Arashin — {3}{W} Creature Bird Soldier 3/4 [04] (h/high_sentinels_of_arashin.txt)
+- [ ] (K) Flying.
+- [ ] (S) Gets +1/+1 for each OTHER creature you control with a +1/+1 counter on it (S:Continuous AddPower X AddToughness X, X=Count$Valid Creature.Other+YouCtrl+counters_GE1_P1P1).
+- [ ] (A) {3}{W}: put a +1/+1 counter on target creature (AB$ PutCounter CounterNum 1).
+- [ ] (int) Static buff scales dynamically with counters across your board (counter-synergy payoff).
+
+### Knight of the White Orchid — {W}{W} Creature 2/2 [04] (k/knight_of_the_white_orchid.txt)
+- [ ] (K) First Strike.
+- [ ] (T) ETB, IF an opponent controls more lands than you: may search library for a Plains, put it onto the battlefield, then shuffle (T:ChangesZone→Battlefield, CheckSVar Y SVarCompare GTX, OptionalDecider You → ChangeZone Library→Battlefield Card.Plains).
+- [ ] (int) Intervening-if land-count comparison (X=your lands, Y=opponent's highest land count); the Plains enters untapped (ramp).
+
+### Kytheon, Hero of Akros // Gideon, Battle-Forged — {W} Legendary Creature 2/1 [04] (k/kytheon_hero_of_akros_gideon_battle_forged.txt)
+- [ ] (T) [Front] At end of combat, if Kytheon and 2+ other creatures attacked this combat, exile and return transformed to Gideon (T:Phase EndCombat, IsPresent attackedThisCombat GE3 → exile→return Transformed).
+- [ ] (A) [Front] {2}{W}: Kytheon gains indestructible until end of turn (AB$ Pump KW Indestructible).
+- [ ] (int) DFC flip-walker (AlternateMode DoubleFaced); transform condition is a board-state check at end of combat.
+- [ ] (A) [Back Gideon] +2: up to one target creature an opponent controls attacks Gideon next turn if able (AB$ DelayedTrigger, MustAttack static, UpcomingTurn).
+- [ ] (A) [Back Gideon] +1: until your next turn target creature gains indestructible, then untap it (AB$ Pump KW Indestructible Duration UntilYourNextTurn → DBUntap).
+- [ ] (A) [Back Gideon] 0 ultimate: Gideon becomes a 4/4 indestructible Human Soldier still a planeswalker; prevent all damage to him this turn (AB$ Animate Power 4 Toughness 4 Keywords Indestructible → DBPrevent replacement).
+- [ ] (int) Gideon back face starts at loyalty 3; the 0-ability animates the walker into a creature while staying a planeswalker.
+
+### Languish — {2}{B}{B} Sorcery [01,02] (l/languish.txt)
+- [ ] (cast) All creatures get -4/-4 until end of turn (SP$ PumpAll ValidCards Creature, NumAtt -4 NumDef -4, IsCurse) — non-destroy wrath (dodges indestructible).
+
+### Llanowar Wastes — Land [01,02,03] (l/llanowar_wastes.txt)
+- [ ] (A) {T}: Add {C} (AB$ Mana Produced C).
+- [ ] (A) {T}: Add {B} or {G}, deals 1 damage to you (AB$ Mana Produced Combo B G → DBPain DealDamage 1 to You).
+
+### Mastery of the Unseen — {1}{W} Enchantment [04] (m/mastery_of_the_unseen.txt)
+- [ ] (A) {3}{W}: Manifest the top card of your library (AB$ Manifest) — put it onto the battlefield face down as a 2/2.
+- [ ] (T) Whenever a permanent you control is turned face up, gain 1 life for each creature you control (T:TurnFaceUp ValidCard Permanent.YouCtrl → GainLife X, X=Count$Valid Creature.YouCtrl).
+- [ ] (int) Manifest is known BROKEN/unimplemented (B3): the activated engine is a no-op so the TurnFaceUp lifegain can never fire (see STATUS NOTES).
+
+### Murderous Cut — {4}{B} Instant [02,03] (m/murderous_cut.txt)
+- [ ] (K) Delve (K:Delve) — exile graveyard cards to pay {1} each toward cost.
+- [ ] (cast) Destroy target creature (SP$ Destroy ValidTgts Creature).
+
+### Nissa, Vastwood Seer // Nissa, Sage Animist — {2}{G} Legendary Creature Elf Scout 2/2 [01,02] (n/nissa_vastwood_seer_nissa_sage_animist.txt)
+- [ ] (T) [Front] ETB: may search library for a basic Forest, reveal, put to hand, shuffle (T:ChangesZone→Battlefield → ChangeZone Library→Hand Forest.Basic, OptionalDecider You).
+- [ ] (T) [Front] Whenever a land you control enters, if you control 7+ lands, exile and return transformed to Nissa, Sage Animist (T:ChangesZone Land.YouCtrl, IsPresent Land.YouCtrl PresentCompare GE7 → exile→return Transformed).
+- [ ] (int) DFC flip-walker (AlternateMode DoubleFaced); flips on the 7th-land trigger.
+- [ ] (A) [Back] +1: reveal top card; if land put onto battlefield, else into hand (AB$ Dig DigNum 1 Reveal, ChangeValid Land, DestinationZone Battlefield / DestinationZone2 Hand).
+- [ ] (A) [Back] -2: create Ashaya, the Awoken World, a legendary 4/4 green Elemental token (AB$ Token ashaya_the_awoken_world).
+- [ ] (A) [Back] -7 ultimate: untap up to six target lands; they become 6/6 Elemental creatures, still lands, permanently (AB$ Untap TargetMax 6 → DBAnimate Power 6 Toughness 6 Duration Permanent).
+- [ ] (int) Back face starts loyalty 3.
+
+### Nykthos, Shrine to Nyx — Legendary Land [04] (n/nykthos_shrine_to_nyx.txt)
+- [ ] (A) {T}: Add {C} (AB$ Mana Produced C).
+- [ ] (A) {2},{T}: choose a color, add mana of that color equal to your devotion to it (AB$ ChooseColor → DBMana Produced Chosen Amount X, X=Count$Devotion.Chosen).
+- [ ] (int) Devotion counting (mana symbols of the chosen color among your permanents) — ramp payoff for mono-color devotion.
+
+### Palace Siege — {3}{B}{B} Enchantment [02 SB] (p/palace_siege.txt)
+- [ ] (R/T) As it enters, choose Khans or Dragons (K:ETBReplacement:Other:SiegeChoice → GenericChoice Choices Khans,Dragons, SetChosenMode).
+- [ ] (S/T) Khans mode: at the beginning of your upkeep, return target creature card from your graveyard to your hand (S:Continuous Affected Card.Self+ChosenModeKhans AddTrigger KhansTrigger → ChangeZone Graveyard→Hand Creature).
+- [ ] (S/T) Dragons mode: at the beginning of your upkeep, each opponent loses 2 life and you gain 2 life (AddTrigger DragonsTrigger → LoseLife 2 Opponent + GainLife 2 You).
+- [ ] (int) GenericChoice mode-select is known BROKEN (B4): mode-select unimplemented AND loader maps ChosenMode to Self_ unconditionally so both triggers attach regardless of choice (see STATUS NOTES).
+
+### Read the Bones — {2}{B} Sorcery [02] (r/read_the_bones.txt)
+- [ ] (cast) Scry 2, then draw two cards, then lose 2 life (SP$ Scry ScryNum 2 → DBDraw NumCards 2 → DBLoseLife 2).
+
+### Revoke Existence — {1}{W} Sorcery [04] (r/revoke_existence.txt)
+- [ ] (cast) Exile target artifact or enchantment (SP$ ChangeZone Battlefield→Exile, ValidTgts Artifact,Enchantment).
+
+### Sandsteppe Citadel — Land [01,02,03] (s/sandsteppe_citadel.txt)
+- [ ] (R) Enters tapped (R:Event Moved→Battlefield, ReplaceWith ETBTapped).
+- [ ] (A) {T}: Add {W}, {B}, or {G} (AB$ Mana Produced Combo W B G) — tri-land.
+
+### Self-Inflicted Wound — {1}{B} Sorcery [03] (s/self_inflicted_wound.txt)
+- [ ] (cast) Target opponent sacrifices a green or white creature (SP$ Sacrifice ValidTgts Player.Opponent, SacValid Creature.White,Creature.Green, RememberSacrificed).
+- [ ] (int) If they do, they lose 2 life (DBDrain LoseLife 2 to Targeted, ConditionPresent Remembered GE1) — conditional on a sacrifice actually happening.
+
+### Siege Rhino — {1}{W}{B}{G} Creature Rhino 4/5 [01,02,03] (s/siege_rhino.txt)
+- [ ] (K) Trample.
+- [ ] (T) ETB: each opponent loses 3 life and you gain 3 life (T:ChangesZone→Battlefield → LoseLife 3 Opponent + GainLife 3 You).
+
+### Silence the Believers — {2}{B}{B} Instant [01] (s/silence_the_believers.txt)
+- [ ] (K) Strive {2}{B} (K:Strive:2 B) — costs {2}{B} more per target beyond the first.
+- [ ] (cast) Exile any number of target creatures and all Auras attached to them (SP$ Pump TargetMin 0 TargetMax MaxTgts → DBExile ChangeZoneAll Card.IsRemembered + Aura.AttachedTo Targeted → Exile).
+- [ ] (int) Variable target count drives Strive cost (MaxTgts=Count$Valid Creature); attached Auras swept with the creatures.
+
+### Soldier of the Pantheon — {W} Creature 2/1 [04] (s/soldier_of_the_pantheon.txt)
+- [ ] (K) Protection from multicolored (K:Protection:Card.MultiColor:multicolored).
+- [ ] (T) Whenever an opponent casts a multicolored spell, you gain 1 life (T:SpellCast ValidCard Card.MultiColor, ValidActivatingPlayer Opponent → GainLife 1).
+
+### Sorin, Solemn Visitor — {2}{W}{B} Legendary Planeswalker [01,03] (s/sorin_solemn_visitor.txt)
+- [ ] (A) +1: until your next turn, creatures you control get +1/+0 and gain lifelink (AB$ PumpAll Creature.YouCtrl NumAtt +1 KW Lifelink, Duration UntilYourNextTurn).
+- [ ] (A) -2: create a 2/2 black Vampire token with flying (AB$ Token b_2_2_vampire_flying).
+- [ ] (A) -6 ultimate: emblem "At the beginning of each opponent's upkeep, that player sacrifices a creature" (AB$ Effect Triggers BOTTrig, Duration Permanent).
+- [ ] (int) Loyalty starts 4; emblem trigger lives in the command zone (TriggerZones Command).
+
+### Surge of Righteousness — {1}{W} Instant [03,04] (s/surge_of_righteousness.txt)
+- [ ] (cast) Destroy target black or red creature that's attacking or blocking; gain 2 life (SP$ Destroy ValidTgts Creature.Black/Red +attacking/+blocking → NaturalLife GainLife 2).
+
+### Tasigur, the Golden Fang — {5}{B} Legendary Creature Human Shaman 4/5 [01,03] (t/tasigur_the_golden_fang.txt)
+- [ ] (K) Delve (K:Delve) — exile graveyard cards to pay {1} each.
+- [ ] (A) {2}{G/U}{G/U}: mill two, then return a nonland card of an opponent's choice from your graveyard to your hand (AB$ Mill 2 → DBReturn ChangeZone Graveyard→Hand, Chooser Opponent, ChangeType Card.nonLand+YouOwn).
+- [ ] (int) Opponent chooses which card returns (Chooser$ Opponent, AILogic WorstCard); hybrid {G/U} activation cost.
+
+### Temple of Malady — Land [01,02,03] (t/temple_of_malady.txt)
+- [ ] (R) Enters tapped (R:Event Moved→Battlefield → ETBTapped).
+- [ ] (T) ETB: scry 1 (T:ChangesZone→Battlefield → Scry 1).
+- [ ] (A) {T}: Add {B} or {G} (AB$ Mana Produced Combo B G).
+
+### Temple of Plenty — Land [03] (t/temple_of_plenty.txt)
+- [ ] (R) Enters tapped (R:Event Moved→Battlefield → ETBTapped).
+- [ ] (T) ETB: scry 1 (T:ChangesZone→Battlefield → Scry 1).
+- [ ] (A) {T}: Add {G} or {W} (AB$ Mana Produced Combo G W).
+
+### Temple of Silence — Land [01,02,03] (t/temple_of_silence.txt)
+- [ ] (R) Enters tapped (R:Event Moved→Battlefield → ETBTapped).
+- [ ] (T) ETB: scry 1 (T:ChangesZone→Battlefield → Scry 1).
+- [ ] (A) {T}: Add {W} or {B} (AB$ Mana Produced Combo W B).
+
+### Thoughtseize — {B} Sorcery [01,02,03] (t/thoughtseize.txt)
+- [ ] (cast) Target player reveals hand; you choose a nonland card; they discard it (SP$ Discard ValidTgts Player, Mode RevealYouChoose, DiscardValid Card.nonLand).
+- [ ] (int) You lose 2 life (SubAbility DBLoseLife 2) — self-cost rider.
+
+### Tragic Arrogance — {3}{W}{W} Sorcery [01,03,04] (t/tragic_arrogance.txt)
+- [ ] (cast) For each player, you choose an artifact, a creature, an enchantment, and a planeswalker among their permanents; each player sacrifices all OTHER nonland permanents (SP$ RepeatEach RepeatPlayers Player → YouChoose ChooseEach Artifact & Creature & Enchantment & Planeswalker → SacAllOthers Permanent.nonLand+!IsRemembered).
+- [ ] (int) RepeatEach is known BROKEN (B2): the whole effect is an unimplemented no-op; shares the RepeatEach gap with mtg-651 (see STATUS NOTES).
+- [ ] (int) Caster (not the permanent's controller) picks each kept permanent — asymmetric symmetrical wrath.
+
+### Ugin, the Spirit Dragon — {8} Legendary Planeswalker [01,02] (u/ugin_the_spirit_dragon.txt)
+- [ ] (A) +2: deals 3 damage to any target (AB$ DealDamage ValidTgts Any NumDmg 3, AddCounter<2/LOYALTY>).
+- [ ] (A) -X: exile each permanent with mana value X or less that's one or more colors (AB$ ChangeZoneAll Permanent.nonColorless+cmcLEX → Exile, SubCounter<X/LOYALTY>, X=Count$xPaid).
+- [ ] (A) -10 ultimate: gain 7 life, draw seven, then put up to seven permanent cards from hand onto the battlefield (AB$ GainLife 7 → DBDraw 7 → DBChangeZone Hand→Battlefield Permanent ChangeNum 7).
+- [ ] (int) Loyalty starts 7; the -X sweep cost is variable (X-valued loyalty payment) and spares colorless permanents.
+
+### Ultimate Price — {1}{B} Instant [01,02,03] (u/ultimate_price.txt)
+- [ ] (cast) Destroy target monocolored creature (SP$ Destroy ValidTgts Creature.MonoColor) — cannot hit multicolor or colorless.
+
+### Unravel the Aether — {1}{G} Instant [01] (u/unravel_the_aether.txt)
+- [ ] (cast) Choose target artifact or enchantment; its owner shuffles it into their library (SP$ ChangeZone Battlefield→Library, Shuffle, ValidTgts Artifact,Enchantment).
+
+### Urborg, Tomb of Yawgmoth — Legendary Land [01,02,03] (u/urborg_tomb_of_yawgmoth.txt)
+- [ ] (S) Each land is a Swamp in addition to its other land types (S:Continuous Affected Land, AddType Swamp) — every land taps for {B}.
+
+### Valorous Stance — {1}{W} Instant [02,03,04] (v/valorous_stance.txt)
+- [ ] (cast) Modal "choose one" instant (SP$ Charm Choices DBIndestructible,DBDestroy).
+- [ ] (mode) Mode 1: target creature gains indestructible until end of turn (DBIndestructible Pump KW Indestructible).
+- [ ] (mode) Mode 2: destroy target creature with toughness 4+ (DBDestroy ValidTgts Creature.toughnessGE4).
+
+### Windswept Heath — Land [01,02,03] (w/windswept_heath.txt)
+- [ ] (A) {T}, Pay 1 life, Sacrifice: search library for a Forest or Plains, put it onto the battlefield, then shuffle (AB$ ChangeZone Library→Battlefield Forest,Plains, Cost T PayLife<1> Sac) — fetchland.
+
+### Wingmate Roc — {3}{W}{W} Creature Bird 3/4 [03,04] (w/wingmate_roc.txt)
+- [ ] (K) Flying.
+- [ ] (T) Raid: ETB, if you attacked this turn, create a 3/4 white Bird (flying) token (T:ChangesZone→Battlefield, CheckSVar RaidTest=Count$AttackersDeclared → Token w_3_4_bird_flying).
+- [ ] (T) On attack, gain 1 life for each attacking creature (T:Attacks → GainLife X, X=Count$Valid Creature.attacking).
+- [ ] (int) Raid condition checks whether you attacked earlier this turn (intervening-if).
+
+
+
+---
+
+## STATUS NOTES (compatibility history)
+
+The original survey/classification pass is preserved verbatim below. The 93.2%
+WORKING headline and the B1-B4 BROKEN findings remain the authoritative
+compatibility status; the checklist above is the SUPERSET surface area to verify
+per-aspect, NOT a claim that all aspects pass.
 
 TRACK: full play-tested gameplay compatibility for all 2015 Magic World Championship decks (Seattle WA, Aug 27-30 2015; Standard / Khans of Tarkir + Magic Origins era). Sibling of mtg-709 (1994), mtg-881 (2025), mtg-901 (2020); rolls up under the championship-collections umbrella mtg-684.
 
