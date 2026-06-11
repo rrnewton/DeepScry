@@ -897,21 +897,16 @@ impl GameState {
                             continue;
                         }
 
-                        // Check if it matches the pattern
-                        let matches = if card_type == "Land" {
-                            card.is_land()
-                        } else if card_type.starts_with("Creature") {
-                            if card_type == "Creature.Other" {
-                                // Other means not the card with the ability
-                                card.is_creature() && permanent_id != card_id
-                            } else {
-                                card.is_creature()
-                            }
-                        } else if card_type == "Artifact" {
-                            card.is_artifact()
+                        // Check if it matches the pattern.
+                        // Use card_matches_type_filter_static which handles both
+                        // main types (Land, Creature, Artifact) AND subtypes
+                        // (Forest, Island, Mountain, etc.) correctly.
+                        // Special-case "Creature.Other" which means the creature
+                        // is not the card holding the ability.
+                        let matches = if card_type == "Creature.Other" {
+                            card.is_creature() && permanent_id != card_id
                         } else {
-                            // Generic type match - check if any type contains the string
-                            card.types.iter().any(|t| format!("{t:?}").contains(card_type))
+                            crate::game::GameState::card_matches_type_filter_static(card, card_type)
                         };
 
                         if matches {

@@ -4380,18 +4380,13 @@ impl GameState {
 
                     // Check each pattern option (OR logic)
                     for p in &patterns {
-                        let mut matches = false;
+                        // Strip ".Other" modifier for base type matching
+                        let base_pattern = p.trim_end_matches(".Other");
 
-                        // Check card type
-                        if p.contains("Artifact") && card.is_artifact() {
-                            matches = true;
-                        }
-                        if p.contains("Creature") && card.is_creature() {
-                            matches = true;
-                        }
-                        if p.contains("Land") && card.is_land() {
-                            matches = true;
-                        }
+                        // Use the shared type-filter helper which handles both
+                        // main types (Land, Creature, Artifact) and subtypes
+                        // (Forest, Island, Mountain, etc.)
+                        let mut matches = Self::card_matches_type_filter_static(card, base_pattern);
 
                         // Check "Other" modifier - can't sacrifice self
                         if p.contains(".Other") && card_id == source_card_id {
