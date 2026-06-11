@@ -661,4 +661,152 @@ impl GameState {
         }
         Ok(())
     }
+
+    /// [`Effect::ReturnCardsFromGraveyardToHand`]: Recall — return one card from
+    /// `player`'s graveyard to hand for each card discarded this way
+    /// (CR 400.7 / 701.25; count = `remembered_cards.len()` from the preceding
+    /// DiscardCards). Cards are picked in stable lowest-CardId order so the
+    /// choice is deterministic across server and both network clients (the
+    /// graveyard is a public zone, so revealing CardIds leaks nothing).
+    pub(in crate::game::actions) fn execute_return_cards_from_graveyard_to_hand(
+        &mut self,
+        player: PlayerId,
+    ) -> Result<()> {
+        let count = self.remembered_cards.len();
+        if count == 0 {
+            // Nothing was remembered (nothing discarded) — nothing to return.
+            return Ok(());
+        }
+        // Collect graveyard cards once so we can mutate the zone in the loop.
+        let graveyard_cards: smallvec::SmallVec<[CardId; 8]> = self
+            .get_player_zones(player)
+            .map(|z| z.graveyard.cards.iter().copied().collect())
+            .unwrap_or_default();
+        if graveyard_cards.is_empty() {
+            self.logger.gamelog(&format!(
+                "Recall effect: {} has no cards in graveyard to return",
+                self.get_player(player).ok().map(|p| p.name.as_str()).unwrap_or("?")
+            ));
+            return Ok(());
+        }
+        // For each card to return, pick the AI-preferred card still in graveyard.
+        let player_name = self
+            .get_player(player)
+            .ok()
+            .map(|p| p.name.as_str())
+            .unwrap_or("?")
+            .to_string();
+        let to_return = count.min(graveyard_cards.len());
+        for _ in 0..to_return {
+            // Re-snapshot graveyard each iteration (previous iteration may
+            // have moved a card out).
+            let remaining: smallvec::SmallVec<[CardId; 8]> = self
+                .get_player_zones(player)
+                .map(|z| z.graveyard.cards.iter().copied().collect())
+                .unwrap_or_default();
+            // Deterministic pick: lowest CardId (stable across server/clients).
+            // `min_by_key` returns None only on empty iter; we guard
+            // above with `if remaining.is_empty() { break }`, so the
+            // `?`-style early-exit covers the impossible None case.
+            let Some(&chosen) = remaining.iter().min_by_key(|id| id.as_u32()) else {
+                break;
+            };
+            let card_name = self
+                .cards
+                .try_get(chosen)
+                .map(|c| c.name.as_str())
+                .unwrap_or("?")
+                .to_string();
+            self.move_card(chosen, Zone::Graveyard, Zone::Hand, player)?;
+            self.logger
+                .gamelog(&format!("{} returns {} from graveyard to hand", player_name, card_name));
+        }
+        Ok(())
+    }
+
+    /// [`Effect::ReturnGraveyardCardToHand`]: return exactly one card matching
+    /// `type_filter` from `player`'s graveyard to hand (Stormchaser's Talent
+    /// level-2 "return target instant or sorcery"). The card is picked in stable
+    /// lowest-CardId order (deterministic across server/clients).
+    ///
+    /// NOTE (mtg-907): `type_filter` is split + matched with raw `str` compares
+    /// (`"Instant"`/`"Sorcery"`/…). Preserved verbatim from the inline arm; a
+    /// candidate for the Valid$/filter consolidation.
+    pub(in crate::game::actions) fn execute_return_graveyard_card_to_hand(
+        &mut self,
+        player: PlayerId,
+        type_filter: &str,
+    ) -> Result<()> {
+        let graveyard_cards: smallvec::SmallVec<[CardId; 8]> = self
+            .get_player_zones(player)
+            .map(|z| z.graveyard.cards.iter().copied().collect())
+            .unwrap_or_default();
+
+        // Filter by type
+        let filter_types: Vec<&str> = if type_filter.is_empty() {
+            vec![]
+        } else {
+            type_filter.split(',').map(|s| s.trim()).collect()
+        };
+
+        let matching: smallvec::SmallVec<[CardId; 8]> = graveyard_cards
+            .into_iter()
+            .filter(|&id| {
+                if filter_types.is_empty() {
+                    return true;
+                }
+                if let Some(card) = self.cards.try_get(id) {
+                    filter_types.iter().any(|&t| match t {
+                        "Instant" => card.is_instant(),
+                        "Sorcery" => card.is_sorcery(),
+                        "Creature" => card.is_creature(),
+                        "Land" => card.is_land(),
+                        "Artifact" => card.is_artifact(),
+                        _ => false,
+                    })
+                } else {
+                    false
+                }
+            })
+            .collect();
+
+        if matching.is_empty() {
+            let player_name = self
+                .get_player(player)
+                .ok()
+                .map(|p| p.name.as_str())
+                .unwrap_or("?")
+                .to_string();
+            self.logger.gamelog(&format!(
+                "{} has no matching {} in graveyard to return",
+                player_name,
+                if type_filter.is_empty() {
+                    "card".to_string()
+                } else {
+                    type_filter.to_string()
+                }
+            ));
+        } else {
+            // Deterministic pick: lowest CardId (stable across server/clients).
+            let Some(&chosen) = matching.iter().min_by_key(|id| id.as_u32()) else {
+                return Ok(());
+            };
+            let card_name = self
+                .cards
+                .try_get(chosen)
+                .map(|c| c.name.as_str())
+                .unwrap_or("?")
+                .to_string();
+            let player_name = self
+                .get_player(player)
+                .ok()
+                .map(|p| p.name.as_str())
+                .unwrap_or("?")
+                .to_string();
+            self.move_card(chosen, Zone::Graveyard, Zone::Hand, player)?;
+            self.logger
+                .gamelog(&format!("{} returns {} from graveyard to hand", player_name, card_name));
+        }
+        Ok(())
+    }
 }
