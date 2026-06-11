@@ -1,0 +1,24 @@
+[metadata]
+Name:Torch the Tower deals base 2 damage (unbargained)
+Goal:Win
+Turns:3
+Difficulty:Easy
+Description:Torch the Tower (SVar:X:Count$Bargain.3.2) deals 2 damage to target creature or planeswalker when cast without paying the optional Bargain cost (no artifact/enchantment/token to sacrifice). Before the fix (mtg-863), Count$Bargain.3.2 fell through to Fixed(0) and the spell dealt 0 damage. After the fix, CountExpression::Bargain evaluates conservatively to the unbargained_value (2), so a 2/2 Grizzly Bears takes lethal damage and dies. P0 controls 2 Mountains (mana for {R}) and holds Torch the Tower; P1 controls a Grizzly Bears (2/2). No artifacts/enchantments/tokens in play, so Bargain cannot be paid — the spell should deal exactly 2.
+
+[state]
+turn=2
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Torch the Tower
+p0library=Mountain; Mountain; Mountain; Mountain; Mountain
+p0graveyard=
+p0battlefield=Mountain; Mountain
+p0exile=
+
+p1life=20
+p1hand=
+p1library=Plains; Plains; Plains; Plains; Plains
+p1graveyard=
+p1battlefield=Grizzly Bears
+p1exile=

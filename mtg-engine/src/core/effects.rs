@@ -379,6 +379,23 @@ pub enum CountExpression {
         /// Value if the spell was NOT kicked (default)
         unkicked_value: i32,
     },
+
+    /// Conditional value based on whether the spell was bargained (Count$Bargain.true_val.false_val)
+    ///
+    /// Corresponds to Forge's `Count$Bargain.3.2` = "3 if bargained, 2 if not".
+    /// Bargain (The Wilds of Eldraine mechanic, CR 702.162) lets you sacrifice an
+    /// artifact, enchantment, or token as an optional additional cost when casting
+    /// the spell. Used by Torch the Tower's `SVar:X:Count$Bargain.3.2`.
+    ///
+    /// Since we don't yet track bargain-payment state at resolution time, this
+    /// evaluates to `unbargained_value` as a conservative correct default — the
+    /// spell always deals at least its base (non-bargained) amount.
+    Bargain {
+        /// Value if the spell was bargained (optional sacrifice paid)
+        bargained_value: i32,
+        /// Value if the spell was NOT bargained (default)
+        unbargained_value: i32,
+    },
 }
 
 /// Comparison conditions for Count$Compare expressions
@@ -580,6 +597,21 @@ impl CountExpression {
                             return CountExpression::Kicked {
                                 kicked_value: kicked_val,
                                 unkicked_value: unkicked_val,
+                            };
+                        }
+                    }
+                } else if let Some(bargain_rest) = rest.strip_prefix("Bargain.") {
+                    // Count$Bargain.BargainedValue.UnbargainedValue
+                    // Example: "Bargain.3.2" = 3 if bargained, 2 if not (Torch the Tower)
+                    // Bargain (CR 702.162): optional sacrifice of artifact/enchantment/token at cast time.
+                    let parts: Vec<&str> = bargain_rest.splitn(2, '.').collect();
+                    if parts.len() == 2 {
+                        if let (Ok(bargained_val), Ok(unbargained_val)) =
+                            (parts[0].parse::<i32>(), parts[1].parse::<i32>())
+                        {
+                            return CountExpression::Bargain {
+                                bargained_value: bargained_val,
+                                unbargained_value: unbargained_val,
                             };
                         }
                     }
@@ -4719,6 +4751,7 @@ mod tests {
             | CountExpression::SpellsCastThisTurn
             | CountExpression::ValidGraveyard { .. }
             | CountExpression::Kicked { .. }
+            | CountExpression::Bargain { .. }
             | CountExpression::TargetedCardPower
             | CountExpression::Compare { .. } => panic!("Expected CardsInHand, got {:?}", expr),
         }
@@ -4766,7 +4799,8 @@ mod tests {
             | CountExpression::SpellsCastThisTurn
             | CountExpression::Compare { .. }
             | CountExpression::TargetedCardPower
-            | CountExpression::Kicked { .. } => {
+            | CountExpression::Kicked { .. }
+            | CountExpression::Bargain { .. } => {
                 panic!("Expected ValidGraveyard, got {:?}", &svars["CT"])
             }
         }
@@ -4810,6 +4844,7 @@ mod tests {
                     | CountExpression::SpellsCastThisTurn
                     | CountExpression::ValidGraveyard { .. }
                     | CountExpression::Kicked { .. }
+                    | CountExpression::Bargain { .. }
                     | CountExpression::TargetedCardPower
                     | CountExpression::Compare { .. } => {
                         panic!("Expected ValidPermanents, got {:?}", source)
@@ -4829,6 +4864,7 @@ mod tests {
             | CountExpression::SpellsCastThisTurn
             | CountExpression::ValidGraveyard { .. }
             | CountExpression::Kicked { .. }
+            | CountExpression::Bargain { .. }
             | CountExpression::TargetedCardPower => panic!("Expected Compare, got {:?}", expr),
         }
     }

@@ -6460,3 +6460,98 @@ async fn test_diamond_valley_sacrifice_lifegain() -> Result<()> {
     println!("✓ Diamond Valley: sacrifice a 3/3, gain 3 life (1994 champ compat, mtg-713 B10)");
     Ok(())
 }
+
+/// Torch the Tower deals its base 2 damage when cast without paying the optional
+/// Bargain cost (no artifact/enchantment/token available to sacrifice).
+///
+/// Before the fix (mtg-863), `SVar:X:Count$Bargain.3.2` fell through to
+/// `CountExpression::Fixed(0)`, causing the spell to always deal 0 damage.
+/// After the fix, `CountExpression::Bargain` is recognised and evaluates
+/// conservatively to the unbargained_value (2), so a 2/2 Grizzly Bears takes
+/// 2 damage and dies.
+///
+/// MTG rules: CR 702.162 (Bargain), CR 601.2b (optional additional costs).
+#[tokio::test]
+async fn test_torch_the_tower_base_damage_unbargained() -> Result<()> {
+    let cardsfolder = require_cardsfolder();
+
+    let puzzle_path = PathBuf::from("../test_puzzles/torch_the_tower_base_damage.pzl");
+    let puzzle_contents = std::fs::read_to_string(&puzzle_path)?;
+    let puzzle = PuzzleFile::parse(&puzzle_contents)?;
+
+    let card_db = CardDatabase::new(cardsfolder);
+    let mut game = load_puzzle_into_game(&puzzle, &card_db).await?;
+
+    // Enable log capture to verify damage was applied
+    game.logger.enable_capture();
+    game.seed_rng(42);
+
+    let p1_id = game.players[0].id; // Torch the Tower caster
+    let p2_id = game.players[1].id; // Grizzly Bears controller
+
+    // Count P2's creatures before game
+    let p2_creatures_before = game
+        .battlefield
+        .cards
+        .iter()
+        .filter(|&&cid| {
+            game.cards
+                .try_get(cid)
+                .is_some_and(|c| c.controller == p2_id && c.is_creature())
+        })
+        .count();
+    assert_eq!(
+        p2_creatures_before, 1,
+        "P2 should start with 1 creature (Grizzly Bears)"
+    );
+
+    let mut controller1 = HeuristicController::new(p1_id);
+    let mut controller2 = HeuristicController::new(p2_id);
+
+    let mut game_loop = GameLoop::new(&mut game).with_verbosity(VerbosityLevel::Normal);
+    // Run 1 turn: P0 should cast Torch the Tower, dealing 2 damage to the Grizzly Bears
+    game_loop.run_turns(&mut controller1, &mut controller2, 1)?;
+
+    // After the turn, Grizzly Bears (2/2) should be dead (took exactly 2 damage)
+    let p2_creatures_after = game_loop
+        .game
+        .battlefield
+        .cards
+        .iter()
+        .filter(|&&cid| {
+            game_loop
+                .game
+                .cards
+                .try_get(cid)
+                .is_some_and(|c| c.controller == p2_id && c.is_creature())
+        })
+        .count();
+
+    // Check game log for evidence of Torch the Tower dealing damage
+    let logs = game_loop.game.logger.logs();
+    let torch_cast = logs.iter().any(|l| l.message.contains("Torch the Tower"));
+    let deals_damage = logs
+        .iter()
+        .any(|l| l.message.contains("deals") && l.message.contains("damage"));
+    let deals_zero = logs.iter().any(|l| l.message.contains("deals 0 damage"));
+
+    println!("Torch the Tower cast: {torch_cast}");
+    println!("Damage logged: {deals_damage}");
+    println!("Deals-0-damage (pre-fix regression): {deals_zero}");
+    println!("P2 creatures after: {p2_creatures_after}");
+
+    // The pre-fix regression: the spell dealt 0 damage (Grizzly Bears survived).
+    // Post-fix: the spell deals 2 damage (Grizzly Bears dies, 0 creatures remain).
+    assert!(
+        !deals_zero,
+        "Torch the Tower must NOT deal 0 damage (pre-fix mtg-863 regression)"
+    );
+
+    assert_eq!(
+        p2_creatures_after, 0,
+        "Grizzly Bears (2/2) should die from Torch the Tower's 2 damage (Count$Bargain.3.2 → unbargained=2)"
+    );
+
+    println!("✓ Torch the Tower: deals 2 damage (Count$Bargain.3.2 evaluates correctly, mtg-863)");
+    Ok(())
+}

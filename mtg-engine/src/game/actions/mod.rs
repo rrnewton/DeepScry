@@ -7708,6 +7708,20 @@ impl GameState {
                 // TODO: Once kicker tracking is implemented, resolve the actual state.
                 Ok(*unkicked_value)
             }
+            CountExpression::Bargain {
+                bargained_value: _,
+                unbargained_value,
+            } => {
+                // Bargain (CR 702.162) is an optional additional cost: sacrifice an
+                // artifact, enchantment, or token when casting. We don't yet track
+                // whether the optional sacrifice was paid at resolution time, so we
+                // conservatively evaluate as unbargained (the base damage value).
+                // This ensures Torch the Tower always deals at least its printed
+                // base damage (2) instead of 0.
+                // TODO(mtg-863): track bargain-paid state per spell on the stack so
+                // the bargained_value (3) is used when the player actually sacrificed.
+                Ok(*unbargained_value)
+            }
             CountExpression::TargetedCardPower => {
                 // TargetedCardPower needs the effect's target card, which this
                 // controller-only signature does not carry. The
