@@ -723,26 +723,26 @@ impl<'a> GameLoop<'a> {
                         // OPTIMIZATION: Only format abilities when debug logging is enabled
                         // The format!("{:?}", a) calls were allocating ~2% of CPU time even when
                         // debug logging was disabled at runtime.
-                        if log::log_enabled!(log::Level::Debug) {
-                            if available_count > 0 && available_count <= 5 {
-                                // Log the actual abilities available
-                                let abilities: smallvec::SmallVec<[String; 8]> =
-                                    self.abilities_buffer.iter().map(|a| format!("{:?}", a)).collect();
-                                log::debug!(
-                                    "Priority check: player {:?} has {} available abilities at action_count={}: {:?}",
-                                    current_priority,
-                                    available_count,
-                                    self.game.action_count(),
-                                    abilities
-                                );
-                            } else {
-                                log::debug!(
-                                    "Priority check: player {:?} has {} available abilities, action_count={}",
-                                    current_priority,
-                                    available_count,
-                                    self.game.action_count()
-                                );
-                            }
+                        if log::log_enabled!(log::Level::Debug) && available_count > 0 && available_count <= 5 {
+                            // Log the actual abilities available (the detail branch — kept at debug!).
+                            let abilities: smallvec::SmallVec<[String; 8]> =
+                                self.abilities_buffer.iter().map(|a| format!("{:?}", a)).collect();
+                            log::debug!(
+                                "Priority check: player {:?} has {} available abilities at action_count={}: {:?}",
+                                current_priority,
+                                available_count,
+                                self.game.action_count(),
+                                abilities
+                            );
+                        } else if log::log_enabled!(log::Level::Trace) {
+                            // No-detail branch (0 abilities, or >5): demoted to trace! — this is
+                            // the per-priority "nothing to choose" echo that dominated debug logs.
+                            log::trace!(
+                                "Priority check: player {:?} has {} available abilities, action_count={}",
+                                current_priority,
+                                available_count,
+                                self.game.action_count()
+                            );
                         }
 
                         // If no actions available, automatically pass priority without asking controller

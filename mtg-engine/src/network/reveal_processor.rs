@@ -75,7 +75,7 @@ pub fn process_card_reveal<P: CardDefProvider>(
 
     // Check for dummy reveal (empty name = hidden opponent card)
     if is_dummy_reveal(&reveal) {
-        log::debug!(
+        log::trace!(
             "{}: Dummy reveal for CardID {} owned by {:?} ({:?}) - skipping instantiation",
             log_prefix,
             card_id.as_u32(),
@@ -104,15 +104,26 @@ pub fn process_card_reveal<P: CardDefProvider>(
     match reason {
         RevealReason::Draw | RevealReason::OpeningHand => {
             let card_already_known = game.cards.get(card_id).is_ok();
-            log::debug!(
-                "{} {:?}: {} (id={}) for {:?} card_already_known={}",
-                log_prefix,
-                reason,
-                reveal.name,
-                card_id.as_u32(),
-                owner,
-                card_already_known
-            );
+            if card_already_known {
+                // No-op: the card instance already exists, nothing is instantiated.
+                log::trace!(
+                    "{} {:?}: {} (id={}) for {:?} card_already_known=true",
+                    log_prefix,
+                    reason,
+                    reveal.name,
+                    card_id.as_u32(),
+                    owner
+                );
+            } else {
+                log::debug!(
+                    "{} {:?}: {} (id={}) for {:?} card_already_known=false",
+                    log_prefix,
+                    reason,
+                    reveal.name,
+                    card_id.as_u32(),
+                    owner
+                );
+            }
 
             if !card_already_known {
                 let card_instance = card_def.instantiate(card_id, owner);
@@ -235,13 +246,22 @@ pub fn process_card_reveal<P: CardDefProvider>(
             // executes the action. We do NOT add it to hand - the card is being
             // played FROM hand, and the GameLoop will move it to stack/battlefield.
             let card_already_known = game.cards.get(card_id).is_ok();
-            log::debug!(
-                "{} Played: {} (id={}) card_already_known={}",
-                log_prefix,
-                reveal.name,
-                card_id.as_u32(),
-                card_already_known
-            );
+            if card_already_known {
+                // No-op: the card instance already exists, nothing is instantiated.
+                log::trace!(
+                    "{} Played: {} (id={}) card_already_known=true",
+                    log_prefix,
+                    reveal.name,
+                    card_id.as_u32()
+                );
+            } else {
+                log::debug!(
+                    "{} Played: {} (id={}) card_already_known=false",
+                    log_prefix,
+                    reveal.name,
+                    card_id.as_u32()
+                );
+            }
 
             if !card_already_known {
                 let card_instance = card_def.instantiate(card_id, owner);
@@ -271,14 +291,24 @@ pub fn process_card_reveal<P: CardDefProvider>(
         RevealReason::Searched => {
             // Library search result - instantiate the card so it can be moved to hand
             let card_already_known = game.cards.get(card_id).is_ok();
-            log::debug!(
-                "{} Searched: {} (id={}) for {:?} card_already_known={}",
-                log_prefix,
-                reveal.name,
-                card_id.as_u32(),
-                owner,
-                card_already_known
-            );
+            if card_already_known {
+                // No-op: the card instance already exists, nothing is instantiated.
+                log::trace!(
+                    "{} Searched: {} (id={}) for {:?} card_already_known=true",
+                    log_prefix,
+                    reveal.name,
+                    card_id.as_u32(),
+                    owner
+                );
+            } else {
+                log::debug!(
+                    "{} Searched: {} (id={}) for {:?} card_already_known=false",
+                    log_prefix,
+                    reveal.name,
+                    card_id.as_u32(),
+                    owner
+                );
+            }
 
             if !card_already_known {
                 let card_instance = card_def.instantiate(card_id, owner);

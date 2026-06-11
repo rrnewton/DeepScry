@@ -2059,7 +2059,7 @@ impl GameState {
     fn draw_card_inner(&mut self, player_id: PlayerId, log_gamelog: bool) -> Result<(Option<CardId>, u8)> {
         if let Some(zones) = self.get_player_zones_mut(player_id) {
             let lib_size = zones.library.len();
-            log::debug!(
+            log::trace!(
                 "draw_card: player {} library cards_len={}",
                 player_id.as_u32(),
                 lib_size
@@ -2097,7 +2097,7 @@ impl GameState {
                 let draw_count = if let Ok(player) = self.get_player_mut(player_id) {
                     let old_count = player.cards_drawn_this_turn;
                     let count = player.record_card_drawn();
-                    log::debug!("Player {} drew card (draw #{} this turn)", player_id.as_u32(), count);
+                    log::trace!("Player {} drew card (draw #{} this turn)", player_id.as_u32(), count);
 
                     // Log for undo - use the prior_log_size from above (still in scope)
                     self.undo_log.log(

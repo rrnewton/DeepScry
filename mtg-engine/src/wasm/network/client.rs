@@ -1633,7 +1633,7 @@ impl WasmNetworkClient {
         for (ac, entry) in reveals {
             match entry {
                 StateSyncEntry::RevealCard { owner, card, reason } => {
-                    log::debug!(
+                    log::trace!(
                         "apply_state_sync: reveal ac={} owner={:?} card={}",
                         ac,
                         owner,

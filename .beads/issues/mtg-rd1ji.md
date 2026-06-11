@@ -1,0 +1,70 @@
+---
+title: 'Network desync: turn-13 REWIND/REPLAY divergence — forward bottoms 4 cards, replay puts card into hand (WC2025 04v02)'
+status: open
+priority: 2
+issue_type: task
+labels:
+- desync
+- network
+depends_on:
+  mtg-677: related
+  mtg-813: related
+created_at: 2026-06-11T03:17:41.485502337+00:00
+updated_at: 2026-06-11T03:17:41.485502337+00:00
+---
+
+# Description
+
+## Summary
+
+A real determinism bug (NOT a logging artifact) surfaced during the debug-log
+noise-reduction audit of a 56K-line WASM console capture. The network game DIED
+at turn 13 because the WASM rewind/replay verifier detected a genuine divergence
+between the forward simulation pass and the replay pass — a bottoming/scry-style
+effect produces different results under rewind+replay.
+
+## Repro
+
+- Mode: native-vs-native, random/random controllers
+- Decks: `decks/championship/2025/04_henry_temur_otters` vs `02_...` (WC2025 04 vs 02)
+- Launch: `&debug=true&mode=network`
+- Reproducible (the audit observed it deterministically with this deck-pair).
+
+## What happened
+
+At turn 13 Main2 the WASM rewind/replay verifier
+(`mtg-engine/.../replay_verifier.rs`, `ReplayCheckOutcome::LogMismatch`, ~line 144)
+fired a REWIND/REPLAY FATAL at buffer index 135:
+
+- **Forward pass** recorded: "puts 4 cards on the bottom of their library"
+  (a scry / surveil / bottom-of-library effect).
+- **Replay pass** instead produced: "puts card#44 into Hand".
+
+So the same action_count point resolves a bottoming effect differently on the
+forward pass vs. the replay pass — i.e. the effect's outcome is not bit-identical
+under rewind+replay, which is the inviolable network-determinism invariant
+(`docs/NETWORK_ARCHITECTURE.md`: desync is ALWAYS fatal).
+
+The verifier correctly treated this as fatal; the server then closed the
+WebSocket with code 1006.
+
+## Suspected area
+
+A bottoming / scry-style effect (put N cards on bottom of library) is not
+replaying deterministically under the rewind/replay model. Likely a transient
+or ordering-dependent piece of resolution state that is not threaded/serialized
+(see CLAUDE.md "rewind safety" — `#[serde(skip)]` resolution scratch held across
+a choice point is the classic culprit). The replay choosing "into Hand" vs the
+forward "to bottom of library" suggests the choice/selection state for the
+bottoming effect diverges on replay.
+
+## Scope
+
+DO NOT fix here — this is a separate netarch/desync investigation. This issue is
+filed with the full repro so it can be picked up under the netarch rewind/replay
+work (mtg-677) and counts against the find-zero-desyncs prize (mtg-813).
+
+## Links
+
+- Related: mtg-677 (TRACK: finish netarch rewind/replay)
+- Related: mtg-813 (PRIZE: 1-hour parallel fuzz finds ZERO desyncs)
