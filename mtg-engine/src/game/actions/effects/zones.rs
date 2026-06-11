@@ -585,12 +585,21 @@ impl GameState {
     }
 
     /// [`Effect::ForceSacrifice`]: force `player` to sacrifice `count`
-    /// permanents matching `sac_type` (CR 701.17). The AI picks the
-    /// least-valuable matching permanents (P/T sum for creatures, CMC otherwise).
+    /// permanents matching the `SacValid$` `sac_type` (CR 701.17). The AI picks
+    /// the least-valuable matching permanents (P/T sum for creatures, CMC else).
     ///
-    /// NOTE (mtg-907): `sac_type` is matched with a raw `str` comparison
-    /// (`"Creature"`/`"Land"`/… else default-to-creature). Preserved verbatim
-    /// from the inline arm; a candidate for the Valid$/filter consolidation.
+    /// mtg-907: `sac_type` is parsed with the canonical `TargetRestriction`,
+    /// fixing the old hand-rolled `match` that mis-handled comma-lists, subtypes,
+    /// and qualifiers (see the inline comment + commit rules review).
+    ///
+    /// KNOWN LIMITATION (NOT introduced here, deferred — see mtg-907): a few
+    /// `SacValid$` strings carry DYNAMIC predicates that neither the old code nor
+    /// `TargetRestriction::parse` resolves — `.attacking`, `.untapped`,
+    /// `.withFlying`, `.sharesCardTypeWith…`, and the `Self` selector. The old
+    /// `match` silently defaulted those to "any creature"; `TargetRestriction`
+    /// silently ignores the unknown qualifier (so `Creature.attacking` degrades
+    /// to bare `Creature`). Both are imperfect; extending `TargetRestriction` to
+    /// model board-state predicates is the proper fix and is tracked in mtg-907.
     pub(in crate::game::actions) fn execute_force_sacrifice(
         &mut self,
         player: PlayerId,
@@ -604,6 +613,17 @@ impl GameState {
             .map(|p| p.name.clone())
             .unwrap_or_else(|_| "Unknown".to_string().into());
 
+        // mtg-907: parse the `SacValid$` filter once with the canonical
+        // TargetRestriction instead of the old hand-rolled `match sac_type`. The
+        // old code only handled SINGLE bare types and fell through to
+        // `is_creature()` for everything else — so it MIS-handled real shipping
+        // filters: `SacValid$ Creature,Planeswalker` (comma-list — Planeswalkers
+        // were never sacrificed), bare subtypes like `SacValid$ Food` / `Mountain`
+        // (a Food artifact was treated as "creature" and skipped), and qualifiers
+        // like `.nonArtifact`. TargetRestriction::matches handles all of these
+        // correctly (CR 109.1/205 card types, multi-type OR, subtype membership,
+        // nonArtifact). See the commit's rules review.
+        let restriction = crate::core::TargetRestriction::parse(sac_type);
         // Find matching permanents controlled by the target player
         let mut candidates: Vec<(CardId, i32)> = self
             .battlefield
@@ -615,19 +635,7 @@ impl GameState {
                 if card.controller != player {
                     return None;
                 }
-                // Match sac_type against card types
-                let type_matches = match sac_type {
-                    "Creature" => card.is_creature(),
-                    "Land" => card.is_land(),
-                    "Artifact" => card.is_artifact(),
-                    "Enchantment" => card.is_enchantment(),
-                    "Permanent" | "" => true, // Any permanent
-                    _ => {
-                        // Try matching as creature subtype or more complex filter
-                        card.is_creature() // Default to creature
-                    }
-                };
-                if type_matches {
+                if restriction.matches(card) {
                     // Score: lower value = sacrifice first
                     // Use P/T sum for creatures, CMC for non-creatures
                     let value = if card.is_creature() {

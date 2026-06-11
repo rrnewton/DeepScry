@@ -2138,6 +2138,68 @@ mod tests {
         assert_eq!(bf_creatures, 1, "Only 1 creature should remain after sacrificing 2");
     }
 
+    #[test]
+    fn test_force_sacrifice_comma_list_includes_planeswalker() {
+        // mtg-907: `SacValid$ Creature,Planeswalker` must offer BOTH creatures
+        // and planeswalkers as sacrifice candidates. The pre-mtg-907 hand-rolled
+        // `match sac_type` only handled single bare types and fell through to
+        // `is_creature()` for the comma-list, so planeswalkers were NEVER
+        // sacrificable. Now routed through TargetRestriction::parse, which
+        // splits on ',' into [Creature, Planeswalker] and matches either.
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        let p2_id = game.players[1].id;
+
+        // P2 controls a big creature (P/T sum 10) and a cheap planeswalker
+        // (CMC 3). The AI sacrifices the LEAST valuable candidate: creatures are
+        // scored by P/T sum (10), non-creatures by CMC (3). So the planeswalker
+        // (value 3) is chosen — which is ONLY possible if it is in the candidate
+        // set at all, i.e. the comma-list filter matched it.
+        let dragon_id = game.next_entity_id();
+        let mut dragon = Card::new(dragon_id, "Shivan Dragon".to_string(), p2_id);
+        dragon.add_type(CardType::Creature);
+        dragon.set_base_power(Some(5));
+        dragon.set_base_toughness(Some(5));
+        dragon.controller = p2_id;
+        game.cards.insert(dragon_id, dragon);
+        game.battlefield.add(dragon_id);
+
+        let pw_id = game.next_entity_id();
+        let mut pw = Card::new(pw_id, "Jace Beleren".to_string(), p2_id);
+        pw.add_type(CardType::Planeswalker);
+        pw.mana_cost = ManaCost::from_string("1UU"); // CMC 3
+        pw.controller = p2_id;
+        game.cards.insert(pw_id, pw);
+        game.battlefield.add(pw_id);
+
+        // "Each opponent sacrifices a creature or planeswalker."
+        let spell_id = game.next_entity_id();
+        let mut spell = Card::new(spell_id, "Edict of the Walkers".to_string(), p1_id);
+        spell.add_type(CardType::Sorcery);
+        spell.effects.push(Effect::ForceSacrifice {
+            player: p2_id,
+            sac_type: "Creature,Planeswalker".to_string(),
+            count: 1,
+        });
+        game.cards.insert(spell_id, spell);
+        game.stack.add(spell_id);
+
+        game.resolve_spell(spell_id, &[]).unwrap();
+
+        // The planeswalker (value 3) is the cheaper candidate and is sacrificed;
+        // the dragon (value 10) survives. Pre-fix this was IMPOSSIBLE — the
+        // planeswalker was never a candidate, so the dragon would have been
+        // forced out instead.
+        assert!(
+            !game.battlefield.contains(pw_id),
+            "Jace (planeswalker) should be sacrificed — comma-list filter must include planeswalkers (mtg-907)"
+        );
+        assert!(
+            game.battlefield.contains(dragon_id),
+            "Shivan Dragon should survive (higher value than the planeswalker)"
+        );
+    }
+
     // ==================== TapAll Tests ====================
 
     #[test]
