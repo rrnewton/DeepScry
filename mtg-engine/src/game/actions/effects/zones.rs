@@ -4,30 +4,30 @@
 //! This module will eventually hold the whole zone-change family
 //! (Destroy/Exile/Return/Sacrifice/Search/ChangeZoneAll/Balance/Dig). It starts
 //! with [`Effect::Dig`] — the "look at top N, keep some, put the rest
-//! elsewhere" effect — because that extraction is the structural prerequisite
-//! for the mtg-908 network-desync fix.
+//! elsewhere" effect.
 //!
-//! ## mtg-908 follow-on (READ BEFORE editing `execute_dig`)
+//! ## mtg-908 — Dig keep-decision is information-INDEPENDENT (positional)
 //!
-//! [`Effect::Dig`]'s "which cards to keep" decision currently runs an INLINE AI
-//! heuristic ([`GameState::dig_card_score`]) that peeks at the actual (hidden)
-//! library contents. On a network game the server scores the real top-N while
-//! the client shadow scores its hidden-shadowed top-N, so the two pick
-//! different cards → fatal state-hash desync (mtg-908: the user's 2025 04-vs-02
-//! game died this way at turn 13).
+//! [`Effect::Dig`]'s "which cards to keep" decision used to run an INLINE AI
+//! value-ranking that peeked at the actual top-of-library card identities. On a
+//! network game the server ranked the real top-N while a client SHADOW (where
+//! those cards are hidden / unmaterialised) scored them all 0 and kept a
+//! DIFFERENT subset → fatal state-hash desync (mtg-908: the user's 2025 04-vs-02
+//! game died this way). CLAUDE.md requires controllers/effects to "produce
+//! identical decisions whether running on the server (full state) or on a client
+//! (shadow state)".
 //!
-//! The fix (tracked in mtg-908, NOT done here) mirrors how Scry is handled:
-//! intercept Dig in the `priority.rs` effect-resolution loop where the
-//! `controller` handle is in scope, call a new
-//! `controller.choose_dig_partition(...)` (server-authoritative, sent to the
-//! client), and reduce THIS `execute_dig` to a controller-less fallback
-//! (default keep-first-N), exactly like [`GameState::execute_scry`].
+//! The keep decision is now PURELY POSITIONAL — keep the first `max_select`
+//! filter-matching cards in revealed (library top-down) order. That depends only
+//! on the server-authoritative library ORDER, which the shadow learns via
+//! LibraryReordered / reveals, so server and shadow agree.
 //!
-//! THIS slice is purely structural / behavior-preserving: `execute_dig` keeps
-//! the existing hidden-info heuristic verbatim. Keeping the whole self-dig
-//! decision + application in one cohesive method is deliberate — it makes the
-//! mtg-908 swap (decision → controller, application → a `dig_apply_decision`
-//! helper) a clean follow-on rather than surgery on the giant dispatcher.
+//! PARTIAL: this closes the UNFILTERED-dig desync class (Stock Up, Accumulate
+//! Wisdom). FILTERED digs (e.g. Thundertrap Trainer's `ChangeValid$
+//! Card.nonCreature+nonLand`) still desync because the shadow cannot apply the
+//! filter to hidden cards at all — that needs the server's kept-set broadcast to
+//! the shadow (a server-local-decision → shadow side-channel), tracked under
+//! mtg-908 / mtg-677. mtg-908 stays OPEN for that case.
 
 use crate::core::{CardId, DigFilter, PlayerId};
 use crate::game::GameState;
@@ -45,11 +45,9 @@ impl GameState {
     /// 2. `!target_self` (Fire Lord Ozai, Xander's Pact): exile the top N from
     ///    each opponent's library.
     ///
-    /// NOTE (mtg-908): the self-dig "which cards to keep" ranking below uses
-    /// [`GameState::dig_card_score`] against the real (hidden) library — a
-    /// network-desync hazard slated to move behind a server-authoritative
-    /// controller choice. Preserved verbatim here (behavior-preserving
-    /// extraction); see the module doc.
+    /// NOTE (mtg-908): the self-dig keep decision is POSITIONAL (keep the first
+    /// `max_select` matching cards in revealed order) — information-independent,
+    /// so server and network-shadow agree. See the module doc.
     #[allow(clippy::too_many_arguments)]
     pub(in crate::game::actions) fn execute_dig(
         &mut self,
@@ -61,7 +59,11 @@ impl GameState {
         may_play: bool,
         may_play_without_mana_cost: bool,
         target_self: bool,
-        optional: bool,
+        // mtg-908: `optional` no longer affects the keep COUNT (the old
+        // hidden-info "skip if low value" heuristic was removed; the AI now
+        // always takes `max_select`). Kept in the signature for the full
+        // Effect::Dig parameter set / future controller-routed use.
+        _optional: bool,
         rest_random: bool,
         reveal: bool,
         change_valid: &[DigFilter],
@@ -118,36 +120,37 @@ impl GameState {
                     }
                 }
 
-                // Determine how many cards to select
+                // Determine how many cards to select.
                 let max_select = if change_all {
                     valid_ids.len()
                 } else {
                     (change_count as usize).min(valid_ids.len())
                 };
 
-                // AI heuristic: rank valid cards by value, pick best ones
-                // Score: creatures by (power+toughness)*10 + cmc*5 + 80,
-                //        lands by 100, others by 50 + cmc*30
-                if valid_ids.len() > 1 && max_select < valid_ids.len() {
-                    valid_ids.sort_by(|&a, &b| {
-                        let score_a = self.dig_card_score(a);
-                        let score_b = self.dig_card_score(b);
-                        score_b.cmp(&score_a) // Descending: best first
-                    });
-                }
-
-                // If optional and no good cards, AI may choose to skip
-                let select_count = if optional && max_select > 0 {
-                    // Simple heuristic: skip only if best card scores very low
-                    let best_score = valid_ids.first().map(|&id| self.dig_card_score(id)).unwrap_or(0);
-                    if best_score < 30 {
-                        0
-                    } else {
-                        max_select
-                    }
-                } else {
-                    max_select
-                };
+                // mtg-908: keep the first `max_select` valid cards in REVEALED
+                // (library top-down) order — a POSITIONAL, information-INDEPENDENT
+                // decision. The previous code ranked `valid_ids` by
+                // `dig_card_score` (creature P/T, land, CMC) and, for an optional
+                // dig, skipped when the best card scored low. BOTH read the real
+                // (hidden) top-of-library card identities, which a network
+                // client's SHADOW cannot reproduce: there those cards are
+                // unmaterialised, so the shadow scored them all 0, did NOT
+                // reorder, and kept a DIFFERENT subset than the server — a FATAL
+                // state-hash desync (mtg-908: the user's 2025 04-vs-02 game died
+                // here). CLAUDE.md requires controllers/effects to "produce
+                // identical decisions whether running on the server (full state)
+                // or on a client (shadow state)". A positional keep depends only
+                // on the server-authoritative library ORDER (which the shadow
+                // learns via LibraryReordered / reveals), so both sides agree.
+                //
+                // Tradeoff (acceptable): the AI no longer keeps the "best"-valued
+                // cards, just the first matching ones. Determinism outranks dig
+                // keep-quality for automated play, and a HUMAN still chooses which
+                // cards to keep through the UI (this fallback only drives AI /
+                // no-controller resolution). For an `optional` dig the AI always
+                // takes `max_select` (an information-independent default) rather
+                // than the old hidden-info "skip if low value" heuristic.
+                let select_count = max_select;
 
                 // Move selected cards to destination
                 let selected: smallvec::SmallVec<[CardId; 8]> = valid_ids.iter().take(select_count).copied().collect();
@@ -326,27 +329,10 @@ impl GameState {
         }
         Ok(())
     }
-
-    /// AI heuristic scoring a card for Dig selection: creatures by P/T + CMC,
-    /// lands at a fixed 100, other cards by CMC. Higher = more desirable to keep.
-    ///
-    /// NOTE (mtg-908): this reads the real (potentially hidden) card identity,
-    /// which is the network-desync hazard. On the fix it becomes a legitimate
-    /// controller-side decision over the controller's OWN view (server-
-    /// authoritative). Kept here verbatim for the behavior-preserving extraction.
-    pub(in crate::game::actions) fn dig_card_score(&self, card_id: CardId) -> i32 {
-        let Some(card) = self.cards.try_get(card_id) else {
-            return 0;
-        };
-        let cmc = i32::from(card.definition.mana_cost.cmc());
-        if card.is_creature() {
-            let power = i32::from(card.current_power());
-            let toughness = i32::from(card.current_toughness());
-            80 + (power + toughness) * 10 + cmc * 5
-        } else if card.is_land() {
-            100
-        } else {
-            50 + 30 * cmc
-        }
-    }
 }
+// NOTE (mtg-908): the old `dig_card_score` value-ranking heuristic was REMOVED.
+// It read hidden top-of-library card identities to rank which dug cards to keep,
+// which a network client's shadow cannot reproduce (those cards are
+// unmaterialised there) — the root of the mtg-908 desync. The Dig keep decision
+// is now purely positional (keep the first `max_select` matching cards in
+// revealed order), which is information-independent.
