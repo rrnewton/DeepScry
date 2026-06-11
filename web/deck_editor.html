@@ -402,9 +402,25 @@
         .cloud-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin-top: 8px; }
         .cloud-tools .migrate-opt { font-size: 11px; color: var(--muted); display: flex; align-items: center; gap: 4px; cursor: pointer; }
         .cloud-tools button { padding: 5px 10px; font-size: 12px; }
-        .cloud-link-row { margin-top: 8px; }
-        .cloud-link-row a { font-size: 12px; }
-        .cloud-objpath { font-family: 'Consolas','Monaco',monospace; font-size: 10.5px; color: var(--muted); margin-top: 3px; word-break: break-all; }
+        .cloud-tools a { font-size: 12px; }
+        .cloud-objpath { font-family: 'Consolas','Monaco',monospace; font-size: 10.5px; color: var(--muted); margin-top: 6px; word-break: break-all; }
+
+        /* In-section Save buttons (item 8): one per store, so it is unambiguous
+           which destination a Save targets. */
+        .store-save-row { margin: 6px 0 8px; }
+        .store-save-row button { padding: 6px 12px; font-size: 12px; }
+
+        /* Local-store persistence note + info affordance (item 12). */
+        .local-note { font-size: 11px; color: var(--muted); line-height: 1.4; margin-bottom: 6px; }
+        .info-affordance {
+            display: inline-block;
+            color: var(--accent);
+            cursor: help;
+            font-size: 13px;
+            vertical-align: middle;
+            margin-left: 2px;
+        }
+        .info-affordance:hover, .info-affordance:focus { color: var(--accent-2); outline: none; }
 
         /* ── Import textarea modal-ish ────────────────────────────────── */
         .import-panel {
@@ -483,13 +499,19 @@
             </div>
         </div>
 
-        <!-- Deck actions (Save destination is decided by login state). -->
+        <!-- Deck-wide actions. SAVE now lives INSIDE each store's section
+             (batch2 item 8) so the destination is unambiguous; this row keeps
+             the store-agnostic actions: start fresh, export, import. The
+             context-aware "Save and use" (launcher flow) stays here because it
+             must navigate back to the launcher after saving. -->
         <div class="controls-section">
             <div class="deck-actions">
-                <button id="btn-save" class="success">Save</button>
+                <!-- New deck: clears EVERYTHING for a fresh deck (item 8). -->
+                <button id="btn-new" class="ghost" title="Start a brand-new empty deck">New deck</button>
+                <!-- Shown only in the launcher flow (?from=launcher); wired in JS. -->
+                <button id="btn-save" class="success" style="display:none;">Save and use</button>
                 <button id="btn-export" class="ghost" title="Export as .dck text">Export .dck</button>
                 <button id="btn-import" class="ghost" title="Import from .dck text">Import .dck</button>
-                <button id="btn-clear" class="danger" title="Clear the current deck">Clear</button>
                 <span id="action-status" class="status-msg"></span>
             </div>
         </div>
@@ -506,25 +528,50 @@
             </div>
             <div id="cloud-account" class="cloud-account" style="display:none;">
                 <div class="cloud-acct-line">Signed in<span id="cloud-acct-who"></span>.</div>
+                <!-- Save to Cloud lives INSIDE the cloud section (item 8). -->
+                <div class="store-save-row">
+                    <button id="btn-save-cloud" class="success" title="Save the current deck to your cloud account">☁ Save to Cloud</button>
+                </div>
                 <div class="cloud-list saved-list" id="cloud-list">
                     <span class="no-saved">No cloud decks yet.</span>
                 </div>
                 <div class="cloud-tools">
-                    <button id="btn-migrate-all" class="ghost" title="Copy every Local Browser deck into your cloud account">Migrate All &rarr;</button>
-                    <label class="migrate-opt"><input type="checkbox" id="migrate-delete-local"> Delete local copies after migrating</label>
+                    <!-- Download relabelled (item 10): drop the leading "View /". -->
+                    <a id="btn-download-decks" href="#" title="Re-mint a fresh link and download your real collection.tgz">Download deck collection</a>
+                    <!-- Direct link (item 11): copy a temporary presigned URL. -->
+                    <button id="btn-direct-link" class="ghost" title="Copy a temporary direct link to your cloud collection (expires)">Direct link</button>
                 </div>
-                <div class="cloud-link-row">
-                    <a id="btn-download-decks" href="#" title="Re-mint a fresh link and download your real collection.tgz">View / download my cloud collection</a>
-                    <div class="cloud-objpath" id="cloud-objpath"></div>
-                </div>
+                <div class="cloud-objpath" id="cloud-objpath"></div>
             </div>
         </div>
 
         <!-- ── Saved Decks — LOCAL BROWSER (localStorage) ──────────────────── -->
         <div class="controls-section saved-decks-wrap">
-            <h3>Saved Decks &mdash; Local Browser <span class="store-badge store-local">💾</span></h3>
+            <h3>
+                Saved Decks &mdash; Local Browser
+                <span class="store-badge store-local">💾</span>
+                <!-- Persistence info affordance (item 12). The native title=
+                     tooltip carries the full, accurate caveats (incl. Safari's
+                     ~7-day ITP eviction). -->
+                <span class="info-affordance" id="local-info" tabindex="0" role="button"
+                      aria-label="About local browser deck storage"
+                      title="These decks are saved in THIS browser's local storage, on THIS device only — not synced across devices/browsers and not backed up. They persist across sessions but CAN be lost: clearing site data, private/incognito windows (gone when the window closes), or the browser evicting storage under disk pressure. Safari (Intelligent Tracking Prevention) may delete this kind of storage after ~7 days if you don't revisit the site, so Safari local decks can vanish after about a week of non-use; Chrome/Edge/Firefox are generally more durable but still not guaranteed. For durable, cross-device storage, sign in and use Saved Decks — Cloud.">&#9432;</span>
+            </h3>
+            <!-- One-line persistence summary always visible; the &#9432; carries
+                 the full caveats on hover/focus. -->
+            <div class="local-note">Saved in this browser only (not synced/backed up). Hover &#9432; for details.</div>
+            <!-- Save to Local lives INSIDE the local section (item 8). -->
+            <div class="store-save-row">
+                <button id="btn-save-local" class="success" title="Save the current deck to this browser's local storage">💾 Save to Local</button>
+            </div>
             <div class="saved-list" id="saved-list">
                 <span class="no-saved">No saved decks yet.</span>
+            </div>
+            <!-- Migrate All moved here (item 9): migration goes local → cloud, so
+                 it belongs under the LOCAL section. Shown only when signed in. -->
+            <div class="cloud-tools" id="migrate-tools" style="display:none;">
+                <button id="btn-migrate-all" class="ghost" title="Copy every Local Browser deck into your cloud account">Migrate All to Cloud &rarr;</button>
+                <label class="migrate-opt"><input type="checkbox" id="migrate-delete-local"> Delete local copies after migrating</label>
             </div>
         </div>
 
@@ -1561,20 +1608,16 @@ function currentDeckCount() {
 }
 
 /**
- * Persist the current deck. Destination is decided by LOGIN state:
- *   - logged in  → write to the CLOUD account (R2 PUT) AND keep a local mirror
- *     (so the launcher, which plays from localStorage, can launch it). On a
- *     cloud failure we keep the local copy and say so.
- *   - logged out → write to LOCAL BROWSER (localStorage) only, as before.
- * The save indicator reports exactly WHERE it went (requirement C).
+ * Shared first half of every save: validate non-empty, resolve the name
+ * (premade → save-as-copy), write the LOCAL BROWSER copy (the launcher plays
+ * from localStorage, so every save keeps a local copy regardless of
+ * destination), and refresh the local list. Returns the resolved name, or null
+ * if the deck is empty (caller aborts).
  *
- * EMPTY-SAVE GUARD (requirement F): a deck with 0 cards is refused with a clear
- * message — this is what produced the 86-byte metadata-only .dck in R2.
- *
- * Async: returns a Promise<string|null> with the saved name (or null on
- * empty/no-op). "Save and use" awaits it before navigating.
+ * EMPTY-SAVE GUARD: a deck with 0 cards is refused with a clear message — this
+ * is what produced the 86-byte metadata-only .dck in R2.
  */
-async function saveDeck() {
+function persistLocalCopy() {
     let name = deckNameInput.value.trim() || 'Unnamed Deck';
     if (currentDeckCount() === 0) {
         showStatus('⚠ This deck is empty — add some cards before saving.', 'err');
@@ -1586,32 +1629,57 @@ async function saveDeck() {
         name = uniqueCopyName(editContext.originalName + ' (copy)', all);
         deckNameInput.value = name;
     }
-    const deckObj = { main_deck: mapToPairs(deck.main), sideboard: mapToPairs(deck.sideboard) };
-    all[name] = deckObj;
+    all[name] = { main_deck: mapToPairs(deck.main), sideboard: mapToPairs(deck.sideboard) };
     editContext = { source: 'custom', originalName: name };
-
-    // Always keep localStorage in sync (source of truth for THIS device + the
-    // launcher's play path). writeCustomDecksLocalOnly avoids the legacy
-    // debounced mirror; the explicit cloud PUT below is the authoritative path.
     writeCustomDecksLocalOnly(all);
     renderLocalList();
+    return name;
+}
 
-    if (cloudLoggedIn) {
-        try {
-            const res = await DeckStorage.save(readCustomDecks(), _cloudEtag);
-            _cloudEtag = res.etag;
-            await refreshCloudList();
-            showStatus('☁ Saved "' + name + '" to your cloud account.', 'ok');
-        } catch (err) {
-            const reason = err && err.conflict
-                ? 'your decks changed on another device — reload to merge'
-                : (err && err.message ? err.message : 'unknown error');
-            showStatus('⚠ Cloud save failed (' + reason + ') — kept local copy of "' + name + '".', 'err');
-        }
-    } else {
-        showStatus('💾 Saved "' + name + '" to local browser.', 'ok');
+/**
+ * Save to LOCAL BROWSER only (batch2 item 8: explicit destination). Always
+ * available. Returns the saved name or null (empty deck).
+ */
+function saveToLocal() {
+    const name = persistLocalCopy();
+    if (!name) return null;
+    showStatus('💾 Saved "' + name + '" to local browser.', 'ok');
+    return name;
+}
+
+/**
+ * Save to the CLOUD account (R2 PUT) — and, since the launcher plays from
+ * localStorage, also keep the local copy in sync. Requires login; if not
+ * logged in we save locally and tell the user how to enable cloud. On a cloud
+ * failure the local copy is kept. Returns Promise<string|null>.
+ */
+async function saveToCloud() {
+    const name = persistLocalCopy();
+    if (!name) return null;
+    if (!cloudLoggedIn) {
+        showStatus('💾 Saved "' + name + '" locally. Sign in to save to the cloud.', 'ok');
+        return name;
+    }
+    try {
+        const res = await DeckStorage.save(readCustomDecks(), _cloudEtag);
+        _cloudEtag = res.etag;
+        await refreshCloudList();
+        showStatus('☁ Saved "' + name + '" to your cloud account.', 'ok');
+    } catch (err) {
+        const reason = err && err.conflict
+            ? 'your decks changed on another device — reload to merge'
+            : (err && err.message ? err.message : 'unknown error');
+        showStatus('⚠ Cloud save failed (' + reason + ') — kept local copy of "' + name + '".', 'err');
     }
     return name;
+}
+
+/**
+ * Destination-agnostic save used by the launcher "Save and use" flow: cloud if
+ * signed in, else local. Returns Promise<string|null>.
+ */
+async function saveDeck() {
+    return cloudLoggedIn ? await saveToCloud() : saveToLocal();
 }
 
 /** Find a custom-deck name not already taken (appends " 2", " 3", … if needed). */
@@ -1874,16 +1942,16 @@ function scrollResultsTop() {
     if (wrap) wrap.scrollTop = 0;
 }
 
-// Deck actions. The single SAVE button is context-sensitive (mtg-718 batch):
-//   - reached FROM the launcher (?from=launcher) → "Save and use": save then
-//     return to the launcher with this deck preselected (launcherReturnUrl).
-//   - otherwise (from the lobby, no active game) → "Save": save and STAY.
-// The plain "Back to Launcher" / "Back to Lobby" links remain the cancel/back
-// action (they intentionally do NOT preselect the edited deck).
-(function setupSaveButton() {
+// Deck actions (batch2 item 8). The per-store Save buttons (Save to Local /
+// Save to Cloud) live inside their sections; the top "Save and use" button is
+// shown ONLY in the launcher flow (?from=launcher), where saving must navigate
+// back to the launcher with this deck preselected (launcherReturnUrl). Outside
+// the launcher flow there is no ambiguous top-level Save at all — the user
+// picks a destination explicitly.
+(function setupSaveButtons() {
     const saveBtn = document.getElementById('btn-save');
-    if (!saveBtn) return;
-    if (FROM_LAUNCHER) {
+    if (saveBtn && FROM_LAUNCHER) {
+        saveBtn.style.display = '';
         saveBtn.textContent = 'Save and use';
         saveBtn.title = 'Save this deck and return to the launcher with it selected';
         saveBtn.addEventListener('click', async () => {
@@ -1891,11 +1959,11 @@ function scrollResultsTop() {
             if (!savedName) return; // empty deck — saveDeck already surfaced the error
             window.location.href = launcherReturnUrl(savedName);
         });
-    } else {
-        saveBtn.textContent = 'Save';
-        saveBtn.title = 'Save this deck';
-        saveBtn.addEventListener('click', saveDeck);
     }
+    const localBtn = document.getElementById('btn-save-local');
+    if (localBtn) localBtn.addEventListener('click', () => { saveToLocal(); });
+    const cloudBtn = document.getElementById('btn-save-cloud');
+    if (cloudBtn) cloudBtn.addEventListener('click', () => { saveToCloud(); });
 })();
 
 // Keep the "Back to Lobby" link carrying the session's sticky params
@@ -1932,12 +2000,16 @@ setupBackToLauncher();
 
 document.getElementById('btn-export').addEventListener('click', exportDck);
 document.getElementById('btn-import').addEventListener('click', openImportPanel);
-document.getElementById('btn-clear').addEventListener('click', () => {
+// New deck (item 8): clear everything for a fresh, empty deck. Confirms only
+// when there is work to lose. Also resets the deck-name field so the next save
+// doesn't silently overwrite the deck we just cleared from.
+document.getElementById('btn-new').addEventListener('click', () => {
     if (deck.main.size + deck.sideboard.size > 0) {
-        if (!confirm('Clear the current deck?')) return;
+        if (!confirm('Start a new deck? This clears the current deck.')) return;
     }
     clearDeck();
-    showStatus('Deck cleared.', '');
+    deckNameInput.value = 'My Deck';
+    showStatus('Started a new deck.', '');
 });
 
 document.getElementById('btn-import-cancel').addEventListener('click', closeImportPanel);
@@ -2069,7 +2141,39 @@ loadEditTarget();
         });
     }
 
-    // Migrate All → + delete-local checkbox (requirement D).
+    // Direct link (batch2 item 11). R2 objects are PRIVATE (served via
+    // time-limited presigned SigV4 URLs); a permanent public link would require
+    // a public bucket — a security risk (everyone's decks readable). So we
+    // implement option (a): copy the CURRENT presigned GET URL to the clipboard
+    // with a clear "(temporary link, expires)" note. A stable always-fresh app
+    // route (option b) needs a new server endpoint and is tracked as a TODO bead
+    // (mtg-fovl2); the download button covers the durable path meanwhile.
+    const directBtn = document.getElementById('btn-direct-link');
+    if (directBtn) {
+        directBtn.addEventListener('click', async () => {
+            try {
+                const url = await DeckStorage.directLink();
+                if (!url) { showStatus('No direct link available (cloud not configured).', 'err'); return; }
+                let copied = false;
+                try {
+                    if (navigator.clipboard && navigator.clipboard.writeText) {
+                        await navigator.clipboard.writeText(url);
+                        copied = true;
+                    }
+                } catch (_) { copied = false; }
+                showStatus(copied
+                    ? '🔗 Temporary direct link copied (expires — re-copy when it lapses).'
+                    : '🔗 Direct link (temporary, expires): ' + url, copied ? 'ok' : '');
+            } catch (err) {
+                showStatus('Could not make a direct link: ' + (err && err.message ? err.message : 'unknown'), 'err');
+            }
+        });
+    }
+
+    // Migrate All → now lives under the LOCAL section (item 9), shown only when
+    // signed in (migration is local→cloud, so it needs a cloud account).
+    const migrateTools = document.getElementById('migrate-tools');
+    if (migrateTools) migrateTools.style.display = '';
     const migrateBtn = document.getElementById('btn-migrate-all');
     const delLocalCb = document.getElementById('migrate-delete-local');
     if (migrateBtn) {

@@ -448,6 +448,26 @@
   }
 
   /**
+   * Mint a fresh, TEMPORARY presigned direct link to the user's cloud
+   * collection object (the "Direct link" button, mtg-742 batch2 item 11).
+   *
+   * R2 objects are PRIVATE — there is no permanent public URL without making the
+   * whole bucket public (a security risk: every user's decks become world-
+   * readable). So this returns the SHORT-TTL presigned GET URL the server just
+   * minted; it works for a while and then EXPIRES, which the caller surfaces to
+   * the user. Prefers `get_url` (inline view); falls back to `download_url`.
+   * Returns the URL string, or null when cloud storage is not configured.
+   */
+  async function directLink() {
+    try {
+      const creds = await fetchCredentials();
+      return creds.get_url || creds.download_url || null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /**
    * One-time migration: import the existing localStorage decks
    * (mtg-forge-custom-decks) into the R2 collection. ADDITIVE — local decks
    * win on name collision only if the remote slot is empty; existing remote
@@ -516,6 +536,7 @@
     save,
     saveDebounced,
     downloadMyDecks,
+    directLink,
     migrateLocalStorage,
     migrateAll,
     // Exposed for tests + reuse:
