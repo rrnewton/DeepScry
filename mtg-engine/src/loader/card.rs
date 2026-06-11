@@ -511,6 +511,58 @@ fn etb_tapped_predicate_is_supported(valid_card: &str) -> bool {
     true
 }
 
+/// Parsed shape of a broad "whenever a creature dies" `ValidCard$` predicate
+/// (Fecundity et al.). See [`crate::core::effects::TriggerEvent::CreatureDies`].
+struct CreatureDiesFilter {
+    /// Controller restriction on the dying creature relative to the trigger
+    /// source's controller: `None` = any, `Some(true)` = `.YouCtrl`,
+    /// `Some(false)` = `.OppCtrl`.
+    you_control: Option<bool>,
+    /// `true` if `.Other` (the source's own death does not fire the trigger).
+    exclude_self: bool,
+}
+
+/// Recognize the BROAD `ValidCard$ Creature[.qualifier...]` dies-trigger shape
+/// (Fecundity: `ValidCard$ Creature`). Returns `None` when the predicate is not
+/// the broad creature shape (so the narrow Self / EquippedBy / DamagedBy
+/// branches keep their existing behavior and unmodeled qualifiers are left
+/// unhandled rather than silently widened).
+///
+/// Tokenizes the predicate STRUCTURALLY (split on `.` then `+`, per CLAUDE.md
+/// "NO HACKY STRING OPERATIONS ON STRUCTURED DATA") rather than substring
+/// matching. The base type must be exactly `Creature`; every trailing qualifier
+/// must be one we model (`YouCtrl`, `OppCtrl`, `Other`) — any unknown qualifier
+/// (or a comma-separated multi-clause predicate, or the `DamagedBy` shape handled
+/// elsewhere) returns `None` to avoid a false match.
+fn creature_dies_filter(valid_card: Option<&str>) -> Option<CreatureDiesFilter> {
+    let valid_card = valid_card?;
+    // A comma introduces a second selector clause we do not model here.
+    if valid_card.contains(',') {
+        return None;
+    }
+    let mut parts = valid_card.split('.');
+    // Base type must be exactly `Creature`.
+    if parts.next()?.trim() != "Creature" {
+        return None;
+    }
+    let mut you_control: Option<bool> = None;
+    let mut exclude_self = false;
+    for qualifier in parts.flat_map(|q| q.split('+')) {
+        match qualifier.trim() {
+            "YouCtrl" => you_control = Some(true),
+            "OppCtrl" => you_control = Some(false),
+            "Other" => exclude_self = true,
+            // Any qualifier we do not model (e.g. `DamagedBy`, type-specific
+            // filters) — bail so we never claim to honor a restriction we ignore.
+            _ => return None,
+        }
+    }
+    Some(CreatureDiesFilter {
+        you_control,
+        exclude_self,
+    })
+}
+
 /// Card definition (not yet instantiated in a game)
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CardDefinition {
@@ -2598,6 +2650,46 @@ impl CardDefinition {
                 triggers.push(Trigger::new(TriggerEvent::DamagedCreatureDies, effects, description));
             }
 
+            // Parse "whenever a creature dies" triggers — the BROAD `ValidCard$ Creature`
+            // shape (any creature, optionally controller-qualified), NOT the narrow
+            // Self / EquippedBy / DamagedBy shapes handled above.
+            // T:Mode$ ChangesZone | Origin$ Battlefield | Destination$ Graveyard | ValidCard$ Creature[.YouCtrl/.OppCtrl/.Other]
+            // Example: Fecundity — "Whenever a creature dies, that creature's controller may draw a card."
+            // The trigger lives on a permanent (Fecundity) that watches OTHER creatures
+            // die, so check_death_triggers scans the battlefield for it (mtg-409 follow-up,
+            // mtg-913 B12). Tokenize the `ValidCard$` predicate on `.` (never substring
+            // matching) so `Creature`, `Creature.YouCtrl`, `Creature.OppCtrl`,
+            // `Creature.Other`, and combinations map to the right filter. Excludes
+            // `Creature.DamagedBy` (handled above) and any qualifier we do not model.
+            if mode == Some("ChangesZone")
+                && params.get("Origin").map(|s| s.as_str()) == Some("Battlefield")
+                && params.get("Destination").map(|s| s.as_str()) == Some("Graveyard")
+            {
+                if let Some(filter) = creature_dies_filter(params.get("ValidCard").map(|s| s.as_str())) {
+                    let mut effects = Vec::new();
+
+                    if let Some(exec_ref) = params.get("Execute") {
+                        if let Some(svar_params) = self.parsed_svars.get(exec_ref) {
+                            effects.extend(self.extract_effects_from_svar(svar_params));
+                        }
+                    }
+
+                    let description = params
+                        .get("TriggerDescription")
+                        .map(|s| s.to_string())
+                        .unwrap_or_else(|| "When a creature dies".to_string());
+
+                    triggers.push(Trigger::new(
+                        TriggerEvent::CreatureDies {
+                            you_control: filter.you_control,
+                            exclude_self: filter.exclude_self,
+                        },
+                        effects,
+                        description,
+                    ));
+                }
+            }
+
             // Parse phase triggers (Mode$ Phase)
             if mode == Some("Phase") {
                 // Determine which phase/step this triggers on using tokenized params
@@ -2737,6 +2829,15 @@ impl CardDefinition {
                                 // bare/`Defined$ You` draw stays a placeholder (=
                                 // controller / active player on a controller-only
                                 // trigger like Sylvan Library).
+                                //
+                                // Defined$ TriggeredCardController (Fecundity:
+                                // "whenever a creature dies, THAT CREATURE'S
+                                // CONTROLLER may draw") also stays a placeholder:
+                                // for a CreatureDies trigger the firing site
+                                // (`check_death_triggers`) sets `ctx.controller` to
+                                // the DYING creature's controller, so the
+                                // placeholder → `ctx.controller` resolution lands
+                                // the draw on the right player (mtg-913 B12).
                                 let player = if svar_params.get("Defined") == Some("TriggeredPlayer") {
                                     PlayerId::triggered_player()
                                 } else {
@@ -6382,6 +6483,70 @@ Oracle:Double strike\nWhenever Markov Blademaster deals combat damage to a playe
             trigger.trigger_self_only,
             "ValidSource$ Card.Self should make trigger self-only"
         );
+    }
+
+    #[test]
+    fn test_parse_fecundity_creature_dies_trigger() {
+        use crate::core::TriggerEvent;
+
+        // Fecundity: broad "whenever a creature dies" trigger (ValidCard$ Creature).
+        // Regression for mtg-913 B12 — the parser previously only recognized
+        // Card.Self / Card.EquippedBy / Creature.DamagedBy and SILENTLY DROPPED
+        // this shape, so no trigger was built at all.
+        let content = r#"
+Name:Fecundity
+ManaCost:2 G
+Types:Enchantment
+T:Mode$ ChangesZone | Origin$ Battlefield | Destination$ Graveyard | ValidCard$ Creature | TriggerZones$ Battlefield | Execute$ TrigDraw | OptionalDecider$ TriggeredCardController | TriggerDescription$ Whenever a creature dies, that creature's controller may draw a card.
+SVar:TrigDraw:DB$ Draw | Defined$ TriggeredCardController | NumCards$ 1
+Oracle:Whenever a creature dies, that creature's controller may draw a card.
+"#;
+
+        let def = CardLoader::parse(content).unwrap();
+        let triggers = def.parse_triggers();
+
+        assert_eq!(triggers.len(), 1, "Fecundity should parse exactly one trigger");
+        assert_eq!(
+            triggers[0].event,
+            TriggerEvent::CreatureDies {
+                you_control: None,
+                exclude_self: false,
+            },
+            "ValidCard$ Creature should produce an any-creature CreatureDies trigger. Got: {:?}",
+            triggers[0].event
+        );
+    }
+
+    #[test]
+    fn test_creature_dies_filter_qualifiers() {
+        // Bare `Creature` → any creature, includes self.
+        let f = creature_dies_filter(Some("Creature")).expect("bare Creature matches");
+        assert_eq!(f.you_control, None);
+        assert!(!f.exclude_self);
+
+        // `.YouCtrl` / `.OppCtrl` controller restrictions.
+        let f = creature_dies_filter(Some("Creature.YouCtrl")).expect("YouCtrl matches");
+        assert_eq!(f.you_control, Some(true));
+        let f = creature_dies_filter(Some("Creature.OppCtrl")).expect("OppCtrl matches");
+        assert_eq!(f.you_control, Some(false));
+
+        // `.Other` excludes the source's own death.
+        let f = creature_dies_filter(Some("Creature.Other")).expect("Other matches");
+        assert!(f.exclude_self);
+        assert_eq!(f.you_control, None);
+
+        // Combined qualifiers (order-independent, `+`-joined).
+        let f = creature_dies_filter(Some("Creature.YouCtrl+Other")).expect("YouCtrl+Other matches");
+        assert_eq!(f.you_control, Some(true));
+        assert!(f.exclude_self);
+
+        // Shapes we must NOT claim: DamagedBy (handled elsewhere), a non-creature
+        // base type, an unmodeled qualifier, and a multi-clause predicate.
+        assert!(creature_dies_filter(Some("Creature.DamagedBy")).is_none());
+        assert!(creature_dies_filter(Some("Card.Self")).is_none());
+        assert!(creature_dies_filter(Some("Creature.Token")).is_none());
+        assert!(creature_dies_filter(Some("Creature,Artifact")).is_none());
+        assert!(creature_dies_filter(None).is_none());
     }
 
     #[test]

@@ -596,6 +596,12 @@ impl HeuristicController {
                     // attacking and trading favorably.
                     value += 15;
                 }
+                crate::core::TriggerEvent::CreatureDies { .. } => {
+                    // "Whenever a creature dies, ..." (Fecundity-style payoff on a
+                    // creature body, e.g. graveyard/aristocrats engines). Repeatable
+                    // card advantage / value as creatures trade.
+                    value += 12;
+                }
                 crate::core::TriggerEvent::BeginningOfDraw => {
                     // Draw-step triggers are usually card advantage (Grafted
                     // Skullcap, Sylvan Library, Yawgmoth's Bargain): "draw an

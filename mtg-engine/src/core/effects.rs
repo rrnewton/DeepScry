@@ -2670,6 +2670,29 @@ pub enum TriggerEvent {
     /// CardId.
     DamagedCreatureDies,
 
+    /// When ANY creature dies (goes to the graveyard from the battlefield),
+    /// regardless of who controls it or the trigger source.
+    /// Corresponds to: T:Mode$ ChangesZone | Origin$ Battlefield | Destination$ Graveyard | ValidCard$ Creature[.YouCtrl/.OppCtrl/.Other]
+    /// Example: Fecundity — "Whenever a creature dies, that creature's controller may draw a card."
+    /// Fires from the trigger source (Fecundity), which sits on the battlefield
+    /// while OTHER creatures die. `check_death_triggers` scans the battlefield
+    /// for permanents carrying this trigger when any creature dies; the dying
+    /// creature's controller is threaded as `TriggeredCardController` via the
+    /// `TriggerContext` so `Defined$ TriggeredCardController` resolves to them.
+    /// The `ValidCard$` controller qualifier (`.YouCtrl` / `.OppCtrl`) is stored
+    /// so the firing site can filter by the dying creature's controller relative
+    /// to the trigger source's controller (mtg-409 follow-up, mtg-913 B12).
+    CreatureDies {
+        /// Controller restriction on the *dying* creature, relative to the
+        /// trigger source's controller: `None` = any creature, `Some(true)` =
+        /// only creatures the source's controller controls (`.YouCtrl`),
+        /// `Some(false)` = only creatures an opponent controls (`.OppCtrl`).
+        you_control: Option<bool>,
+        /// When `true`, the trigger source's own death does NOT fire the trigger
+        /// (`Creature.Other`). When `false`, the source dying also counts.
+        exclude_self: bool,
+    },
+
     /// When a Class enchantment reaches a specific level.
     ///
     /// Corresponds to: T:Mode$ ClassLevelGained | ClassLevel$ N | ValidCard$ Card.Self

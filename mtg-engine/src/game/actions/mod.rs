@@ -7407,8 +7407,10 @@ impl GameState {
     /// Returns an error if the card cannot be found or effect execution fails.
     #[allow(clippy::wildcard_enum_match_arm)]
     pub fn check_death_triggers(&mut self, dying_card_id: CardId) -> Result<()> {
-        // Get the card's triggers and controller while it's still on battlefield
-        let (effects_to_execute, controller): (Vec<Effect>, PlayerId) = {
+        // Get the card's triggers, controller, and creature-ness while it's
+        // still on battlefield (the `is_creature` flag gates the broad
+        // "whenever a creature dies" scan below — mtg-913 B12).
+        let (effects_to_execute, controller, dying_is_creature): (Vec<Effect>, PlayerId, bool) = {
             let card = self.cards.get(dying_card_id)?;
 
             // Collect LeavesBattlefield triggers (which we use for "dies" events)
@@ -7419,7 +7421,7 @@ impl GameState {
                 .flat_map(|trigger| trigger.effects.clone())
                 .collect();
 
-            (effects, card.controller)
+            (effects, card.controller, card.is_creature())
         };
 
         if !effects_to_execute.is_empty() {
@@ -7550,6 +7552,86 @@ impl GameState {
                     self.logger.gamelog(&format!("Trigger: {} - {}", source.name, desc));
                 }
                 let ctx = TriggerContext::new(source_id, source_controller);
+                for effect in effects {
+                    let effect = resolve_effect_placeholder(&effect, &ctx);
+                    self.execute_effect(&effect)?;
+                }
+            }
+        }
+
+        // Check broad `CreatureDies` triggers (Fecundity et al.): a permanent on
+        // the battlefield (the trigger SOURCE, not the dying card) carries a
+        // "whenever a creature dies, ..." trigger and watches OTHER creatures die
+        // (mtg-409 follow-up, mtg-913 B12). Only fires when the dying card is a
+        // creature. The `ValidCard$` controller qualifier filters the dying
+        // creature relative to the SOURCE's controller (`.YouCtrl`/`.OppCtrl`),
+        // and `.Other` excludes the source's own death. The dying creature's
+        // controller is threaded as the `TriggerContext` controller so a
+        // placeholder draw (`Defined$ TriggeredCardController`) resolves to that
+        // player — Fecundity gives the draw to the dead creature's controller,
+        // NOT to Fecundity's controller. Scan in CardId order for deterministic
+        // fire ordering.
+        //
+        // Optionality: Fecundity says "MAY draw" (`OptionalDecider$
+        // TriggeredCardController`). The engine does not yet model the optional
+        // decline for triggered draws — like every other triggered draw today
+        // (Howling Mine, Sylvan Library), the draw is taken unconditionally.
+        // This matches existing behavior and is strictly the pre-existing
+        // OptionalDecider gap, NOT a regression introduced here.
+        if dying_is_creature {
+            let creature_dies_triggers: Vec<(CardId, Vec<Effect>, String)> = self
+                .battlefield
+                .cards
+                .iter()
+                .filter_map(|&source_id| {
+                    let source = self.cards.try_get(source_id)?;
+                    // Match each CreatureDies trigger on this source, applying its
+                    // controller/self qualifiers against the dying creature.
+                    let mut effects: Vec<Effect> = Vec::new();
+                    let mut desc = String::new();
+                    for trigger in &source.triggers {
+                        let TriggerEvent::CreatureDies {
+                            you_control,
+                            exclude_self,
+                        } = trigger.event
+                        else {
+                            continue;
+                        };
+                        // `.Other`: the source's own death does not fire it.
+                        if exclude_self && source_id == dying_card_id {
+                            continue;
+                        }
+                        // `.YouCtrl` / `.OppCtrl`: filter the dying creature's
+                        // controller relative to the source's controller.
+                        let controller_ok = match you_control {
+                            None => true,
+                            Some(true) => controller == source.controller,
+                            Some(false) => controller != source.controller,
+                        };
+                        if !controller_ok {
+                            continue;
+                        }
+                        effects.extend(trigger.effects.iter().cloned());
+                        if desc.is_empty() {
+                            desc = trigger.description.clone();
+                        }
+                    }
+                    if effects.is_empty() {
+                        return None;
+                    }
+                    Some((source_id, effects, desc))
+                })
+                .collect();
+
+            for (source_id, effects, desc) in creature_dies_triggers {
+                if let Some(source) = self.cards.try_get(source_id) {
+                    self.logger.gamelog(&format!("Trigger: {} - {}", source.name, desc));
+                }
+                // ctx.controller = the DYING creature's controller, so a
+                // placeholder draw lands on them (Defined$ TriggeredCardController).
+                // The trigger source stays the source for any Defined$ Self refs;
+                // event_source is the dying creature.
+                let ctx = TriggerContext::new(source_id, controller).with_event_source(dying_card_id);
                 for effect in effects {
                     let effect = resolve_effect_placeholder(&effect, &ctx);
                     self.execute_effect(&effect)?;

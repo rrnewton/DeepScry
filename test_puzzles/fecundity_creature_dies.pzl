@@ -1,0 +1,24 @@
+[metadata]
+Name:Fecundity — whenever a creature dies, its controller may draw
+Goal:Win
+Turns:3
+Difficulty:Medium
+Description:P1 controls Fecundity ("Whenever a creature dies, that creature's controller may draw a card."). P2 (the fixed controller) burns P1's Llanowar Elves with Blaze. When the Elves dies, Fecundity's broad "a creature dies" trigger fires and P1 — the DYING creature's controller — draws a card. Regression for mtg-913 B12 (the dies-trigger parser previously only handled Card.Self / Card.EquippedBy / Creature.DamagedBy and silently dropped the broad ValidCard$ Creature shape).
+
+[state]
+turn=1
+activeplayer=p1
+activephase=MAIN1
+p0life=20
+p0hand=
+p0library=Forest; Mountain; Island; Plains; Forest; Forest; Forest; Forest
+p0graveyard=
+p0battlefield=Forest; Forest; Fecundity; Llanowar Elves
+p0exile=
+
+p1life=20
+p1hand=Blaze
+p1library=Mountain; Mountain; Mountain; Mountain; Mountain
+p1graveyard=
+p1battlefield=Mountain; Mountain; Mountain; Mountain; Mountain
+p1exile=
