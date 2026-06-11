@@ -4102,19 +4102,25 @@ impl GameState {
     /// - "Artifact.Equipment" = Artifact type + Equipment subtype
     /// - "Forest" = Land with Forest subtype (single subtype)
     pub fn card_matches_search_filter(card: &crate::core::Card, filter: &str) -> bool {
-        // Check if filter is comma-separated subtypes (e.g., "Plains,Island")
-        // This is the format used by fetch lands
+        // Comma-separated filter: a card matches if it matches ANY comma-part.
+        // Each part is itself a full filter, so this recurses — a part may be a
+        // card TYPE (`Instant`), a land SUBTYPE (`Plains`), or a dotted
+        // `Type.Subtype` (`Land.Basic`). (mtg-907)
+        //
+        // The previous code hard-required `card.is_land()` for EVERY comma-list,
+        // assuming all comma-lists were fetch-land subtype lists (`Plains,Island`).
+        // That silently broke every comma-separated TYPE list — most visibly
+        // `ChangeType$ Instant,Sorcery | Origin$ Library` (Goblin Tutor's "search
+        // for an instant or sorcery" mode, Knowledge Exploitation): an instant is
+        // not a land, so the whole search returned nothing. Recursing per-part
+        // matches the land-subtype lists identically (each `Plains`/`Island`
+        // single-word part still routes through the land-subtype branch below)
+        // while ALSO correctly matching type lists. CR 109.1/205 (card types),
+        // CR 701.19a (search a zone by a stated quality).
         if filter.contains(',') {
-            // Parse as comma-separated subtypes
-            // These are land subtypes, so check if card is a land and has any of the subtypes
-            if !card.is_land() {
-                return false;
-            }
-
-            let subtypes: Vec<&str> = filter.split(',').collect();
-            return subtypes
-                .iter()
-                .any(|subtype| card.subtypes.iter().any(|st| st.as_str() == *subtype));
+            return filter
+                .split(',')
+                .any(|part| Self::card_matches_search_filter(card, part.trim()));
         }
 
         // Check if filter has type.subtype format (e.g., "Land.Basic")
