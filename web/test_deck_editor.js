@@ -143,8 +143,10 @@ function check(cond, msg) {
         );
         const cardCount = await page.evaluate(() => document.getElementById('card-list').children.length);
         check(cardCount > 0, 'card list rendered ' + cardCount + ' items');
-        check(cardCount >= Math.min(200, catalogCards.length - 1),
-            'card list shows up to 200 items (got ' + cardCount + ')');
+        // One page is PAGE_SIZE=100 rows now (batch2 item 5 pagination); a full
+        // catalog fills the first page exactly.
+        check(cardCount === Math.min(100, catalogCards.length),
+            'card list shows one page of up to 100 items (got ' + cardCount + ')');
 
         const countText = await page.textContent('#catalog-count');
         check(/\d+ cards/.test(countText), 'catalog count shows number: "' + countText + '"');
