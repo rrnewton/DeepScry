@@ -145,6 +145,48 @@
 
         .catalog-count { font-size: 11px; color: var(--muted); padding: 6px 14px; background: var(--surface); border-bottom: 1px solid var(--border); flex: none; }
 
+        /* Alphabet jump bar (item 6): A–Z + an "All" reset, wrapping. The active
+           letter is highlighted; clicking it composes (AND) with the search. */
+        .alpha-bar {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 2px;
+            padding: 5px 10px;
+            background: var(--surface);
+            border-bottom: 1px solid var(--border);
+            flex: none;
+        }
+        .alpha-letter {
+            font-size: 11px;
+            font-family: monospace;
+            color: var(--muted);
+            background: transparent;
+            border: 1px solid transparent;
+            border-radius: 3px;
+            padding: 1px 5px;
+            cursor: pointer;
+            line-height: 16px;
+            min-width: 18px;
+            text-align: center;
+        }
+        .alpha-letter:hover { color: var(--accent); border-color: var(--border); }
+        .alpha-letter.active { background: var(--accent-3); color: #fff; border-color: var(--accent-3); }
+        .alpha-letter.alpha-all { color: var(--accent-2); }
+
+        /* Pagination bar (item 5): prev/next + "Page X of Y" footer of results. */
+        .pager {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+            padding: 6px 10px;
+            background: var(--surface);
+            border-top: 1px solid var(--border);
+            flex: none;
+        }
+        .pager button { padding: 4px 10px; font-size: 12px; }
+        .pager-info { font-size: 11px; color: var(--muted); min-width: 110px; text-align: center; }
+
         .card-list-wrap { flex: 1 1 auto; overflow-y: auto; min-height: 0; }
         .card-list { list-style: none; margin: 0; padding: 4px 0; }
         .card-list li {
@@ -202,8 +244,14 @@
         }
         .deck-name-input:focus { outline: none; border-color: var(--accent); }
 
+        /* Deck counts row — now at the top of the deck column (batch2 item 3). */
+        .deck-stats-wrap {
+            padding: 8px 14px;
+            border-bottom: 1px solid var(--border);
+            background: var(--surface-2);
+            flex: none;
+        }
         .deck-stats {
-            margin-top: 8px;
             font-size: 12px;
             color: var(--muted);
             display: flex;
@@ -232,7 +280,10 @@
            full-height bar can never overlap the number label below it. The track
            caps the bar; the label row reserves its own space. */
         .curve-bars { display: flex; align-items: stretch; gap: 3px; height: 52px; }
-        .curve-col { display: flex; flex-direction: column; align-items: center; flex: 1; min-width: 0; }
+        .curve-col { display: flex; flex-direction: column; align-items: center; flex: 1; min-width: 0; cursor: default; border-radius: 3px; }
+        /* Hover highlight (item 7) makes the per-CMC count tooltip discoverable. */
+        .curve-col:hover { background: rgba(67,97,238,0.18); }
+        .curve-col:hover .curve-bar { background: var(--accent); }
         .curve-bar-track { flex: 1; width: 100%; display: flex; align-items: flex-end; justify-content: center; }
         .curve-bar { width: 18px; max-width: 100%; background: var(--accent-3); border-radius: 2px 2px 0 0; transition: height 0.15s; }
         .curve-cmc { font-size: 9px; color: var(--muted); height: 12px; line-height: 12px; margin-top: 2px; }
@@ -422,65 +473,13 @@
     <!-- ── Column 1: controls / chrome (deck name, search+filters, saved decks
          + actions, card details) ─────────────────────────────────────────── -->
     <div class="pane-controls">
-        <!-- Deck name -->
+        <!-- Deck name. The "Cards: N / Main / Side / Colors" stats moved to the
+             TOP of the RIGHT (deck) column — above the mana curve — to free room
+             here (batch2 item 3). -->
         <div class="controls-section">
             <h2>Current Deck</h2>
             <div class="deck-name-row">
                 <input type="text" id="deck-name" class="deck-name-input" placeholder="Deck name…" value="My Deck">
-            </div>
-            <div class="deck-stats" id="deck-stats">
-                <span>Cards: <span class="stat-val" id="stat-count">0</span></span>
-                <span>Main: <span class="stat-val" id="stat-main">0</span></span>
-                <span>Side: <span class="stat-val" id="stat-side">0</span></span>
-                <span>Colors: <span class="color-dots" id="stat-colors"></span></span>
-            </div>
-        </div>
-
-        <!-- Search + filters -->
-        <div class="controls-section catalog-toolbar">
-            <div class="filter-group search-group">
-                <label for="search-input">Search cards</label>
-                <input type="text" id="search-input" class="search-field" placeholder="Name, text, type…" autocomplete="off">
-            </div>
-            <div class="filter-group">
-                <label for="filter-color">Color</label>
-                <select id="filter-color">
-                    <option value="">Any</option>
-                    <option value="W">White</option>
-                    <option value="U">Blue</option>
-                    <option value="B">Black</option>
-                    <option value="R">Red</option>
-                    <option value="G">Green</option>
-                    <option value="C">Colorless</option>
-                    <option value="multi">Multicolor</option>
-                </select>
-            </div>
-            <div class="filter-group">
-                <label for="filter-type">Type</label>
-                <select id="filter-type">
-                    <option value="">Any</option>
-                    <option value="Creature">Creature</option>
-                    <option value="Instant">Instant</option>
-                    <option value="Sorcery">Sorcery</option>
-                    <option value="Enchantment">Enchantment</option>
-                    <option value="Artifact">Artifact</option>
-                    <option value="Land">Land</option>
-                    <option value="Planeswalker">Planeswalker</option>
-                </select>
-            </div>
-            <div class="filter-group">
-                <label for="filter-cmc">Max CMC</label>
-                <select id="filter-cmc">
-                    <option value="">Any</option>
-                    <option value="0">0</option>
-                    <option value="1">1</option>
-                    <option value="2">2</option>
-                    <option value="3">3</option>
-                    <option value="4">4</option>
-                    <option value="5">5</option>
-                    <option value="6">6</option>
-                    <option value="7">7+</option>
-                </select>
             </div>
         </div>
 
@@ -543,15 +542,86 @@
 
     <!-- ── Column 2: search RESULTS list (full-height, scrolls) ───────────── -->
     <div class="pane-results">
+        <!-- Search + filters now live at the TOP of the results column, grouped
+             with the list they drive (batch2 item 4). -->
+        <div class="controls-section catalog-toolbar">
+            <div class="filter-group search-group">
+                <label for="search-input">Search cards</label>
+                <input type="text" id="search-input" class="search-field" placeholder="Name, text, type…" autocomplete="off">
+            </div>
+            <div class="filter-group">
+                <label for="filter-color">Color</label>
+                <select id="filter-color">
+                    <option value="">Any</option>
+                    <option value="W">White</option>
+                    <option value="U">Blue</option>
+                    <option value="B">Black</option>
+                    <option value="R">Red</option>
+                    <option value="G">Green</option>
+                    <option value="C">Colorless</option>
+                    <option value="multi">Multicolor</option>
+                </select>
+            </div>
+            <div class="filter-group">
+                <label for="filter-type">Type</label>
+                <select id="filter-type">
+                    <option value="">Any</option>
+                    <option value="Creature">Creature</option>
+                    <option value="Instant">Instant</option>
+                    <option value="Sorcery">Sorcery</option>
+                    <option value="Enchantment">Enchantment</option>
+                    <option value="Artifact">Artifact</option>
+                    <option value="Land">Land</option>
+                    <option value="Planeswalker">Planeswalker</option>
+                </select>
+            </div>
+            <div class="filter-group">
+                <label for="filter-cmc">Max CMC</label>
+                <select id="filter-cmc">
+                    <option value="">Any</option>
+                    <option value="0">0</option>
+                    <option value="1">1</option>
+                    <option value="2">2</option>
+                    <option value="3">3</option>
+                    <option value="4">4</option>
+                    <option value="5">5</option>
+                    <option value="6">6</option>
+                    <option value="7">7+</option>
+                </select>
+            </div>
+        </div>
+
+        <!-- Alphabet jump bar (batch2 item 6): click a letter to filter to cards
+             whose NAME starts with it; composes (AND) with the search term. -->
+        <div class="alpha-bar" id="alpha-bar"></div>
+
         <div class="catalog-count" id="catalog-count">Loading catalog…</div>
         <div class="card-list-wrap">
             <div id="catalog-loading"><span class="spinner"></span>Fetching card catalog…</div>
             <ul class="card-list" id="card-list" style="display:none;"></ul>
         </div>
+
+        <!-- Pagination (batch2 item 5): prev/next across pages of results. -->
+        <div class="pager" id="pager" style="display:none;">
+            <button id="pager-prev" class="ghost" title="Previous page">‹ Prev</button>
+            <span class="pager-info" id="pager-info"></span>
+            <button id="pager-next" class="ghost" title="Next page">Next ›</button>
+        </div>
     </div>
 
-    <!-- ── Column 3: the DECK — mana curve on top, deck/sideboard below ───── -->
+    <!-- ── Column 3: the DECK — counts on top, then mana curve, then list ─── -->
     <div class="pane-deck">
+        <!-- Deck counts moved here from the left column (batch2 item 3): top of
+             the deck column, above the mana curve. -->
+        <div class="deck-stats-wrap">
+            <div class="deck-stats" id="deck-stats">
+                <span>Cards: <span class="stat-val" id="stat-count">0</span></span>
+                <span>Main: <span class="stat-val" id="stat-main">0</span></span>
+                <span>Side: <span class="stat-val" id="stat-side">0</span></span>
+                <span>Colors: <span class="color-dots" id="stat-colors"></span></span>
+            </div>
+        </div>
+
         <div class="curve-wrap">
             <div class="curve-label">Mana Curve (main deck)</div>
             <div class="curve-bars" id="curve-bars"></div>
@@ -684,6 +754,17 @@ let catalogByName = new Map();
 /** Whether we're adding to main or sideboard. */
 let addTarget = 'main';
 
+/**
+ * Results pagination + alphabet filter (batch2 items 5 & 6).
+ *   - PAGE_SIZE caps how many rows render per page (keeps the DOM light).
+ *   - currentPage is the 0-based page index into the filtered results.
+ *   - alphaLetter is '' (all) or a single uppercase A–Z; when set, only cards
+ *     whose name STARTS with it pass — composed (AND) with the search term.
+ */
+const PAGE_SIZE = 100;
+let currentPage = 0;
+let alphaLetter = '';
+
 // ── DOM refs ───────────────────────────────────────────────────────────────
 const searchInput    = document.getElementById('search-input');
 const filterColor    = document.getElementById('filter-color');
@@ -692,6 +773,11 @@ const filterCmc      = document.getElementById('filter-cmc');
 const catalogCount   = document.getElementById('catalog-count');
 const catalogLoading = document.getElementById('catalog-loading');
 const cardListEl     = document.getElementById('card-list');
+const alphaBarEl     = document.getElementById('alpha-bar');
+const pagerEl        = document.getElementById('pager');
+const pagerPrevBtn   = document.getElementById('pager-prev');
+const pagerNextBtn   = document.getElementById('pager-next');
+const pagerInfoEl    = document.getElementById('pager-info');
 const deckListEl     = document.getElementById('deck-list');
 const deckNameInput  = document.getElementById('deck-name');
 const actionStatus   = document.getElementById('action-status');
@@ -914,6 +1000,14 @@ function passesFilters(entry) {
         if (!haystack.includes(q)) return false;
     }
 
+    // Alphabet filter (item 6): composes (AND) with the search term — the card
+    // NAME must start with the chosen letter. Leading non-letters are ignored
+    // so e.g. quoted/numeric-prefixed names still bucket by first letter.
+    if (alphaLetter) {
+        const firstAlpha = (entry.name.match(/[A-Za-z]/) || [''])[0].toUpperCase();
+        if (firstAlpha !== alphaLetter) return false;
+    }
+
     if (colorF) {
         if (colorF === 'multi') {
             if (!entry.colors || entry.colors.length < 2) return false;
@@ -941,21 +1035,60 @@ function passesFilters(entry) {
 // ── Catalog rendering ──────────────────────────────────────────────────────
 
 /**
- * Render at most 200 filtered results. Pagination is not needed for the
- * expected catalog size; the search filter reduces the list quickly.
+ * Render the alphabet jump bar (item 6): an "All" reset plus A–Z. The active
+ * letter is highlighted; clicking the active letter again (or "All") clears it.
+ * Composes with the search term — selecting a letter does NOT wipe the search.
+ */
+function renderAlphaBar() {
+    if (!alphaBarEl) return;
+    alphaBarEl.innerHTML = '';
+    const mk = (label, value, cls) => {
+        const b = document.createElement('span');
+        b.className = 'alpha-letter' + (cls ? ' ' + cls : '');
+        b.textContent = label;
+        if (alphaLetter === value) b.classList.add('active');
+        b.title = value ? ('Names starting with ' + value + ' (with the current search)')
+                         : 'Show all letters';
+        b.addEventListener('click', () => {
+            // Toggle: clicking the active letter clears it.
+            alphaLetter = (alphaLetter === value) ? '' : value;
+            currentPage = 0;
+            renderCatalog();
+        });
+        alphaBarEl.appendChild(b);
+    };
+    mk('All', '', 'alpha-all');
+    for (let i = 0; i < 26; i++) mk(String.fromCharCode(65 + i), String.fromCharCode(65 + i));
+}
+
+/**
+ * Render one PAGE_SIZE page of filtered results (items 5 & 6). The alphabet bar
+ * and pager footer are refreshed alongside the list. currentPage is clamped to
+ * the available page range so a filter change never strands an empty page.
  */
 function renderCatalog() {
-    const filtered = catalog.filter(passesFilters);
-    const limit = 200;
-    const shown = filtered.slice(0, limit);
+    renderAlphaBar();
 
+    const filtered = catalog.filter(passesFilters);
     const total = catalog.length;
+
+    // Clamp the page into range for the current filter result size.
+    const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+    if (currentPage >= pageCount) currentPage = pageCount - 1;
+    if (currentPage < 0) currentPage = 0;
+    const start = currentPage * PAGE_SIZE;
+    const shown = filtered.slice(start, start + PAGE_SIZE);
+
+    const rangeLo = filtered.length === 0 ? 0 : start + 1;
+    const rangeHi = start + shown.length;
     if (filtered.length === total) {
-        catalogCount.textContent = total + ' cards (showing first ' + Math.min(total, limit) + ')';
+        catalogCount.textContent = total + ' cards (showing ' + rangeLo + '–' + rangeHi + ')';
     } else {
         catalogCount.textContent = filtered.length + ' matching (of ' + total + ')' +
-            (filtered.length > limit ? '; showing first ' + limit : '');
+            (filtered.length > PAGE_SIZE ? '; showing ' + rangeLo + '–' + rangeHi : '');
     }
+
+    renderPager(filtered.length, pageCount);
 
     cardListEl.innerHTML = '';
 
@@ -1005,6 +1138,22 @@ function renderCatalog() {
         li.append(nameSpan, manaSpan, typeBadge, addBtn, sideBtn);
         cardListEl.appendChild(li);
     }
+}
+
+/**
+ * Render the pagination footer (item 5). Hidden when everything fits on one
+ * page; otherwise shows "Page X of Y" with prev/next enabled at the edges.
+ */
+function renderPager(filteredCount, pageCount) {
+    if (!pagerEl) return;
+    if (pageCount <= 1) {
+        pagerEl.style.display = 'none';
+        return;
+    }
+    pagerEl.style.display = '';
+    pagerInfoEl.textContent = 'Page ' + (currentPage + 1) + ' of ' + pageCount;
+    pagerPrevBtn.disabled = currentPage <= 0;
+    pagerNextBtn.disabled = currentPage >= pageCount - 1;
 }
 
 // ── Deck mutations ─────────────────────────────────────────────────────────
@@ -1199,16 +1348,24 @@ function renderCurve(mainEntries) {
     const max = Math.max(...counts, 1);
 
     for (let cmc = 0; cmc <= 7; cmc++) {
+        const cmcLabel = cmc === 7 ? '7+' : String(cmc);
+        // Tooltip (item 7): show the exact card count at this CMC on hover.
+        // Put the title on the WHOLE column (not just the bar) so hovering
+        // anywhere in the column — including the empty space above a short or
+        // zero bar — reveals the count. A 0-height bar would otherwise be
+        // un-hoverable.
+        const tip = counts[cmc] + ' card' + (counts[cmc] === 1 ? '' : 's') + ' at ' + cmcLabel + ' CMC';
         const col = document.createElement('div');
         col.className = 'curve-col';
+        col.title = tip;
         const bar = document.createElement('div');
         bar.className = 'curve-bar';
         const pct = counts[cmc] / max;
         bar.style.height = Math.max(pct * 34, counts[cmc] > 0 ? 4 : 0) + 'px';
-        bar.title = (cmc === 7 ? '7+' : cmc) + ' CMC: ' + counts[cmc] + ' cards';
+        bar.title = tip;
         const label = document.createElement('div');
         label.className = 'curve-cmc';
-        label.textContent = cmc === 7 ? '7+' : cmc;
+        label.textContent = cmcLabel;
         col.append(bar, label);
         barsEl.appendChild(col);
     }
@@ -1692,15 +1849,30 @@ function handleImportFile(file) {
 
 // ── Wire up events ─────────────────────────────────────────────────────────
 
-// Filters (debounced search, instant for selects).
+// Filters (debounced search, instant for selects). Any filter change resets to
+// the first page so the user isn't stranded on an out-of-range page (item 5).
 let filterDebounce = null;
+function rerenderFromFirstPage() { currentPage = 0; renderCatalog(); }
 searchInput.addEventListener('input', () => {
     if (filterDebounce) clearTimeout(filterDebounce);
-    filterDebounce = setTimeout(renderCatalog, 150);
+    filterDebounce = setTimeout(rerenderFromFirstPage, 150);
 });
-filterColor.addEventListener('change', renderCatalog);
-filterType.addEventListener('change', renderCatalog);
-filterCmc.addEventListener('change', renderCatalog);
+filterColor.addEventListener('change', rerenderFromFirstPage);
+filterType.addEventListener('change', rerenderFromFirstPage);
+filterCmc.addEventListener('change', rerenderFromFirstPage);
+
+// Pagination buttons (item 5): step the page and re-render. The list scrolls
+// back to the top so the new page starts at the first row.
+if (pagerPrevBtn) pagerPrevBtn.addEventListener('click', () => {
+    if (currentPage > 0) { currentPage--; renderCatalog(); scrollResultsTop(); }
+});
+if (pagerNextBtn) pagerNextBtn.addEventListener('click', () => {
+    currentPage++; renderCatalog(); scrollResultsTop();
+});
+function scrollResultsTop() {
+    const wrap = document.querySelector('.card-list-wrap');
+    if (wrap) wrap.scrollTop = 0;
+}
 
 // Deck actions. The single SAVE button is context-sensitive (mtg-718 batch):
 //   - reached FROM the launcher (?from=launcher) → "Save and use": save then
