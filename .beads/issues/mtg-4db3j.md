@@ -25,4 +25,6 @@ LATENT-DUP SCAN: scanned all 905 .beads/issues/*.md on integration (476e4873) �
 
 HOW TO FIX A FUTURE OCCURRENCE: 'make beads-check REPAIR=1' (or 'python3 scripts/check_beads_dup_keys.py --repair'), then 'git add .beads/issues'. Repair keeps the latest updated_at and drops the earlier line.
 
-STAMP: 2026-06-11 #depth(476e4873 base). Tooling task, parallel-safe, disjoint from the engine refactor.
+STATUS: DONE on branch claude/beads-dupkey-guard @06ae7792 (rebased onto integration 1604577c). FULL 'make validate' GREEN — 35 passed, 0 failed, 0 skipped — artifact validate_logs/validate_06ae77927a491d742671f4506349f4d13d583761.log. New step lint.beads-dupkey PASS; agentplay.pytest 108 passed/3 skipped (incl. 10 new test_beads_dup_keys.py cases). Latent-dup scan on the rebased tree (906 .beads/issues/*.md) = clean. Ready for delegate ff-merge.
+
+STAMP: 2026-06-11 #depth(476e4873 base; landed @06ae7792). Tooling task, parallel-safe, disjoint from the engine refactor.
