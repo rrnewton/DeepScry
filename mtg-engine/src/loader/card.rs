@@ -3076,16 +3076,12 @@ impl CardDefinition {
                             // wrapped in `UnlessCostWrapper`; the phase-trigger executor in
                             // `check_triggers_for_controller` resolves the placeholder to the
                             // actual source `CardId` at fire time.
-                            if svar_params.api_type == ApiType::Sacrifice
-                                && svar_params.get("SacValid").is_none()
-                            {
+                            if svar_params.api_type == ApiType::Sacrifice && svar_params.get("SacValid").is_none() {
                                 let sac_self = crate::core::Effect::SacrificeSelf {
                                     source: crate::core::CardId::new(0), // placeholder
                                 };
-                                let wrapped = crate::loader::effect_converter::wrap_with_unless_cost(
-                                    sac_self,
-                                    svar_params,
-                                );
+                                let wrapped =
+                                    crate::loader::effect_converter::wrap_with_unless_cost(sac_self, svar_params);
                                 effects.push(wrapped);
                             }
 

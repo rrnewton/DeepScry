@@ -3816,9 +3816,11 @@ impl GameState {
             // silently skip (CR 603.10 / 608.2c fizzle rule).
             Effect::SacrificeSelf { source } => {
                 if self.battlefield.cards.contains(source) {
-                    let owner = self.cards.get(*source).map(|c| c.owner).unwrap_or_else(|_| {
-                        self.players.first().map(|p| p.id).unwrap_or(PlayerId::new(0))
-                    });
+                    let owner = self
+                        .cards
+                        .get(*source)
+                        .map(|c| c.owner)
+                        .unwrap_or_else(|_| self.players.first().map(|p| p.id).unwrap_or(PlayerId::new(0)));
                     let dest = self.death_destination_for_card(*source);
                     self.move_card(*source, Zone::Battlefield, dest, owner)?;
                     log::debug!("SacrificeSelf: {:?} moved to {:?}", source, dest);
