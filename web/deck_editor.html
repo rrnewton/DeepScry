@@ -249,13 +249,16 @@
             overflow-y: auto;
         }
         .card-details .cd-empty { color: var(--muted); font-style: italic; }
-        /* Two-column layout: art on the left, text fields on the right. The art
-           column collapses to zero width (no gap) when the image fails to load. */
-        .card-details .cd-body { display: flex; gap: 10px; align-items: flex-start; }
-        .card-details .cd-text { flex: 1; min-width: 0; }
+        /* VERTICAL stack (batch2 item 2): description text FIRST, card art BELOW
+           it (was side-by-side). The details section scrolls internally, so a
+           tall image simply scrolls into view under the text. The art is
+           centered and capped so it never overflows the narrow left column. */
+        .card-details .cd-body { display: flex; flex-direction: column; gap: 10px; align-items: stretch; }
+        .card-details .cd-text { min-width: 0; }
         .card-details .cd-art {
-            flex: none;
-            width: 146px;
+            align-self: center;
+            width: 100%;
+            max-width: 220px;
             border-radius: 6px;
             border: 1px solid var(--border);
             background: var(--surface-2);
@@ -871,7 +874,8 @@ function renderCardDetails(entry) {
 
     // Build the art <img> via the DOM (not innerHTML) so we can attach an
     // onerror handler that hides a missing/broken image without an inline
-    // handler string. The art column is FIRST in the flex row (left of text).
+    // handler string. The art is appended BELOW the text (batch2 item 2: the
+    // body is now a vertical column — description first, image under it).
     const body = el.querySelector('.cd-body');
     const img = document.createElement('img');
     img.className = 'cd-art';
@@ -894,7 +898,7 @@ function renderCardDetails(entry) {
             img.style.display = 'none';
         }
     });
-    body.insertBefore(img, body.firstChild);
+    body.appendChild(img); // art BELOW the text (vertical stack, item 2)
 }
 
 // ── Filtering ──────────────────────────────────────────────────────────────
