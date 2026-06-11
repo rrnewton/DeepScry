@@ -693,7 +693,7 @@ async fn deck_credentials_handler(headers: axum::http::HeaderMap, State(state): 
         (Some(oauth), Some(sid)) => oauth.identity_for(&sid),
         _ => None,
     };
-    let Some(identity) = identity else {
+    let Some(session) = identity else {
         return (
             StatusCode::UNAUTHORIZED,
             no_store,
@@ -704,7 +704,7 @@ async fn deck_credentials_handler(headers: axum::http::HeaderMap, State(state): 
         );
     };
 
-    let user_id = identity.user_id();
+    let user_id = session.identity.user_id();
     // Defensive: the identity must yield a prefix-safe id (OAuthIdentity
     // sanitizes, but guard against any traversal-y id reaching the key).
     if !r2::is_valid_user_id(user_id) {
@@ -840,14 +840,14 @@ async fn auth_callback_handler(
         return (StatusCode::BAD_REQUEST, "missing authorization code").into_response();
     };
 
-    let subject = match oauth.exchange_code_for_subject(provider, &code).await {
-        Ok(sub) => sub,
+    let resolved = match oauth.exchange_code_for_subject(provider, &code).await {
+        Ok(r) => r,
         Err(e) => {
             log::warn!("[web-server] OAuth code exchange failed: {e}");
             return (StatusCode::BAD_GATEWAY, "login failed talking to the identity provider").into_response();
         }
     };
-    let sid = oauth.create_session(provider, subject);
+    let sid = oauth.create_session(provider, resolved.subject_id, resolved.suggested_name);
 
     // Redirect home with the session cookie set and the (now-spent) state
     // cookie cleared.
@@ -889,12 +889,19 @@ async fn auth_status_handler(headers: axum::http::HeaderMap, State(state): State
         .as_ref()
         .map(|o| o.config().available())
         .unwrap_or((false, false));
-    let identity = match (&state.oauth, cookie_value(&headers, SESSION_COOKIE)) {
+    let session = match (&state.oauth, cookie_value(&headers, SESSION_COOKIE)) {
         (Some(oauth), Some(sid)) => oauth.identity_for(&sid),
         _ => None,
     };
-    let logged_in = identity.is_some();
-    let user_id = identity.map(|i| i.user_id().to_string());
+    let logged_in = session.is_some();
+    let user_id = session.as_ref().map(|s| s.identity.user_id().to_string());
+    // Non-authoritative friendly handle for the web UI to pre-fill the lobby
+    // display-name box (mtg-742). Omitted/empty for guests; the stable
+    // `user_id` is what identity + R2 prefix key on, never this.
+    let suggested_name = session
+        .as_ref()
+        .map(|s| s.suggested_name.clone())
+        .filter(|s| !s.is_empty());
     (
         StatusCode::OK,
         [(axum::http::header::CACHE_CONTROL, "no-store")],
@@ -903,6 +910,7 @@ async fn auth_status_handler(headers: axum::http::HeaderMap, State(state): State
             "oauth_enabled": github || google,
             "logged_in": logged_in,
             "user_id": user_id,
+            "suggested_name": suggested_name,
         })),
     )
 }
@@ -966,5 +974,100 @@ mod cache_policy_tests {
         // bucket is never the served data index in production.
         assert_eq!(cache_control_for_path("/pkg/mtg_engine.js"), MUTABLE_SHORT);
         assert_eq!(cache_control_for_path("/data/sets/index.json"), MUTABLE_SHORT);
+    }
+}
+
+/// Cookie-parsing + OAuth-session HTTP round-trip (mtg-742).
+///
+/// These are the regression tests for the "OAuth login does nothing" report:
+/// they prove that once a session exists, a browser presenting the session
+/// cookie on `/auth/status` is recognised as logged in — exercising the REAL
+/// `cookie_value` header parsing (multiple `; `-separated cookies, prefix
+/// collisions) and the real `auth_status_handler` JSON, including the
+/// non-authoritative `suggested_name` UI pre-fill field.
+#[cfg(test)]
+mod auth_session_tests {
+    use super::*;
+    use axum::body::Body;
+    use axum::http::{header, Request, StatusCode};
+    use tower::ServiceExt; // for `oneshot`
+
+    #[test]
+    fn cookie_value_extracts_among_multiple_cookies() {
+        let mk = |raw: &str| {
+            let mut h = axum::http::HeaderMap::new();
+            h.insert(header::COOKIE, raw.parse().unwrap());
+            h
+        };
+        // Single cookie.
+        assert_eq!(
+            cookie_value(&mk("ds_session=abc123"), SESSION_COOKIE).as_deref(),
+            Some("abc123")
+        );
+        // Among several, with the usual "; " separators.
+        let h = mk("foo=1; ds_session=abc123; bar=2");
+        assert_eq!(cookie_value(&h, SESSION_COOKIE).as_deref(), Some("abc123"));
+        // State + session cookies coexisting (the real OAuth callback case).
+        let h = mk("ds_oauth_state=csrfxyz; ds_session=sid999");
+        assert_eq!(cookie_value(&h, STATE_COOKIE).as_deref(), Some("csrfxyz"));
+        assert_eq!(cookie_value(&h, SESSION_COOKIE).as_deref(), Some("sid999"));
+        // A cookie whose name merely SHARES A PREFIX with ours must not match:
+        // `ds_session_backup` must not be read as `ds_session`.
+        let h = mk("ds_session_backup=nope; other=x");
+        assert_eq!(cookie_value(&h, SESSION_COOKIE), None);
+        // Missing entirely → None.
+        assert_eq!(cookie_value(&mk("a=1; b=2"), SESSION_COOKIE), None);
+    }
+
+    /// Build a minimal router carrying the real `/auth/status` route over a
+    /// test `AppState` whose lobby is a bare in-memory handle (no GameServer).
+    fn test_app(oauth: OAuthState) -> Router {
+        let (_tx, rx) = watch::channel(false);
+        let state = AppState {
+            upstream_ws_url: Arc::new("ws://127.0.0.1:0".to_string()),
+            shutdown_rx: rx,
+            start_time: std::time::Instant::now(),
+            lobby: crate::network::lobby::new_shared_lobby(),
+            r2: None,
+            oauth: Some(oauth),
+        };
+        Router::new()
+            .route("/auth/status", get(auth_status_handler))
+            .with_state(state)
+    }
+
+    #[tokio::test]
+    async fn status_reports_logged_in_with_session_cookie() {
+        let oauth = OAuthState::new_for_test();
+        // Simulate a completed login: GitHub subject 999, friendly handle.
+        let sid = oauth.create_session(Provider::GitHub, "999".into(), "octocat".into());
+        let app = test_app(oauth);
+
+        // Browser presents the session cookie among others (state already
+        // cleared, plus an unrelated cookie) — the live failure mode.
+        let req = Request::builder()
+            .uri("/auth/status")
+            .header(header::COOKIE, format!("theme=dark; {SESSION_COOKIE}={sid}"))
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(resp.into_body(), 64 * 1024).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(json["logged_in"], serde_json::json!(true));
+        assert_eq!(json["user_id"], serde_json::json!("github-999"));
+        assert_eq!(json["suggested_name"], serde_json::json!("octocat"));
+    }
+
+    #[tokio::test]
+    async fn status_reports_guest_without_cookie() {
+        let app = test_app(OAuthState::new_for_test());
+        let req = Request::builder().uri("/auth/status").body(Body::empty()).unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        let bytes = axum::body::to_bytes(resp.into_body(), 64 * 1024).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(json["logged_in"], serde_json::json!(false));
+        assert_eq!(json["user_id"], serde_json::Value::Null);
+        assert_eq!(json["suggested_name"], serde_json::Value::Null);
     }
 }

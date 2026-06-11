@@ -99,7 +99,11 @@ impl Provider {
             // `read:user` would also give the profile; we only need the id, but
             // GitHub requires a scope to return a useful /user response.
             Provider::GitHub => "read:user",
-            Provider::Google => "openid",
+            // `openid` yields the stable `sub`; `email` adds the email claim to
+            // the id_token so we can derive a friendly suggested display name
+            // (local-part) for UI pre-fill. Both ride in the id_token — no
+            // userinfo round-trip needed.
+            Provider::Google => "openid email",
         }
     }
 }
@@ -229,7 +233,30 @@ impl Identity for OAuthIdentity {
 struct Session {
     provider: Provider,
     subject_id: String,
+    /// Friendly provider handle (GitHub `login`, or the local-part of the
+    /// Google email / the OIDC `name`) used ONLY to pre-fill the lobby
+    /// display-name box. NON-AUTHORITATIVE: nothing security-relevant keys on
+    /// it — the stable `subject_id` drives identity + the R2 prefix. May be
+    /// empty when the provider gave us nothing usable.
+    suggested_name: String,
     expires: Instant,
+}
+
+/// The resolved-session view the web layer needs: the stable identity plus the
+/// non-authoritative suggested display name for UI pre-fill.
+#[derive(Debug, Clone)]
+pub struct SessionInfo {
+    pub identity: OAuthIdentity,
+    /// Friendly handle for pre-filling the lobby name box (may be empty).
+    pub suggested_name: String,
+}
+
+/// What `exchange_code_for_subject` resolves: the provider's stable subject id
+/// plus a friendly handle for UI pre-fill (empty if the provider gave none).
+#[derive(Debug, Clone)]
+pub struct ResolvedSubject {
+    pub subject_id: String,
+    pub suggested_name: String,
 }
 
 /// In-memory session + CSRF-state store. Sessions are intentionally
@@ -255,6 +282,21 @@ impl OAuthState {
 
     pub fn config(&self) -> &OAuthConfig {
         &self.config
+    }
+
+    /// Test-only: build a fully-configured `OAuthState` (both providers, dummy
+    /// creds) without touching the environment, so the web layer's HTTP-level
+    /// session/cookie round-trip can be exercised hermetically.
+    #[cfg(test)]
+    pub fn new_for_test() -> Self {
+        Self::new(OAuthConfig {
+            github: Some(ProviderCreds {
+                client_id: "test-id".into(),
+                client_secret: "test-secret".into(),
+            }),
+            google: None,
+            callback_base: "https://example.com/auth/callback".into(),
+        })
     }
 
     /// Generate a fresh random URL-safe token (CSRF state or session id).
@@ -293,8 +335,9 @@ impl OAuthState {
     }
 
     /// Create a session for a verified subject; returns the session id to set
-    /// as a cookie.
-    pub fn create_session(&self, provider: Provider, subject_id: String) -> String {
+    /// as a cookie. `suggested_name` is the non-authoritative friendly handle
+    /// for UI pre-fill (pass an empty string when none is available).
+    pub fn create_session(&self, provider: Provider, subject_id: String, suggested_name: String) -> String {
         let sid = self.random_token();
         if sid.is_empty() {
             return sid;
@@ -306,20 +349,25 @@ impl OAuthState {
             Session {
                 provider,
                 subject_id,
+                suggested_name,
                 expires: Instant::now() + SESSION_TTL,
             },
         );
         sid
     }
 
-    /// Resolve a session id to an [`OAuthIdentity`], if valid + unexpired.
-    pub fn identity_for(&self, session_id: &str) -> Option<OAuthIdentity> {
+    /// Resolve a session id to its [`SessionInfo`] (stable identity + the
+    /// non-authoritative suggested display name), if valid + unexpired.
+    pub fn identity_for(&self, session_id: &str) -> Option<SessionInfo> {
         let sessions = self.sessions.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let s = sessions.get(session_id)?;
         if s.expires <= Instant::now() {
             return None;
         }
-        Some(OAuthIdentity::new(s.provider, &s.subject_id))
+        Some(SessionInfo {
+            identity: OAuthIdentity::new(s.provider, &s.subject_id),
+            suggested_name: s.suggested_name.clone(),
+        })
     }
 
     /// Drop a session (logout).
@@ -338,7 +386,7 @@ impl OAuthState {
     /// Returns `Err(message)` if the provider is not configured, the network
     /// request fails, the provider returns a non-success status, or the
     /// response cannot be decoded into a usable subject id.
-    pub async fn exchange_code_for_subject(&self, provider: Provider, code: &str) -> Result<String, String> {
+    pub async fn exchange_code_for_subject(&self, provider: Provider, code: &str) -> Result<ResolvedSubject, String> {
         let creds = self
             .config
             .creds(provider)
@@ -385,7 +433,12 @@ impl OAuthState {
                     .json()
                     .await
                     .map_err(|e| format!("userinfo decode failed: {e}"))?;
-                Ok(user.id.to_string())
+                // `login` is the @handle — friendly, but the user can rename it,
+                // so it is UI sugar only; the numeric `id` is the stable key.
+                Ok(ResolvedSubject {
+                    subject_id: user.id.to_string(),
+                    suggested_name: user.login.unwrap_or_default(),
+                })
             }
             Provider::Google => {
                 // Google returns an OIDC id_token (a JWT) whose `sub` claim is
@@ -394,8 +447,11 @@ impl OAuthState {
                 // userinfo round-trip. (We trust it because it arrived over the
                 // server-to-server TLS token exchange we just authenticated.)
                 let id_token = token.id_token.ok_or_else(|| "no id_token from Google".to_string())?;
-                let sub = jwt_sub_claim(&id_token).ok_or_else(|| "no sub in id_token".to_string())?;
-                Ok(sub)
+                let claims = jwt_claims(&id_token).ok_or_else(|| "no sub in id_token".to_string())?;
+                Ok(ResolvedSubject {
+                    subject_id: claims.subject_id,
+                    suggested_name: claims.suggested_name,
+                })
             }
         }
     }
@@ -412,6 +468,8 @@ struct TokenResponse {
 #[derive(Deserialize)]
 struct GitHubUser {
     id: u64,
+    /// The mutable @handle. Friendly for UI pre-fill; never an identity key.
+    login: Option<String>,
 }
 
 fn non_empty_env(key: &str) -> Option<String> {
@@ -444,16 +502,39 @@ fn prune_expired_sessions(sessions: &mut HashMap<String, Session>) {
     sessions.retain(|_, s| s.expires > now);
 }
 
-/// Extract the `sub` claim from a JWT's payload WITHOUT verifying the
-/// signature. Safe here ONLY because the JWT came directly from Google over
-/// the authenticated server-to-server token exchange (not from the browser),
-/// so its integrity is already established by TLS + the client secret. We are
-/// not using it as a bearer credential, only reading the stable subject id.
-fn jwt_sub_claim(jwt: &str) -> Option<String> {
+/// The claims we read out of a Google OIDC id_token: the stable `sub` plus a
+/// non-authoritative friendly handle for UI pre-fill.
+struct JwtClaims {
+    subject_id: String,
+    suggested_name: String,
+}
+
+/// Extract the `sub` claim (and a friendly handle) from a JWT's payload WITHOUT
+/// verifying the signature. Safe here ONLY because the JWT came directly from
+/// Google over the authenticated server-to-server token exchange (not from the
+/// browser), so its integrity is already established by TLS + the client
+/// secret. We are not using it as a bearer credential, only reading the stable
+/// subject id (`sub`) and a friendly display name. Returns `None` when there is
+/// no usable `sub`.
+fn jwt_claims(jwt: &str) -> Option<JwtClaims> {
     let payload_b64 = jwt.split('.').nth(1)?;
     let bytes = base64url_decode(payload_b64)?;
     let json: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
-    json.get("sub").and_then(|v| v.as_str()).map(str::to_owned)
+    let subject_id = json.get("sub").and_then(|v| v.as_str())?.to_owned();
+    // Prefer the email local-part (before '@') as the friendly handle; fall
+    // back to the OIDC `name` claim; empty string if neither is present.
+    let suggested_name = json
+        .get("email")
+        .and_then(|v| v.as_str())
+        .and_then(|e| e.split('@').next())
+        .filter(|s| !s.is_empty())
+        .or_else(|| json.get("name").and_then(|v| v.as_str()))
+        .unwrap_or("")
+        .to_owned();
+    Some(JwtClaims {
+        subject_id,
+        suggested_name,
+    })
 }
 
 /// Minimal base64url decoder (no padding) for the JWT payload segment.
@@ -516,7 +597,47 @@ mod tests {
         let bytes = base64url_decode(payload).unwrap();
         assert_eq!(std::str::from_utf8(&bytes).unwrap(), "{\"sub\":\"42\"}");
         let fake_jwt = format!("header.{payload}.sig");
-        assert_eq!(jwt_sub_claim(&fake_jwt).as_deref(), Some("42"));
+        let claims = jwt_claims(&fake_jwt).expect("sub present");
+        assert_eq!(claims.subject_id, "42");
+        // No email/name claim → empty suggested handle.
+        assert_eq!(claims.suggested_name, "");
+    }
+
+    #[test]
+    fn jwt_claims_derive_suggested_name() {
+        // {"sub":"77","email":"alice@example.com"} → handle = local-part.
+        let payload = b64url(r#"{"sub":"77","email":"alice@example.com"}"#);
+        let jwt = format!("h.{payload}.s");
+        let claims = jwt_claims(&jwt).expect("sub present");
+        assert_eq!(claims.subject_id, "77");
+        assert_eq!(claims.suggested_name, "alice");
+
+        // No email, but a `name` claim → fall back to name.
+        let payload = b64url(r#"{"sub":"77","name":"Bob Builder"}"#);
+        let jwt = format!("h.{payload}.s");
+        assert_eq!(jwt_claims(&jwt).unwrap().suggested_name, "Bob Builder");
+    }
+
+    /// Tiny base64url (no padding) encoder for building test JWT payloads.
+    fn b64url(s: &str) -> String {
+        const TBL: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+        let bytes = s.as_bytes();
+        let mut out = String::new();
+        for chunk in bytes.chunks(3) {
+            let b0 = u32::from(chunk[0]);
+            let b1 = u32::from(*chunk.get(1).unwrap_or(&0));
+            let b2 = u32::from(*chunk.get(2).unwrap_or(&0));
+            let n = (b0 << 16) | (b1 << 8) | b2;
+            out.push(TBL[(n >> 18) as usize & 63] as char);
+            out.push(TBL[(n >> 12) as usize & 63] as char);
+            if chunk.len() > 1 {
+                out.push(TBL[(n >> 6) as usize & 63] as char);
+            }
+            if chunk.len() > 2 {
+                out.push(TBL[n as usize & 63] as char);
+            }
+        }
+        out
     }
 
     #[test]
@@ -548,9 +669,11 @@ mod tests {
             callback_base: "https://example.com/auth/callback".into(),
         };
         let st = OAuthState::new(cfg);
-        let sid = st.create_session(Provider::GitHub, "999".into());
-        let id = st.identity_for(&sid).expect("session resolves");
-        assert_eq!(id.user_id(), "github-999");
+        let sid = st.create_session(Provider::GitHub, "999".into(), "octocat".into());
+        let info = st.identity_for(&sid).expect("session resolves");
+        assert_eq!(info.identity.user_id(), "github-999");
+        // The friendly handle rides alongside the stable identity for UI sugar.
+        assert_eq!(info.suggested_name, "octocat");
         st.destroy_session(&sid);
         assert!(st.identity_for(&sid).is_none(), "logout drops session");
     }
