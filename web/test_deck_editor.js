@@ -335,9 +335,10 @@ function check(cond, msg) {
 
         // ── 5. Save deck / saved chips ──────────────────────────────────
         log('\n=== 5. Save deck ===');
-        // Set deck name.
+        // Set deck name. Save is now per-destination (batch2 item 8): use the
+        // in-section "Save to Local" button (logged-out default destination).
         await page.fill('#deck-name', 'TestDeck');
-        await page.click('#btn-save');
+        await page.click('#btn-save-local');
         await page.waitForTimeout(200);
 
         const statusText = await page.textContent('#action-status');
@@ -406,13 +407,24 @@ function check(cond, msg) {
         // The no-op "Use in Lobby" button is gone.
         const useBtnGone = await page.evaluate(() => !document.getElementById('btn-use-in-lobby'));
         check(useBtnGone, '#btn-use-in-lobby is removed from the deck editor');
-        // Opened from the LOBBY (no ?from=launcher): SAVE just saves + stays.
-        const saveLabelLobby = await page.evaluate(() => {
-            const b = document.getElementById('btn-save');
-            return b ? b.textContent.trim() : null;
+        // Opened from the LOBBY (no ?from=launcher): the ambiguous top-level SAVE
+        // is HIDDEN (batch2 item 8); the user picks a destination via the
+        // in-section "Save to Local" / "Save to Cloud" buttons instead.
+        const lobbySave = await page.evaluate(() => {
+            const top = document.getElementById('btn-save');
+            const vis = (e) => !!e && getComputedStyle(e).display !== 'none';
+            return {
+                topVisible: vis(top),
+                hasLocalSave: !!document.getElementById('btn-save-local'),
+                hasCloudSave: !!document.getElementById('btn-save-cloud'),
+                hasNew: !!document.getElementById('btn-new'),
+            };
         });
-        check(saveLabelLobby === 'Save',
-            'SAVE button reads "Save" when not from launcher (got "' + saveLabelLobby + '")');
+        check(!lobbySave.topVisible,
+            'ambiguous top-level Save is hidden outside the launcher flow');
+        check(lobbySave.hasLocalSave && lobbySave.hasCloudSave,
+            'per-destination Save buttons exist: Save to Local + Save to Cloud');
+        check(lobbySave.hasNew, '"New deck" button exists (replaces Clear)');
 
         // Opened FROM the launcher (?from=launcher&...): SAVE becomes "Save and use"
         // and navigates back to the launcher (index.html?goto=launcher&...&deck=).
@@ -493,8 +505,9 @@ function check(cond, msg) {
             check(mainStat > 0, 'editor populated the premade card list (main=' + mainStat + ')');
 
             // Save → must write a COPY under a NEW name, leaving the premade absent
-            // from the custom-decks store (premades are not custom decks).
-            await editPage.click('#btn-save');
+            // from the custom-decks store (premades are not custom decks). Uses
+            // the in-section "Save to Local" button (batch2 item 8).
+            await editPage.click('#btn-save-local');
             await editPage.waitForTimeout(250);
             const afterSave = await editPage.evaluate((key) => {
                 try { return JSON.parse(localStorage.getItem(key) || '{}'); } catch (_) { return {}; }
@@ -548,10 +561,11 @@ function check(cond, msg) {
             check(two.localChips.some((t) => t.includes('LocalA')),
                 'Local Browser list shows the localStorage deck: ' + JSON.stringify(two.localChips));
 
-            // Empty-save guard: naming an empty deck and clicking Save is refused
-            // and writes NOTHING to localStorage (the 86-byte metadata-only bug).
+            // Empty-save guard: naming an empty deck and clicking Save to Local
+            // is refused and writes NOTHING to localStorage (the 86-byte
+            // metadata-only bug). (batch2 item 8: per-destination save button.)
             await lop.fill('#deck-name', 'EmptyGuardDeck');
-            await lop.click('#btn-save');
+            await lop.click('#btn-save-local');
             await lop.waitForTimeout(200);
             const guard = await lop.evaluate(() => ({
                 msg: document.getElementById('action-status').textContent,
@@ -579,6 +593,109 @@ function check(cond, msg) {
             }));
             check(uploaded.name === 'UploadedDeck' && uploaded.main === 24,
                 'uploading a .dck file imports its cards (name=' + uploaded.name + ', main=' + uploaded.main + ')');
+
+            // ── batch2 items 3,4,5,6,7,12: layout + pagination + alphabet +
+            //    curve tooltip + local-storage info affordance ──────────────
+            log('  -- batch2 layout/pagination/alphabet/curve/info checks --');
+
+            // Item 4: the search toolbar is inside the RESULTS pane (column 2).
+            // Item 3: the deck stats row is inside the DECK pane (column 3).
+            const placement = await lop.evaluate(() => {
+                const inSel = (childId, parentSel) => {
+                    const c = document.getElementById(childId);
+                    const p = document.querySelector(parentSel);
+                    return !!(c && p && p.contains(c));
+                };
+                return {
+                    searchInResults: inSel('search-input', '.pane-results'),
+                    statsInDeck: inSel('deck-stats', '.pane-deck'),
+                    statsAboveCurve: (() => {
+                        const s = document.getElementById('deck-stats');
+                        const cv = document.getElementById('curve-bars');
+                        if (!s || !cv) return false;
+                        // stats node precedes curve in document order within the deck pane.
+                        return !!(s.compareDocumentPosition(cv) & Node.DOCUMENT_POSITION_FOLLOWING);
+                    })(),
+                };
+            });
+            check(placement.searchInResults, 'item 4: search bar lives at the top of the results column');
+            check(placement.statsInDeck && placement.statsAboveCurve,
+                'item 3: deck counts live in the deck column, above the mana curve');
+
+            // Item 6: alphabet bar exists with All + 26 letters; clicking a letter
+            // filters to names starting with it (AND with the search term).
+            const alpha = await lop.evaluate(() => {
+                const bar = document.getElementById('alpha-bar');
+                const letters = bar ? [...bar.querySelectorAll('.alpha-letter')].map((b) => b.textContent) : [];
+                return { count: letters.length, hasAll: letters.includes('All'), hasZ: letters.includes('Z') };
+            });
+            check(alpha.count === 27 && alpha.hasAll && alpha.hasZ,
+                'item 6: alphabet bar has All + A–Z (' + alpha.count + ' buttons)');
+            // Click "A" and assert every visible row name starts with A.
+            await lop.evaluate(() => {
+                const a = [...document.querySelectorAll('#alpha-bar .alpha-letter')].find((b) => b.textContent === 'A');
+                if (a) a.click();
+            });
+            await lop.waitForTimeout(150);
+            const alphaFiltered = await lop.evaluate(() => {
+                const names = [...document.querySelectorAll('#card-list .card-name')].map((n) => n.textContent);
+                const firstAlpha = (s) => (s.match(/[A-Za-z]/) || [''])[0].toUpperCase();
+                return { total: names.length, allA: names.length > 0 && names.every((n) => firstAlpha(n) === 'A') };
+            });
+            check(alphaFiltered.total > 0 && alphaFiltered.allA,
+                'item 6: clicking "A" filters to names starting with A (' + alphaFiltered.total + ' shown)');
+            // Reset the letter via "All" so pagination math below is over the full set.
+            await lop.evaluate(() => {
+                const all = [...document.querySelectorAll('#alpha-bar .alpha-letter')].find((b) => b.textContent === 'All');
+                if (all) all.click();
+            });
+            await lop.waitForTimeout(150);
+
+            // Item 5: pagination — with the full catalog the pager is visible and
+            // Next advances the page.
+            const pager0 = await lop.evaluate(() => {
+                const p = document.getElementById('pager');
+                return {
+                    visible: !!p && getComputedStyle(p).display !== 'none',
+                    info: (document.getElementById('pager-info') || {}).textContent || '',
+                    firstName: (document.querySelector('#card-list .card-name') || {}).textContent || '',
+                };
+            });
+            check(pager0.visible && /Page 1 of/.test(pager0.info),
+                'item 5: pagination footer shows "Page 1 of N" ("' + pager0.info + '")');
+            await lop.click('#pager-next');
+            await lop.waitForTimeout(150);
+            const pager1 = await lop.evaluate(() => ({
+                info: (document.getElementById('pager-info') || {}).textContent || '',
+                firstName: (document.querySelector('#card-list .card-name') || {}).textContent || '',
+                prevDisabled: document.getElementById('pager-prev').disabled,
+            }));
+            check(/Page 2 of/.test(pager1.info) && pager1.firstName !== pager0.firstName,
+                'item 5: Next advances to page 2 with a different first row');
+            check(pager1.prevDisabled === false, 'item 5: Prev is enabled on page 2');
+
+            // Item 7: mana-curve column carries a per-CMC count tooltip (title).
+            // Add a 1-CMC card so a bar has a non-zero count to describe.
+            await lop.fill('#search-input', 'Lightning Bolt');
+            await lop.waitForTimeout(250);
+            await lop.evaluate(() => { const b = document.querySelector('#card-list li .add-btn'); if (b && !b.disabled) b.click(); });
+            await lop.waitForTimeout(150);
+            const curveTip = await lop.evaluate(() => {
+                const cols = [...document.querySelectorAll('#curve-bars .curve-col')];
+                return cols.map((c) => c.title).filter((t) => /\d+ card/.test(t));
+            });
+            check(curveTip.length === 8 && curveTip.some((t) => /at \d/.test(t)),
+                'item 7: every curve column has a "N cards at C CMC" tooltip');
+
+            // Item 12: the Local Browser header has an info affordance whose tooltip
+            // names the local-only storage + the Safari ~7-day caveat.
+            const info = await lop.evaluate(() => {
+                const el = document.getElementById('local-info');
+                return el ? el.getAttribute('title') : null;
+            });
+            check(!!info && /local storage/i.test(info) && /Safari/.test(info) && /7[\s-]?day/i.test(info),
+                'item 12: Local Browser info tooltip explains local-only storage + Safari 7-day eviction');
+
             await lo.close();
         }
 
@@ -638,7 +755,8 @@ function check(cond, msg) {
             await cip.fill('#deck-name', 'CloudSaveDeck');
             await cip.fill('#search-input', '');
             await cip.waitForTimeout(200);
-            await cip.click('#btn-save');
+            // Save to Cloud destination button (batch2 item 8).
+            await cip.click('#btn-save-cloud');
             await cip.waitForTimeout(1200);
             const saved = await cip.evaluate(() => ({
                 msg: document.getElementById('action-status').textContent,
@@ -662,6 +780,29 @@ function check(cond, msg) {
             check(/Migrated/i.test(migd.msg), 'Migrate All reports progress ("' + migd.msg + '")');
             check(migd.cloudChips.some((t) => t.includes('MigrateMe')),
                 'migrated local deck now appears in the Cloud list');
+
+            // batch2 items 9/10/11: structural checks on the cloud/local sections.
+            const struct = await cip.evaluate(() => {
+                const txt = (id) => { const e = document.getElementById(id); return e ? e.textContent.trim() : null; };
+                const vis = (id) => { const e = document.getElementById(id); return !!e && getComputedStyle(e).display !== 'none'; };
+                // Which section is the migrate button inside — local or cloud?
+                const mig = document.getElementById('btn-migrate-all');
+                const local = document.querySelector('.saved-decks-wrap:not(#cloud-section)');
+                return {
+                    migrateLabel: txt('btn-migrate-all'),
+                    migrateInLocal: !!(mig && local && local.contains(mig)),
+                    migrateToolsVisible: vis('migrate-tools'),
+                    downloadLabel: txt('btn-download-decks'),
+                    hasDirectLink: !!document.getElementById('btn-direct-link'),
+                };
+            });
+            check(/Migrate All to Cloud/i.test(struct.migrateLabel || ''),
+                'item 9: migrate button renamed "Migrate All to Cloud" ("' + struct.migrateLabel + '")');
+            check(struct.migrateInLocal && struct.migrateToolsVisible,
+                'item 9: migrate tools live in the LOCAL section and show when signed in');
+            check(struct.downloadLabel === 'Download deck collection',
+                'item 10: download link relabelled "Download deck collection" ("' + struct.downloadLabel + '")');
+            check(struct.hasDirectLink, 'item 11: a "Direct link" button exists in the Cloud section');
             await ci.close();
         }
 
