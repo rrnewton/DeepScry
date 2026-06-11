@@ -3639,96 +3639,7 @@ impl GameState {
                 origins,
                 destination,
                 shuffle,
-            } => {
-                // Move all cards matching the restriction from EACH origin zone
-                // to the destination. Timetwister/Diminishing-Returns style mass
-                // shuffles list two origins (Hand + Graveyard); single-origin
-                // mass bounce/exile list one. Track (card, owner, source-zone)
-                // so each card moves from the zone it actually lives in.
-                let mut cards_to_move: Vec<(CardId, PlayerId, crate::zones::Zone)> = Vec::new();
-                // SHADOW determinism (mtg-728 sig-2c): the opponent's hidden
-                // hand/library cards are late-bound reserved CardIds with NO
-                // instance, so `try_get` returns None and `restriction.matches`
-                // can't be evaluated. For an UNRESTRICTED mass move (Timetwister
-                // / Wheel / Windfall shuffle-back — matches any card) those
-                // reserved cards MUST still move; otherwise the opponent's
-                // library ends up short on the shadow and its subsequent
-                // shuffle consumes a different amount of RNG than the server's,
-                // breaking server<->shadow RNG lockstep and desyncing every
-                // later shuffle/draw. Only reached in shadow games (the server
-                // and native clients always have real instances).
-                let move_reserved_in_shadow = self.is_shadow_game && restriction.is_unrestricted();
-                for &origin in origins {
-                    match origin {
-                        crate::zones::Zone::Battlefield => {
-                            for card_id in self.battlefield.cards.iter().copied() {
-                                if let Some(card) = self.cards.try_get(card_id) {
-                                    if restriction.matches(card) {
-                                        cards_to_move.push((card_id, card.owner, origin));
-                                    }
-                                }
-                            }
-                        }
-                        // Per-player private/owned zones: collect from each
-                        // player's own zone so ownership is exact.
-                        crate::zones::Zone::Graveyard
-                        | crate::zones::Zone::Hand
-                        | crate::zones::Zone::Library
-                        | crate::zones::Zone::Exile => {
-                            for (player_id, zones) in &self.player_zones {
-                                let zone_cards = match origin {
-                                    crate::zones::Zone::Graveyard => &zones.graveyard.cards,
-                                    crate::zones::Zone::Hand => &zones.hand.cards,
-                                    crate::zones::Zone::Library => &zones.library.cards,
-                                    crate::zones::Zone::Exile => &zones.exile.cards,
-                                    // Unreachable: outer match already narrowed to these four.
-                                    crate::zones::Zone::Battlefield
-                                    | crate::zones::Zone::Stack
-                                    | crate::zones::Zone::Command => continue,
-                                };
-                                for &card_id in zone_cards {
-                                    match self.cards.try_get(card_id) {
-                                        Some(card) => {
-                                            if restriction.matches(card) {
-                                                cards_to_move.push((card_id, *player_id, origin));
-                                            }
-                                        }
-                                        // Reserved (instance-less) shadow card under an
-                                        // unrestricted mass move (mtg-728 sig-2c).
-                                        None if move_reserved_in_shadow => {
-                                            cards_to_move.push((card_id, *player_id, origin));
-                                        }
-                                        None => {}
-                                    }
-                                }
-                            }
-                        }
-                        crate::zones::Zone::Stack | crate::zones::Zone::Command => {
-                            // Mass zone changes don't originate from the stack or
-                            // the command zone in any supported card.
-                        }
-                    }
-                }
-
-                for (card_id, owner, origin) in cards_to_move {
-                    self.move_card(card_id, origin, *destination, owner)?;
-                }
-
-                // `Shuffle$ True` mass move into the library (Timetwister,
-                // Mnemonic Nexus) requires shuffling the affected libraries so
-                // the moved cards land in random order. Ordered moves
-                // (`LibraryPosition$ -1`, e.g. Manifold Insights) set
-                // shuffle=false and are left untouched. The effect is symmetric
-                // across players, so shuffle every library; a library that
-                // received no cards only advances RNG (deterministic /
-                // replay-safe).
-                if *shuffle && matches!(destination, crate::zones::Zone::Library) {
-                    let player_ids: smallvec::SmallVec<[PlayerId; 4]> = self.players.iter().map(|p| p.id).collect();
-                    for pid in player_ids {
-                        self.shuffle_library(pid);
-                    }
-                }
-            }
+            } => self.execute_change_zone_all(restriction, origins, *destination, *shuffle)?,
             Effect::RemoveCounter {
                 target,
                 counter_type,
@@ -3780,53 +3691,7 @@ impl GameState {
                 destination,
                 enters_tapped,
                 shuffle,
-            } => {
-                // Search library for a card matching the filter and move it to destination
-                // MTG Rules 701.19a: To search a zone, a player looks at all cards in that zone
-
-                // Get the library zone for the player
-                let library_cards = self
-                    .player_zones
-                    .iter()
-                    .find(|(id, _)| *id == *player)
-                    .map(|(_, zones)| zones.library.cards.clone())
-                    .ok_or_else(|| MtgError::InvalidAction(format!("Player {:?} has no library", player)))?;
-
-                // Search for a card matching the filter
-                // Filter format examples:
-                // - "Land.Basic" = Land type + Basic subtype
-                // - "Creature" = Any Creature
-                // - "Plains,Island" = Land with Plains OR Island subtype (fetch lands)
-                // - "Artifact.Equipment" = Artifact type + Equipment subtype
-                let mut found_card = None;
-                for &card_id in &library_cards {
-                    if let Some(card) = self.cards.try_get(card_id) {
-                        let card_matches = Self::card_matches_search_filter(card, card_type_filter);
-
-                        if card_matches {
-                            found_card = Some(card_id);
-                            break;
-                        }
-                    }
-                }
-
-                // If we found a matching card, move it to the destination
-                if let Some(card_id) = found_card {
-                    // Move the card from library to destination
-                    self.move_card(card_id, Zone::Library, *destination, *player)?;
-
-                    // If destination is battlefield and enters_tapped is true, tap the card
-                    if *destination == Zone::Battlefield && *enters_tapped {
-                        // Use helper that handles tap + undo log + mana version
-                        let _ = self.tap_permanent(card_id);
-                    }
-                }
-
-                // Shuffle the library if required (MTG Rules 701.19b)
-                if *shuffle {
-                    self.shuffle_library(*player);
-                }
-            }
+            } => self.execute_search_library(*player, card_type_filter, *destination, *enters_tapped, *shuffle)?,
             Effect::AttachEquipment {
                 source_equipment,
                 target_creature,
