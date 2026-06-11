@@ -15,6 +15,8 @@
 //! - [`damage`] — DealDamage / DealDamageDivided / EachDamage / DamageAll /
 //!   PreventDamage / PreventDamageFromSource / PreventAllCombatDamageThisTurn.
 //! - [`life`] — GainLife / GainLifeDynamic / LoseLife / SetLife / DrainMana.
+//! - [`cards`] — DrawCards / Mill / Scry / Surveil (card-flow).
 
+mod cards;
 mod damage;
 mod life;

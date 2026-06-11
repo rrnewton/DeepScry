@@ -3538,25 +3538,7 @@ impl GameState {
                 fixed_damage,
             } => self.execute_each_damage(damagers, *receiver, *use_card_power, *fixed_damage)?,
 
-            Effect::DrawCards { player, count } => {
-                if player.is_remembered_players() {
-                    // Draw for each player stored in remembered_players
-                    // Clone to avoid borrow conflict during mutation
-                    let players: smallvec::SmallVec<[PlayerId; 4]> = self.remembered_players.iter().copied().collect();
-                    for pid in players {
-                        for _ in 0..*count {
-                            let (_, draw_num) = self.draw_card(pid)?;
-                            self.check_card_drawn_triggers(pid, draw_num)?;
-                        }
-                    }
-                } else {
-                    for _ in 0..*count {
-                        let (_, draw_num) = self.draw_card(*player)?;
-                        // Check for "second card drawn" triggers
-                        self.check_card_drawn_triggers(*player, draw_num)?;
-                    }
-                }
-            }
+            Effect::DrawCards { player, count } => self.execute_draw_cards(*player, *count)?,
             Effect::DiscardCards { .. } | Effect::Loot { .. } => {
                 // Discard-producing effects route through the shared
                 // `execute_discard_effect` helper. The generic execute_effect
@@ -4035,39 +4017,10 @@ impl GameState {
                     }
                 }
             }
-            Effect::Mill { player, count } => {
-                // Mill cards from library to graveyard
-                self.mill_cards(*player, *count)?;
-            }
+            Effect::Mill { player, count } => self.execute_mill(*player, *count)?,
             Effect::DrainMana { player } => self.execute_drain_mana(*player)?,
-            Effect::Scry { player, count } => {
-                // Scry — CR 701.18. The "real" controller-dispatched path
-                // lives in `priority.rs` (see resolve_top_spell_with_discard_hook
-                // and the activated-ability resolution loop). Reaching this
-                // arm in execute_effect means we're on a fallback path that
-                // doesn't have controller access (e.g., the legacy
-                // `cast_spell + resolve_spell` v1 sequence in
-                // `game_loop/legacy.rs`, or a direct execute_effect call
-                // from a test harness). In those cases we use the safest
-                // possible default: keep every revealed card on top in
-                // its original library order (a true no-op).
-                let revealed = self.scry_snapshot_top_n(*player, *count);
-                if !revealed.is_empty() {
-                    let decision = crate::game::ScryDecision::keep_all_on_top(&revealed);
-                    self.scry_apply_decision(*player, &revealed, &decision)?;
-                }
-            }
-            Effect::Surveil { player, count } => {
-                // Surveil — CR 701.42. Same rationale as Effect::Scry above:
-                // the controller-dispatched path lives in priority.rs;
-                // reaching here is a fallback. Default to "no cards milled"
-                // — preserves library order, never destroys information.
-                let revealed = self.surveil_snapshot_top_n(*player, *count);
-                if !revealed.is_empty() {
-                    let decision = crate::game::SurveilDecision::keep_all_on_top(&revealed);
-                    self.surveil_apply_decision(*player, &revealed, &decision)?;
-                }
-            }
+            Effect::Scry { player, count } => self.execute_scry(*player, *count)?,
+            Effect::Surveil { player, count } => self.execute_surveil(*player, *count)?,
             Effect::AddTurn { player, num_turns } => {
                 // Take extra turns (CR 500.7) - Time Walk, Temporal Manipulation, etc.
                 // Add extra turns to the GameState extra-turn queue (consumed in
