@@ -227,6 +227,52 @@ function check(cond, msg) {
     check(migrated.hasLocalOnly, 'migrated deck appears in the remote collection');
     check(migrated.burnUnchanged, 'migration is ADDITIVE: existing remote deck not clobbered');
 
+    // ── 8. authStatus + credentialsInfo (mtg-742 cloud-deck UI) ──────────
+    // The editor/launcher now key cloud on the AUTHORITATIVE /auth/status, and
+    // show the R2 object path from credentialsInfo(). Mock /auth/status here.
+    await page.route('**/auth/status', (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ logged_in: true, user_id: 'dev', provider: 'github',
+          display_name: 'octocat', suggested_name: 'octocat', oauth_enabled: true,
+          providers: { github: true, google: true } }),
+      }));
+    const auth = await page.evaluate(async () => {
+      const s = await window.DeckStorage.authStatus(true); // force past cache
+      const li = await window.DeckStorage.isLoggedIn();
+      const info = await window.DeckStorage.credentialsInfo();
+      return { logged_in: s.logged_in, provider: s.provider, isLoggedIn: li,
+        userId: info && info.user_id, objectKey: info && info.object_key };
+    });
+    check(auth.logged_in === true && auth.isLoggedIn === true,
+      'authStatus()/isLoggedIn() read login from /auth/status (the session cookie)');
+    check(auth.provider === 'github', 'authStatus() surfaces the provider');
+    check(auth.userId === 'dev' && auth.objectKey === 'decks/dev/collection.tgz',
+      'credentialsInfo() returns the R2 user_id + object_key for transparency UI');
+
+    // ── 9. migrateAll OVERWRITES cloud with every local deck (manual button) ─
+    const migAll = await page.evaluate(async () => {
+      // Local now has 2 decks; one (My Burn Deck) collides with a DIFFERENT
+      // remote version — migrateAll must OVERWRITE it (vs migrateLocalStorage,
+      // which preserves the remote). Reset local to a known pair first.
+      const local = {
+        'Local Only Deck': { main_deck: [['Forest', 17]], sideboard: [] },
+        'My Burn Deck': { main_deck: [['OVERWRITTEN', 3]], sideboard: [] },
+      };
+      localStorage.setItem(window.DeckStorage.CUSTOM_DECKS_KEY, JSON.stringify(local));
+      const res = await window.DeckStorage.migrateAll();
+      const h = await window.DeckStorage.hydrate();
+      return {
+        migrated: res.migrated,
+        burnOverwritten:
+          JSON.stringify(h.collection['My Burn Deck'].main_deck) ===
+          JSON.stringify([['OVERWRITTEN', 3]]),
+      };
+    });
+    check(migAll.migrated === 2, 'migrateAll() pushes EVERY local deck (2)');
+    check(migAll.burnOverwritten, 'migrateAll() OVERWRITES the cloud slot (manual "make cloud match local")');
+
     await browser.close();
     browser = null;
     if (httpServer) httpServer.kill();

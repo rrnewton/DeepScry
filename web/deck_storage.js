@@ -48,12 +48,18 @@
   const TGZ_CONTENT_TYPE = 'application/gzip';
 
   // ── Feature flag ──────────────────────────────────────────────────────────
-  // Cloud deck storage engages when EITHER an explicit dev/feature flag is set
-  // OR the user is signed in via OAuth (a session-derived identity was recorded
-  // by the landing page in sessionStorage['mtg.cloudIdentity']). Ephemeral
-  // (name-only) users have no identity → cloud stays off and they remain on the
-  // localStorage-only path. The credentials endpoint is the real authority: a
-  // flag-on guest with no session just gets a graceful 401.
+  // Cloud deck storage engages when the user is signed in via OAuth. The
+  // AUTHORITATIVE login signal is the server's `/auth/status` (the HttpOnly
+  // session cookie) — see authStatus() below — NOT the inherited
+  // sessionStorage['mtg.cloudIdentity'] hint, which is absent in a fresh
+  // browser that logged in directly (the Safari+Google bug: the user signed in
+  // but the editor showed nothing because it trusted sessionStorage instead of
+  // the cookie).
+  //
+  // cloudEnabled() is the *synchronous* flag check still used by the legacy
+  // background-mirror path (maybeCloudSync). The editor's primary cloud path now
+  // uses the async, authoritative authStatus()/isLoggedIn() and does NOT depend
+  // on this returning true. The dev flag remains as a manual override.
   function cloudEnabled() {
     if (global.MTG_DECK_CLOUD === true) return true;
     try {
@@ -68,15 +74,53 @@
     }
   }
 
-  /** True iff the server currently has a valid OAuth session for this browser. */
-  async function isLoggedIn() {
+  // Cache the authoritative status for the page lifetime so the two lists, the
+  // save indicator, and the migrate button all agree without re-fetching.
+  let _statusCache = null;
+
+  /**
+   * Authoritative login status straight from the server session cookie.
+   * Returns the parsed `/auth/status` body:
+   *   { logged_in, user_id, provider, display_name, suggested_name,
+   *     oauth_enabled, providers:{github,google} }
+   * On a network/parse error returns a logged-out shape so callers degrade to
+   * the localStorage-only path. `force` re-fetches past the cache.
+   */
+  async function authStatus(force) {
+    if (_statusCache && !force) return _statusCache;
     try {
       const r = await fetch('/auth/status', { cache: 'no-store' });
-      if (!r.ok) return false;
-      const s = await r.json();
-      return !!(s && s.logged_in);
+      if (!r.ok) {
+        _statusCache = { logged_in: false, oauth_enabled: false, providers: {} };
+        return _statusCache;
+      }
+      _statusCache = await r.json();
     } catch (_) {
-      return false;
+      _statusCache = { logged_in: false, oauth_enabled: false, providers: {} };
+    }
+    return _statusCache;
+  }
+
+  /** True iff the server currently has a valid OAuth session for this browser. */
+  async function isLoggedIn() {
+    const s = await authStatus();
+    return !!(s && s.logged_in);
+  }
+
+  /**
+   * The R2 object identity for the logged-in account, for transparency UI:
+   *   { user_id, object_key }
+   *   e.g. "github-583231", "decks/github-583231/collection.tgz"
+   * Returns null when not logged in / R2 not configured (the credentials
+   * endpoint answers 401/503). Re-uses the SAME presign endpoint the save path
+   * uses, so the displayed path is exactly where the bytes live.
+   */
+  async function credentialsInfo() {
+    try {
+      const creds = await fetchCredentials();
+      return { user_id: creds.user_id || null, object_key: creds.object_key || null };
+    } catch (_) {
+      return null;
     }
   }
 
@@ -434,14 +478,46 @@
     return { migrated, etag: res.etag };
   }
 
+  /**
+   * Explicit "Migrate All →" (mtg-742, manual migration). Pushes EVERY
+   * localStorage deck into the cloud collection, OVERWRITING the cloud slot of
+   * the same name (the user clicked the button intending these local decks to
+   * become the cloud copy). Distinct from migrateLocalStorage (additive,
+   * collision-shy) so the button has predictable "make cloud match local"
+   * semantics. Returns { migrated, total, etag }.
+   *
+   * Does NOT itself delete local copies — the caller decides that based on the
+   * "Delete local copies after migrating" checkbox, only after this resolves
+   * successfully (so a failed cloud write never loses the local decks).
+   */
+  async function migrateAll() {
+    let local = {};
+    try {
+      const raw = localStorage.getItem(CUSTOM_DECKS_KEY);
+      local = raw ? JSON.parse(raw) : {};
+    } catch (_) {
+      local = {};
+    }
+    const localNames = Object.keys(local);
+    if (localNames.length === 0) return { migrated: 0, total: 0, etag: null };
+
+    const { collection, etag } = await hydrate();
+    for (const name of localNames) collection[name] = local[name];
+    const res = await save(collection, etag);
+    return { migrated: localNames.length, total: localNames.length, etag: res.etag };
+  }
+
   global.DeckStorage = {
     cloudEnabled,
+    authStatus,
     isLoggedIn,
+    credentialsInfo,
     hydrate,
     save,
     saveDebounced,
     downloadMyDecks,
     migrateLocalStorage,
+    migrateAll,
     // Exposed for tests + reuse:
     packTgz,
     unpackTgz,

@@ -2,7 +2,9 @@
   {
     "AllowedOrigins": [
       "https://deepscry.net",
-      "https://www.deepscry.net"
+      "https://www.deepscry.net",
+      "http://localhost:8080",
+      "http://localhost:8090"
     ],
     "AllowedMethods": ["GET", "PUT", "HEAD"],
     "AllowedHeaders": ["*"],

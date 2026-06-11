@@ -344,12 +344,13 @@ function check(cond, msg) {
         check(statusText.includes('Saved') || statusText.includes('TestDeck'),
             'save status message shown: "' + statusText + '"');
 
-        // Saved chips should appear.
+        // Saved chips should appear. The chip label now includes a card count,
+        // e.g. "TestDeck (4)", so match by prefix rather than exact equality.
         const chipText = await page.evaluate(() => {
             const chips = [...document.querySelectorAll('#saved-list .saved-chip span:first-child')];
             return chips.map((el) => el.textContent);
         });
-        check(chipText.includes('TestDeck'), 'saved chip "TestDeck" appears');
+        check(chipText.some((t) => t.startsWith('TestDeck')), 'saved chip "TestDeck" appears');
 
         // Verify localStorage was written under the SHARED key in the canonical
         // {main_deck, sideboard} object form (mtg-682) — the same shape the
@@ -510,6 +511,231 @@ function check(cond, msg) {
                     'the saved copy is in canonical {main_deck,...} form with cards');
             }
             await editCtx.close();
+        }
+
+        // ── 9b. Two deck lists + empty-save guard + upload (logged OUT) ──
+        // The plain HTTP server has no /auth/status route → the editor is in the
+        // signed-out state: the Cloud section shows a sign-in note (no account
+        // block) and the Local Browser list is the localStorage decks.
+        log('\n=== 9b. Two lists (Cloud/Local), empty-save guard, upload (logged out) ===');
+        {
+            const lo = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+            const lop = await lo.newPage();
+            lop.on('pageerror', (e) => check(false, '9b page JS error: ' + e.message));
+            await lop.addInitScript(() => localStorage.setItem('mtg-forge-custom-decks',
+                JSON.stringify({ 'LocalA': { main_deck: [['Forest', 24]], sideboard: [] } })));
+            await lop.goto(BASE + '/deck_editor.html', { timeout: 20000 });
+            await lop.waitForFunction(
+                () => document.getElementById('card-list') &&
+                      document.getElementById('card-list').children.length > 0,
+                { timeout: 15000 });
+            await lop.waitForTimeout(400);
+            const two = await lop.evaluate(() => {
+                const vis = (id) => { const e = document.getElementById(id); return e ? getComputedStyle(e).display !== 'none' : null; };
+                return {
+                    cloudSignedOut: vis('cloud-signed-out'),
+                    cloudAccount: vis('cloud-account'),
+                    localChips: [...document.querySelectorAll('#saved-list .saved-chip')].map((c) => c.textContent),
+                    cloudListText: document.getElementById('cloud-list').textContent.trim(),
+                    hasCloudHeading: [...document.querySelectorAll('#cloud-section h3')].some((h) => /Cloud/.test(h.textContent)),
+                    hasLocalHeading: [...document.querySelectorAll('.saved-decks-wrap h3')].some((h) => /Local Browser/.test(h.textContent)),
+                };
+            });
+            check(two.cloudSignedOut === true && two.cloudAccount === false,
+                'logged-out: Cloud section shows the sign-in note, hides the account block');
+            check(two.hasCloudHeading && two.hasLocalHeading,
+                'two distinctly-labeled lists: "Cloud" + "Local Browser"');
+            check(two.localChips.some((t) => t.includes('LocalA')),
+                'Local Browser list shows the localStorage deck: ' + JSON.stringify(two.localChips));
+
+            // Empty-save guard: naming an empty deck and clicking Save is refused
+            // and writes NOTHING to localStorage (the 86-byte metadata-only bug).
+            await lop.fill('#deck-name', 'EmptyGuardDeck');
+            await lop.click('#btn-save');
+            await lop.waitForTimeout(200);
+            const guard = await lop.evaluate(() => ({
+                msg: document.getElementById('action-status').textContent,
+                stored: !!JSON.parse(localStorage.getItem('mtg-forge-custom-decks') || '{}')['EmptyGuardDeck'],
+            }));
+            check(/empty/i.test(guard.msg) && guard.stored === false,
+                'empty-save guard: refuses a 0-card deck and stores nothing ("' + guard.msg + '")');
+
+            // Upload a .dck file → imports through the same path as paste.
+            await lop.click('#btn-import');
+            await lop.waitForSelector('#import-panel.open', { timeout: 3000 });
+            const importBtns = await lop.evaluate(() =>
+                [...document.querySelectorAll('#import-panel .row button')].map((b) => b.textContent.trim()));
+            check(importBtns.length === 3 && importBtns.some((t) => /Upload/.test(t)),
+                'import dialog has a 3-button row incl. Upload: ' + JSON.stringify(importBtns));
+            await lop.setInputFiles('#import-file', {
+                name: 'uploaded.dck',
+                mimeType: 'text/plain',
+                buffer: Buffer.from('[metadata]\nName=UploadedDeck\n\n[Main]\n4 Lightning Bolt\n20 Mountain\n'),
+            });
+            await lop.waitForTimeout(300);
+            const uploaded = await lop.evaluate(() => ({
+                name: document.getElementById('deck-name').value,
+                main: parseInt(document.getElementById('stat-main').textContent, 10),
+            }));
+            check(uploaded.name === 'UploadedDeck' && uploaded.main === 24,
+                'uploading a .dck file imports its cards (name=' + uploaded.name + ', main=' + uploaded.main + ')');
+            await lo.close();
+        }
+
+        // ── 9c. Logged-IN: account block + auto-hydrated cloud list + save ──
+        // Mock /auth/status (logged in), the credentials endpoint, and a fake R2
+        // so the editor's authoritative-login + auto-hydrate + cloud-save path is
+        // exercised hermetically (no real OAuth / R2).
+        log('\n=== 9c. Logged-in: cloud account, auto-hydrate, cloud save ===');
+        {
+            const ci = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+            const cip = await ci.newPage();
+            cip.on('pageerror', (e) => check(false, '9c page JS error: ' + e.message));
+            const r2 = { bytes: null, etag: null };
+            await cip.route('**/auth/status', (route) => route.fulfill({
+                status: 200, contentType: 'application/json',
+                body: JSON.stringify({ logged_in: true, user_id: 'github-42', provider: 'github',
+                    display_name: 'octocat', suggested_name: 'octocat', oauth_enabled: true,
+                    providers: { github: true, google: true } }),
+            }));
+            await cip.route('**/api/deck-storage/credentials', (route) => {
+                const base = 'https://fake-r2.example.com/deepscry-decks/decks/github-42/collection.tgz';
+                route.fulfill({ status: 200, contentType: 'application/json',
+                    body: JSON.stringify({ user_id: 'github-42', object_key: 'decks/github-42/collection.tgz',
+                        ttl_secs: 600, put_url: base + '?m=PUT', get_url: base + '?m=GET',
+                        head_url: base + '?m=HEAD', download_url: base + '?m=DL', content_type: 'application/gzip' }) });
+            });
+            await cip.route('**/fake-r2.example.com/**', async (route) => {
+                const m = route.request().method();
+                const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Expose-Headers': 'ETag' };
+                if (m === 'PUT') { r2.bytes = Buffer.from(route.request().postDataBuffer()); r2.etag = '"e1"';
+                    return route.fulfill({ status: 200, headers: { ...cors, ETag: r2.etag }, body: '' }); }
+                if (m === 'GET' || m === 'HEAD') return r2.bytes
+                    ? route.fulfill({ status: 200, headers: { ...cors, ETag: r2.etag, 'Content-Type': 'application/gzip' }, body: m === 'HEAD' ? Buffer.alloc(0) : r2.bytes })
+                    : route.fulfill({ status: 404, headers: cors, body: '' });
+                return route.fulfill({ status: 200, headers: cors, body: '' });
+            });
+            await cip.goto(BASE + '/deck_editor.html', { timeout: 20000 });
+            await cip.waitForFunction(
+                () => document.getElementById('card-list') &&
+                      document.getElementById('card-list').children.length > 0,
+                { timeout: 15000 });
+            await cip.waitForTimeout(700);
+            const acct = await cip.evaluate(() => ({
+                accountVisible: getComputedStyle(document.getElementById('cloud-account')).display !== 'none',
+                who: document.getElementById('cloud-acct-who').textContent,
+                objpath: document.getElementById('cloud-objpath').textContent,
+            }));
+            check(acct.accountVisible, 'logged-in: the cloud account block is shown');
+            check(/github/.test(acct.who), 'account line shows the provider: "' + acct.who + '"');
+            check(acct.objpath === 'decks/github-42/collection.tgz',
+                'object path is shown for transparency: "' + acct.objpath + '"');
+
+            // Build a real deck and Save → reports cloud + appears in cloud list.
+            await cip.fill('#search-input', 'Lightning Bolt');
+            await cip.waitForTimeout(300);
+            await cip.evaluate(() => { const b = document.querySelector('#card-list li .add-btn'); if (b && !b.disabled) b.click(); });
+            await cip.fill('#deck-name', 'CloudSaveDeck');
+            await cip.fill('#search-input', '');
+            await cip.waitForTimeout(200);
+            await cip.click('#btn-save');
+            await cip.waitForTimeout(1200);
+            const saved = await cip.evaluate(() => ({
+                msg: document.getElementById('action-status').textContent,
+                cloudChips: [...document.querySelectorAll('#cloud-list .saved-chip')].map((c) => c.textContent),
+            }));
+            check(/cloud/i.test(saved.msg) && /☁/.test(saved.msg),
+                'save reports it went to the CLOUD account ("' + saved.msg + '")');
+            check(saved.cloudChips.some((t) => t.includes('CloudSaveDeck')),
+                'saved deck appears in the auto-hydrated Cloud list: ' + JSON.stringify(saved.cloudChips));
+
+            // Migrate All button exists + migrates local→cloud.
+            await cip.evaluate(() => localStorage.setItem('mtg-forge-custom-decks',
+                JSON.stringify(Object.assign(JSON.parse(localStorage.getItem('mtg-forge-custom-decks') || '{}'),
+                    { 'MigrateMe': { main_deck: [['Forest', 30]], sideboard: [] } }))));
+            await cip.click('#btn-migrate-all');
+            await cip.waitForTimeout(1000);
+            const migd = await cip.evaluate(() => ({
+                msg: document.getElementById('action-status').textContent,
+                cloudChips: [...document.querySelectorAll('#cloud-list .saved-chip')].map((c) => c.textContent),
+            }));
+            check(/Migrated/i.test(migd.msg), 'Migrate All reports progress ("' + migd.msg + '")');
+            check(migd.cloudChips.some((t) => t.includes('MigrateMe')),
+                'migrated local deck now appears in the Cloud list');
+            await ci.close();
+        }
+
+        // ── 9d. Launcher: two custom groups + cloud deck is PLAYABLE ─────
+        // Mock /auth/status + credentials + a fake R2 pre-seeded with a cloud
+        // deck, then verify launcher.html offers BOTH "Custom Decks (Cloud)" and
+        // "Custom Decks (Local Browser)" groups, and that selecting the cloud
+        // deck makes its cards available to the play path (buildDeckSubmission +
+        // mirrored into localStorage) — the "not found / missing cards" fix.
+        log('\n=== 9d. Launcher two custom groups + cloud deck playable ===');
+        {
+            const li = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+            const lip = await li.newPage();
+            lip.on('pageerror', (e) => check(false, '9d launcher JS error: ' + e.message));
+            // Pre-pack a cloud collection {CloudDeck} as a .tgz the fake R2 returns.
+            await lip.addInitScript(() => localStorage.setItem('mtg-forge-custom-decks',
+                JSON.stringify({ 'LocalDeck': { main_deck: [['Forest', 24]], sideboard: [] } })));
+            await lip.route('**/auth/status', (route) => route.fulfill({
+                status: 200, contentType: 'application/json',
+                body: JSON.stringify({ logged_in: true, user_id: 'github-9d', provider: 'github',
+                    display_name: 'octocat', oauth_enabled: true, providers: { github: true } }),
+            }));
+            await lip.route('**/api/deck-storage/credentials', (route) => {
+                const base = 'https://fake-r2.example.com/deepscry-decks/decks/github-9d/collection.tgz';
+                route.fulfill({ status: 200, contentType: 'application/json',
+                    body: JSON.stringify({ user_id: 'github-9d', object_key: 'decks/github-9d/collection.tgz',
+                        ttl_secs: 600, put_url: base + '?m=PUT', get_url: base + '?m=GET',
+                        head_url: base + '?m=HEAD', download_url: base + '?m=DL', content_type: 'application/gzip' }) });
+            });
+            // The fake R2 GET returns a .tgz built in-page from a known cloud deck.
+            // We let the first GET 404 then the page builds nothing; instead we
+            // pre-seed by packing via DeckStorage in a throwaway eval AFTER load is
+            // simplest: intercept GET to return a packed collection.
+            let cloudTgz = null;
+            await lip.route('**/fake-r2.example.com/**', async (route) => {
+                const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Expose-Headers': 'ETag' };
+                const m = route.request().method();
+                if ((m === 'GET' || m === 'HEAD') && cloudTgz)
+                    return route.fulfill({ status: 200, headers: { ...cors, ETag: '"e1"', 'Content-Type': 'application/gzip' }, body: m === 'HEAD' ? Buffer.alloc(0) : cloudTgz });
+                if (m === 'GET' || m === 'HEAD') return route.fulfill({ status: 404, headers: cors, body: '' });
+                return route.fulfill({ status: 200, headers: { ...cors, ETag: '"e1"' }, body: '' });
+            });
+            // First load a throwaway page on this origin to pack the cloud .tgz.
+            await lip.goto(BASE + '/deck_editor.html', { timeout: 20000 });
+            cloudTgz = Buffer.from(await lip.evaluate(async () => {
+                const files = window.DeckStorage.collectionToFiles({
+                    'CloudDeck': { main_deck: [['Lightning Bolt', 4], ['Mountain', 36]], sideboard: [] } });
+                const tgz = await window.DeckStorage.packTgz(files);
+                return Array.from(tgz);
+            }));
+            // Now load the launcher; it should hydrate the cloud deck from R2.
+            await lip.goto(BASE + '/launcher.html?game=g9d&name=tester', { timeout: 20000 });
+            await lip.waitForTimeout(2500);
+            const res = await lip.evaluate(() => {
+                const col = document.getElementById('deck-collection');
+                col.value = 'custom'; col.dispatchEvent(new Event('change'));
+                const ds = document.getElementById('deck-select');
+                const groups = [...ds.querySelectorAll('optgroup')].map((g) => g.label);
+                // Pick the cloud deck and trigger the change handlers.
+                const opt = [...ds.options].find((o) => o.value.startsWith('cloud:'));
+                let mirrored = null;
+                if (opt) {
+                    ds.value = opt.value; ds.dispatchEvent(new Event('change'));
+                    const ls = JSON.parse(localStorage.getItem('mtg-forge-custom-decks') || '{}');
+                    mirrored = ls['CloudDeck'] ? ls['CloudDeck'].main_deck.reduce((s, p) => s + p[1], 0) : null;
+                }
+                return { groups, hadCloudOpt: !!opt, mirroredCards: mirrored };
+            });
+            check(res.groups.some((g) => /Cloud/.test(g)) && res.groups.some((g) => /Local/.test(g)),
+                'launcher offers BOTH custom groups (Cloud + Local Browser): ' + JSON.stringify(res.groups));
+            check(res.hadCloudOpt, 'launcher lists the hydrated cloud deck as a cloud: option');
+            check(res.mirroredCards === 40,
+                'selecting the cloud deck makes its 40 cards available to play (mirrored to localStorage)');
+            await li.close();
         }
 
         // ── 10. World Championship collections (all years) in the launcher ──

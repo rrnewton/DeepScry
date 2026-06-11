@@ -35,6 +35,10 @@
     <title>DeepScry &mdash; Launcher</title>
     <!-- Derives window.MTG_WS_URL for the waiting-room lobby socket (mtg-682). -->
     <script src="server-config.js"></script>
+    <!-- Cloud deck storage (mtg-742): authoritative /auth/status login + R2
+         hydrate, shared with the deck editor. Used to offer a "Custom Decks
+         (Cloud)" group in the picker and make cloud decks playable. -->
+    <script src="deck_storage.js"></script>
     <style>
         :root {
             --bg: #0a0a14; --surface: #16213e; --surface-2: #0f3460;
@@ -480,7 +484,7 @@ import { buildRedirectQuery, IMAGE_SOURCE_IDS, forwardStickyParamsOnAnchor, forw
             filter: (deckName) => deckName.includes('chandra_tokens'),
         },
         custom: {
-            name: 'Custom Decks (Local)',
+            name: 'Custom Decks',
             filter: () => false, // handled separately from localStorage
         },
     };
@@ -513,6 +517,15 @@ import { buildRedirectQuery, IMAGE_SOURCE_IDS, forwardStickyParamsOnAnchor, forw
     // sideboard: [...] } — the exact DeckSubmission wire shape (mtg-682). This is
     // what lets the launcher CreateGame/JoinGame a real, valid deck without WASM.
     let allDeckContents = {};
+
+    // Cloud custom decks (mtg-742): hydrated from R2 when the server session
+    // (/auth/status) says we're logged in. Kept SEPARATE from the localStorage
+    // decks so the picker can show two clearly-labeled groups (Cloud vs Local).
+    // The deck <option> value for a cloud deck is prefixed `cloud:` so the play
+    // path resolves its cards from `cloudDecks`, not localStorage.
+    let cloudLoggedIn = false;
+    let cloudDecks = {}; // { name: { main_deck, sideboard } }
+    const CLOUD_OPT_PREFIX = 'cloud:';
 
     function getCustomDecks() {
         try {
@@ -645,16 +658,47 @@ import { buildRedirectQuery, IMAGE_SOURCE_IDS, forwardStickyParamsOnAnchor, forw
         deckSelect.innerHTML = '';
 
         if (collection === 'custom') {
-            const customDecks = getCustomDecks();
-            const names = Object.keys(customDecks).sort();
-            if (names.length === 0) {
-                deckSelect.appendChild(new Option('(No custom decks — use the Deck Editor)', ''));
-            } else {
-                for (const name of names) {
-                    const deck = customDecks[name];
-                    const count = (deck.main_deck || []).reduce((sum, pair) => sum + (pair[1] || 0), 0);
-                    deckSelect.appendChild(new Option(`${name} (${count} cards)`, name));
+            const localDecks = getCustomDecks();
+            const localNames = Object.keys(localDecks).sort();
+            const cloudNames = Object.keys(cloudDecks).sort();
+            const cardCount = (d) => (d.main_deck || []).reduce((s, p) => s + (p[1] || 0), 0);
+
+            // Group 1 — Custom Decks (Cloud), only when logged in. The option
+            // VALUE is `cloud:<name>` so the play path knows to resolve cards
+            // from the hydrated R2 collection, not localStorage.
+            if (cloudLoggedIn) {
+                const g = document.createElement('optgroup');
+                g.label = 'Custom Decks (Cloud)';
+                if (cloudNames.length === 0) {
+                    const o = new Option('(No cloud decks — save one in the Deck Editor)', '');
+                    o.disabled = true; g.appendChild(o);
+                } else {
+                    for (const name of cloudNames) {
+                        g.appendChild(new Option(`${name} (${cardCount(cloudDecks[name])} cards)`,
+                            CLOUD_OPT_PREFIX + name));
+                    }
                 }
+                deckSelect.appendChild(g);
+            }
+
+            // Group 2 — Custom Decks (Local Browser).
+            const lg = document.createElement('optgroup');
+            lg.label = cloudLoggedIn ? 'Custom Decks (Local Browser)' : 'Custom Decks';
+            if (localNames.length === 0) {
+                const o = new Option('(No local decks — use the Deck Editor)', '');
+                o.disabled = true; lg.appendChild(o);
+            } else {
+                for (const name of localNames) {
+                    lg.appendChild(new Option(`${name} (${cardCount(localDecks[name])} cards)`, name));
+                }
+            }
+            deckSelect.appendChild(lg);
+
+            // Sign-in hint when logged out (no cloud group shown).
+            if (!cloudLoggedIn) {
+                const o = new Option('— Sign in on the home page for cloud decks —', '');
+                o.disabled = true;
+                deckSelect.appendChild(o);
             }
         } else {
             const cfg = DECK_COLLECTIONS[collection];
@@ -744,8 +788,33 @@ import { buildRedirectQuery, IMAGE_SOURCE_IDS, forwardStickyParamsOnAnchor, forw
             : `Edit custom deck "${name}"`;
     }
 
+    /**
+     * When a CLOUD deck is selected, mirror its cards into localStorage under
+     * its plain name so EVERY downstream play path finds it (mtg-742). The
+     * network start already gets the cards via buildDeckSubmission → CreateGame,
+     * but the game-page boot path (game_boot_params.js / tui_game.html) resolves
+     * custom decks by name from localStorage — without this a cloud-only deck
+     * would be "not found / missing cards" there. Mirroring at selection time
+     * keeps the launch path identical for cloud and local decks.
+     */
+    function mirrorSelectedCloudDeck() {
+        const val = deckSelect.value;
+        if (!val || !val.startsWith(CLOUD_OPT_PREFIX)) return;
+        const name = val.slice(CLOUD_OPT_PREFIX.length);
+        const d = cloudDecks[name];
+        if (!d || !Array.isArray(d.main_deck)) return;
+        try {
+            const all = getCustomDecks();
+            all[name] = { main_deck: d.main_deck, sideboard: Array.isArray(d.sideboard) ? d.sideboard : [] };
+            localStorage.setItem(CUSTOM_DECKS_KEY, JSON.stringify(all));
+        } catch (e) {
+            console.warn('Could not mirror cloud deck to localStorage:', e);
+        }
+    }
+
     collectionSelect.addEventListener('change', updateDeckDropdown);
     deckSelect.addEventListener('change', refreshPlayEnabled);
+    deckSelect.addEventListener('change', mirrorSelectedCloudDeck);
     // mtg-nf6p6: persist the deck/collection picks so they survive a Back round
     // trip. (updateDeckDropdown runs first on a collection change and may reset
     // deckSelect.value, so save AFTER it via a second listener.)
@@ -763,6 +832,31 @@ import { buildRedirectQuery, IMAGE_SOURCE_IDS, forwardStickyParamsOnAnchor, forw
     }
 
     /** Load the built-in deck names WASM-free (same source deck_editor uses). */
+    /**
+     * Authoritative cloud hydration (mtg-742): ask the server /auth/status (the
+     * session cookie) whether we're signed in — NOT inherited sessionStorage —
+     * and, if so, fetch the user's R2 deck collection so the picker can offer a
+     * "Custom Decks (Cloud)" group. Best-effort: any failure leaves cloudDecks
+     * empty and the launcher works exactly as before (local-only).
+     */
+    async function hydrateCloudDecks() {
+        if (!window.DeckStorage) return;
+        try {
+            const status = await DeckStorage.authStatus();
+            cloudLoggedIn = !!(status && status.logged_in);
+        } catch (_) {
+            cloudLoggedIn = false;
+        }
+        if (!cloudLoggedIn) return;
+        try {
+            const { collection } = await DeckStorage.hydrate();
+            cloudDecks = collection || {};
+        } catch (e) {
+            console.warn('Could not hydrate cloud decks:', e);
+            cloudDecks = {};
+        }
+    }
+
     async function loadDeckNames() {
         try {
             const r = await fetch('./data/sets/index.json', { cache: 'no-store' });
@@ -1136,15 +1230,23 @@ import { buildRedirectQuery, IMAGE_SOURCE_IDS, forwardStickyParamsOnAnchor, forw
      *  WASM-free. Built-in decks come from index.json's deck_contents; custom
      *  decks from the shared localStorage key. Returns null if unavailable. */
     function buildDeckSubmission() {
-        const name = deckSelect.value;
-        if (!name) return null;
+        const val = deckSelect.value;
+        if (!val) return null;
         if (collectionSelect.value === 'custom') {
-            const decks = getCustomDecks();
-            const d = decks[name];
+            // A `cloud:<name>` option resolves its cards from the hydrated R2
+            // collection (mtg-742) — this is what makes a cloud deck PLAYABLE
+            // (previously the launcher only read localStorage, so a cloud-only
+            // deck would be "not found / missing cards" at launch).
+            let d;
+            if (val.startsWith(CLOUD_OPT_PREFIX)) {
+                d = cloudDecks[val.slice(CLOUD_OPT_PREFIX.length)];
+            } else {
+                d = getCustomDecks()[val];
+            }
             if (!d || !Array.isArray(d.main_deck)) return null;
             return { main_deck: d.main_deck, sideboard: Array.isArray(d.sideboard) ? d.sideboard : [] };
         }
-        const c = allDeckContents[name];
+        const c = allDeckContents[val];
         if (!c || !Array.isArray(c.main_deck)) return null;
         return { main_deck: c.main_deck, sideboard: Array.isArray(c.sideboard) ? c.sideboard : [] };
     }
@@ -1435,8 +1537,12 @@ import { buildRedirectQuery, IMAGE_SOURCE_IDS, forwardStickyParamsOnAnchor, forw
             autoUnready('');
             return;
         }
-        if (selectedDeckSize() < 40) {
-            setStatus('Pick a valid deck (40+ cards) before readying.', true);
+        const size = selectedDeckSize();
+        if (size < 40) {
+            setStatus(size === 0
+                ? 'This deck is EMPTY (0 cards) — open the Deck Editor and add cards, then save.'
+                : `This deck has only ${size} cards — a legal deck needs 40+. Edit it before readying.`,
+                true);
             return;
         }
         weAreReady = true;
@@ -1466,11 +1572,16 @@ import { buildRedirectQuery, IMAGE_SOURCE_IDS, forwardStickyParamsOnAnchor, forw
     }
 
     // Kick off deck loading, THEN connect the lobby socket (create/join needs a
-    // resolved deck). loadDeckNames resolves the dropdown; connect afterwards.
-    loadDeckNames().then(() => {
-        refreshReadyButton();
-        connectLobby();
-    });
+    // resolved deck). Hydrate cloud decks FIRST so the picker can render the
+    // "Custom Decks (Cloud)" group on the initial updateDeckDropdown() inside
+    // loadDeckNames. Cloud hydration is best-effort and never blocks the lobby.
+    hydrateCloudDecks()
+        .catch(() => {})
+        .then(loadDeckNames)
+        .then(() => {
+            refreshReadyButton();
+            connectLobby();
+        });
 })();
 </script>
 </body>

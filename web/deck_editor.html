@@ -329,6 +329,29 @@
         .saved-chip-del:hover { color: #ff8585; }
         .no-saved { font-size: 12px; color: var(--muted); font-style: italic; }
 
+        /* Cloud vs Local visual distinction. The Cloud section gets an accent
+           tint + ☁ badge; Local stays neutral with a 💾 badge, so it is
+           unmistakable which store a deck lives in. */
+        .store-badge { font-size: 12px; vertical-align: middle; }
+        .store-cloud { color: var(--accent); }
+        .store-local { color: var(--accent-2); }
+        #cloud-section {
+            background: rgba(76,201,240,0.06);
+            border-left: 2px solid var(--accent);
+        }
+        .cloud-note { font-size: 11.5px; color: var(--muted); line-height: 1.45; }
+        .cloud-acct-line { font-size: 11.5px; color: var(--text); margin-bottom: 6px; }
+        .cloud-acct-line #cloud-acct-who { color: var(--accent); font-weight: 600; }
+        /* Cloud deck chips read as cloud-tinted; local chips stay neutral. */
+        #cloud-list .saved-chip { background: rgba(76,201,240,0.12); border-color: rgba(76,201,240,0.4); }
+        #cloud-list .saved-chip:hover { border-color: var(--accent); }
+        .cloud-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin-top: 8px; }
+        .cloud-tools .migrate-opt { font-size: 11px; color: var(--muted); display: flex; align-items: center; gap: 4px; cursor: pointer; }
+        .cloud-tools button { padding: 5px 10px; font-size: 12px; }
+        .cloud-link-row { margin-top: 8px; }
+        .cloud-link-row a { font-size: 12px; }
+        .cloud-objpath { font-family: 'Consolas','Monaco',monospace; font-size: 10.5px; color: var(--muted); margin-top: 3px; word-break: break-all; }
+
         /* ── Import textarea modal-ish ────────────────────────────────── */
         .import-panel {
             display: none;
@@ -458,23 +481,48 @@
             </div>
         </div>
 
-        <!-- Saved decks + actions -->
-        <div class="controls-section saved-decks-wrap">
-            <h3>Saved Decks</h3>
-            <div class="saved-list" id="saved-list">
-                <span class="no-saved">No saved decks yet.</span>
-            </div>
+        <!-- Deck actions (Save destination is decided by login state). -->
+        <div class="controls-section">
             <div class="deck-actions">
                 <button id="btn-save" class="success">Save</button>
                 <button id="btn-export" class="ghost" title="Export as .dck text">Export .dck</button>
                 <button id="btn-import" class="ghost" title="Import from .dck text">Import .dck</button>
                 <button id="btn-clear" class="danger" title="Clear the current deck">Clear</button>
-                <!-- Cloud deck storage (mtg-742). Hidden unless the cloud feature
-                     flag is on (localStorage['mtg-deck-cloud']='1') or the user is
-                     signed in; shown by the init code below. -->
-                <button id="btn-download-decks" class="ghost" style="display:none"
-                        title="Download all your decks as a .tgz file (data liberation)">Download my decks</button>
                 <span id="action-status" class="status-msg"></span>
+            </div>
+        </div>
+
+        <!-- ── Saved Decks — CLOUD (auto-hydrated from R2 when signed in) ───── -->
+        <div class="controls-section saved-decks-wrap" id="cloud-section">
+            <h3>Saved Decks &mdash; Cloud <span id="cloud-badge" class="store-badge store-cloud">☁</span></h3>
+            <!-- Signed-out note (default); replaced by the account line + list
+                 when /auth/status says we're logged in. -->
+            <div id="cloud-signed-out" class="cloud-note">
+                Sign in with <strong>GitHub</strong> or <strong>Google</strong> on the
+                <a id="cloud-signin-link" href="index.html">home page</a> to use cloud decks
+                (they follow you between devices).
+            </div>
+            <div id="cloud-account" class="cloud-account" style="display:none;">
+                <div class="cloud-acct-line">Signed in<span id="cloud-acct-who"></span>.</div>
+                <div class="cloud-list saved-list" id="cloud-list">
+                    <span class="no-saved">No cloud decks yet.</span>
+                </div>
+                <div class="cloud-tools">
+                    <button id="btn-migrate-all" class="ghost" title="Copy every Local Browser deck into your cloud account">Migrate All &rarr;</button>
+                    <label class="migrate-opt"><input type="checkbox" id="migrate-delete-local"> Delete local copies after migrating</label>
+                </div>
+                <div class="cloud-link-row">
+                    <a id="btn-download-decks" href="#" title="Re-mint a fresh link and download your real collection.tgz">View / download my cloud collection</a>
+                    <div class="cloud-objpath" id="cloud-objpath"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ── Saved Decks — LOCAL BROWSER (localStorage) ──────────────────── -->
+        <div class="controls-section saved-decks-wrap">
+            <h3>Saved Decks &mdash; Local Browser <span class="store-badge store-local">💾</span></h3>
+            <div class="saved-list" id="saved-list">
+                <span class="no-saved">No saved decks yet.</span>
             </div>
         </div>
 
@@ -521,13 +569,17 @@
     <div class="import-box">
         <h3>Import .dck Deck</h3>
         <p style="margin:0; font-size:13px; color: var(--muted);">
-            Paste a deck in .dck format. Lines: <code>4 Card Name</code> or
+            Paste a deck in .dck format, or <strong>Upload</strong> a .dck file
+            from disk. Lines: <code>4 Card Name</code> or
             <code>4 Card Name|SET|[collector]</code>. Sections:
             <code>[Main]</code>, <code>[Sideboard]</code>.
         </p>
         <textarea id="import-text" placeholder="[metadata]&#10;Name=My Deck&#10;&#10;[Main]&#10;4 Lightning Bolt&#10;20 Mountain&#10;&#10;[Sideboard]&#10;2 Red Elemental Blast"></textarea>
+        <!-- Hidden file input driven by the Upload button below. -->
+        <input type="file" id="import-file" accept=".dck,text/plain" style="display:none;">
         <div class="row">
             <button id="btn-import-cancel" class="ghost">Cancel</button>
+            <button id="btn-import-upload" class="ghost" title="Read a .dck file from disk">Upload .dck…</button>
             <button id="btn-import-confirm">Import</button>
         </div>
         <span id="import-status" class="status-msg"></span>
@@ -641,6 +693,11 @@ const deckListEl     = document.getElementById('deck-list');
 const deckNameInput  = document.getElementById('deck-name');
 const actionStatus   = document.getElementById('action-status');
 const savedListEl    = document.getElementById('saved-list');
+const cloudListEl    = document.getElementById('cloud-list');
+const cloudSignedOut = document.getElementById('cloud-signed-out');
+const cloudAccount   = document.getElementById('cloud-account');
+const cloudAcctWho   = document.getElementById('cloud-acct-who');
+const cloudObjPath   = document.getElementById('cloud-objpath');
 
 // ── Card catalog loading ───────────────────────────────────────────────────
 
@@ -1281,35 +1338,24 @@ function readCustomDecks() {
     }
 }
 
-/** Write the full custom-decks object to localStorage. */
-function writeCustomDecks(obj) {
+/**
+ * Write the full custom-decks object to LOCAL BROWSER storage only.
+ * Cloud writes are now EXPLICIT and reported (see saveDeck / migrate), never an
+ * invisible background mirror — so the save indicator can honestly say where the
+ * deck went (requirement C) and migration is manual (requirement D).
+ */
+function writeCustomDecksLocalOnly(obj) {
     localStorage.setItem(CUSTOM_DECKS_KEY, JSON.stringify(obj));
-    // Cloud mirror (mtg-742): when the cloud flag is on, ALSO push to R2 with
-    // a debounced, If-Match conditional write. localStorage stays the
-    // source-of-truth for THIS device; R2 is the cross-device store. Failures
-    // here never block the local save (offline-tolerant by design).
-    maybeCloudSync(obj);
 }
 
-// Tracks the last-known remote ETag so conditional writes can detect a
-// cross-device clobber (a 412 → we re-hydrate and surface a hint).
+// ── Cloud state (authoritative login via /auth/status) ─────────────────────
+// `cloudLoggedIn` is set once on init from DeckStorage.authStatus(); the two
+// lists, the Save destination, and the migrate tools all read it. `_cloudEtag`
+// tracks the last-known R2 object ETag for conditional (If-Match) writes;
+// `_cloudCollection` is the last hydrated {name: deckObj} cloud view.
+let cloudLoggedIn = false;
 let _cloudEtag = null;
-let _cloudReady = false;
-function maybeCloudSync(obj) {
-    if (!window.DeckStorage || !window.DeckStorage.cloudEnabled()) return;
-    if (!_cloudReady) return; // don't push until the initial hydrate settled.
-    window.DeckStorage.saveDebounced(obj, _cloudEtag, (err, res) => {
-        if (err) {
-            if (err.conflict) {
-                showStatus('Your decks changed on another device — reload to merge.', 'err');
-            } else {
-                console.warn('cloud deck sync failed:', err);
-            }
-            return;
-        }
-        _cloudEtag = res.etag;
-    });
-}
+let _cloudCollection = {};
 
 /** Convert a Map<name,count> to the canonical [[name,count], ...] array form. */
 function mapToPairs(map) {
@@ -1339,35 +1385,71 @@ function pairsToMap(pairs) {
  */
 let editContext = { source: null, originalName: null };
 
+/** Count the cards in a {main_deck,sideboard} object (pairs form). */
+function deckCardCount(deckObj) {
+    const sum = (pairs) => (Array.isArray(pairs) ? pairs : []).reduce((s, p) => s + (p[1] || 0), 0);
+    return sum(deckObj && deckObj.main_deck) + sum(deckObj && deckObj.sideboard);
+}
+
+/** Card count of the CURRENT in-editor deck (main + sideboard). */
+function currentDeckCount() {
+    let n = 0;
+    for (const c of deck.main.values()) n += c;
+    for (const c of deck.sideboard.values()) n += c;
+    return n;
+}
+
 /**
- * Persist the current deck to localStorage. Returns the saved deck NAME (which
- * may differ from the typed name when a premade is saved as a "(copy)"), or
- * null if nothing was saved (empty deck). Callers like "Save and use" use the
- * return value to decide whether to navigate.
+ * Persist the current deck. Destination is decided by LOGIN state:
+ *   - logged in  → write to the CLOUD account (R2 PUT) AND keep a local mirror
+ *     (so the launcher, which plays from localStorage, can launch it). On a
+ *     cloud failure we keep the local copy and say so.
+ *   - logged out → write to LOCAL BROWSER (localStorage) only, as before.
+ * The save indicator reports exactly WHERE it went (requirement C).
+ *
+ * EMPTY-SAVE GUARD (requirement F): a deck with 0 cards is refused with a clear
+ * message — this is what produced the 86-byte metadata-only .dck in R2.
+ *
+ * Async: returns a Promise<string|null> with the saved name (or null on
+ * empty/no-op). "Save and use" awaits it before navigating.
  */
-function saveDeck() {
+async function saveDeck() {
     let name = deckNameInput.value.trim() || 'Unnamed Deck';
-    if (deck.main.size === 0 && deck.sideboard.size === 0) {
-        showStatus('Deck is empty — add some cards first.', 'err');
+    if (currentDeckCount() === 0) {
+        showStatus('⚠ This deck is empty — add some cards before saving.', 'err');
         return null;
     }
     const all = readCustomDecks();
-    // Editing a PREMADE always saves a copy: if the name still matches the
-    // premade we came from, derive a fresh "(copy)" name so we never shadow or
-    // claim to be the built-in deck. (Custom decks save in place.)
+    // Editing a PREMADE always saves a copy (never mutate the built-in).
     if (editContext.source === 'premade' && name === editContext.originalName) {
         name = uniqueCopyName(editContext.originalName + ' (copy)', all);
         deckNameInput.value = name;
-        showStatus('Saved a COPY as "' + name + '" (premade left unchanged).', 'ok');
-    } else {
-        showStatus('Saved "' + name + '"!', 'ok');
     }
-    all[name] = { main_deck: mapToPairs(deck.main), sideboard: mapToPairs(deck.sideboard) };
-    writeCustomDecks(all);
-    // After the first save of a premade copy, subsequent saves are an in-place
-    // custom-deck edit on that copy.
+    const deckObj = { main_deck: mapToPairs(deck.main), sideboard: mapToPairs(deck.sideboard) };
+    all[name] = deckObj;
     editContext = { source: 'custom', originalName: name };
-    renderSavedList();
+
+    // Always keep localStorage in sync (source of truth for THIS device + the
+    // launcher's play path). writeCustomDecksLocalOnly avoids the legacy
+    // debounced mirror; the explicit cloud PUT below is the authoritative path.
+    writeCustomDecksLocalOnly(all);
+    renderLocalList();
+
+    if (cloudLoggedIn) {
+        try {
+            const res = await DeckStorage.save(readCustomDecks(), _cloudEtag);
+            _cloudEtag = res.etag;
+            await refreshCloudList();
+            showStatus('☁ Saved "' + name + '" to your cloud account.', 'ok');
+        } catch (err) {
+            const reason = err && err.conflict
+                ? 'your decks changed on another device — reload to merge'
+                : (err && err.message ? err.message : 'unknown error');
+            showStatus('⚠ Cloud save failed (' + reason + ') — kept local copy of "' + name + '".', 'err');
+        }
+    } else {
+        showStatus('💾 Saved "' + name + '" to local browser.', 'ok');
+    }
     return name;
 }
 
@@ -1380,9 +1462,8 @@ function uniqueCopyName(base, all) {
     }
 }
 
-function loadDeckFromStorage(name) {
-    const all = readCustomDecks();
-    const entry = all[name];
+/** Load a deck object into the editor (shared by both stores). */
+function loadDeckObject(name, entry, storeLabel) {
     if (!entry) return;
     deckNameInput.value = name;
     deck.main = pairsToMap(entry.main_deck);
@@ -1390,36 +1471,51 @@ function loadDeckFromStorage(name) {
     editContext = { source: 'custom', originalName: name };
     renderDeck();
     renderCatalog();
-    showStatus('Loaded "' + name + '"', 'ok');
+    showStatus('Loaded "' + name + '" from ' + storeLabel + '.', 'ok');
+}
+
+function loadDeckFromStorage(name) {
+    const all = readCustomDecks();
+    loadDeckObject(name, all[name], 'local browser');
 }
 
 function deleteSavedDeck(name) {
     const all = readCustomDecks();
     delete all[name];
-    writeCustomDecks(all);
-    renderSavedList();
-    showStatus('Deleted "' + name + '"', 'ok');
+    writeCustomDecksLocalOnly(all);
+    renderLocalList();
+    showStatus('Deleted local "' + name + '"', 'ok');
 }
 
-function renderSavedList() {
-    const all = readCustomDecks();
-    const names = Object.keys(all).sort();
-    savedListEl.innerHTML = '';
+/**
+ * Render a store's decks as clickable chips with a delete button.
+ *   - listEl: the container element
+ *   - decks:  { name: deckObj } map
+ *   - onLoad(name): load that deck into the editor
+ *   - onDelete(name): remove it from its store
+ *   - emptyMsg: text when the store has no decks
+ * Shared by both the Cloud and Local lists so they look + behave identically
+ * (only the surrounding section's tint/badge differs).
+ */
+function renderDeckChips(listEl, decks, onLoad, onDelete, emptyMsg) {
+    const names = Object.keys(decks).sort();
+    listEl.innerHTML = '';
     if (names.length === 0) {
         const span = document.createElement('span');
         span.className = 'no-saved';
-        span.textContent = 'No saved decks yet.';
-        savedListEl.appendChild(span);
+        span.textContent = emptyMsg;
+        listEl.appendChild(span);
         return;
     }
     for (const name of names) {
+        const count = deckCardCount(decks[name]);
         const chip = document.createElement('span');
         chip.className = 'saved-chip';
-        chip.title = 'Load "' + name + '"';
+        chip.title = 'Load "' + name + '" (' + count + ' cards)';
 
         const label = document.createElement('span');
-        label.textContent = name;
-        label.addEventListener('click', () => loadDeckFromStorage(name));
+        label.textContent = name + ' (' + count + ')';
+        label.addEventListener('click', () => onLoad(name));
 
         const del = document.createElement('span');
         del.className = 'saved-chip-del';
@@ -1427,11 +1523,77 @@ function renderSavedList() {
         del.title = 'Delete "' + name + '"';
         del.addEventListener('click', (e) => {
             e.stopPropagation();
-            if (confirm('Delete saved deck "' + name + '"?')) deleteSavedDeck(name);
+            onDelete(name);
         });
 
         chip.append(label, del);
-        savedListEl.appendChild(chip);
+        listEl.appendChild(chip);
+    }
+}
+
+/** Render the LOCAL BROWSER list from localStorage. */
+function renderLocalList() {
+    renderDeckChips(
+        savedListEl,
+        readCustomDecks(),
+        loadDeckFromStorage,
+        (name) => { if (confirm('Delete local deck "' + name + '"?')) deleteSavedDeck(name); },
+        'No saved decks yet.',
+    );
+}
+
+// Back-compat alias: some call sites (and the e2e) still call renderSavedList().
+function renderSavedList() { renderLocalList(); }
+
+// ── Cloud deck list (R2, auto-hydrated when signed in) ─────────────────────
+
+/** Load a CLOUD deck into the editor (from the last hydrated collection). */
+function loadCloudDeck(name) {
+    loadDeckObject(name, _cloudCollection[name], 'cloud');
+}
+
+/**
+ * Delete a deck from the CLOUD account (R2 PUT of the collection minus that
+ * deck). Local copies are untouched (the two stores are independent).
+ */
+async function deleteCloudDeck(name) {
+    if (!confirm('Delete cloud deck "' + name + '"? (your local copy, if any, stays)')) return;
+    const next = {};
+    for (const [k, v] of Object.entries(_cloudCollection)) if (k !== name) next[k] = v;
+    try {
+        const res = await DeckStorage.save(next, _cloudEtag);
+        _cloudEtag = res.etag;
+        _cloudCollection = next;
+        renderCloudChips();
+        showStatus('Deleted cloud "' + name + '"', 'ok');
+    } catch (err) {
+        showStatus('⚠ Could not delete cloud deck: ' + (err && err.message ? err.message : 'unknown'), 'err');
+    }
+}
+
+/** Render the cloud chips from the last-hydrated `_cloudCollection`. */
+function renderCloudChips() {
+    renderDeckChips(
+        cloudListEl,
+        _cloudCollection,
+        loadCloudDeck,
+        deleteCloudDeck,
+        'No cloud decks yet.',
+    );
+}
+
+/** Re-fetch the cloud collection from R2 and re-render the cloud list. */
+async function refreshCloudList() {
+    if (!cloudLoggedIn) return;
+    try {
+        const { collection, etag } = await DeckStorage.hydrate();
+        _cloudCollection = collection || {};
+        _cloudEtag = etag;
+        renderCloudChips();
+    } catch (err) {
+        console.warn('cloud hydrate failed:', err);
+        cloudListEl.innerHTML = '<span class="no-saved">Could not load cloud decks (' +
+            (err && err.message ? err.message : 'offline') + ').</span>';
     }
 }
 
@@ -1463,6 +1625,7 @@ function exportDck() {
 const importPanel = document.getElementById('import-panel');
 const importText  = document.getElementById('import-text');
 const importStatus = document.getElementById('import-status');
+const importFile  = document.getElementById('import-file');
 
 function openImportPanel() {
     importText.value = '';
@@ -1475,18 +1638,22 @@ function closeImportPanel() {
     importPanel.classList.remove('open');
 }
 
-function confirmImport() {
-    const text = importText.value.trim();
-    if (!text) {
-        importStatus.textContent = 'Paste some deck text first.';
+/**
+ * Import a .dck from raw TEXT (shared by paste-Import and file-Upload, so both
+ * validate + load through the SAME path). Returns true on success.
+ */
+function importDckText(text) {
+    const trimmed = (text || '').trim();
+    if (!trimmed) {
+        importStatus.textContent = 'Paste some deck text or upload a .dck file first.';
         importStatus.className = 'status-msg err';
-        return;
+        return false;
     }
-    const parsed = parseDck(text);
+    const parsed = parseDck(trimmed);
     if (parsed.main.size === 0 && parsed.sideboard.size === 0) {
         importStatus.textContent = 'No valid card entries found. Check format.';
         importStatus.className = 'status-msg err';
-        return;
+        return false;
     }
     deck.main = parsed.main;
     deck.sideboard = parsed.sideboard;
@@ -1495,6 +1662,28 @@ function confirmImport() {
     renderDeck();
     renderCatalog();
     showStatus('Imported ' + (parsed.main.size + parsed.sideboard.size) + ' unique cards.', 'ok');
+    return true;
+}
+
+function confirmImport() {
+    importDckText(importText.value);
+}
+
+/** Read a chosen .dck file from disk and import it through importDckText. */
+function handleImportFile(file) {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+        // Drop the file's text into the textarea too, so the user can see/tweak
+        // it, then import through the shared path.
+        importText.value = String(reader.result || '');
+        importDckText(importText.value);
+    };
+    reader.onerror = () => {
+        importStatus.textContent = 'Could not read that file.';
+        importStatus.className = 'status-msg err';
+    };
+    reader.readAsText(file);
 }
 
 // ── Wire up events ─────────────────────────────────────────────────────────
@@ -1521,8 +1710,8 @@ filterCmc.addEventListener('change', renderCatalog);
     if (FROM_LAUNCHER) {
         saveBtn.textContent = 'Save and use';
         saveBtn.title = 'Save this deck and return to the launcher with it selected';
-        saveBtn.addEventListener('click', () => {
-            const savedName = saveDeck();
+        saveBtn.addEventListener('click', async () => {
+            const savedName = await saveDeck();
             if (!savedName) return; // empty deck — saveDeck already surfaced the error
             window.location.href = launcherReturnUrl(savedName);
         });
@@ -1577,6 +1766,13 @@ document.getElementById('btn-clear').addEventListener('click', () => {
 
 document.getElementById('btn-import-cancel').addEventListener('click', closeImportPanel);
 document.getElementById('btn-import-confirm').addEventListener('click', confirmImport);
+// Upload .dck: the visible button proxies to the hidden file input; selecting a
+// file reads it and imports through the same path as paste.
+document.getElementById('btn-import-upload').addEventListener('click', () => importFile.click());
+importFile.addEventListener('change', () => {
+    handleImportFile(importFile.files && importFile.files[0]);
+    importFile.value = ''; // allow re-picking the same file
+});
 
 // Close import panel on backdrop click.
 importPanel.addEventListener('click', (e) => {
@@ -1631,50 +1827,104 @@ async function loadEditTarget() {
 }
 
 renderDeck();
-renderSavedList();
+renderLocalList();
 loadCatalog();
 loadEditTarget();
 
-// ── Cloud deck storage bootstrap (mtg-742) ─────────────────────────────────
-// Additive + flag-gated: when localStorage['mtg-deck-cloud']='1', reveal the
-// "Download my decks" button, run a one-time additive migration of existing
-// localStorage decks into R2, hydrate the cross-device collection, and merge
-// any cloud-only decks into the local view. All best-effort; any failure
-// leaves the existing offline flow fully intact.
+// ── Cloud deck bootstrap (mtg-742) ─────────────────────────────────────────
+// AUTHORITATIVE + AUTO-HYDRATE (requirement A): ask the server /auth/status
+// (the session cookie) whether we're signed in — NOT inherited sessionStorage,
+// which is empty in a fresh browser that logged in directly. If signed in, show
+// the account line and AUTO-fetch + render the cloud collection from R2.
+// Migration is now MANUAL (requirement D): no migrateLocalStorage() on load.
 (async function initCloudDeckStorage() {
-    if (!window.DeckStorage || !window.DeckStorage.cloudEnabled()) return;
+    if (!window.DeckStorage) return;
+    let status;
+    try {
+        status = await DeckStorage.authStatus();
+    } catch (_) {
+        status = { logged_in: false };
+    }
+    cloudLoggedIn = !!(status && status.logged_in);
+
+    // Sign-in link → home page (login agent owns index.html). Keep any sticky
+    // params so identity/name survive the hop.
+    const signinLink = document.getElementById('cloud-signin-link');
+    if (signinLink) {
+        const qp = new URLSearchParams();
+        for (const k of ['name', 'ws']) { const v = EDITOR_QS.get(k); if (v) qp.set(k, v); }
+        const q = qp.toString();
+        if (q) signinLink.href = 'index.html?' + q;
+    }
+
+    if (!cloudLoggedIn) {
+        // Signed-out: show the note, hide the account block. Local-only path.
+        cloudSignedOut.style.display = '';
+        cloudAccount.style.display = 'none';
+        return;
+    }
+
+    // Signed in: reveal the account block, show who + where, auto-hydrate.
+    cloudSignedOut.style.display = 'none';
+    cloudAccount.style.display = '';
+    if (cloudAcctWho) {
+        const prov = status.provider ? (' via ' + status.provider) : '';
+        const who = status.display_name || status.suggested_name || '';
+        cloudAcctWho.textContent = prov + (who ? (' as ' + who) : '');
+    }
+
+    // Object-path transparency + durable download link (requirement C).
+    try {
+        const info = await DeckStorage.credentialsInfo();
+        if (info && info.object_key && cloudObjPath) {
+            cloudObjPath.textContent = info.object_key;
+        }
+    } catch (_) { /* best-effort */ }
+
     const dlBtn = document.getElementById('btn-download-decks');
     if (dlBtn) {
-        dlBtn.style.display = '';
-        dlBtn.addEventListener('click', async () => {
+        dlBtn.addEventListener('click', async (e) => {
+            e.preventDefault();
             try {
-                await window.DeckStorage.downloadMyDecks();
-            } catch (e) {
-                showStatus('Download failed: ' + e.message, 'err');
+                await DeckStorage.downloadMyDecks(); // re-mints a fresh presigned URL
+            } catch (err) {
+                showStatus('Download failed: ' + (err && err.message ? err.message : 'unknown'), 'err');
             }
         });
     }
-    try {
-        // One-time additive import of localStorage decks (never removes them).
-        await window.DeckStorage.migrateLocalStorage();
-        // Hydrate cross-device collection and merge cloud-only decks into the
-        // local view so a fresh device sees decks made elsewhere.
-        const { collection, etag } = await window.DeckStorage.hydrate();
-        _cloudEtag = etag;
-        const local = readCustomDecks();
-        let added = 0;
-        for (const [name, deck] of Object.entries(collection)) {
-            if (!(name in local)) { local[name] = deck; added++; }
-        }
-        if (added > 0) {
-            localStorage.setItem(CUSTOM_DECKS_KEY, JSON.stringify(local));
-            renderSavedList();
-        }
-        _cloudReady = true; // subsequent writeCustomDecks() pushes to R2.
-    } catch (e) {
-        console.warn('cloud deck storage init failed (offline-tolerant):', e);
-        // Leave _cloudReady false so we never push a half-initialized state.
+
+    // Migrate All → + delete-local checkbox (requirement D).
+    const migrateBtn = document.getElementById('btn-migrate-all');
+    const delLocalCb = document.getElementById('migrate-delete-local');
+    if (migrateBtn) {
+        migrateBtn.addEventListener('click', async () => {
+            const local = readCustomDecks();
+            const names = Object.keys(local);
+            if (names.length === 0) { showStatus('No local decks to migrate.', ''); return; }
+            migrateBtn.disabled = true;
+            showStatus('Migrating ' + names.length + ' deck(s) to cloud…', '');
+            try {
+                const res = await DeckStorage.migrateAll();
+                _cloudEtag = res.etag;
+                if (delLocalCb && delLocalCb.checked) {
+                    // Only after a SUCCESSFUL cloud write do we remove local copies.
+                    writeCustomDecksLocalOnly({});
+                    renderLocalList();
+                    showStatus('☁ Migrated ' + res.migrated + ' deck(s) to cloud and removed local copies.', 'ok');
+                } else {
+                    showStatus('☁ Migrated ' + res.migrated + ' deck(s) to cloud (local copies kept).', 'ok');
+                }
+                await refreshCloudList();
+            } catch (err) {
+                showStatus('⚠ Migration failed (' + (err && err.message ? err.message : 'unknown') +
+                    ') — local decks unchanged.', 'err');
+            } finally {
+                migrateBtn.disabled = false;
+            }
+        });
     }
+
+    await refreshCloudList();
 })();
 </script>
 </body>

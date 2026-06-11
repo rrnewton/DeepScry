@@ -276,6 +276,12 @@ pub async fn run_web_server(mut config: WebServerConfig) -> Result<()> {
         .route("/auth/callback/:provider", get(auth_callback_handler))
         .route("/auth/logout", axum::routing::post(auth_logout_handler))
         .route("/auth/status", get(auth_status_handler))
+        // DEV-ONLY test login (mtg-742): mint a real session WITHOUT a live
+        // OAuth round-trip, so the deck-storage R2 PUT/GET round-trip can be
+        // exercised end-to-end locally. Gated behind `MTG_DEV_LOGIN=1`; the
+        // route 404s in production (the env var is never set there). See
+        // dev_login_handler.
+        .route("/auth/dev-login", get(dev_login_handler))
         .fallback_service(static_with_cache)
         .with_state(state);
 
@@ -926,6 +932,49 @@ async fn auth_status_handler(headers: axum::http::HeaderMap, State(state): State
     )
 }
 
+/// `GET /auth/dev-login?provider=github&sub=<id>&name=<n>` — DEV-ONLY.
+///
+/// Mints a real session for a synthetic subject so the deck-storage R2
+/// round-trip (PUT on save, GET on auto-hydrate) can be exercised end-to-end on
+/// a local box without a live GitHub/Google authorization-code flow. This is
+/// the ONLY non-OAuth path to a session, so it is gated TWICE: (1) the
+/// `MTG_DEV_LOGIN` env var must be exactly `1` (never set in prod), and (2)
+/// OAuth state must be present (so identity/R2 keying behaves identically to a
+/// real login).
+///
+/// Without the env var it returns 404 — indistinguishable from a route that
+/// does not exist, so production never exposes it.
+async fn dev_login_handler(
+    axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
+    State(state): State<AppState>,
+) -> axum::response::Response {
+    if std::env::var("MTG_DEV_LOGIN").ok().as_deref() != Some("1") {
+        return (StatusCode::NOT_FOUND, "not found").into_response();
+    }
+    let Some(oauth) = state.oauth.as_ref() else {
+        return (StatusCode::SERVICE_UNAVAILABLE, "oauth not configured").into_response();
+    };
+    let provider = params
+        .get("provider")
+        .and_then(|p| Provider::parse_slug(p))
+        .unwrap_or(Provider::GitHub);
+    let subject_id = params.get("sub").cloned().unwrap_or_else(|| "dev-test-1".to_string());
+    let suggested_name = params.get("name").cloned().unwrap_or_else(|| "dev-tester".to_string());
+    let sid = oauth.create_session(provider, subject_id, suggested_name);
+    let mut resp = (StatusCode::OK, "dev session created").into_response();
+    // Dev-login runs against a LOCAL plain-HTTP box, where a `Secure` cookie
+    // would be dropped by the browser. Omit `Secure` for THIS dev-only cookie
+    // so the round-trip works over http://localhost. (Production logins still
+    // use the Secure set_cookie via the real OAuth callback.)
+    let cookie = format!(
+        "{SESSION_COOKIE}={sid}; Path=/; HttpOnly; SameSite=Lax; Max-Age={}",
+        30 * 24 * 60 * 60
+    );
+    resp.headers_mut()
+        .insert(axum::http::header::SET_COOKIE, HeaderValue::from_str(&cookie).unwrap());
+    resp
+}
+
 // (`serve_static_file_with_header` retired with mtg-620: the per-route
 // no-cache carve-outs it implemented are now handled by the global
 // `content_addressed_cache_header` middleware above.)
@@ -1044,7 +1093,26 @@ mod auth_session_tests {
         };
         Router::new()
             .route("/auth/status", get(auth_status_handler))
+            .route("/auth/dev-login", get(dev_login_handler))
             .with_state(state)
+    }
+
+    #[tokio::test]
+    async fn dev_login_is_404_without_env_gate() {
+        // SAFETY of the dev-only backdoor: with `MTG_DEV_LOGIN` unset (the
+        // production default), /auth/dev-login is indistinguishable from a
+        // missing route. We assert the unset path only (never SET the env var in
+        // a test — it is process-global and would leak into parallel tests).
+        if std::env::var("MTG_DEV_LOGIN").as_deref() == Ok("1") {
+            return; // someone deliberately enabled it; skip the negative check.
+        }
+        let app = test_app(OAuthState::new_for_test());
+        let req = Request::builder()
+            .uri("/auth/dev-login?provider=github&sub=x")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
     }
 
     #[tokio::test]

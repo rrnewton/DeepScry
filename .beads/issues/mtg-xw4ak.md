@@ -1,0 +1,22 @@
+---
+title: Apply R2 bucket CORS policy so browser PUT/GET works (blocks live cloud-deck round-trip)
+status: open
+priority: 2
+issue_type: task
+created_at: 2026-06-11T04:22:16.363622529+00:00
+updated_at: 2026-06-11T04:22:16.363622529+00:00
+---
+
+# Description
+
+The cloud-deck save/hydrate (mtg-742) works end-to-end EXCEPT the browser's direct R2 PUT/GET, which is blocked by a missing bucket CORS policy.
+
+## Evidence
+- Server presigned credentials are correct; direct (server-side, no-CORS) PUT/GET to the presigned URLs returns 200/200 byte-identical.
+- A browser CORS preflight (OPTIONS) to the presigned PUT URL returns 403 with NO Access-Control-Allow-Origin → the browser aborts with "Failed to fetch".
+- The deploy keys in .r2.env are OBJECT-scoped: PutBucketCors/GetBucketCors → AccessDenied. So this CANNOT be done from the app; it needs an admin/account-scoped R2 token (Cloudflare dashboard or S3 PutBucketCors).
+
+## Fix (one-time operator step)
+Apply scripts/r2-cors.json to the deepscry-decks bucket (now includes localhost:8080/8090 for dev + the deepscry.net origins). Steps documented in scripts/deepscry-deploy.env.example ("OUT-OF-BAND operator steps") and ai_docs/reference/R2_DECK_STORAGE.md.
+
+Once applied, re-run the real round-trip: start `mtg server-web` with secrets + MTG_DEV_LOGIN=1, then debug/r2_roundtrip.js should show PUT 200 + auto-hydrate GET in a fresh session. (Also rotate the R2 token before public launch, per the env file note.)
