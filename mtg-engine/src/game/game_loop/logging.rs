@@ -1049,6 +1049,16 @@ impl<'a> GameLoop<'a> {
                     format!("{source_name} ({source_id}) forces {player_name} to sacrifice {count} {sac_type}");
                 self.game.logger.gamelog(&message);
             }
+            Effect::SacrificeSelf { source } => {
+                let card_name = self
+                    .game
+                    .cards
+                    .try_get(*source)
+                    .map(|c| c.name.as_str().to_owned())
+                    .unwrap_or_else(|| format!("{source_name}"));
+                let message = format!("{card_name} is sacrificed");
+                self.game.logger.gamelog(&message);
+            }
             Effect::TapAll { .. } => {
                 let message = format!("{source_name} ({source_id}) taps all matching permanents");
                 self.game.logger.gamelog(&message);

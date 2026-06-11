@@ -4142,6 +4142,7 @@ impl GameState {
                     | crate::core::Effect::SacrificeAll { .. }
                     | crate::core::Effect::DamageAll { .. }
                     | crate::core::Effect::ForceSacrifice { .. }
+                    | crate::core::Effect::SacrificeSelf { .. }
                     | crate::core::Effect::TapAll { .. }
                     | crate::core::Effect::UntapAll { .. }
                     | crate::core::Effect::SetLife { .. }

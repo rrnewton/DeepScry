@@ -58,10 +58,17 @@ pub(crate) enum ActivatedAbilityType {
     /// Pump ability - boosts creature stats
     /// Example: Shivan Dragon "{R}: +1/+0 until end of turn"
     Pump { power: i32, toughness: i32 },
-    /// Destroy ability - destroys target permanent
-    /// Example: Royal Assassin "{T}: Destroy target tapped creature"
+    /// Destroy ability - destroys target permanent.
+    ///
+    /// `requires_tapped_target` is true when the ability description mentions
+    /// "tapped" (e.g. Royal Assassin) so the heuristic limits its search to
+    /// tapped creatures.  When false (e.g. Chaos Orb — "destroy all nontoken
+    /// permanents it touches"), any opponent permanent is a valid candidate.
+    ///
+    /// Example (requires_tapped=true):  Royal Assassin "{T}: Destroy target tapped creature"
+    /// Example (requires_tapped=false): Chaos Orb "{1},{T}: flip; destroy touched non-token permanents"
     /// Reference: DestroyAi.java in forge-ai
-    Destroy,
+    Destroy { requires_tapped_target: bool },
     /// Regenerate ability - adds a regeneration shield
     /// Example: Drudge Skeletons "{B}: Regenerate CARDNAME."
     Regenerate,

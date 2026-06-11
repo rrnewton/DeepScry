@@ -85,19 +85,21 @@ impl HeuristicController {
                         return true;
                     }
                 }
-                ActivatedAbilityType::Destroy => {
-                    // Destroy abilities (Royal Assassin, etc.)
+                ActivatedAbilityType::Destroy { requires_tapped_target } => {
+                    // Destroy abilities (Royal Assassin, Chaos Orb, etc.)
                     // Reference: DestroyAi.java in forge-ai
                     //
-                    // Royal Assassin specifically targets "tapped creatures", so this ability
-                    // is most valuable during/after opponent's combat when attackers are tapped.
+                    // When `requires_tapped_target` is true (Royal Assassin), the ability
+                    // targets only tapped creatures — most valuable after opponent attacks.
+                    // When false (Chaos Orb — any nontoken permanent), any opponent permanent
+                    // is a valid target so we are more permissive about when to fire it.
                     //
                     // Strategy:
                     // 1. Only use when we have a valid target (handled by game loop)
                     // 2. Prioritize high-value targets
                     // 3. Use during opponent's declare attackers or after blockers declared
+                    //    (tapped-target abilities); during main phases for general destroy.
 
-                    // Check timing - best used after opponent declares attackers
                     let current_step = view.current_step();
                     let is_combat = matches!(
                         current_step,
@@ -106,14 +108,26 @@ impl HeuristicController {
                             | crate::game::Step::CombatDamage
                     );
                     let is_end_phase = current_step == crate::game::Step::End;
+                    let is_main1 = current_step == crate::game::Step::Main1;
                     let is_main2 = current_step == crate::game::Step::Main2;
 
-                    // During combat or end phase - good time to destroy attackers
-                    // Reference: DestroyAi checks for phase restrictions
-                    if is_combat || is_end_phase || is_main2 {
-                        // Check if there are valuable tapped creatures to destroy
-                        if self.has_valuable_destroy_target(view) {
-                            return true;
+                    if requires_tapped_target {
+                        // Royal Assassin: best during/after opponent combat when
+                        // attackers are tapped.
+                        // Reference: DestroyAi checks for phase restrictions
+                        if is_combat || is_end_phase || is_main2 {
+                            if self.has_valuable_destroy_target(view, true) {
+                                return true;
+                            }
+                        }
+                    } else {
+                        // General destroy (Chaos Orb, etc.): any opponent permanent
+                        // is a valid target; prefer main phases to avoid tapping
+                        // mana/artefact needed for combat tricks.
+                        if is_main1 || is_main2 || is_end_phase {
+                            if self.has_valuable_destroy_target(view, false) {
+                                return true;
+                            }
                         }
                     }
                 }
@@ -291,11 +305,17 @@ impl HeuristicController {
             }
         }
 
-        // Check for destroy effects (Royal Assassin, Atog, etc.)
+        // Check for destroy effects (Royal Assassin, Chaos Orb, etc.)
         // Reference: DestroyAi.java in forge-ai
+        //
+        // Carry the `requires_tapped_target` flag so the heuristic knows
+        // whether to restrict its target search to tapped creatures (Royal
+        // Assassin) or any opponent permanent (Chaos Orb).
         for effect in &ability.effects {
             if matches!(effect, crate::core::Effect::DestroyPermanent { .. }) {
-                return ActivatedAbilityType::Destroy;
+                return ActivatedAbilityType::Destroy {
+                    requires_tapped_target: ability.cache.targets_tapped,
+                };
             }
         }
 
@@ -399,49 +419,71 @@ impl HeuristicController {
         self.has_valuable_ping_target(view, damage)
     }
 
-    /// Check if there's a valuable tapped creature we can destroy
-    /// Reference: DestroyAi.java - targets "best creature" from valid targets
+    /// Check if there's a valuable target we can destroy.
     ///
-    /// For Royal Assassin specifically, targets must be tapped creatures.
-    /// We evaluate based on creature value - prefer destroying high-power/value targets.
-    pub(crate) fn has_valuable_destroy_target(&self, view: &GameStateView) -> bool {
-        // Look for opponent's tapped creatures
-        // Royal Assassin can only target tapped creatures per card text
+    /// `requires_tapped_target`:
+    /// - `true`  (Royal Assassin): only tapped creatures qualify.
+    /// - `false` (Chaos Orb, etc.): any non-indestructible opponent permanent
+    ///   qualifies; creatures score higher than non-creatures.
+    ///
+    /// Reference: DestroyAi.java - targets "best creature" from valid targets
+    pub(crate) fn has_valuable_destroy_target(&self, view: &GameStateView, requires_tapped_target: bool) -> bool {
         let mut best_value = 0i32;
 
         for opponent_id in view.opponents() {
             for &card_id in view.battlefield() {
                 if let Some(card) = view.get_card(card_id) {
-                    if card.controller == opponent_id && card.is_creature() && card.tapped {
-                        // Check if creature has indestructible (can't destroy it)
-                        if card.has_keyword(Keyword::Indestructible) {
-                            continue;
-                        }
+                    if card.controller != opponent_id {
+                        continue;
+                    }
 
-                        // Evaluate this creature's value
-                        // Use power + toughness as a simple heuristic
+                    // For tapped-only abilities (Royal Assassin), skip untapped or non-creature.
+                    if requires_tapped_target && !(card.is_creature() && card.tapped) {
+                        continue;
+                    }
+
+                    // Check if permanent has indestructible (can't destroy it)
+                    if card.has_keyword(Keyword::Indestructible) {
+                        continue;
+                    }
+
+                    if card.is_creature() {
+                        // Evaluate creature value: power + toughness heuristic
                         let power = i32::from(card.current_power());
                         let toughness = i32::from(card.current_toughness());
                         let value = power * 10 + toughness * 5;
 
                         // Add bonus for dangerous keywords
-                        if card.has_keyword(Keyword::Deathtouch) {
-                            best_value = best_value.max(value + 50);
+                        let adjusted = if card.has_keyword(Keyword::Deathtouch) {
+                            value + 50
                         } else if card.has_keyword(Keyword::Lifelink) {
-                            best_value = best_value.max(value + 30);
+                            value + 30
                         } else if card.has_keyword(Keyword::FirstStrike) || card.has_keyword(Keyword::DoubleStrike) {
-                            best_value = best_value.max(value + 20);
+                            value + 20
                         } else {
-                            best_value = best_value.max(value);
-                        }
+                            value
+                        };
+                        best_value = best_value.max(adjusted);
+                    } else if !requires_tapped_target {
+                        // Non-creature permanent (land, artifact, enchantment):
+                        // only considered by general-destroy abilities (Chaos Orb).
+                        // Assign a flat "worth destroying" score of 25 — below the
+                        // creature threshold of 30, so creatures are preferred but
+                        // non-creature permanents are not ignored entirely.
+                        best_value = best_value.max(25);
                     }
                 }
             }
         }
 
-        // Only activate if there's a target worth destroying
-        // Threshold: at least a 2/2 creature (value 30)
-        best_value >= 30
+        // Threshold: at least a 2/2 creature value (power=2→20, toughness=2→10 → 30)
+        // or a non-creature permanent (25) for general-destroy.
+        // For tapped-creature-only abilities the original 30 is kept.
+        if requires_tapped_target {
+            best_value >= 30
+        } else {
+            best_value >= 25
+        }
     }
 
     /// Check if pumping this creature would enable better attacks

@@ -110,6 +110,7 @@ fn expand_all_players_effect(effect: &Effect, player_ids: &[PlayerId]) -> smallv
         | Effect::NoOp { .. }
         | Effect::GainLifeDynamic { .. }
         | Effect::ClassLevelUp { .. }
+        | Effect::SacrificeSelf { .. }
         | Effect::UnlessCostWrapper { .. }
         | Effect::CreateTokenDynamic { .. } => false,
     };
@@ -236,6 +237,7 @@ fn expand_all_players_effect(effect: &Effect, player_ids: &[PlayerId]) -> smallv
             | Effect::NoOp { .. }
             | Effect::GainLifeDynamic { .. }
             | Effect::ClassLevelUp { .. }
+            | Effect::SacrificeSelf { .. }
             | Effect::UnlessCostWrapper { .. }
             | Effect::CreateTokenDynamic { .. } => unreachable!(),
         })
@@ -3808,6 +3810,23 @@ impl GameState {
                 count,
             } => self.execute_force_sacrifice(*player, sac_type, *count)?,
 
+            // SacrificeSelf: sacrifice the source card itself.
+            // Resolved from placeholder at phase-trigger fire time; if the
+            // source has already left the battlefield (removed in response),
+            // silently skip (CR 603.10 / 608.2c fizzle rule).
+            Effect::SacrificeSelf { source } => {
+                if self.battlefield.cards.contains(source) {
+                    let owner = self.cards.get(*source).map(|c| c.owner).unwrap_or_else(|_| {
+                        self.players.first().map(|p| p.id).unwrap_or(PlayerId::new(0))
+                    });
+                    let dest = self.death_destination_for_card(*source);
+                    self.move_card(*source, Zone::Battlefield, dest, owner)?;
+                    log::debug!("SacrificeSelf: {:?} moved to {:?}", source, dest);
+                } else {
+                    log::debug!("SacrificeSelf: {:?} not on battlefield — fizzle", source);
+                }
+            }
+
             Effect::TapAll { restriction } => self.execute_tap_all(restriction)?,
             Effect::UntapAll { restriction } => self.execute_untap_all(restriction)?,
 
@@ -6035,6 +6054,37 @@ impl GameState {
                         },
                     };
                 }
+                // SacrificeSelf stored on a phase trigger has a placeholder
+                // source (`CardId::new(0)`). Resolve it to the actual trigger
+                // source card so the executor can move the right card to the
+                // graveyard. The UnlessCost payer (UnlessPayer$ You = controller)
+                // is also resolved here to a concrete numeric string, mirroring
+                // the Paralyze/UntapPermanent pattern.
+                // Pattern: Stasis / Aura Flux / Arcades Sabboth
+                //   "At the beginning of your upkeep, sacrifice CARDNAME unless you pay {cost}."
+                Effect::UnlessCostWrapper {
+                    inner_effect,
+                    unless_cost,
+                } if matches!(
+                    inner_effect.as_ref(),
+                    Effect::SacrificeSelf { source } if source.is_placeholder()
+                ) =>
+                {
+                    effect = Effect::UnlessCostWrapper {
+                        inner_effect: Box::new(Effect::SacrificeSelf { source: card_id }),
+                        unless_cost: crate::core::effects::UnlessCost {
+                            cost: unless_cost.cost.clone(),
+                            payer: controller.as_u32().to_string(),
+                            switched: unless_cost.switched,
+                        },
+                    };
+                }
+                // SacrificeSelf without an UnlessCost wrapper (bare self-sacrifice
+                // trigger). Also resolve the placeholder to the actual card.
+                Effect::SacrificeSelf { source } if source.is_placeholder() => {
+                    effect = Effect::SacrificeSelf { source: card_id };
+                }
+
                 _ => {}
             }
 

@@ -3065,6 +3065,30 @@ impl CardDefinition {
                                 }
                             }
 
+                            // DB$ Sacrifice (self-sacrifice) on a phase trigger.
+                            // Pattern: `DB$ Sacrifice | UnlessPayer$ You | UnlessCost$ U`
+                            // (Stasis, Aura Flux, Arcades Sabboth, Avatar of Discord, …)
+                            // "At the beginning of your upkeep, sacrifice CARDNAME unless you pay {cost}."
+                            //
+                            // `DB$ Sacrifice` with NO `SacValid$` means "sacrifice THIS card"
+                            // (Forge convention: absent SacValid means self-sacrifice). We
+                            // emit a `SacrificeSelf` with a placeholder source (`CardId::new(0)`)
+                            // wrapped in `UnlessCostWrapper`; the phase-trigger executor in
+                            // `check_triggers_for_controller` resolves the placeholder to the
+                            // actual source `CardId` at fire time.
+                            if svar_params.api_type == ApiType::Sacrifice
+                                && svar_params.get("SacValid").is_none()
+                            {
+                                let sac_self = crate::core::Effect::SacrificeSelf {
+                                    source: crate::core::CardId::new(0), // placeholder
+                                };
+                                let wrapped = crate::loader::effect_converter::wrap_with_unless_cost(
+                                    sac_self,
+                                    svar_params,
+                                );
+                                effects.push(wrapped);
+                            }
+
                             // Fallback for counter-driven self-relocation chains
                             // (All Hallow's Eve's TrigRemoveCounter →
                             // DBMoveToGraveyard → DBResurrection). We deliberately

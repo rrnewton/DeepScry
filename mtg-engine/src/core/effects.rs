@@ -1432,6 +1432,19 @@ pub enum Effect {
         count: u8,
     },
 
+    /// Sacrifice the source card itself ("sacrifice CARDNAME").
+    ///
+    /// Used for `DB$ Sacrifice` with no `SacValid$` — the card sacrifices
+    /// itself, optionally wrapped in `UnlessCostWrapper` (Stasis, Aura Flux,
+    /// Arcades Sabboth: "at the beginning of your upkeep, sacrifice CARDNAME
+    /// unless you pay {cost}"). The `source` field is a placeholder
+    /// (`CardId::new(0)`) when stored on the trigger; the phase-trigger
+    /// executor resolves it to the actual source `CardId` at fire time.
+    SacrificeSelf {
+        /// The card to sacrifice (placeholder until resolved at trigger time)
+        source: crate::core::CardId,
+    },
+
     /// Tap all permanents matching a filter
     /// Example: "Tap all creatures your opponents control" (Cryptic Command)
     TapAll { restriction: TargetRestriction },
@@ -2621,6 +2634,7 @@ impl Effect {
             | Effect::ClassLevelUp { .. }
             | Effect::ReturnGraveyardCardToHand { .. }
             | Effect::ReturnGraveyardCardToZone { .. }
+            | Effect::SacrificeSelf { .. }
             | Effect::Unimplemented { .. }
             | Effect::NoOp { .. } => EffectTargetCategory::NoTargetNeeded,
 

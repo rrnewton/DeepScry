@@ -512,8 +512,8 @@ impl HeuristicController {
                     // Firebreathing/pump abilities (Shivan Dragon, Granite Gargoyle)
                     value += 5 + power * 3 + toughness * 2;
                 }
-                ActivatedAbilityType::Destroy => {
-                    // Destroy abilities are extremely valuable (Royal Assassin)
+                ActivatedAbilityType::Destroy { .. } => {
+                    // Destroy abilities are extremely valuable (Royal Assassin, Chaos Orb)
                     value += 40;
                 }
                 ActivatedAbilityType::Regenerate => {

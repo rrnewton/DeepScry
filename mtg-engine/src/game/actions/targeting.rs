@@ -664,6 +664,7 @@ impl GameState {
                             | Effect::DamageAll { .. }
                             | Effect::LoseLife { .. }
                             | Effect::ForceSacrifice { .. }
+                            | Effect::SacrificeSelf { .. }
                             | Effect::TapAll { .. }
                             | Effect::UntapAll { .. }
                             | Effect::SetLife { .. }
@@ -733,6 +734,7 @@ impl GameState {
                 | Effect::AddPhase { .. }
                 | Effect::AttachEquipment { .. }
                 | Effect::ForceSacrifice { .. }
+                | Effect::SacrificeSelf { .. }
                 | Effect::TapAll { .. }
                 | Effect::UntapAll { .. }
                 | Effect::SetLife { .. }
@@ -1348,6 +1350,7 @@ impl GameState {
                 | Effect::ClassLevelUp { .. }
                 | Effect::EachDamage { .. }
                 | Effect::ForceSacrifice { .. }
+                | Effect::SacrificeSelf { .. }
                 | Effect::TapAll { .. }
                 | Effect::SetLife { .. }
                 | Effect::ChooseColor { .. }
@@ -1679,6 +1682,7 @@ impl GameState {
             | Effect::DamageAll { .. }
             | Effect::LoseLife { .. }
             | Effect::ForceSacrifice { .. }
+            | Effect::SacrificeSelf { .. }
             | Effect::TapAll { .. }
             | Effect::UntapAll { .. }
             | Effect::SetLife { .. }
