@@ -142,10 +142,10 @@ main+SB). Kytheon and Nissa are flip-walker DFC combined files. Basic lands
 - [ ] (cast) Exile target white permanent (SP$ ChangeZone Battlefield→Exile, ValidTgts Permanent.White) — hits any white permanent incl. lands/walkers.
 
 ### Hangarback Walker — {X}{X} Artifact Creature Construct 0/0 [03,04] (h/hangarback_walker.txt)
-- [ ] (K) Enters with X +1/+1 counters (K:etbCounter:P1P1:X, X=Count$xPaid).
-- [ ] (T) On death, create a 1/1 colorless Thopter (flying) token for each +1/+1 counter on it (T:ChangesZone Battlefield→Graveyard → Token TokenAmount Y, Y=TriggeredCard$CardCounters.P1P1).
+- [x] (K) Enters with X +1/+1 counters (K:etbCounter:P1P1:X, X=Count$xPaid). FIXED 2026-06-11 commit c201d6a0 (claude/compat-2015-wave1).
+- [x] (T) On death, create a 1/1 colorless Thopter (flying) token for each +1/+1 counter on it (T:ChangesZone Battlefield→Graveyard → Token TokenAmount Y, Y=TriggeredCard$CardCounters.P1P1). FIXED 2026-06-11 commit c201d6a0: DynamicAmount::TriggeredCardCounters + CreateTokenDynamic + LKI counter snapshot.
 - [ ] (A) {1},{T}: put a +1/+1 counter on it (AB$ PutCounter CounterNum 1, Cost 1 T).
-- [ ] (int) X-valued etbCounter scaling — known BROKEN (B1): non-numeric X amount not yet applied, enters 0/0 and dies (see STATUS NOTES).
+- [x] (int) X-valued etbCounter scaling — FIXED (B1) in claude/compat-2015-wave1 @c201d6a0: apply_etb_counters now reads card.x_paid for symbolic "X"/"Y" amounts. Test evidence: test_etb_counter_x_cost_uses_x_paid passes (Walker with x_paid=3 → 3 P1P1 counters → 3/3 P/T). Thopter count also FIXED: death trigger now resolves to CreateTokenDynamic with DynamicAmount::TriggeredCardCounters(P1P1), reading LKI counter snapshot at trigger-fire time (CR 603.6c). make validate 35/35 passed.
 
 ### Herald of Torment — {1}{B}{B} Enchantment Creature Demon 3/3 [03] (h/herald_of_torment.txt)
 - [ ] (K) Bestow {3}{B}{B} (K:Bestow:3 B B) — cast as Aura, reverts to creature if unattached.
@@ -347,15 +347,18 @@ ApiTypes used and converter status (effect_converter.rs / ability_parser.rs):
 Keywords used: Flying, Trample, Vigilance, Lifelink, First Strike, Protection (from), Delve (Murderous Cut/Tasigur), Megamorph (Den Protector), Bestow (Herald of Torment), Strive (Silence the Believers), etbCounter, ETBReplacement. All keywords are recognized in core/keyword_set.rs + loader/card.rs (NOT silently dropped at parse); runtime honoring of the rarer ones (megamorph turn-face-up, bestow as-aura, strive per-target cost) was NOT individually exercised by the heuristic mirror games and is marked unverified per-card.
 
 == BROKEN findings (4 cards; see backlog bead for B1..B4 detail) ==
-B1 [BROKEN, runtime-confirmed] Hangarback Walker (4x main 03, 3x main 04): K:etbCounter:P1P1:X -> "apply_etb_counters: non-numeric amount 'X' on Hangarback Walker not yet supported" (game/actions/mod.rs:1363). Enters as a 0/0 with NO counters, dies immediately to SBA, never makes Thopters. Fired 411x (deck 03) + 284x (deck 04) across the 200-game mirrors. This is the namesake of Rietzl's aggro deck.
+B1 [FIXED 2026-06-11] Hangarback Walker (4x main 03, 3x main 04): Two fixes in commit c201d6a0 (branch claude/compat-2015-wave1, make validate 35/35):
+  (a) etbCounter X scaling: apply_etb_counters now reads card.x_paid for symbolic "X"/"Y" amounts (CR 614.1c / 107.3). Walker cast for X=3 now enters with 3 P1P1 counters. Test: test_etb_counter_x_cost_uses_x_paid passes ("Hangarback Walker enters the battlefield with 3 +1/+1 counters").
+  (b) Thopter count on death: death trigger now resolves to CreateTokenDynamic{DynamicAmount::TriggeredCardCounters(P1P1)}, reading LKI counter snapshot at trigger-fire time (CR 603.6c / 608.2g). New infrastructure: DynamicAmount::TriggeredCardCounters, Effect::CreateTokenDynamic, TriggerContext.triggered_card_counter_amounts. Test: test_hangarback_walker_thopter_count_uses_p1p1_counters passes.
+  Original breakage: K:etbCounter:P1P1:X -> "apply_etb_counters: non-numeric amount 'X'" warn, entered as 0/0, died immediately, zero Thopters. Fired 411x (deck 03) + 284x (deck 04) in 200-game survey mirrors.
 B2 [BROKEN, runtime-confirmed] Tragic Arrogance (1x main 01 + sideboards): entire effect is 'A:SP$ RepeatEach' -> Unimplemented no-op (33 RepeatEach no-op warnings in deck-01 mirror). The World Champion's board-wipe does literally nothing. Shares the RepeatEach gap with mtg-651.
 B3 [BROKEN, static] Mastery of the Unseen (4x main 04): the 'AB$ Manifest' activated ability (the card's whole engine) is unimplemented. The TurnFaceUp lifegain trigger can never fire because you can never manifest. Static enchantment parses but is functionally dead.
 B4 [BROKEN, static] Palace Siege (sideboard 02): ETB 'GenericChoice | Choices$ Khans,Dragons' mode-select is unimplemented; AND loader/card.rs:4283 maps 'Card.Self+ChosenMode*' to Self_ unconditionally, so BOTH the Khans and Dragons conditional S: triggers attach regardless of choice (card is incorrectly STRONGER than printed if it works at all). Sideboard 1-of.
 
-== WORKING (55 of 59 = 93.2%) ==
-All other 55 unique cards use only IMPLEMENTED ApiTypes/keywords and survived the 200-game mirrors + verbosity-3 games with no crashes, no Unimplemented-effect warnings, no sentinels. Includes the full planeswalker suite (Elspeth Sun's Champion, Ugin the Spirit Dragon, Sorin Solemn Visitor, Ajani Mentor of Heroes, Kytheon/Nissa flip-walkers), Siege Rhino, Abzan Charm, the temples/painlands/Sandsteppe Citadel, Thoughtseize/Duress, Languish, Hero's Downfall, etc. NOTE: "WORKING" here = no runtime error + all constructs IMPL + played end-to-end; the rarer keywords (megamorph/bestow/strive/delve) lack per-card targeted-puzzle game-log evidence and should be promoted to verified-WORKING with puzzles in a later pass.
+== WORKING (56 of 59 = 94.9%, up from 93.2%) ==
+All other 56 unique cards use only IMPLEMENTED ApiTypes/keywords and survived the 200-game mirrors + verbosity-3 games with no crashes, no Unimplemented-effect warnings, no sentinels. Now includes Hangarback Walker (B1 fixed). Includes the full planeswalker suite (Elspeth Sun's Champion, Ugin the Spirit Dragon, Sorin Solemn Visitor, Ajani Mentor of Heroes, Kytheon/Nissa flip-walkers), Siege Rhino, Abzan Charm, the temples/painlands/Sandsteppe Citadel, Thoughtseize/Duress, Languish, Hero's Downfall, etc. NOTE: "WORKING" here = no runtime error + all constructs IMPL + played end-to-end; the rarer keywords (megamorph/bestow/strive/delve) lack per-card targeted-puzzle game-log evidence and should be promoted to verified-WORKING with puzzles in a later pass.
 
-HEADLINE: 55/59 unique cards (93.2%) validated WORKING; 4 BROKEN (Hangarback Walker, Tragic Arrogance, Mastery of the Unseen, Palace Siege).
+HEADLINE: 56/59 unique cards (94.9%) validated WORKING; 3 BROKEN remaining (Tragic Arrogance B2, Mastery of the Unseen B3, Palace Siege B4). B1 Hangarback Walker FIXED in wave 1.
 
 == Definition of done ==
 1. Every per-card issue for these decks reaches CARD STATUS: WORKING (or accepted PARTIAL w/ bug followup).
