@@ -2084,7 +2084,19 @@ impl GameState {
     }
 
     /// Check if a card matches a type filter string (static method)
-    fn card_matches_type_filter_static(card: &crate::core::Card, type_filter: &str) -> bool {
+    /// Whether `card` matches a simple bare type/subtype filter string: one of
+    /// the permanent card types (`Land`/`Creature`/`Artifact`/`Enchantment`),
+    /// `Permanent` (any), else treated as a subtype. This is the ONE shared
+    /// implementation for the "count/find permanents of a controlled type"
+    /// helpers (mtg-907 DRY: the byte-identical `GameLoop::card_matches_type_filter`
+    /// copy was deleted and routed here).
+    ///
+    /// NOTE: this is the *simple* type/subtype filter (no `.`/`+` qualifier
+    /// grammar). It is distinct from `card_matches_search_filter` (the
+    /// `Type.Subtype` / comma-list fetch grammar) and from
+    /// `TargetRestriction::parse` (the `ValidTgts` `.`-modifier grammar) — those
+    /// are genuinely different DSLs, not duplicates of this one.
+    pub(crate) fn card_matches_type_filter_static(card: &crate::core::Card, type_filter: &str) -> bool {
         match type_filter {
             "Land" => card.is_land(),
             "Creature" => card.is_creature(),

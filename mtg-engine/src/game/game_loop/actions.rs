@@ -470,28 +470,11 @@ impl<'a> GameLoop<'a> {
             .cards
             .iter()
             .filter(|&&card_id| {
-                self.game
-                    .cards
-                    .try_get(card_id)
-                    .is_some_and(|c| c.controller == player_id && Self::card_matches_type_filter(c, type_filter))
+                self.game.cards.try_get(card_id).is_some_and(|c| {
+                    c.controller == player_id && crate::game::GameState::card_matches_type_filter_static(c, type_filter)
+                })
             })
             .count()
-    }
-
-    /// Check if a card matches a type filter string
-    fn card_matches_type_filter(card: &crate::core::Card, type_filter: &str) -> bool {
-        match type_filter {
-            "Land" => card.is_land(),
-            "Creature" => card.is_creature(),
-            "Artifact" => card.is_artifact(),
-            "Enchantment" => card.is_enchantment(),
-            "Permanent" => true, // Any permanent matches
-            _ => {
-                // Try matching as a subtype
-                let subtype = crate::core::Subtype::new(type_filter);
-                card.subtypes.contains(&subtype)
-            }
-        }
     }
 
     /// Push castable spells directly to abilities_buffer
