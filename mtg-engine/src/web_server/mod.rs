@@ -895,9 +895,12 @@ async fn auth_status_handler(headers: axum::http::HeaderMap, State(state): State
     };
     let logged_in = session.is_some();
     let user_id = session.as_ref().map(|s| s.identity.user_id().to_string());
-    // Non-authoritative friendly handle for the web UI to pre-fill the lobby
-    // display-name box (mtg-742). Omitted/empty for guests; the stable
-    // `user_id` is what identity + R2 prefix key on, never this.
+    // Non-authoritative display fields for the landing page's logged-in view
+    // ("Signed in via GitHub as octocat") and lobby name pre-fill (mtg-742).
+    // Omitted/empty for guests; the stable `user_id` is what identity + R2
+    // prefix key on, NEVER any of these display fields.
+    let provider = session.as_ref().map(|s| s.provider.slug());
+    let display_name = session.as_ref().and_then(|s| s.display_name().map(str::to_owned));
     let suggested_name = session
         .as_ref()
         .map(|s| s.suggested_name.clone())
@@ -910,6 +913,8 @@ async fn auth_status_handler(headers: axum::http::HeaderMap, State(state): State
             "oauth_enabled": github || google,
             "logged_in": logged_in,
             "user_id": user_id,
+            "provider": provider,
+            "display_name": display_name,
             "suggested_name": suggested_name,
         })),
     )

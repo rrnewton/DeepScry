@@ -125,17 +125,44 @@
         .status-line.err { color: var(--danger); }
         .status-line.ok { color: var(--ok); }
 
-        /* Games table */
+        /* Games table — DENSER rows (mtg-742 lobby redesign): tighter vertical
+           padding so more rows fit in the same height. */
         table { width: 100%; border-collapse: collapse; margin-top: 6px; font-size: 13px; }
-        th, td { padding: 8px 6px; border-bottom: 1px solid var(--border); text-align: left; }
+        th, td { padding: 5px 6px; border-bottom: 1px solid var(--border); text-align: left; }
         th { color: var(--muted); font-weight: 600; text-transform: uppercase; font-size: 11px; }
         tr.empty td { color: var(--muted); text-align: center; padding: 16px; }
-        td .pw { width: 110px; padding: 5px 7px; font-size: 12px; }
-        td button { padding: 5px 12px; font-size: 12px; }
+        td .pw { width: 110px; padding: 4px 7px; font-size: 12px; }
+        td button { padding: 4px 12px; font-size: 12px; }
 
-        /* Scrollable games container + filter/pagination controls. */
+        /* Wide "Create a Game" bar spanning the top of the lobby: game name +
+           passcode side by side, small inline Create button (mtg-742). */
+        .create-bar {
+            display: grid;
+            grid-template-columns: 1fr 1fr auto;
+            gap: 12px;
+            align-items: end;
+        }
+        @media (max-width: 720px) { .create-bar { grid-template-columns: 1fr; } }
+        .create-bar .create-go { align-self: end; }
+        .create-bar #btn-create { padding: 8px 18px; white-space: nowrap; }
+
+        /* Header row for a list pane: title on the left, an inline control
+           (e.g. Refresh) on the right. */
+        .list-head {
+            display: flex; align-items: baseline; justify-content: space-between;
+            gap: 8px; margin: 0 0 2px;
+        }
+        .list-head h3 { margin: 0; }
+        .list-head button {
+            padding: 4px 12px; font-size: 12px;
+            background: transparent; border: 1px solid var(--accent); color: var(--accent);
+        }
+
+        /* Scrollable games container + filter/pagination controls. Taller so at
+           least 8 dense rows are visible (mtg-742). */
         .games-scroll {
-            max-height: 280px;
+            max-height: 360px;
+            min-height: 280px;
             overflow-y: auto;
             border: 1px solid var(--border);
             border-radius: 6px;
@@ -251,10 +278,28 @@
     <div id="pane-name" class="card">
         <h2>Sign in</h2>
 
+        <!-- Logged-in view (OAuth). Shown when /auth/status reports
+             logged_in:true: the signed-in identity plus a real Log out button
+             that POSTs /auth/logout and returns to the signed-out state. -->
+        <div id="oauth-signed-in" style="display:none; margin: 4px 0 16px;">
+            <p style="margin: 4px 0 12px; font-size: 15px;">
+                ✅ <strong>Signed in</strong> via <strong id="oauth-provider-name">your provider</strong><span id="oauth-as-name"></span>.
+                Your custom decks save to the cloud and follow you across devices.
+            </p>
+            <div class="row" style="gap: 10px;">
+                <button type="button" id="btn-oauth-logout">Log out</button>
+            </div>
+            <div style="height: 16px;"></div>
+            <div style="border-top: 1px solid var(--border); margin: 4px 0 14px;"></div>
+            <p style="color: var(--muted); margin: 4px 0 6px; font-size: 13px;">
+                Pick a display name for the lobby below to continue.
+            </p>
+        </div>
+
         <!-- OAuth login choices. Shown only when the server has the matching
-             provider configured (filled in by /auth/status). Signing in with
-             GitHub or Google gives you a durable cloud deck collection that
-             follows you across devices. -->
+             provider configured (filled in by /auth/status) AND you are not
+             already signed in. Signing in with GitHub or Google gives you a
+             durable cloud deck collection that follows you across devices. -->
         <div id="oauth-choices" style="display:none; margin: 4px 0 16px;">
             <p style="color: var(--muted); margin: 4px 0 12px;">
                 Sign in to save your custom decks to the cloud (they follow you across devices):
@@ -287,6 +332,16 @@
                 <button type="submit" id="btn-name">Continue as ephemeral</button>
             </div>
         </form>
+        <!-- Privacy reassurance for SIGNED-IN (OAuth) users picking a lobby
+             name: only the chosen username is public; email / GitHub / Google
+             identity stay private; the sign-in identity is what your saved deck
+             collection is tied to. Shown only on the OAuth path (toggled in
+             renderSignedIn / renderSignedOut). -->
+        <p id="oauth-privacy-note" style="display:none; color: var(--muted); margin: 8px 0 0; font-size: 13px; line-height: 1.5;">
+            🔒 Only the <strong>username you pick above</strong> is shown to other players. Your
+            <strong>email and your GitHub/Google identity are never revealed</strong> to anyone you play with.
+            Your sign-in is used privately to <strong>save and load your deck collection</strong> across devices.
+        </p>
         <p id="name-status" class="status-line"></p>
     </div>
 
@@ -299,59 +354,37 @@
                 &middot; <a href="#" id="btn-logout">change name</a>
             </span></h2>
 
-            <div class="grid-2" style="margin-top: 8px;">
-
-                <!-- Create -->
+            <!-- Create a Game — WIDE bar across the top: game name + passcode
+                 side by side, small inline Create button (mtg-742 redesign). -->
+            <form id="create-form" class="create-bar" autocomplete="off" style="margin-top: 10px;">
                 <div>
-                    <h3>Create a Game</h3>
-                    <form id="create-form" autocomplete="off">
-                        <label for="create-game">Game Name (required)</label>
-                        <input type="text" id="create-game" maxlength="40" placeholder="e.g. friday-night-magic" required>
-                        <div style="height: 8px;"></div>
-                        <label for="create-pass">Passcode (optional, share with friend)</label>
-                        <div class="pw-wrap">
-                            <input type="password" id="create-pass" maxlength="40" placeholder="leave blank for open game">
-                            <button type="button" class="pw-toggle" data-target="create-pass"
-                                    aria-label="Show passcode" aria-pressed="false" title="Show passcode">
-                            </button>
-                        </div>
-                        <div class="row">
-                            <button type="submit" id="btn-create">Create Game</button>
-                            <button type="button" class="ghost" id="btn-refresh">Refresh List</button>
-                        </div>
-                    </form>
-                    <p id="create-status" class="status-line"></p>
-
-                    <!-- Logged-in players (same treatment as Open Games:
-                         text filter, "Showing N of M" count, paginated cap) -->
-                    <h3 style="margin-top: 18px;">Logged-in Players</h3>
-                    <div class="games-filter">
-                        <input type="text" id="players-filter" maxlength="40"
-                               placeholder="Filter by player name&hellip;"
-                               aria-label="Filter players">
-                    </div>
-                    <div class="games-scroll">
-                        <table id="players-table">
-                            <thead>
-                                <tr><th>Player</th></tr>
-                            </thead>
-                            <tbody id="players-tbody">
-                                <tr class="empty"><td>No players logged in.</td></tr>
-                            </tbody>
-                        </table>
-                    </div>
-                    <div class="games-pager">
-                        <span id="players-count">Showing 0 of 0</span>
-                        <span>
-                            <button type="button" id="players-prev" disabled>&lt; prev</button>
-                            <button type="button" id="players-next" disabled>next &gt;</button>
-                        </span>
+                    <label for="create-game">Game Name (required)</label>
+                    <input type="text" id="create-game" maxlength="40" placeholder="e.g. friday-night-magic" required>
+                </div>
+                <div>
+                    <label for="create-pass">Passcode (optional, share with friend)</label>
+                    <div class="pw-wrap">
+                        <input type="password" id="create-pass" maxlength="40" placeholder="leave blank for open game">
+                        <button type="button" class="pw-toggle" data-target="create-pass"
+                                aria-label="Show passcode" aria-pressed="false" title="Show passcode">
+                        </button>
                     </div>
                 </div>
+                <div class="create-go">
+                    <button type="submit" id="btn-create">Create</button>
+                </div>
+            </form>
+            <p id="create-status" class="status-line"></p>
 
-                <!-- Open games -->
+            <!-- Open Games + Logged-in Players SIDE BY SIDE, equal height. -->
+            <div class="grid-2" style="margin-top: 14px; align-items: start;">
+
+                <!-- Open games (Refresh List lives in THIS list's header). -->
                 <div>
-                    <h3>Open Games</h3>
+                    <div class="list-head">
+                        <h3>Open Games</h3>
+                        <button type="button" class="ghost" id="btn-refresh">Refresh List</button>
+                    </div>
                     <div class="games-filter">
                         <input type="text" id="games-filter" maxlength="40"
                                placeholder="Filter by game or host name&hellip;"
@@ -372,6 +405,35 @@
                         <span>
                             <button type="button" id="games-prev" disabled>&lt; prev</button>
                             <button type="button" id="games-next" disabled>next &gt;</button>
+                        </span>
+                    </div>
+                </div>
+
+                <!-- Logged-in players -->
+                <div>
+                    <div class="list-head">
+                        <h3>Logged-in Players</h3>
+                    </div>
+                    <div class="games-filter">
+                        <input type="text" id="players-filter" maxlength="40"
+                               placeholder="Filter by player name&hellip;"
+                               aria-label="Filter players">
+                    </div>
+                    <div class="games-scroll">
+                        <table id="players-table">
+                            <thead>
+                                <tr><th>Player</th></tr>
+                            </thead>
+                            <tbody id="players-tbody">
+                                <tr class="empty"><td>No players logged in.</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    <div class="games-pager">
+                        <span id="players-count">Showing 0 of 0</span>
+                        <span>
+                            <button type="button" id="players-prev" disabled>&lt; prev</button>
+                            <button type="button" id="players-next" disabled>next &gt;</button>
                         </span>
                     </div>
                 </div>
@@ -587,6 +649,22 @@
     var currentUsername = sessionStorage.getItem('mtg.username') || '';
     // True once the server confirms Register success.
     var nameRegistered = false;
+    // OAuth login state from /auth/status. When `loggedIn` is true the lobby's
+    // logout control becomes a real "Log out" (POST /auth/logout); otherwise it
+    // is the ephemeral "change name" name-reset. `provider`/`displayName` drive
+    // the "Signed in via GitHub as X" copy.
+    var oauthLoggedIn = false;
+    var oauthProvider = null;
+    var oauthDisplayName = null;
+    // Auto-number-on-collision state. When a signed-in user continues into the
+    // lobby under a server-suggested display name that is already taken, we
+    // transparently append / bump a numeric suffix (alice → alice2 → alice3 …)
+    // and retry, rather than bouncing the user back with a "name taken" error.
+    // `autoNumberBase` is the stem we append digits to; `autoNumberAttempt` is
+    // how many auto-retries we have made (bounded to avoid a hot loop).
+    var autoNumberBase = null;
+    var autoNumberAttempt = 0;
+    var AUTO_NUMBER_MAX = 50;
 
     // Pagination / filter state for the games-list browser.
     var GAMES_PAGE_SIZE = 20;
@@ -842,9 +920,24 @@
             currentUsername = msg.player_name;
             sessionStorage.setItem('mtg.username', currentUsername);
             setNameStatus('', '');
+            autoNumberBase = null;
+            autoNumberAttempt = 0;
             enterLobby(currentUsername);
             requestLobbyLists();
+        } else if (autoNumberBase && autoNumberAttempt < AUTO_NUMBER_MAX) {
+            // The suggested display name is taken — transparently append / bump
+            // a numeric suffix and retry, so a signed-in user lands in the lobby
+            // without having to hand-pick a free name (alice → alice2 → alice3).
+            autoNumberAttempt += 1;
+            var candidate = autoNumberBase + (autoNumberAttempt + 1); // base2, base3, …
+            currentUsername = candidate;
+            var inp = document.getElementById('username');
+            if (inp) inp.value = candidate;
+            setNameStatus('“' + autoNumberBase + '” was taken — joining as “' + candidate + '”…', '');
+            sendRegister(candidate);
         } else {
+            autoNumberBase = null;
+            autoNumberAttempt = 0;
             setNameStatus(msg.error || 'Name already taken or invalid.', 'err');
             document.getElementById('btn-name').disabled = false;
         }
@@ -1021,10 +1114,23 @@
         return /^[A-Za-z0-9_\-]{1,32}$/.test(candidate);
     }
 
-    function submitName(name) {
+    // Submit a name for lobby registration. When `autoNumber` is true (a
+    // signed-in user continuing under a suggested display name), a "name taken"
+    // RegisterResult triggers an automatic numeric-suffix retry instead of an
+    // error — see handleRegisterResult.
+    function submitName(name, autoNumber) {
         if (!nameIsValid(name)) {
             setNameStatus('Names must be 1–32 chars: letters, digits, "_" or "-".', 'err');
             return;
+        }
+        if (autoNumber) {
+            // Remember the stem (strip a trailing run of digits so a suggested
+            // name that already ends in a number bumps cleanly).
+            autoNumberBase = name.replace(/[0-9]+$/, '') || name;
+            autoNumberAttempt = 0;
+        } else {
+            autoNumberBase = null;
+            autoNumberAttempt = 0;
         }
         document.getElementById('btn-name').disabled = true;
         setNameStatus('Registering…', '');
@@ -1178,7 +1284,9 @@
     document.getElementById('name-form').addEventListener('submit', function (ev) {
         ev.preventDefault();
         var n = document.getElementById('username').value.trim();
-        submitName(n);
+        // Signed-in users continue under their (editable, pre-filled) display
+        // name with auto-number-on-collision; ephemeral users do not.
+        submitName(n, oauthLoggedIn);
     });
 
     // ── OAuth sign-in choices (mtg-742) ─────────────────────────────────────
@@ -1186,28 +1294,117 @@
     // logged in, then reveal the matching buttons. Signing in navigates to the
     // server's authorization-code start endpoint. The ephemeral (name-only)
     // path always remains available below — guests get no cloud deck prefix.
+    // Friendly label for a provider slug.
+    function providerLabel(slug) {
+        if (slug === 'github') return 'GitHub';
+        if (slug === 'google') return 'Google';
+        return slug || 'your provider';
+    }
+
+    // Render the sign-in pane for the SIGNED-OUT (but oauth-enabled) state:
+    // provider buttons visible, logged-in view hidden.
+    function renderSignedOut(providers) {
+        var choices = document.getElementById('oauth-choices');
+        var signedIn = document.getElementById('oauth-signed-in');
+        if (signedIn) signedIn.style.display = 'none';
+        if (choices) choices.style.display = '';
+        var ghBtn = document.getElementById('btn-login-github');
+        var ggBtn = document.getElementById('btn-login-google');
+        if (providers && providers.github && ghBtn) ghBtn.style.display = '';
+        if (providers && providers.google && ggBtn) ggBtn.style.display = '';
+        // Privacy note is OAuth-only; ephemeral users have no identity/email.
+        var priv = document.getElementById('oauth-privacy-note');
+        if (priv) priv.style.display = 'none';
+    }
+
+    // Render the sign-in pane for the SIGNED-IN (OAuth) state: hide the provider
+    // buttons, show "Signed in via <Provider> as <name>" + Log out.
+    function renderSignedIn() {
+        var choices = document.getElementById('oauth-choices');
+        var signedIn = document.getElementById('oauth-signed-in');
+        if (choices) choices.style.display = 'none';
+        if (signedIn) signedIn.style.display = '';
+        var pn = document.getElementById('oauth-provider-name');
+        if (pn) pn.textContent = providerLabel(oauthProvider);
+        var an = document.getElementById('oauth-as-name');
+        if (an) an.textContent = oauthDisplayName ? (' as ' + oauthDisplayName) : '';
+        // A signed-in user is NOT ephemeral — relabel the continue button and
+        // soften the ephemeral warning copy for this state.
+        var btn = document.getElementById('btn-name');
+        if (btn) btn.textContent = 'Continue to lobby';
+        // Reassure the signed-in user, while they pick a name, about what is
+        // and isn't shared (username public; email/identity private; identity
+        // used privately to save their decks).
+        var priv = document.getElementById('oauth-privacy-note');
+        if (priv) priv.style.display = '';
+    }
+
+    // POST /auth/logout: invalidate the server session + clear the session
+    // cookie, drop the cloud-identity sessionStorage, then return to the
+    // signed-out sign-in state (and the ephemeral lobby logout too).
+    function oauthLogout() {
+        var btn = document.getElementById('btn-oauth-logout');
+        if (btn) btn.disabled = true;
+        return fetch('/auth/logout', { method: 'POST', cache: 'no-store' })
+            .catch(function () { /* network error: still clear client state */ })
+            .then(function () {
+                oauthLoggedIn = false;
+                oauthProvider = null;
+                oauthDisplayName = null;
+                try { sessionStorage.removeItem('mtg.cloudIdentity'); } catch (_) {}
+                // Drop the lobby/ephemeral session too and return to sign-in.
+                logout();
+                renderSignedOut(lastOAuthProviders);
+                updateLobbyLogoutControl();
+                if (btn) btn.disabled = false;
+            });
+    }
+
+    // The lobby's logout control: "Log out" (real OAuth logout) for signed-in
+    // users, "change name" (ephemeral name-reset) otherwise.
+    function updateLobbyLogoutControl() {
+        var el = document.getElementById('btn-logout');
+        if (!el) return;
+        el.textContent = oauthLoggedIn ? 'Log out' : 'change name';
+    }
+
+    var lastOAuthProviders = null;
     (function initOAuthChoices() {
         var ghBtn = document.getElementById('btn-login-github');
         var ggBtn = document.getElementById('btn-login-google');
         if (ghBtn) ghBtn.addEventListener('click', function () { window.location.href = '/auth/login/github'; });
         if (ggBtn) ggBtn.addEventListener('click', function () { window.location.href = '/auth/login/google'; });
+        var logoutBtn = document.getElementById('btn-oauth-logout');
+        if (logoutBtn) logoutBtn.addEventListener('click', function (ev) { ev.preventDefault(); oauthLogout(); });
         fetch('/auth/status', { cache: 'no-store' }).then(function (r) {
             return r.ok ? r.json() : null;
         }).then(function (s) {
             if (!s || !s.oauth_enabled) return; // no OAuth → only ephemeral shown.
-            document.getElementById('oauth-choices').style.display = '';
-            if (s.providers && s.providers.github && ghBtn) ghBtn.style.display = '';
-            if (s.providers && s.providers.google && ggBtn) ggBtn.style.display = '';
-            // If already logged in, remember it so the deck UI can enable cloud
-            // save. We surface a small note rather than auto-skipping the name
-            // step, since a logged-in user still picks a lobby display name.
-            if (s.logged_in) {
+            lastOAuthProviders = s.providers || null;
+            oauthLoggedIn = !!s.logged_in;
+            oauthProvider = s.provider || null;
+            oauthDisplayName = s.display_name || null;
+            if (oauthLoggedIn) {
+                // Real logged-in view + remember the cloud identity so the deck
+                // UI can enable cloud save. A logged-in user still picks a lobby
+                // display name below — but we PRE-FILL it from the server's
+                // suggested_name (GitHub @login / Google email-prefix) so the
+                // common case is just "Continue". The field stays editable.
                 try { sessionStorage.setItem('mtg.cloudIdentity', s.user_id || '1'); } catch (_) {}
+                renderSignedIn();
+                var inp = document.getElementById('username');
+                // Only pre-fill if the user hasn't already typed/restored a name.
+                if (inp && s.suggested_name && !inp.value) {
+                    inp.value = s.suggested_name;
+                    currentUsername = s.suggested_name;
+                }
                 var ns = document.getElementById('name-status');
-                if (ns) ns.textContent = 'Signed in — your decks will save to the cloud.';
+                if (ns) ns.textContent = 'Signed in — your decks will save to the cloud. Pick a lobby name (pre-filled) and continue.';
             } else {
                 try { sessionStorage.removeItem('mtg.cloudIdentity'); } catch (_) {}
+                renderSignedOut(lastOAuthProviders);
             }
+            updateLobbyLogoutControl();
         }).catch(function () { /* offline / no server: ephemeral path still works */ });
     })();
 
@@ -1223,7 +1420,13 @@
 
     document.getElementById('btn-logout').addEventListener('click', function (ev) {
         ev.preventDefault();
-        logout();
+        // OAuth users get a REAL log out (server session invalidated); ephemeral
+        // users get the name-reset ("change name").
+        if (oauthLoggedIn) {
+            oauthLogout();
+        } else {
+            logout();
+        }
     });
 
     // Passcode show/hide on the create-game form.

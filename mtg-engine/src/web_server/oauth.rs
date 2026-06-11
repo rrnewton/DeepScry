@@ -243,12 +243,34 @@ struct Session {
 }
 
 /// The resolved-session view the web layer needs: the stable identity plus the
-/// non-authoritative suggested display name for UI pre-fill.
+/// non-authoritative display fields the landing page uses to render the
+/// logged-in view ("Signed in via GitHub as octocat") and pre-fill the lobby
+/// name box. NONE of the display fields are security-relevant — the stable
+/// `identity` (subject id) is the sole key for the R2 deck prefix.
 #[derive(Debug, Clone)]
 pub struct SessionInfo {
     pub identity: OAuthIdentity,
-    /// Friendly handle for pre-filling the lobby name box (may be empty).
+    /// Which provider this session authenticated with (for "Signed in via
+    /// GitHub/Google"). Display-only.
+    pub provider: Provider,
+    /// Friendly handle for pre-filling the lobby name box (may be empty). This
+    /// is the same provider handle used as the [`display_name`](Self::display_name).
     pub suggested_name: String,
+}
+
+impl SessionInfo {
+    /// The friendly handle to show in the logged-in view ("Signed in via
+    /// GitHub as <name>"). `None` when the provider gave us nothing usable, so
+    /// the UI can fall back to a bare "Signed in via GitHub". This is the same
+    /// non-authoritative handle as [`suggested_name`](Self::suggested_name);
+    /// the stable identity never keys on it.
+    pub fn display_name(&self) -> Option<&str> {
+        if self.suggested_name.is_empty() {
+            None
+        } else {
+            Some(&self.suggested_name)
+        }
+    }
 }
 
 /// What `exchange_code_for_subject` resolves: the provider's stable subject id
@@ -366,6 +388,7 @@ impl OAuthState {
         }
         Some(SessionInfo {
             identity: OAuthIdentity::new(s.provider, &s.subject_id),
+            provider: s.provider,
             suggested_name: s.suggested_name.clone(),
         })
     }
@@ -674,8 +697,31 @@ mod tests {
         assert_eq!(info.identity.user_id(), "github-999");
         // The friendly handle rides alongside the stable identity for UI sugar.
         assert_eq!(info.suggested_name, "octocat");
+        // Display fields for the logged-in view: provider + a friendly name.
+        assert_eq!(info.provider, Provider::GitHub);
+        assert_eq!(info.display_name(), Some("octocat"));
         st.destroy_session(&sid);
         assert!(st.identity_for(&sid).is_none(), "logout drops session");
+    }
+
+    #[test]
+    fn display_name_is_none_when_handle_empty() {
+        let cfg = OAuthConfig {
+            github: None,
+            google: Some(ProviderCreds {
+                client_id: "id".into(),
+                client_secret: "secret".into(),
+            }),
+            callback_base: "https://example.com/auth/callback".into(),
+        };
+        let st = OAuthState::new(cfg);
+        // A provider that gave us no friendly handle → empty suggested_name →
+        // display_name() is None so the UI shows a bare "Signed in via Google".
+        let sid = st.create_session(Provider::Google, "sub-123".into(), String::new());
+        let info = st.identity_for(&sid).expect("session resolves");
+        assert_eq!(info.provider, Provider::Google);
+        assert_eq!(info.suggested_name, "");
+        assert_eq!(info.display_name(), None);
     }
 
     #[test]

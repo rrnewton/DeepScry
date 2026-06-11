@@ -5,11 +5,14 @@
  * Hermetic: serves web/ over a local HTTP server and intercepts the auth +
  * deck-URL fetches so no real OAuth provider or external host is touched.
  *
- * Part 1 — Landing page sign-in choices (index.html):
- *   - With both providers configured (/auth/status), the GitHub + Google
- *     buttons appear, plus the always-present "Ephemeral account" section
- *     with its can't-save-to-cloud WARNING.
- *   - Clicking "Sign in with GitHub" navigates to /auth/login/github.
+ * Part 1 — Landing page sign-in choices (index.html), THREE auth states:
+ *   1a (oauth disabled): no provider buttons, only the ephemeral path.
+ *   1b (oauth enabled, logged OUT): GitHub + Google buttons visible + the
+ *      always-present "Ephemeral account" section with its can't-save WARNING;
+ *      clicking "Sign in with GitHub" navigates to /auth/login/github.
+ *   1c (oauth enabled, logged IN): the logged-in view ("Signed in via GitHub
+ *      as <name>") + a real "Log out" button; clicking it POSTs /auth/logout
+ *      and returns the page to the signed-out provider-buttons state.
  *
  * Part 2 — Custom Deck URL (launcher.html):
  *   - A valid .dck URL loads, lands in Custom Decks, and is selected.
@@ -55,37 +58,54 @@ function check(cond, msg) {
 
     browser = await chromium.launch({ headless: true, args: ['--no-sandbox'] });
 
-    // ── Part 1: landing-page sign-in choices ───────────────────────────────
-    {
+    // Helper: open index.html with a given /auth/status payload mocked.
+    async function openIndexWith(statusBody) {
       const ctx = await browser.newContext();
       const page = await ctx.newPage();
       page.on('pageerror', (e) => failures.push('pageerror(index): ' + e.message));
-      // Both providers configured, not logged in.
       await page.route('**/auth/status', (route) =>
-        route.fulfill({
-          status: 200,
-          contentType: 'application/json',
-          body: JSON.stringify({
-            providers: { github: true, google: true },
-            oauth_enabled: true,
-            logged_in: false,
-            user_id: null,
-          }),
-        })
+        route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(statusBody) })
       );
       await page.goto(`http://127.0.0.1:${PORT}/index.html`);
+      return { ctx, page };
+    }
+
+    // ── Part 1a: oauth DISABLED → only ephemeral, no provider buttons ──────
+    {
+      const { ctx, page } = await openIndexWith({ oauth_enabled: false, logged_in: false });
+      // Give the page a beat to (not) reveal the oauth choices.
+      await page.waitForSelector('#username', { timeout: 5000 });
+      await page.waitForTimeout(300);
+      const choicesShown = await page.isVisible('#oauth-choices');
+      const signedInShown = await page.isVisible('#oauth-signed-in');
+      check(!choicesShown, 'oauth disabled → no GitHub/Google buttons (choices hidden)');
+      check(!signedInShown, 'oauth disabled → no logged-in view');
+      const hasEphemeral = await page.isVisible('text=Ephemeral account');
+      check(hasEphemeral, 'oauth disabled → ephemeral account path still present');
+      await ctx.close();
+    }
+
+    // ── Part 1b: oauth ENABLED, logged OUT → both buttons; GitHub navigates ─
+    {
+      const { ctx, page } = await openIndexWith({
+        providers: { github: true, google: true },
+        oauth_enabled: true,
+        logged_in: false,
+        provider: null,
+        display_name: null,
+        user_id: null,
+      });
       await page.waitForFunction(
         () => document.getElementById('oauth-choices') && document.getElementById('oauth-choices').style.display !== 'none',
         { timeout: 5000 }
       );
-      const ghVisible = await page.isVisible('#btn-login-github');
-      const ggVisible = await page.isVisible('#btn-login-google');
-      check(ghVisible, 'GitHub sign-in button shown when provider configured');
-      check(ggVisible, 'Google sign-in button shown when provider configured');
+      check(await page.isVisible('#btn-login-github'), 'GitHub sign-in button shown when provider configured');
+      check(await page.isVisible('#btn-login-google'), 'Google sign-in button shown when provider configured');
+      check(!(await page.isVisible('#oauth-signed-in')), 'logged-out → no logged-in view');
+      check(!(await page.isVisible('#oauth-privacy-note')), 'logged-out → OAuth privacy note hidden (no identity to reassure about)');
       const warnText = (await page.textContent('#ephemeral-warning')) || '';
       check(/cannot save decks to the cloud/i.test(warnText), 'Ephemeral warning states decks cannot be saved to the cloud');
-      const hasEphemeralHeading = await page.isVisible('text=Ephemeral account');
-      check(hasEphemeralHeading, '"Ephemeral account" option is present');
+      check(await page.isVisible('text=Ephemeral account'), '"Ephemeral account" option is present');
 
       // Clicking GitHub navigates to /auth/login/github.
       await page.route('**/auth/login/github', (route) => route.fulfill({ status: 200, body: 'redirect-stub' }));
@@ -94,6 +114,104 @@ function check(cond, msg) {
         page.click('#btn-login-github'),
       ]);
       check(true, 'Clicking "Sign in with GitHub" hits /auth/login/github');
+      await ctx.close();
+    }
+
+    // ── Part 1c: oauth ENABLED, logged IN → logged-in view + Log out ───────
+    {
+      const { ctx, page } = await openIndexWith({
+        providers: { github: true, google: true },
+        oauth_enabled: true,
+        logged_in: true,
+        provider: 'github',
+        display_name: 'octocat',
+        suggested_name: 'octocat',
+        user_id: 'github-99',
+      });
+      await page.waitForFunction(
+        () => document.getElementById('oauth-signed-in') && document.getElementById('oauth-signed-in').style.display !== 'none',
+        { timeout: 5000 }
+      );
+      check(!(await page.isVisible('#oauth-choices')), 'logged-in → provider buttons hidden');
+      check(await page.isVisible('#btn-oauth-logout'), 'logged-in → Log out button visible');
+      const signedInText = (await page.textContent('#oauth-signed-in')) || '';
+      check(/GitHub/.test(signedInText), 'logged-in view names the provider (GitHub)');
+      check(/octocat/.test(signedInText), 'logged-in view shows the display name (octocat)');
+      // Username field is auto-populated from suggested_name, still editable.
+      const prefill = await page.inputValue('#username');
+      check(prefill === 'octocat', 'logged-in → username field pre-filled from suggested_name');
+      const editable = await page.evaluate(() => !document.getElementById('username').readOnly && !document.getElementById('username').disabled);
+      check(editable, 'logged-in → pre-filled username stays editable');
+      check((await page.textContent('#btn-name')) === 'Continue to lobby', 'logged-in → continue button relabeled (not "ephemeral")');
+      // Privacy reassurance is shown only on the OAuth path and covers the
+      // three user-requested points.
+      check(await page.isVisible('#oauth-privacy-note'), 'logged-in → OAuth privacy note shown by the username field');
+      const privText = (await page.textContent('#oauth-privacy-note')) || '';
+      check(/only the .*username you pick/i.test(privText.replace(/\s+/g, ' ')), 'privacy note: only the chosen username is public');
+      check(/email and your GitHub\/Google identity are never revealed/i.test(privText.replace(/\s+/g, ' ')), 'privacy note: email + provider identity never revealed to other players');
+      check(/save and load your deck collection/i.test(privText.replace(/\s+/g, ' ')), 'privacy note: sign-in identity is used to save your deck collection');
+      const cloudId = await page.evaluate(() => sessionStorage.getItem('mtg.cloudIdentity'));
+      check(cloudId === 'github-99', 'logged-in stamps mtg.cloudIdentity for cloud deck save');
+
+      // Clicking Log out POSTs /auth/logout and returns to the signed-out state.
+      let logoutMethod = null;
+      await page.route('**/auth/logout', (route) => {
+        logoutMethod = route.request().method();
+        route.fulfill({ status: 200, body: 'logged out' });
+      });
+      await Promise.all([
+        page.waitForRequest((r) => r.url().endsWith('/auth/logout'), { timeout: 5000 }),
+        page.click('#btn-oauth-logout'),
+      ]);
+      check(logoutMethod === 'POST', 'Log out POSTs /auth/logout (not GET)');
+      await page.waitForFunction(
+        () => document.getElementById('oauth-choices') && document.getElementById('oauth-choices').style.display !== 'none',
+        { timeout: 5000 }
+      );
+      check(await page.isVisible('#btn-login-github'), 'after Log out → provider buttons return (signed-out state)');
+      check(!(await page.isVisible('#oauth-signed-in')), 'after Log out → logged-in view hidden');
+      const cloudId2 = await page.evaluate(() => sessionStorage.getItem('mtg.cloudIdentity'));
+      check(cloudId2 === null, 'after Log out → cloud identity cleared from sessionStorage');
+      await ctx.close();
+    }
+
+    // ── Part 1d: lobby layout redesign (structural, no WS needed) ──────────
+    {
+      const { ctx, page } = await openIndexWith({ oauth_enabled: false, logged_in: false });
+      // The lobby pane starts hidden (revealed after WS registration); these
+      // are structural DOM checks, so wait for ATTACHMENT, not visibility.
+      await page.waitForSelector('#create-form', { state: 'attached', timeout: 5000 });
+      // Create-a-Game is a WIDE bar with game name + passcode side by side and
+      // a small inline Create button.
+      const createIsBar = await page.evaluate(() => document.getElementById('create-form').classList.contains('create-bar'));
+      check(createIsBar, 'Create-a-Game uses the wide create-bar layout');
+      check((await page.textContent('#btn-create')).trim() === 'Create', 'Create button is the small inline "Create"');
+      // Refresh List lives inside the Open Games list header, not as a
+      // standalone create-form control.
+      const refreshInGamesHead = await page.evaluate(() => {
+        const btn = document.getElementById('btn-refresh');
+        const head = btn && btn.closest('.list-head');
+        return !!(head && /Open Games/.test(head.textContent));
+      });
+      check(refreshInGamesHead, 'Refresh List button is part of the Open Games list header');
+      // Games + Players are siblings in the same grid-2 (side by side).
+      const sideBySide = await page.evaluate(() => {
+        const games = document.getElementById('games-table');
+        const players = document.getElementById('players-table');
+        const gGrid = games.closest('.grid-2');
+        const pGrid = players.closest('.grid-2');
+        return !!(gGrid && gGrid === pGrid);
+      });
+      check(sideBySide, 'Open Games and Logged-in Players are side by side in one grid');
+      // Both scroll panes are tall enough for ~8 dense rows (>= 280px min).
+      const tallEnough = await page.evaluate(() => {
+        const panes = document.querySelectorAll('#pane-lobby .games-scroll');
+        return Array.from(panes).every((p) => {
+          const min = parseInt(getComputedStyle(p).minHeight, 10) || 0;
+          return min >= 280;
+        });
+      });
+      check(tallEnough, 'list panes are tall enough to show ~8 rows (min-height >= 280px)');
       await ctx.close();
     }
 
