@@ -43,3 +43,8 @@ mod stack;
 mod tapping;
 mod tokens;
 mod zones;
+
+/// Shared AI Dig keep-ranking score (creatures by P/T+CMC, lands flat 100,
+/// others by CMC). Re-exported so the heuristic controller can rank dug cards
+/// identically to the effect-layer fallback (mtg-908). See [`zones::dig_card_score`].
+pub(crate) use zones::dig_card_score;

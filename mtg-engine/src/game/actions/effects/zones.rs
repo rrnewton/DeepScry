@@ -424,20 +424,33 @@ impl GameState {
     /// NOTE (mtg-908): this reads the real (potentially hidden) card identity,
     /// which is the network-desync hazard. The controller-routed path makes this
     /// a server-authoritative decision shipped to the client; this scorer is the
-    /// shared ranking used by both the fallback and the heuristic controller.
+    /// shared ranking used by both the fallback (`dig_default_decision`) and the
+    /// heuristic controller's `choose_dig_partition` — both call the free
+    /// [`dig_card_score`] function so the keep-ranking is IDENTICAL across the
+    /// effect fallback and the controller (DRY; no divergent copies).
     pub(in crate::game::actions) fn dig_card_score(&self, card_id: CardId) -> i32 {
-        let Some(card) = self.cards.try_get(card_id) else {
-            return 0;
-        };
-        let cmc = i32::from(card.definition.mana_cost.cmc());
-        if card.is_creature() {
-            let power = i32::from(card.current_power());
-            let toughness = i32::from(card.current_toughness());
-            80 + (power + toughness) * 10 + cmc * 5
-        } else if card.is_land() {
-            100
-        } else {
-            50 + 30 * cmc
-        }
+        self.cards.try_get(card_id).map(dig_card_score).unwrap_or(0)
+    }
+}
+
+/// Shared AI Dig keep-ranking score for a single card: creatures by
+/// `80 + (power+toughness)*10 + cmc*5`, lands a flat `100`, other cards
+/// `50 + 30*cmc`. Higher = more desirable to keep.
+///
+/// This is the ONE place the Dig keep-heuristic lives. It is shared by the
+/// no-controller fallback ([`GameState::dig_default_decision`]) and the
+/// heuristic controller (`HeuristicController::choose_dig_partition`), so the
+/// server's effect-fallback path and the controller-routed path rank cards
+/// identically — a prerequisite for mtg-908 server/client agreement.
+pub fn dig_card_score(card: &crate::core::Card) -> i32 {
+    let cmc = i32::from(card.definition.mana_cost.cmc());
+    if card.is_creature() {
+        let power = i32::from(card.current_power());
+        let toughness = i32::from(card.current_toughness());
+        80 + (power + toughness) * 10 + cmc * 5
+    } else if card.is_land() {
+        100
+    } else {
+        50 + 30 * cmc
     }
 }

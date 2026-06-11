@@ -1950,6 +1950,48 @@ pub trait PlayerController {
         ChoiceResult::Ok(SurveilDecision::keep_all_on_top(revealed))
     }
 
+    /// Choose which revealed cards a Dig effect keeps (mtg-908).
+    ///
+    /// A Dig ("look at the top N, keep up to `change_count` matching cards, put
+    /// the rest elsewhere" — Impulse, Stock Up, Accumulate Wisdom) reveals the
+    /// digging player's top-of-library cards. `valid` is the filter-matching
+    /// subset of those revealed cards (top-down, server-authoritative); the
+    /// controller returns a [`DigDecision`] naming which of them to keep
+    /// (move to the effect's destination zone). Every other revealed card is the
+    /// "rest" and is handled by the engine.
+    ///
+    /// ## Information visibility (WHY this is a controller choice)
+    ///
+    /// The keep decision depends on the revealed (otherwise hidden) card
+    /// identities, so — exactly like [`PlayerController::choose_scry_order`] — it
+    /// MUST be made server-authoritatively and shipped to the client. The engine
+    /// only calls this on the digging player's controller, and the network
+    /// protocol sends the revealed CardIds inline in the [`ChoiceRequest`]
+    /// addressed to that player. Before this method existed, Dig decided inline
+    /// from hidden info, so server and client picked different cards and the game
+    /// desynced (mtg-908: the user's 2025 04-vs-02 game died this way).
+    ///
+    /// ## Default behavior
+    ///
+    /// The default keeps the first `change_count` valid cards in revealed order
+    /// (all of them when `change_all`) — a deterministic, information-independent
+    /// fallback. Real controllers (Heuristic) override this to rank by value.
+    ///
+    /// ## Java Forge equivalent
+    ///
+    /// Matches `PlayerController.chooseCardsToKeep`-style dig handling, where the
+    /// player picks which looked-at cards to take.
+    fn choose_dig_partition(
+        &mut self,
+        _view: &GameStateView,
+        valid: &[CardId],
+        change_count: u8,
+        change_all: bool,
+        _optional: bool,
+    ) -> ChoiceResult<DigDecision> {
+        ChoiceResult::Ok(DigDecision::keep_first_n(valid, change_count as usize, change_all))
+    }
+
     /// Choose a card from library (for tutoring/searching effects)
     ///
     /// Called when a SearchLibrary effect executes (e.g., Vibrant Cityscape,

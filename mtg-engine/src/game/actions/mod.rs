@@ -1,6 +1,6 @@
 //! Game actions and mechanics
 
-mod effects;
+pub(crate) mod effects;
 mod triggers;
 
 pub use targeting::is_legal_target;
