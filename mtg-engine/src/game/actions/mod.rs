@@ -3743,34 +3743,7 @@ impl GameState {
             Effect::DrainMana { player } => self.execute_drain_mana(*player)?,
             Effect::Scry { player, count } => self.execute_scry(*player, *count)?,
             Effect::Surveil { player, count } => self.execute_surveil(*player, *count)?,
-            Effect::AddTurn { player, num_turns } => {
-                // Take extra turns (CR 500.7) - Time Walk, Temporal Manipulation, etc.
-                // Add extra turns to the GameState extra-turn queue (consumed in
-                // GameState::advance_step at end of turn, CR 500.7). NOTE: this
-                // must push to `self.extra_turns` (the VecDeque actually drained
-                // by the turn-rotation code), NOT `self.turn.extra_turns` (a
-                // dead, write-only field) — otherwise the extra turn was queued
-                // somewhere nothing reads, and never taken (mtg-551).
-                for _ in 0..*num_turns {
-                    let prior_log_size = self.logger.log_count();
-                    self.extra_turns.push_back(*player);
-                    // Log for undo so a rewind+replay across the AddTurn
-                    // resolution doesn't leave a stale queued extra turn
-                    // (mtg-559/mtg-610).
-                    self.undo_log.log(
-                        crate::undo::GameAction::PushExtraTurn { player: *player },
-                        prior_log_size,
-                    );
-                }
-                let player_name = self
-                    .get_player(*player)
-                    .map(|p| p.name.as_str().to_string())
-                    .unwrap_or_else(|_| "Unknown".to_string());
-                self.logger.gamelog(&format!(
-                    "{} takes {} extra turn(s) after this one",
-                    player_name, num_turns
-                ));
-            }
+            Effect::AddTurn { player, num_turns } => self.execute_add_turn(*player, *num_turns)?,
             Effect::CounterSpell {
                 target,
                 remember_mana_value,
@@ -3809,58 +3782,7 @@ impl GameState {
                 mana,
                 produces_chosen_color,
                 amount_var,
-            } => {
-                // Capture log size before mana addition
-                let prior_log_size = self.logger.log_count();
-
-                // Add mana to player's mana pool
-                // Note: For mana abilities, produces_chosen_color is handled in tap_for_mana_for_cost
-                // where we have access to the source card's chosen_color.
-                // This path is mainly for spell effects (Dark Ritual) and triggered abilities (Su-Chi).
-                // Note: amount_var (for variable mana like Raucous Audience) is resolved in ManaEngine
-                // during tap_for_mana_for_cost, not here.
-                if *produces_chosen_color {
-                    // This shouldn't happen in practice since mana abilities go through tap_for_mana_for_cost
-                    // but log a warning if it does
-                    self.logger
-                        .normal("Warning: produces_chosen_color in execute_effect - source card unknown");
-                }
-                if amount_var.is_some() {
-                    // Variable mana should be resolved before reaching execute_effect
-                    self.logger
-                        .normal("Warning: amount_var in execute_effect - should be resolved in ManaEngine");
-                }
-                let p = self.get_player_mut(*player)?;
-
-                // Add each component of the mana cost to the pool
-                for _ in 0..mana.white {
-                    p.mana_pool.add_color(crate::core::Color::White);
-                }
-                for _ in 0..mana.blue {
-                    p.mana_pool.add_color(crate::core::Color::Blue);
-                }
-                for _ in 0..mana.black {
-                    p.mana_pool.add_color(crate::core::Color::Black);
-                }
-                for _ in 0..mana.red {
-                    p.mana_pool.add_color(crate::core::Color::Red);
-                }
-                for _ in 0..mana.green {
-                    p.mana_pool.add_color(crate::core::Color::Green);
-                }
-                for _ in 0..mana.colorless {
-                    p.mana_pool.add_color(crate::core::Color::Colorless);
-                }
-
-                // Log the mana addition
-                self.undo_log.log(
-                    crate::undo::GameAction::AddMana {
-                        player_id: *player,
-                        mana: *mana,
-                    },
-                    prior_log_size,
-                );
-            }
+            } => self.execute_add_mana(*player, mana, *produces_chosen_color, amount_var.as_deref())?,
             Effect::PutCounter {
                 target,
                 counter_type,
@@ -5658,23 +5580,7 @@ impl GameState {
                     }
                 }
             }
-            Effect::ClearRemembered => {
-                // Clear remembered cards, players, and numeric value storage.
-                // The numeric value (Mana Drain) is already captured onto the
-                // delayed trigger by the preceding CreateDelayedTrigger, so
-                // clearing the scratch here is safe.
-                self.remembered_cards.clear();
-                self.remembered_players.clear();
-                if self.remembered_amount.is_some() {
-                    let prior_log_size = self.logger.log_count();
-                    let previous = self.remembered_amount;
-                    self.remembered_amount = None;
-                    self.undo_log.log(
-                        crate::undo::GameAction::SetRememberedAmount { previous },
-                        prior_log_size,
-                    );
-                }
-            }
+            Effect::ClearRemembered => self.execute_clear_remembered()?,
             Effect::UnlessCostWrapper {
                 inner_effect,
                 unless_cost,
@@ -5840,64 +5746,12 @@ impl GameState {
                 }
             }
 
-            Effect::ChooseColor { player, source } => {
-                // Choose a color using AI heuristic (pick most prominent color in deck)
-                let chosen = self.pick_prominent_color(*player, &[]);
+            Effect::ChooseColor { player, source } => self.execute_choose_color(*player, *source)?,
 
-                // Store the chosen color on the source card
-                if let Ok(card) = self.cards.get_mut(*source) {
-                    let card_name = card.name.clone();
-                    card.chosen_color = Some(chosen);
-                    let player_name = self
-                        .get_player(*player)
-                        .map(|p| p.name.to_string())
-                        .unwrap_or_else(|_| format!("Player {}", player.as_u32()));
-                    self.logger
-                        .normal(&format!("{} chooses color: {:?} ({})", player_name, chosen, card_name));
-                } else {
-                    log::warn!("ChooseColor: source card {} not found", source.as_u32());
-                }
-            }
-
-            Effect::AddPhase { count } => {
-                // Add extra combat phase(s) after the current step
-                for _ in 0..*count {
-                    self.extra_combat_phases += 1;
-                }
-                self.logger
-                    .gamelog(&format!("AddPhase: {} additional combat phase(s) this turn", count));
-            }
-            Effect::Clone { .. } => {
-                // Clone (Copy Artifact, etc.) requires a controller decision
-                // ("you may" + which permanent to copy), so it is resolved by
-                // the interactive path in priority.rs::resolve_clone_effect.
-                // Reaching execute_effect means that interception was bypassed
-                // (e.g. a non-interactive resolution path) — log rather than
-                // silently entering as a vanilla permanent so the gap is visible.
-                log::warn!(
-                    target: "actions",
-                    "Effect::Clone reached execute_effect without controller interception; \
-                     permanent will not copy. This is a routing bug — Clone must go through \
-                     the interactive spell-resolution hook."
-                );
-            }
-            Effect::Unimplemented { api_type } => {
-                // Log a warning instead of silently doing nothing
-                log::warn!(
-                    target: "actions",
-                    "Unimplemented effect '{}' resolved as no-op",
-                    api_type
-                );
-                self.logger.gamelog(&format!(
-                    "WARNING: Effect '{}' is not yet implemented - resolving as no-op",
-                    api_type
-                ));
-            }
-            Effect::NoOp { api_type } => {
-                // Intentional no-op (e.g. StoreSVar — the value it would stash is
-                // modeled directly elsewhere). Silent: no warning, no gamelog.
-                log::debug!(target: "actions", "NoOp effect '{}' (intentional)", api_type);
-            }
+            Effect::AddPhase { count } => self.execute_add_phase(*count)?,
+            Effect::Clone { .. } => self.execute_clone_fallback()?,
+            Effect::Unimplemented { api_type } => self.execute_unimplemented(api_type)?,
+            Effect::NoOp { api_type } => self.execute_noop(api_type)?,
 
             // XPaid variants should be resolved to concrete variants before execution
             // by resolve_x_paid_effect() in resolve_spell_execute_effects().

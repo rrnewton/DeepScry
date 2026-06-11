@@ -22,10 +22,13 @@
 //!   TapAll / UntapAll.
 //! - [`pump`] — PumpCreature / PumpCreatureVariable / DebuffCreature /
 //!   PumpAllCreatures / AnimateAll (stat modification).
+//! - [`misc`] — AddMana / ChooseColor / AddTurn / AddPhase / ClearRemembered /
+//!   Clone (routing guard) / Unimplemented / NoOp.
 
 mod cards;
 mod counters;
 mod damage;
 mod life;
+mod misc;
 mod pump;
 mod tapping;
