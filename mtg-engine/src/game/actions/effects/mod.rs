@@ -29,6 +29,8 @@
 //! - [`tokens`] — CreateToken / CopyPermanent / CopySpellAbility.
 //! - [`control`] — GainControl / Fight / GrantCantBeBlocked / Regenerate /
 //!   AttachEquipment.
+//! - [`zones`] — Dig (more zone-movement effects to follow). The Dig extraction
+//!   is the structural prerequisite for the mtg-908 network-desync fix.
 
 mod cards;
 mod control;
@@ -40,3 +42,4 @@ mod pump;
 mod stack;
 mod tapping;
 mod tokens;
+mod zones;
