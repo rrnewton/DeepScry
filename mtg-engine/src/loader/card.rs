@@ -5306,6 +5306,13 @@ impl CardDefinition {
         // receives the keyword, and the untap step skips any permanent that has
         // it. This generalizes to every `Event$ Untap | Layer$ CantHappen`
         // replacement, not just Paralyze.
+        //
+        // Also: damage-increase replacement effects of the form:
+        //   R:Event$ DamageDone | ValidSource$ Card.RedSource+YouCtrl
+        //     | ValidTarget$ Player.Opponent,Permanent.OppCtrl
+        //     | ReplaceWith$ <SVar> | ...
+        // where <SVar> resolves to `ReplaceCount$DamageAmount/Plus.N` (Torbran).
+        // We model this as StaticAbility::DamageIncrease { bonus: N } on the host.
         for ability in &self.raw_abilities {
             let Some(body) = ability.strip_prefix("R:") else {
                 continue;
@@ -5317,25 +5324,84 @@ impl CardDefinition {
                     params.insert(k.trim(), v.trim());
                 }
             }
-            if params.get("Event") != Some(&"Untap") || params.get("Layer") != Some(&"CantHappen") {
+
+            // --- Doesn't-untap lock (Paralyze, Exhaustion, ...) ---
+            if params.get("Event") == Some(&"Untap") && params.get("Layer") == Some(&"CantHappen") {
+                // Which permanents are locked? Default to the enchanted creature
+                // (the overwhelmingly common case); honor an explicit ValidCard$.
+                let affected = params
+                    .get("ValidCard")
+                    .and_then(|v| parse_single_affected_selector(v))
+                    .unwrap_or(AffectedSelector::CreatureEnchantedBy);
+                let description = params
+                    .get("Description")
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| "Doesn't untap during its controller's untap step.".to_string());
+                abilities.push(StaticAbility::GrantKeyword {
+                    affected,
+                    keyword: Keyword::DoesNotUntap,
+                    description,
+                    condition: None,
+                });
                 continue;
             }
-            // Which permanents are locked? Default to the enchanted creature
-            // (the overwhelmingly common case); honor an explicit ValidCard$.
-            let affected = params
-                .get("ValidCard")
-                .and_then(|v| parse_single_affected_selector(v))
-                .unwrap_or(AffectedSelector::CreatureEnchantedBy);
-            let description = params
-                .get("Description")
-                .map(|s| s.to_string())
-                .unwrap_or_else(|| "Doesn't untap during its controller's untap step.".to_string());
-            abilities.push(StaticAbility::GrantKeyword {
-                affected,
-                keyword: Keyword::DoesNotUntap,
-                description,
-                condition: None,
-            });
+
+            // --- Damage-increase replacement (Torbran, Thane of Red Fell, ...) ---
+            // Shape: Event$ DamageDone | ValidSource$ Card.RedSource+YouCtrl
+            //        | ValidTarget$ Player.Opponent,Permanent.OppCtrl
+            //        | ReplaceWith$ <svar>
+            // where SVar:<svar>:DB$ ReplaceEffect | VarName$ DamageAmount | VarValue$ X
+            //       SVar:X:ReplaceCount$DamageAmount/Plus.<N>
+            if params.get("Event") == Some(&"DamageDone") {
+                let valid_source = params.get("ValidSource").copied().unwrap_or("");
+                let valid_target = params.get("ValidTarget").copied().unwrap_or("");
+                let replace_with = params.get("ReplaceWith").copied().unwrap_or("");
+                // This narrowly matches the Torbran shape:
+                // - source must be a red card controlled by the ability's controller
+                // - target must be an opponent player or opponent-controlled permanent
+                let is_red_source_you_ctrl = valid_source
+                    .split('+')
+                    .any(|q| q.trim() == "RedSource" || q.trim() == "Card.RedSource");
+                let you_ctrl = valid_source.split('+').any(|q| q.trim() == "YouCtrl");
+                let targets_opponent =
+                    valid_target.contains("Player.Opponent") || valid_target.contains("Permanent.OppCtrl");
+                if is_red_source_you_ctrl && you_ctrl && targets_opponent && !replace_with.is_empty() {
+                    // Resolve the svar chain to extract the +N bonus.
+                    // SVar:X:ReplaceCount$DamageAmount/Plus.<N>
+                    let mut bonus: Option<u32> = None;
+                    // The replace_with svar (e.g. "DmgPlus2") contains a DB$ReplaceEffect
+                    // chain; the X svar carries "ReplaceCount$DamageAmount/Plus.<N>".
+                    // We look for any SVar whose body matches that pattern.
+                    for svar_body in self.svars.values() {
+                        // Tokenize: split on `$` (it's a simple key$value per param).
+                        // Format: "ReplaceCount$DamageAmount/Plus.2"
+                        for part in svar_body.split('$') {
+                            // Look for "DamageAmount/Plus.<N>" segment.
+                            if let Some(rest) = part.trim().strip_prefix("DamageAmount/Plus.") {
+                                if let Ok(n) = rest.trim().parse::<u32>() {
+                                    bonus = Some(n);
+                                    break;
+                                }
+                            }
+                        }
+                        if bonus.is_some() {
+                            break;
+                        }
+                    }
+                    if let Some(n) = bonus {
+                        let description = params.get("Description").map(|s| s.to_string()).unwrap_or_else(|| {
+                            format!(
+                                "If a red source you control would deal damage to an opponent \
+                                     or a permanent an opponent controls, it deals that much \
+                                     damage plus {} instead.",
+                                n
+                            )
+                        });
+                        abilities.push(StaticAbility::DamageIncrease { bonus: n, description });
+                    }
+                }
+                continue;
+            }
         }
 
         abilities

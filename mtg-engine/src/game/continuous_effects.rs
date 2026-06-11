@@ -1564,6 +1564,11 @@ impl GameState {
                         // Block-restriction statics (Ironclaw Orcs) don't affect
                         // P/T; they gate block legality in combat_rules::can_block.
                     }
+                    StaticAbility::DamageIncrease { .. } => {
+                        // Damage-increase replacement (Torbran et al.) doesn't
+                        // affect P/T; applied at damage-dealing time in
+                        // get_damage_boost_for_source / combat post-processing.
+                    }
                 }
             }
         }

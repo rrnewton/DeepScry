@@ -513,6 +513,10 @@ impl GameStateEvaluator {
                     // creature/artifact itself, not an aura attached to a
                     // creature; they contribute no enchanted-creature value.
                 }
+                StaticAbility::DamageIncrease { .. } => {
+                    // Damage-increase statics (Torbran) live on the creature
+                    // itself, not an aura; no enchanted-creature value.
+                }
             }
         }
 

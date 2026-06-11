@@ -929,6 +929,80 @@ impl GameState {
             }
         }
 
+        // Apply damage-increase replacement effects (CR 614.1a) such as Torbran,
+        // Thane of Red Fell: "If a red source you control would deal damage to an
+        // opponent or a permanent an opponent controls, it deals that much plus 2
+        // instead." This is applied AFTER the combat-damage map is fully populated
+        // (all prevention has already been applied) and BEFORE lifelink (so that
+        // a Torbran-boosted creature with lifelink gains the correct extra life).
+        //
+        // Creature targets: damage_sources_per_target maps creature → {source cards}.
+        // We look up each source's boost for the target's controller and add it.
+        let creature_target_ids: Vec<CardId> = damage_sources_per_target.keys().copied().collect();
+        for target_creature in creature_target_ids {
+            if !self.battlefield.contains(target_creature) {
+                continue;
+            }
+            let target_ctrl = match self.cards.get(target_creature) {
+                Ok(c) => c.controller,
+                Err(_) => continue,
+            };
+            let sources: Vec<CardId> = damage_sources_per_target
+                .get(&target_creature)
+                .map(|s| s.iter().copied().collect())
+                .unwrap_or_default();
+            for source_id in sources {
+                let boost = self.get_damage_boost_for_source(source_id, target_ctrl);
+                if boost > 0 {
+                    *damage_to_creatures.entry(target_creature).or_insert(0) += boost;
+                    *damage_dealt_by_creature.entry(source_id).or_insert(0) += boost;
+                    let source_name = self
+                        .cards
+                        .get(source_id)
+                        .map(|c| c.name.to_string())
+                        .unwrap_or_default();
+                    let target_name = self
+                        .cards
+                        .get(target_creature)
+                        .map(|c| c.name.to_string())
+                        .unwrap_or_default();
+                    self.logger.gamelog(&format!(
+                        "Torbran: {} deals {} additional damage to {} (damage increase)",
+                        source_name, boost, target_name
+                    ));
+                }
+            }
+        }
+        // Player targets: creatures_that_dealt_player_damage has (source, player, amount).
+        // Torbran boosts damage from a red source controlled by the Torbran-controller to
+        // an opponent player. Since in combat the defending player is always the opponent
+        // of the attacker, get_damage_boost_for_source handles the opponent check.
+        for (attacker_id, defending_player, ref mut recorded_amount) in
+            creatures_that_dealt_player_damage.iter_mut()
+        {
+            let (attacker_id, defending_player) = (*attacker_id, *defending_player);
+            let boost = self.get_damage_boost_for_source(attacker_id, defending_player);
+            if boost > 0 {
+                *damage_to_players.entry(defending_player).or_insert(0) += boost;
+                *damage_dealt_by_creature.entry(attacker_id).or_insert(0) += boost;
+                // Update the recorded amount in creatures_that_dealt_player_damage for triggers.
+                *recorded_amount += boost;
+                let attacker_name = self
+                    .cards
+                    .get(attacker_id)
+                    .map(|c| c.name.to_string())
+                    .unwrap_or_default();
+                let player_name = self
+                    .get_player(defending_player)
+                    .map(|p| p.name.to_string())
+                    .unwrap_or_default();
+                self.logger.gamelog(&format!(
+                    "Torbran: {} deals {} additional damage to {} (damage increase)",
+                    attacker_name, boost, player_name
+                ));
+            }
+        }
+
         // Apply lifelink BEFORE dealing damage (since creatures might die)
         // MTG Rules 702.15: Damage dealt by a source with lifelink also causes
         // its controller to gain that much life

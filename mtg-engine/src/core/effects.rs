@@ -3301,6 +3301,27 @@ pub enum StaticAbility {
         /// Description for logging
         description: String,
     },
+
+    /// Damage-increase replacement effect (CR 614.1a): when a qualifying red
+    /// source controlled by this permanent's controller would deal damage to an
+    /// opponent or opponent-controlled permanent, it deals that much plus
+    /// `bonus` instead.
+    ///
+    /// Corresponds to Torbran, Thane of Red Fell's static:
+    ///   `R:Event$ DamageDone | ValidSource$ Card.RedSource+YouCtrl
+    ///    | ValidTarget$ Player.Opponent,Permanent.OppCtrl | ReplaceWith$ DmgPlus2`
+    /// where `DmgPlus2` resolves to `ReplaceCount$DamageAmount/Plus.2`.
+    ///
+    /// This is deliberately narrow: it only models the "RedSource + YouCtrl →
+    /// Opponent/OppCtrl target → +N" shape (the shape Torbran has). Generalising
+    /// to arbitrary ValidSource/ValidTarget predicates can be done later when
+    /// another card requires it.
+    DamageIncrease {
+        /// Extra damage to add per damage event (e.g. 2 for Torbran).
+        bonus: u32,
+        /// Description for logging.
+        description: String,
+    },
 }
 
 /// Target selector for cost reduction abilities

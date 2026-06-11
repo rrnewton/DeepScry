@@ -7070,21 +7070,55 @@ impl GameState {
     pub fn get_noncombat_damage_modifier(&self, target_controller: PlayerId) -> i32 {
         let mut modifier = 0;
         if let Some(source_id) = self.current_damage_source {
-            if let Ok(source_card) = self.cards.get(source_id) {
-                let source_controller = source_card.controller;
-                if target_controller != source_controller {
-                    // Check for Artist's Talent level 3
-                    for &card_id in &self.battlefield.cards {
-                        if let Ok(card) = self.cards.get(card_id) {
-                            if card.name.as_str() == "Artist's Talent"
-                                && card.controller == source_controller
-                                && card.get_counter(crate::core::CounterType::Level) >= 3
-                            {
-                                modifier += 2;
-                            }
-                        }
+            modifier += self.get_damage_boost_for_source(source_id, target_controller);
+        }
+        modifier
+    }
+
+    /// Compute the total damage bonus granted by battlefield continuous effects
+    /// (CR 614.1a damage-increase replacements) when `source_id` deals damage to
+    /// a target whose controller is `target_controller`.
+    ///
+    /// Currently handles:
+    /// - Artist's Talent level 3: +2 when a YOUR source deals damage to an OPPONENT.
+    /// - Torbran, Thane of Red Fell (`StaticAbility::DamageIncrease`): +N when a
+    ///   RED source YOU control deals damage to an opponent or opponent permanent.
+    ///
+    /// Called from both the spell-damage path (via `get_noncombat_damage_modifier`)
+    /// and the combat-damage path (directly, since `current_damage_source` is not
+    /// set during combat assignments).
+    pub fn get_damage_boost_for_source(&self, source_id: CardId, target_controller: PlayerId) -> i32 {
+        let Ok(source_card) = self.cards.get(source_id) else {
+            return 0;
+        };
+        let source_controller = source_card.controller;
+        // Damage-increase effects only apply when the source damages an OPPONENT
+        // (a player/permanent controlled by someone other than the source's controller).
+        if target_controller == source_controller {
+            return 0;
+        }
+        let source_is_red = source_card.colors.contains(&crate::core::Color::Red);
+        let mut modifier = 0;
+        for &card_id in &self.battlefield.cards {
+            let Ok(card) = self.cards.get(card_id) else {
+                continue;
+            };
+            // Only effects controlled by the source's controller matter here
+            // (Torbran boosts YOUR red sources; Artist's Talent boosts YOUR sources).
+            if card.controller != source_controller {
+                continue;
+            }
+            for static_ability in &card.static_abilities {
+                if let crate::core::StaticAbility::DamageIncrease { bonus, .. } = static_ability {
+                    // DamageIncrease (Torbran shape): requires source to be red.
+                    if source_is_red {
+                        modifier += *bonus as i32;
                     }
                 }
+            }
+            // Artist's Talent level 3 (name-based, pre-existing).
+            if card.name.as_str() == "Artist's Talent" && card.get_counter(crate::core::CounterType::Level) >= 3 {
+                modifier += 2;
             }
         }
         modifier
