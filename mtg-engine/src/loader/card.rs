@@ -754,7 +754,13 @@ impl CardDefinition {
                     if let Some(params) = AbilityParams::parse_svar_body(body) {
                         if params.api_type == ApiType::Token {
                             if let Some(script) = params.get("TokenScript") {
-                                token_scripts.insert(script.to_string());
+                                // TokenScript$ may be a comma-separated list of distinct token
+                                // scripts (e.g. Wurmcoil Engine: "c_3_3_a_phyrexian_wurm_deathtouch,
+                                // c_3_3_a_phyrexian_wurm_lifelink"). Split on commas so each
+                                // individual script name is loaded as its own file.
+                                for name in script.split(',') {
+                                    token_scripts.insert(name.trim().to_string());
+                                }
                             }
                         }
                     }
@@ -768,7 +774,10 @@ impl CardDefinition {
                 if let Some(params) = AbilityParams::parse_svar_body(body) {
                     if params.api_type == ApiType::Token {
                         if let Some(script) = params.get("TokenScript") {
-                            token_scripts.insert(script.to_string());
+                            // Same comma-split as the SVar arm above.
+                            for name in script.split(',') {
+                                token_scripts.insert(name.trim().to_string());
+                            }
                         }
                     }
                 }
@@ -6215,6 +6224,52 @@ Oracle:Deathtouch\nWhen this creature enters, create a Food token.
             "Should extract c_a_food_sac token script. Got: {:?}. raw_abilities: {:?}",
             token_scripts,
             def.raw_abilities
+        );
+    }
+
+    #[test]
+    fn test_extract_token_scripts_comma_separated() {
+        // Wurmcoil Engine uses a comma-separated TokenScript$ list to create two
+        // distinct tokens: one with deathtouch, one with lifelink (B3 bug fix).
+        // extract_token_scripts must split on commas so each name is returned
+        // individually — callers load each as a separate file.
+        let content = r#"
+Name:Wurmcoil Engine
+ManaCost:6
+Types:Artifact Creature Phyrexian Wurm
+PT:6/6
+K:Deathtouch
+K:Lifelink
+T:Mode$ ChangesZone | Origin$ Battlefield | Destination$ Graveyard | ValidCard$ Card.Self | Execute$ TrigToken | TriggerDescription$ When CARDNAME dies, create a 3/3 colorless Phyrexian Wurm artifact creature token with deathtouch and a 3/3 colorless Phyrexian Wurm artifact creature token with lifelink.
+SVar:TrigToken:DB$ Token | TokenScript$ c_3_3_a_phyrexian_wurm_deathtouch,c_3_3_a_phyrexian_wurm_lifelink
+Oracle:Deathtouch, lifelink\nWhen Wurmcoil Engine dies, create a 3/3 colorless Phyrexian Wurm artifact creature token with deathtouch and a 3/3 colorless Phyrexian Wurm artifact creature token with lifelink.
+"#;
+
+        let def = CardLoader::parse(content).unwrap();
+        let token_scripts = def.extract_token_scripts();
+
+        // Both individual script names must be returned, NOT the composite string.
+        assert!(
+            token_scripts.contains(&"c_3_3_a_phyrexian_wurm_deathtouch".to_string()),
+            "Should extract deathtouch wurm script individually. Got: {:?}",
+            token_scripts
+        );
+        assert!(
+            token_scripts.contains(&"c_3_3_a_phyrexian_wurm_lifelink".to_string()),
+            "Should extract lifelink wurm script individually. Got: {:?}",
+            token_scripts
+        );
+        // The raw composite string must NOT appear in the output (that was the bug).
+        assert!(
+            !token_scripts.contains(&"c_3_3_a_phyrexian_wurm_deathtouch,c_3_3_a_phyrexian_wurm_lifelink".to_string()),
+            "Must not return the raw comma-joined string as a single entry. Got: {:?}",
+            token_scripts
+        );
+        assert_eq!(
+            token_scripts.len(),
+            2,
+            "Should extract exactly 2 scripts. Got: {:?}",
+            token_scripts
         );
     }
 

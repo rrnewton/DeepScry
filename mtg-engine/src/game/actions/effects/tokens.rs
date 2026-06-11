@@ -23,7 +23,33 @@ impl GameState {
     /// `controller` (or under every player when `for_each_player`). CR 111.2:
     /// the creator is owner and controller. Each mint is undo-logged
     /// (mtg-ba6uq #3) and revealed to all players for network determinism.
+    ///
+    /// `token_script` may be a comma-separated list of distinct token script
+    /// names (e.g. Wurmcoil Engine: `"c_3_3_a_phyrexian_wurm_deathtouch,
+    /// c_3_3_a_phyrexian_wurm_lifelink"`). When multiple names are present,
+    /// one token of each distinct kind is created per repetition of `amount`.
     pub(in crate::game::actions) fn execute_create_token(
+        &mut self,
+        controller: PlayerId,
+        token_script: &str,
+        amount: u8,
+        for_each_player: bool,
+    ) -> Result<()> {
+        // TokenScript$ may name multiple distinct tokens via comma separation
+        // (CR 111.2 — each listed token is minted independently). Split and
+        // delegate so every script name goes through the single-script path.
+        let scripts: Vec<&str> = token_script.split(',').map(str::trim).collect();
+        if scripts.len() > 1 {
+            for script in scripts {
+                self.execute_create_token_single(controller, script, amount, for_each_player)?;
+            }
+            return Ok(());
+        }
+        self.execute_create_token_single(controller, token_script, amount, for_each_player)
+    }
+
+    /// Inner helper: create `amount` tokens from a single (non-comma) `token_script`.
+    fn execute_create_token_single(
         &mut self,
         controller: PlayerId,
         token_script: &str,

@@ -7796,4 +7796,62 @@ mod tests {
             "Essence Scatter must NOT target artifact spells (non-creature)"
         );
     }
+
+    /// Regression test for B3 (mtg-914): Wurmcoil Engine comma-separated TokenScript$.
+    ///
+    /// Before the fix, `execute_create_token` treated "a,b" as a single key and
+    /// found nothing in `token_definitions`, silently creating zero tokens.
+    /// After the fix, the comma list is split and each name is looked up
+    /// individually, so both the deathtouch and lifelink Wurm tokens are minted.
+    ///
+    /// This test inserts both token definitions directly (no filesystem I/O),
+    /// calls `execute_create_token` with the comma-joined script string, and
+    /// asserts exactly two tokens land on the battlefield.
+    #[test]
+    fn test_execute_create_token_comma_separated_wurmcoil() {
+        use crate::loader::CardLoader;
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players.first().unwrap().id;
+
+        // Minimal token definition stubs (name is sufficient for the test).
+        let deathtouch_script = "c_3_3_a_phyrexian_wurm_deathtouch";
+        let lifelink_script = "c_3_3_a_phyrexian_wurm_lifelink";
+
+        // Load the real token definitions from the forge-java tokenscripts directory.
+        let db = CardDatabase::new(PathBuf::from("../cardsfolder"));
+        let mut dt_def = tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(async { db.get_token(deathtouch_script).await })
+            .expect("Deathtouch Wurm token should parse")
+            .expect("Deathtouch Wurm token file should exist");
+        dt_def.script_name = Some(deathtouch_script.to_string());
+
+        let mut ll_def = tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(async { db.get_token(lifelink_script).await })
+            .expect("Lifelink Wurm token should parse")
+            .expect("Lifelink Wurm token file should exist");
+        ll_def.script_name = Some(lifelink_script.to_string());
+
+        game.token_definitions
+            .insert(deathtouch_script.to_string(), std::sync::Arc::new(dt_def));
+        game.token_definitions
+            .insert(lifelink_script.to_string(), std::sync::Arc::new(ll_def));
+
+        let before = game.battlefield.cards.len();
+
+        // Call with the comma-separated composite string exactly as stored in the
+        // card script (SVar:TrigToken:DB$ Token | TokenScript$ <composite>).
+        game.execute_create_token(p1_id, &format!("{},{}", deathtouch_script, lifelink_script), 1, false)
+            .expect("execute_create_token should not fail");
+
+        let after = game.battlefield.cards.len();
+        assert_eq!(
+            after - before,
+            2,
+            "Wurmcoil Engine should create exactly 2 tokens (deathtouch + lifelink). \
+             before={before}, after={after}"
+        );
+    }
 }
