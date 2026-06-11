@@ -7750,7 +7750,7 @@ impl GameState {
             CountExpression::ValidPermanents { filter, modifier } => {
                 let count = self.count_permanents_matching(filter, controller);
                 let raw = i32::try_from(count).unwrap_or(i32::MAX);
-                Ok(modifier.clone().apply(raw))
+                Ok(modifier.apply(raw))
             }
             CountExpression::CardsDrawnThisTurn => {
                 if let Ok(player) = self.get_player(controller) {
