@@ -1,0 +1,158 @@
+---
+title: 'EPIC: cross-year championship broken-card root-cause consolidation (missing effect-families ranked by card-unblock impact)'
+status: open
+priority: 2
+issue_type: task
+depends_on:
+  mtg-651: related
+  mtg-245: related
+  mtg-684: parent-child
+created_at: 2026-06-11T05:50:28.597118375+00:00
+updated_at: 2026-06-11T05:50:36.395034892+00:00
+---
+
+# Description
+
+CROSS-YEAR ROOT-CAUSE CONSOLIDATION of every World Championship broken-card backlog. Compiled by agent compat-rootcause-rollup (slot05), 2026-06-10, STAMP 2026-06-10_#3177(9e100acf). Rolls up under the championship-collections umbrella mtg-684.
+
+PURPOSE: the per-year survey backlogs (1994 mtg-713, 2000 mtg-xxtl0, 2005 mtg-nzozr, 2010 mtg-0oxuk, 2015 mtg-cn0dr, 2020 mtg-902, 2025 mtg-v59ll) each list per-card BROKEN/PARTIAL findings. The SAME handful of missing engine effect-families recurs across years. This bead RE-INDEXES those scattered per-card items by SHARED ENGINE ROOT CAUSE, ranked by how many championship cards each family unblocks — so the post-refactor fix loop can implement effect-families in impact order instead of card-by-card.
+
+ALL FIXES DEFERRED until the mtg-245 execute_effect dispatch-table refactor lands (it owns the effect/Count resolution paths every item below touches). This is a CONSOLIDATION/INDEX bead — no engine edits. Source backlogs hold the full per-card repro commands + file pointers; this bead is the cross-year map.
+
+SOURCE BACKLOGS (read these for per-card detail):
+- 1994: mtg-713  (B1-B18; MANY already FIXED+landed — see its DONE section; only OPEN items counted below)
+- 2000: mtg-xxtl0 (B1-B11)   [on branch claude/compat-2000-survey, tracker mtg-h558o]
+- 2005: mtg-nzozr (B1-B5)     [on branch claude/compat-2005-survey, tracker mtg-a4t4t]
+- 2010: mtg-0oxuk (B1-B6)     [on branch claude/compat-2010-survey, tracker mtg-38g7u]
+- 2015: mtg-cn0dr (B1-B4)     [on branch claude/compat-2015-survey, tracker mtg-8ikty]
+- 2020: mtg-902  (B1-B5; B2 Adventure already DONE)  [tracker mtg-901]
+- 2025: mtg-v59ll (B1-B3)     [on branch claude/compat-2025-survey, tracker mtg-881]
+- 1995: PENDING — slot07 has not filed a 1995 backlog yet (no claude/compat-1995 branch exists as of this stamp). Re-index 1995 into the families below once it lands.
+
+NOTE ON COUNTS: "cards" = distinct championship cards the family unblocks (counted once per card even if it appears in multiple decks/years). "copies" hints at deck weight where the source bead gave it. Already-FIXED items (1994 Berserk/Whirling Dervish/Winter Orb/Jade Statue/Howling Mine/Ivory Tower/Meekstone/Stasis/Kismet/Flashfires/Juggernaut/DestroyAll-subtype; 2020 Adventure) are EXCLUDED from the family counts — they are no longer blocking.
+
+================================================================
+RANKED MISSING EFFECT-FAMILIES (highest leverage first)
+================================================================
+
+== F1. X / kicker-scaled counters at ETB  (apply_etb_counters non-numeric amount) ==
+  IMPACT: 3 distinct cards across 2 years; each a 4-of mana/threat engine -> highest-frequency runtime warning across all surveys.
+  ROOT CAUSE: mtg-engine/src/game/actions/mod.rs:1363 apply_etb_counters only accepts an INTEGER counter amount; any non-numeric amount (X = xPaid, XKicked = Count$TimesKicked) is "not yet supported" -> the permanent enters with ZERO counters.
+  CARDS:
+    - Hangarback Walker  (2015 B1; 4x rietzl_abzan + 3x mono_white) — enters 0/0, dies instantly, never makes Thopters. WARN fired 411x+284x.
+    - Everflowing Chalice (2010 B1; deck04 ramp) — kicked Chalice enters with 0 charge counters -> produces 0 mana. WARN 46x.
+    - (siblings named in beads: Walking Ballista, Endless One — same family, not in a championship deck yet.)
+  FIX SHAPE: resolve X/xPaid and Count$TimesKicked to a scalar at the ETB-counter site (relates to mtg-291 which fixed the NUMERIC case). Smallest, highest-frequency fix — DO FIRST.
+  Prereq: coordinate with mtg-245 (owns actions/mod.rs).
+
+== F2. RepeatEach / per-element repeat-subability (token & sacrifice payoffs) ==
+  IMPACT: 3+ distinct cards across 3 years (2005, 2010, 2015) + the long-standing Sylvan Library (mtg-651). One of the highest-recurrence families.
+  ROOT CAUSE: ApiType RepeatEach is NOT in the ApiType enum (loader/ability_parser.rs) -> parses to Unknown -> Effect::Unimplemented no-op. The "for each X, do sub-ability Y" loop (iterate DefinedCards/RepeatPlayers, bind Remembered, run the sub) does not exist.
+  CARDS:
+    - Tragic Arrogance   (2015 B2; manfield_abzan main + 3 sideboards) — whole card is a RepeatEach board-wipe; does literally nothing. WARN 33x.
+    - Terastodon         (2010 B2; deck04) — destroys fine but never makes the compensating 3/3 Elephants. WARN 11x.
+    - Sylvan Library     (1994 PARTIAL, mtg-548/mtg-651) — draw-2/pay-4 RepeatEach chain unimplemented.
+    - (2005 backlog also flags the RepeatEach family as a sibling.)
+  FIX SHAPE: add ApiType::RepeatEach + the per-element repeat loop; pair with ChooseCard (F4) for the per-player choose variants. Bug issue mtg-651 already tracks this — fold all three cards in.
+
+== F3. Damage-INCREASE replacement layer ("deals N damage plus M") ==
+  IMPACT: 3 distinct cards across 2 years (2020, 2025) + a large named sibling family (Fiery Emancipation, Gratuitous Violence, City on Fire).
+  ROOT CAUSE: NO damage-INCREASE replacement layer exists. core/prevention.rs implements damage-PREVENTION only; DB$ ReplaceEffect | VarName$ DamageAmount has no converter arm; ApiType::ReplaceEffect not in the parser. Source-filtered damage boosts are silently dropped.
+  CARDS:
+    - Torbran, Thane of Red Fell (2020 B1; 4x mono_red) — red sources deal +2; centerpiece of the deck, dead.
+    - Artist's Talent L3        (2025 B3; decks 01/02) — noncombat damage to opponents +2; L1/L2 work, L3 silently nothing.
+    - Crumbling Sanctuary       (2000 B9; finkel+maher) — DamageDone->exile-from-library REDIRECT (same damage-replacement classifier gap).
+  BUG ISSUE: mtg-crapg (2025) + mtg-902 B1 (2020) already name this shared gap.
+  FIX SHAPE: one damage-modification replacement category applied at the SINGLE damage-application chokepoint (combat + ability), filtered by ValidSource/ValidTarget/IsCombat; deterministic + rewind-safe + identical server/client.
+
+== F4. ChooseCard / choose-N-permanents converter arm ==
+  IMPACT: 3+ distinct cards across 2000/1994 + enables the per-player half of F2 (RepeatEach).
+  ROOT CAUSE: ApiType::ChooseCard has NO effect_converter arm -> abilities whose head is ChooseCard (then Tap/Sacrifice the chosen) are dropped.
+  CARDS:
+    - Tangle Wire     (2000 B2; finkel+maher 4x) — upkeep forced-tap chain dead; just fades.
+    - Forcefield      (1994 B5; AB$ ChooseCard) — ability dropped, card inert.
+    - Tragic Arrogance per-player choose (2015 B2, with F2).
+    - (Parallax Wave/Tide per-counter ChangeZone flagged as related in 2000.)
+  FIX SHAPE: ChooseCard converter arm (choose N cards matching a filter, remember them) + ensure the chained sub-ability (Tap/Sacrifice/ChangeZone) runs on the chosen set. Tracked in mtg-651.
+
+== F5. Continuous characteristic-defining P/T + AddType statics (becomes-a-creature / P/T = some count) ==
+  IMPACT: 2 high-value cards in 2000 (one is a deck's whole win condition) + the Siege-cycle type-discriminator (2015).
+  ROOT CAUSE: continuous CharacteristicDefining SetPower/SetToughness is NOT a standalone runtime StaticAbility (only handled inside CopyPermanent); continuous AddType$ Creature/<type> is unsupported.
+  CARDS:
+    - Opalescence  (2000 B5; 4x vandelogt_replenish) — turns enchantments into P/T-= -mana-value creatures; the Replenish deck's WIN CONDITION. Dead.
+    - Serra Avatar (2000 B4; chimera) — */* = your life total; enters as 0/0 and dies instantly.
+    - (Related: 2015 B4 Palace Siege ChosenMode* selector + 2025 B2 Multiversal Passage AddType$ ChosenType share the continuous-AddType machinery — see F8.)
+  FIX SHAPE: implement continuous CDA P/T as a real layer-7b static + a layer-4 continuous AddType static.
+
+== F6. NameCard / "choose a card name" + Card.NamedCard predicate ==
+  IMPACT: 3 distinct cards across 2005/2010.
+  ROOT CAUSE: ApiType::NameCard not in the enum -> Unknown -> no-op; Card.NamedCard predicate never set.
+  CARDS:
+    - Memoricide       (2010 B4; deck02 main+SB, deck01 SB) — names a card, exiles all copies from gy/hand/library. Does nothing.
+    - Pithing Needle   (2005 B5; 3x decks 01/04) — names a card, its CantBeActivated lock keys off Card.NamedCard -> whole lock inert.
+    - Cranial Extraction (2005 B5; SB deck02) — same NameCard exile.
+  FIX SHAPE: ApiType::NameCard + name-choice infra + Card.NamedCard wiring. (Pithing Needle also needs F7 CantBeActivated.)
+
+== F7. Activation/attack/block legality statics (CantBeActivated / CantAttack / CantBlock) ==
+  IMPACT: 3+ distinct hate-pieces across 2000 (+ Pithing Needle from F6).
+  ROOT CAUSE: CantBeActivated / CantAttack / CantBlock parse into StaticAbilityMode but are NOT in the runtime StaticAbility enum -> never enforced; the hate-pieces are inert.
+  CARDS:
+    - Cursed Totem  (2000 B6; replenish SB) — creature activated abilities not blocked.
+    - Light of Day  (2000 B7; chimera SB) — black creatures still attack/block.
+    - Pithing Needle CantBeActivated half (2005 B5, with F6).
+  FIX SHAPE: wire these three static modes into the activation-legality + declare-attackers/blockers checks.
+
+== F8. Mode-choice-on-ETB statics (GenericChoice / ChooseType + ChosenMode/ChosenType selector) ==
+  IMPACT: 2 distinct cards across 2015/2025; generalizes to the whole Siege cycle + every basic-land-type-chooser.
+  ROOT CAUSE: ApiType GenericChoice and ApiType ChooseType have NO converter arms; the ChosenMode*/ChosenType selector is mapped UNCONDITIONALLY to Self_ (loader/card.rs:4283) ignoring the discriminator.
+  CARDS:
+    - Multiversal Passage (2025 B2; 4x decks 01/02/03) — ETB "choose a basic land type" dropped -> land taps for NO mana. A dead 4-of mana-base land.
+    - Palace Siege        (2015 B4; turtenwald SB) — both Khans AND Dragons modes attach (stronger than printed).
+  FIX SHAPE: GenericChoice + ChooseType converter arms that record the chosen mode/type; make ChosenMode*/ChosenType selectors match the recorded value. (Multiversal Passage also needs the continuous AddType from F5.)
+
+== F9. Runtime SVar store (StoreSVar) for ETB-paid / counted riders ==
+  IMPACT: 2 distinct cards across 2000/2010.
+  ROOT CAUSE: ApiType StoreSVar is an explicit Effect::NoOp (effect_converter.rs:1843) — no runtime SVar store; values written there stay at their default.
+  CARDS:
+    - Phyrexian Processor (2000 B3; finkel+maher 4x) — ETB "pay any amount of life" stores nothing -> always makes a 0/0 Minion.
+    - Summoning Trap      (2010 B6; deck04 4x) — countered-creature tracker never increments -> the {0} alternative-cast never arms.
+  FIX SHAPE: a real runtime SVar store (often paired with an ETB "pay any amount of life" replacement for Processor).
+
+== F10. Life-floor / damage-redirect replacement classifier shapes ==
+  IMPACT: 2 distinct cards in 2000 (shares the replacement-classifier layer with F3).
+  ROOT CAUSE: loader/card.rs R: classifier recognizes only narrow shapes (ETB-tapped, CantHappen-untap, prevent-damage). LifeReduced floors and DamageDone redirects are unrecognized -> dropped.
+  CARDS:
+    - Worship           (2000 B10; chimera SB) — "can't go below 1 while you control a creature" not enforced.
+    - Crumbling Sanctuary (2000 B9; also F3) — DamageDone->exile redirect.
+  FIX SHAPE: general replacement-classifier categories for life-loss-floor + damage-redirect (build alongside F3's damage-modification chokepoint).
+
+================================================================
+LONG-TAIL SINGLE-CARD GAPS (one championship card each; lower leverage — fix opportunistically with their family or last)
+================================================================
+- Honden of Cleansing Fire (2005 B1): Count$ '/Times.N' multiplier suffix dropped -> WRONG life math (gains 6 not 4). Count-expression parser. HIGH-VALUE-SMALL (wrong, not merely inert).
+- Sensei's Divining Top (2005 B2): RearrangeTopOfLibrary (look-at-top-N reorder) unimplemented; draw half works. Library-reorder effect family (also Soothsaying/Index).
+- Umezawa's Jitte (2005 B3): Charm modal on an activated SubCounter ability reaches execute_effect fallback — VERIFY whether the chosen mode applies.
+- Yosei, the Morning Star (2005 B4): SkipPhase (skip target's next untap step) unimplemented; tap half works. Sibling: Kokusho-cycle.
+- Sorin Markov -7 (2010 B5): ControlPlayer (control a player's next turn) unimplemented; +2/-3 work. Large rare feature.
+- Mastery of the Unseen (2015 B3): Manifest activated ability unimplemented (face-down infra partly exists).
+- Metalworker (2000 B1, HIGH VALUE): ApiType::Reveal has no converter arm -> the explosive-mana engine of the 1st/2nd-place Tinker decks is a dead {T} ability. (Reveal-then-do-Y-per-X family.)
+- Commence the Endgame (2020 B3): Amass/Army unsupported; draws 2 but makes no Army. Niche.
+- Chandra, Acolyte of Flame -2 (2020 B4): AB$ Play (cast-from-graveyard) no converter arm. Shares the cast-from-other-zone family.
+- 1994 still-OPEN singletons (from mtg-713, non-fixed): Time Elemental (B2 targeted-bounce ChangeZone + B3 Attacks->DelayedTrigger), Vesuvan Doppelganger (B4 AddTriggers upkeep re-copy), Magical Hack/Sleight of Mind (B7 ChangeText), In the Eye of Chaos/Presence of the Master (B8 SpellCast-on-opp-cast global-enchant trigger + TriggeredSpellAbility), Channel (B14 SP$ Effect|Abilities temp mana ability), Reverse Damage (B15 ChooseSource non-CoP prevention), Siren's Call (B16 granted-MustAttack temp effect), Fork (B17 CopySpellAbility, mtg-152), Floral Spuzzem (B21 AttackerUnblocked trigger site), Old Man of the Sea (B1 activated GainControl duration follow-up, mtg-741).
+
+================================================================
+SUGGESTED EXECUTION ORDER (post-mtg-245-refactor)
+================================================================
+1. F1  X/kicker ETB counters       (3 cards, smallest fix, highest WARN volume) 
+2. F2  RepeatEach + F4 ChooseCard   (paired; 5+ cards incl Sylvan Library mtg-651)
+3. F3  Damage-increase replacement  (3 cards incl Torbran; bug mtg-crapg/mtg-902-B1)
+4. F5  Continuous CDA P/T + AddType  (Opalescence win-con + Serra Avatar; enables F8)
+5. F6  NameCard + F7 legality statics (paired; Pithing Needle needs both)
+6. F8  GenericChoice/ChooseType mode statics (Multiversal Passage 4-of land)
+7. F9  StoreSVar runtime store
+8. F10 replacement-classifier shapes (with F3)
+9. Long-tail singletons, opportunistically.
+
+When a family lands, flip the per-card status in its YEAR backlog + the per-card Card Compatibility issue + docs/EFFECT_SUPPORT.md, and check the box for each card listed here.
+
+Driven by agent compat-rootcause-rollup (slot05), 2026-06-10. SURVEY/CONSOLIDATE/BEADS ONLY — no engine edits.
