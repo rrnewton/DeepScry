@@ -297,6 +297,88 @@ function check(cond, msg) {
       check(guest.acct === ' (guest)', 'ephemeral session → lobby banner "Welcome, rando (guest)"');
     }
 
+    // ── Part 1c-logout: the LOBBY control ALWAYS reads "Log out" and routes ──
+    // back to the signed-out sign-in page (for BOTH OAuth and ephemeral
+    // sessions). The user's clarified requirement: there is no "change name"
+    // affordance — changing your name = log out, then type a new one on the
+    // sign-in page. We drive the REAL enterLobby() via the stub WebSocket so
+    // the control is read exactly as a player sees it in the lobby (mtg-742).
+    {
+      // (A) Signed-in (GitHub) lobby → control reads "Log out"; clicking it
+      //     POSTs /auth/logout AND returns to the signed-out sign-in page
+      //     (provider buttons back, logged-in view gone).
+      const { ctx, page } = await openLobbyWith({
+        providers: { github: true, google: true }, oauth_enabled: true,
+        logged_in: true, provider: 'github', display_name: '@octocat',
+        suggested_name: 'octocat', user_id: 'github-7',
+      });
+      await page.waitForSelector('#btn-name', { timeout: 5000 });
+      await page.fill('#username', 'octocat');
+      await Promise.all([
+        page.waitForSelector('#pane-lobby:not(.hidden)', { timeout: 5000 }),
+        page.click('#btn-name'),
+      ]);
+      check((await page.textContent('#btn-logout')).trim() === 'Log out', 'signed-in lobby: #btn-logout reads "Log out"');
+      let logoutMethod = null;
+      await page.route('**/auth/logout', (route) => {
+        logoutMethod = route.request().method();
+        route.fulfill({ status: 200, body: 'logged out' });
+      });
+      await Promise.all([
+        page.waitForRequest((r) => r.url().endsWith('/auth/logout'), { timeout: 5000 }),
+        page.click('#btn-logout'),
+      ]);
+      check(logoutMethod === 'POST', 'signed-in lobby "Log out" POSTs /auth/logout');
+      // Lands on the signed-out sign-in page: name pane visible, lobby hidden,
+      // provider buttons back, logged-in view gone.
+      await page.waitForSelector('#pane-name:not(.hidden)', { timeout: 5000 });
+      check(await page.evaluate(() => document.getElementById('pane-lobby').classList.contains('hidden')), 'signed-in logout → lobby pane hidden');
+      await page.waitForFunction(
+        () => { const c = document.getElementById('oauth-choices'); return c && c.style.display !== 'none'; },
+        { timeout: 5000 }
+      );
+      check(await page.isVisible('#btn-login-github'), 'signed-in logout → sign-in page shows GitHub button');
+      check(!(await page.isVisible('#oauth-signed-in')), 'signed-in logout → logged-in view gone');
+      check(await page.evaluate(() => sessionStorage.getItem('mtg.cloudIdentity') === null), 'signed-in logout → cloud identity cleared');
+      await ctx.close();
+
+      // (B) Ephemeral lobby (OAuth-enabled deployment, name-only session) →
+      //     control STILL reads "Log out"; clicking it returns to the signed-out
+      //     sign-in page (which still offers the GitHub/Google sign-in buttons).
+      const { ctx: ctx2, page: page2 } = await openLobbyWith({
+        providers: { github: true, google: true }, oauth_enabled: true, logged_in: false,
+        provider: null, display_name: null, user_id: null,
+      });
+      await page2.waitForSelector('#btn-name', { timeout: 5000 });
+      await page2.fill('#username', 'rando');
+      await Promise.all([
+        page2.waitForSelector('#pane-lobby:not(.hidden)', { timeout: 5000 }),
+        page2.click('#btn-name'),
+      ]);
+      check((await page2.textContent('#btn-logout')).trim() === 'Log out', 'ephemeral lobby: #btn-logout ALSO reads "Log out" (no "change name")');
+      await page2.click('#btn-logout');
+      await page2.waitForSelector('#pane-name:not(.hidden)', { timeout: 5000 });
+      check(await page2.evaluate(() => document.getElementById('pane-lobby').classList.contains('hidden')), 'ephemeral logout → lobby pane hidden');
+      check(await page2.isVisible('#btn-login-github'), 'ephemeral logout → sign-in page still offers GitHub sign-in');
+      check(await page2.evaluate(() => !sessionStorage.getItem('mtg.username')), 'ephemeral logout → committed name cleared from sessionStorage');
+      // The name field is ready for a NEW name (this is how you "change name").
+      check(await page2.isVisible('#username'), 'ephemeral logout → name field ready for a new name');
+      await ctx2.close();
+
+      // (C) Belt-and-suspenders: no "change name" text remains anywhere in the
+      //     lobby control across either session type.
+      const { ctx: ctx3, page: page3 } = await openLobbyWith({ oauth_enabled: false, logged_in: false });
+      await page3.waitForSelector('#btn-name', { timeout: 5000 });
+      await page3.fill('#username', 'guest1');
+      await Promise.all([
+        page3.waitForSelector('#pane-lobby:not(.hidden)', { timeout: 5000 }),
+        page3.click('#btn-name'),
+      ]);
+      check((await page3.textContent('#btn-logout')).trim() === 'Log out', 'oauth-disabled ephemeral lobby: #btn-logout reads "Log out"');
+      check(!/change name/i.test(await page3.textContent('#btn-logout')), 'no "change name" wording on the lobby logout control');
+      await ctx3.close();
+    }
+
     // ── Part 1d: lobby layout redesign (structural, no WS needed) ──────────
     {
       const { ctx, page } = await openIndexWith({ oauth_enabled: false, logged_in: false });

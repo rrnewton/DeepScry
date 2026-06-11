@@ -363,7 +363,7 @@
         <div class="card" style="margin-bottom: 18px;">
             <h2>Lobby <span style="float: right; font-weight: normal; font-size: 13px; color: var(--muted);">
                 Welcome, <strong id="welcome-name" style="color: var(--accent-2);"></strong><span id="welcome-acct-type" style="color: var(--muted); font-weight: normal;"></span>
-                &middot; <a href="#" id="btn-logout">change name</a>
+                &middot; <a href="#" id="btn-logout">Log out</a>
             </span></h2>
 
             <!-- Create a Game — WIDE bar across the top: game name + passcode
@@ -675,10 +675,11 @@
     // user is never auto-advanced before we can clear a stale committed name.
     var wsReady = false;
     var authStatusResolved = false;
-    // OAuth login state from /auth/status. When `loggedIn` is true the lobby's
-    // logout control becomes a real "Log out" (POST /auth/logout); otherwise it
-    // is the ephemeral "change name" name-reset. `provider`/`displayName` drive
-    // the "Signed in via GitHub as X" copy.
+    // OAuth login state from /auth/status. The lobby's logout control always
+    // reads "Log out"; when `loggedIn` is true clicking it does a real server
+    // logout (POST /auth/logout), otherwise it just clears the ephemeral
+    // name/session. Both return to the signed-out sign-in page.
+    // `provider`/`displayName` drive the "Signed in via GitHub as X" copy.
     var oauthLoggedIn = false;
     var oauthProvider = null;
     var oauthDisplayName = null;
@@ -1193,10 +1194,23 @@
         if (acctEl) acctEl.textContent = welcomeAcctTypeSuffix();
         document.getElementById('pane-name').classList.add('hidden');
         document.getElementById('pane-lobby').classList.remove('hidden');
+        // Ensure the lobby logout control is labeled on every lobby entry. It
+        // always reads "Log out" now (for both OAuth and ephemeral sessions);
+        // calling the updater here keeps it robust against any future label
+        // logic and mirrors the other lobby-state setup (mtg-742).
+        updateLobbyLogoutControl();
         applyLaunchLinks();
         startRefreshTimer();
     }
 
+    // Return to the SIGNED-OUT sign-in page: clear the ephemeral name/session
+    // state, hide the lobby, and show the name pane. On an OAuth-enabled
+    // deployment also re-render the signed-out provider view so the GitHub/
+    // Google buttons are present (a clean sign-in page, never a half-state).
+    // The OAuth-session logout path (oauthLogout) calls this after POSTing
+    // /auth/logout; the ephemeral path calls it directly. Either way the user
+    // lands on the same clear sign-in page where they can pick a new name or
+    // sign in (mtg-742).
     function logout() {
         currentUsername = '';
         nameRegistered = false;
@@ -1205,6 +1219,10 @@
         document.getElementById('pane-lobby').classList.add('hidden');
         document.getElementById('pane-name').classList.remove('hidden');
         document.getElementById('btn-name').disabled = false;
+        // Restore the signed-out OAuth view (provider buttons + ephemeral prose)
+        // when OAuth is configured, so logging out from an ephemeral session in
+        // an OAuth-enabled deployment still shows the sign-in options.
+        if (lastOAuthProviders) renderSignedOut(lastOAuthProviders);
         document.getElementById('username').focus();
         applyLaunchLinks();
         if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null; }
@@ -1421,12 +1439,16 @@
             });
     }
 
-    // The lobby's logout control: "Log out" (real OAuth logout) for signed-in
-    // users, "change name" (ephemeral name-reset) otherwise.
+    // The lobby's logout control ALWAYS reads "Log out" — for BOTH OAuth and
+    // ephemeral (name-only) sessions. Clicking it returns the user to the
+    // signed-out sign-in page (GitHub/Google buttons + ephemeral name entry),
+    // where they can re-enter a new name or sign in. There is deliberately no
+    // separate "change name" affordance: changing your name = log out, then
+    // type a new name on the sign-in page (mtg-742).
     function updateLobbyLogoutControl() {
         var el = document.getElementById('btn-logout');
         if (!el) return;
-        el.textContent = oauthLoggedIn ? 'Log out' : 'change name';
+        el.textContent = 'Log out';
     }
 
     var lastOAuthProviders = null;
@@ -1503,8 +1525,11 @@
 
     document.getElementById('btn-logout').addEventListener('click', function (ev) {
         ev.preventDefault();
-        // OAuth users get a REAL log out (server session invalidated); ephemeral
-        // users get the name-reset ("change name").
+        // "Log out" for BOTH session types. An OAuth session does a REAL server
+        // logout (POST /auth/logout invalidates the session cookie) and then
+        // returns to the signed-out sign-in page; an ephemeral (name-only)
+        // session just clears the client name/session and returns to the same
+        // sign-in page. Both end on the clean signed-out view (mtg-742).
         if (oauthLoggedIn) {
             oauthLogout();
         } else {
