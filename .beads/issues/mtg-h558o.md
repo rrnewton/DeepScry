@@ -1,0 +1,76 @@
+---
+title: 'TRACK: 2000 World Championship decks — full deck compatibility'
+status: open
+priority: 1
+issue_type: task
+depends_on:
+  mtg-684: parent-child
+created_at: 2026-06-11T04:21:37.056827311+00:00
+updated_at: 2026-06-11T05:36:34.829965068+00:00
+---
+
+# Description
+
+TRACK: full play-tested gameplay compatibility for all 2000 Magic World Championship decks (Brussels, Belgium, Aug 2000; Standard "Masques block + Urza block + 6th/7th edition" / Tinker-era pool — the WotC "World Championship Decks 2000" product). Sibling of mtg-709 (1994), mtg-881 (2025), mtg-901 (2020); rolls up under the championship-collections umbrella mtg-684. Broken-card backlog: mtg-xxtl0.
+
+User goal: each 2000 World Championship deck plays COMPLETE games with NO engine errors, and every card's abilities/keywords/effects classified WORKING (or PARTIAL/BROKEN then FIXED) per the targeted_compatibility + compatibility_tracking SKILLs.
+
+== Scope ==
+decks/championship/2000/ (4 decks incl sideboards):
+- 01_finkel_tinker        (1st, World Champion, Jon Finkel USA — Mono-Blue Tinker artifact combo)
+- 02_maher_tinker         (2nd, Bob Maher Jr. USA — Mono-Blue Tinker, near-mirror of Finkel)
+- 03_vandelogt_replenish  (Top4, Tom van de Logt NL — UW Replenish enchantment combo)
+- 04_labarre_chimera      (Top4, Nicolas Labarre FR — GW Chimera infinite-mana combo)
+
+This is an OLD STANDARD pool: artifact-acceleration (Grim Monolith, Thran Dynamo, Metalworker), Tinker, Fading enchantments (Parallax Wave/Tide, Tangle Wire), enchantment-recursion (Replenish + Opalescence), and a mana-elf/altar combo engine.
+
+== Baseline survey (2026-06-10_#3175(c6dbd34f), agent compat-2000-survey slot07) ==
+- 72 unique cards across all 4 decks (union, incl sideboards). ALL 72 resolve to a single cardsfolder/<x>/<name>.txt script file (cardsfolder is a symlink -> forge-java/.../cardsfolder; must use `find -L`). Basic lands Island/Plains/Forest included and present.
+- `mtg tourney <deck> --mirror-only --games 200 --seed 7` for each of the 4 decks (800 games total): ALL completed, ZERO crashes / panics / Unimplemented runtime warnings. Every deck loads (Finkel/Maher 61, Replenish/Chimera 60) and plays end-to-end; 0 draws. The ONLY recurring WARN is benign: `pay_ability_cost failed for ... Regenerate Masticore: Cannot pay mana cost` (the heuristic AI tries Masticore's {2} regen with no mana and is correctly refused; not a crash).
+- Per-deck verbosity-3 AI-vs-AI games captured (gitignored debug/compat2000/v3_*.log) for Finkel(+seeds 3/11/19/23), Replenish, Chimera.
+
+KEY NUANCE: zero runtime errors does NOT mean every ability works. The heuristic AI exercises only a subset, and several cards are silently WEAKER than printed because an ability is dropped at the converter/static layer with NO runtime warning (the Unimplemented warning only fires if such an effect actually RESOLVES — an ability never offered, or a continuous static never applied, emits nothing). Static script-vs-converter scan + targeted game-log analysis found the gaps below.
+
+== ApiType / construct survey (static scan of all 72 scripts vs effect_converter.rs's 60 ApiType arms) ==
+GAP ApiTypes (parse to a variant but NO converter arm -> Effect::Unimplemented, or explicit NoOp):
+- Reveal  -> NO converter arm. Kills METALWORKER's signature {C}{C}-per-artifact mana ability (backlog B1, HIGHEST VALUE — the mana engine of the 1st+2nd place decks).
+- ChooseCard -> NO converter arm. Breaks TANGLE WIRE's per-fade-counter forced-tap sub-ability (B2).
+- StoreSVar -> explicit Effect::NoOp. PHYREXIAN PROCESSOR's "pay X life on ETB" stores 0 -> its X/X token is always 0/0 (B3).
+GAP static/replacement constructs (StaticAbility runtime enum = ModifyPT,GrantKeyword,ReduceCost,RaiseCost,GrantAbility,GainControl,SacrificeMatchingPresent,CantBeCast,CantPlayLand,CantBlockMatching,CastWithFlash — anything else is parsed-but-inert):
+- Continuous CharacteristicDefining SetPower/SetToughness -> UNSUPPORTED. SERRA AVATAR enters 0/0 and instantly dies (EMPIRICALLY CONFIRMED, B4); OPALESCENCE's "enchantments become creatures w/ P/T = mana value" never applies (B5, the Replenish combo kill-condition).
+- Continuous AddType$ Creature -> UNSUPPORTED (also Opalescence, B5).
+- CantBeActivated -> UNSUPPORTED. CURSED TOTEM inert (B6).
+- CantAttack / CantBlock static -> parsed to StaticAbilityMode but NOT in StaticAbility runtime enum. LIGHT OF DAY inert (B7).
+- Continuous AddTrigger / AddSVar -> UNSUPPORTED. ENERGY FLUX inert (B8); PATTERN OF REBIRTH's AddSVar rider inert (its dies-search TRIGGER itself uses ChangeZone and is likely fine).
+- Replacement R: Event$ DamageDone / LifeReduced (non-prevention) -> only narrow prevention + ETB-tapped + CantHappen-untap R: shapes recognized. CRUMBLING SANCTUARY (B9), WORSHIP (B10) use unrecognized shapes. MEEKSTONE (CantHappen-untap) needs verify (B11).
+Keywords: Flying (Birds — WORKING), Fading:N (Parallax Wave/Tide, Tangle Wire — counter tracking parses; the per-counter EFFECT is where Tangle Wire breaks), Cycling:2 (Miscalculation), Enchant (Confiscate GainControl continuous IS supported — likely WORKING).
+
+== HEADLINE METRIC (2026-06-10_#3175(c6dbd34f)) ==
+72 unique cards (union of all 4 decks incl sideboards).
+- EVIDENCE-BACKED WORKING (verified by quoted game-log this pass): 15/72 = 21%. Tinker (artifact tutor onto battlefield), Masticore (regen shield + upkeep-sac trigger + ping), Grim Monolith & Thran Dynamo (tap for mana), Metalworker BODY only (1/2 attacks), Replenish (moves all enchantments Gy->Battlefield), Frantic Search, Enlightened Tutor & Mystical Tutor (library search), Counterspell (counters spells), Birds of Paradise & Llanowar Elves & Priest of Titania (mana), basic lands.
+- LIKELY-FINE-UNVALIDATED (constructs IMPL, no per-card game-log this pass): ~44 cards (most mana rocks/lands, simple counters/burn/destroy/draw, Wrath/Armageddon DestroyAll, Yawgmoth's Will/Bargain, Brainstorm, etc.).
+- KNOWN BROKEN/PARTIAL: 13/72 = ~18% (B1-B11; some bugs hit multiple cards).
+So: evidence-backed WORKING = 15/72 (21%); estimated functional (WORKING + likely-fine) ~59/72 (~82%); known-broken-or-partial 13/72 (~18%).
+
+== BROKEN / PARTIAL summary (detail in backlog mtg-xxtl0) ==
+B1 [PARTIAL, HIGH VALUE] Metalworker — Reveal ApiType has no converter arm; {C}{C}-per-artifact mana ability is Unimplemented. Body (1/2) works. Engine of Finkel + Maher decks.
+B2 [PARTIAL] Tangle Wire — ChooseCard unimplemented; Fading sac works but the per-fade-counter forced-tap drops.
+B3 [PARTIAL] Phyrexian Processor — StoreSVar is NoOp; "pay X life on ETB" stores 0, token always 0/0.
+B4 [BROKEN] Serra Avatar — continuous CDA P/T (= life total) unsupported; enters 0/0 and dies (confirmed).
+B5 [BROKEN, HIGH VALUE] Opalescence — continuous SetPower/SetToughness/AddType unsupported; enchantments never become creatures. Replenish-deck win condition.
+B6 [PARTIAL/inert] Cursed Totem — CantBeActivated static unsupported.
+B7 [PARTIAL/inert] Light of Day — CantAttack/CantBlock static parsed but not in runtime enum.
+B8 [PARTIAL/inert] Energy Flux — continuous AddTrigger unsupported.
+B9 [PARTIAL] Crumbling Sanctuary — DamageDone->exile replacement shape unrecognized.
+B10 [PARTIAL] Worship — LifeReduced->reduce-to-1 replacement shape unrecognized.
+B11 [VERIFY] Meekstone — CantHappen-untap for power>=3 needs targeted confirmation.
+
+== Definition of done ==
+1. Every per-card issue for these 4 decks reaches CARD STATUS: WORKING (or accepted PARTIAL w/ bug followup).
+2. Each deck has a captured end-to-end log with each non-vanilla ability verified by targeted puzzle (not just the heuristic-mirror subset).
+3. The 4-deck tournament reaches 0% engine-failure rate (ALREADY MET: 800 games, 0 failures).
+
+== How agents pick work ==
+Open this umbrella -> pick the highest-value not-yet-WORKING card from backlog mtg-xxtl0 (B1 Metalworker + B5 Opalescence first — the literal combo engines of the four decks) -> drive via targeted_compatibility SKILL. B1(Reveal->Mana), B4/B5(continuous CDA/SetPT/AddType static), B6-B8(static modes) are shared ENGINE features that also block other championship years; coordinate edits to effect_converter.rs / the static-ability layer via mb claims + rebase. Fixes DEFERRED until the effects/actions refactor lands (this was a SURVEY-ONLY pass; NO source edited). Never duplicate.
+
+Driven by agent compat-2000-survey (slot07), 2026-06-10 overnight survey pass. Gitignored evidence: debug/compat2000/{unique_cards.txt,cardpaths.txt,card_apis.tsv,supported_apis.txt,tourney_*.log,v3_*.log} on branch claude/compat-2000-survey.
