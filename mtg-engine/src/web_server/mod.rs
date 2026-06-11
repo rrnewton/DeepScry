@@ -960,7 +960,18 @@ async fn dev_login_handler(
         .unwrap_or(Provider::GitHub);
     let subject_id = params.get("sub").cloned().unwrap_or_else(|| "dev-test-1".to_string());
     let suggested_name = params.get("name").cloned().unwrap_or_else(|| "dev-tester".to_string());
-    let sid = oauth.create_session(provider, subject_id, suggested_name);
+    // login-ux-corrections (mtg-742) changed create_session to take a
+    // ResolvedSubject; build one from the dev-login query params. display_name
+    // is a friendly label (mirrors the real GitHub resolver's "@handle"); only
+    // subject_id is identity-relevant.
+    let sid = oauth.create_session(
+        provider,
+        oauth::ResolvedSubject {
+            subject_id,
+            display_name: format!("@{suggested_name}"),
+            suggested_name,
+        },
+    );
     let mut resp = (StatusCode::OK, "dev session created").into_response();
     // Dev-login runs against a LOCAL plain-HTTP box, where a `Secure` cookie
     // would be dropped by the browser. Omit `Secure` for THIS dev-only cookie
