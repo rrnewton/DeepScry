@@ -1,5 +1,5 @@
 ---
-title: 2005 Championship — broken-card root-cause backlog (B1-B5)
+title: 2005 Championship — broken-card root-cause backlog (B1-B7)
 status: open
 priority: 2
 issue_type: task
@@ -15,7 +15,9 @@ updated_at: 2026-06-11T04:21:29.707048424+00:00
 
 SURVEY-ONLY pass — NO engine/web edits made. All fixes below are DEFERRED until the in-flight engine refactor lands. Each item lists file pointers + a runnable repro.
 
-Prioritized fix order: B1 (smallest, wrong life math) -> B4 (skip-untap lock) -> B2 (Top library manip) -> B3 (Jitte modal verify) -> B5 (NameCard, unverified).
+UPDATE 2026-06-10_#3180(d7cc1319), agent compat-2005-deepverify (slot05): added B6 (graveyard-targeting ChangeZone self-targets — 4 deck-02 recursion cards, Goryo's Vengeance emits Unknown(0) sentinel) + B7 (Dredge keyword has no draw-replacement logic — Life from the Loam + Nightmare Void). Both found by forcing the deck-02 recursion cards through targeted fixed-input puzzles. Deep-verify also promoted ~10 cards to evidence-backed WORKING (tracker mtg-a4t4t headline ~32%->~49%).
+
+Prioritized fix order: B6 (graveyard-target resolution — unblocks the whole deck-02 recursion engine, 4 cards, clear Unknown(0) sentinel) -> B1 (smallest, wrong life math) -> B7 (Dredge replacement, 2 cards) -> B4 (skip-untap lock) -> B2 (Top library manip) -> B3 (Jitte modal verify) -> B5 (NameCard, unverified).
 
 == B1 [BROKEN, HIGH VALUE] Honden of Cleansing Fire — '/Times.N' count multiplier dropped ==
 Card: cardsfolder/h/honden_of_cleansing_fire.txt (4x in deck03 03_asahara_enduring_ideal).
@@ -77,5 +79,72 @@ Symptom: NameCard is NOT in the ApiType enum (ability_parser.rs) — parses as A
 Risk: if NameCard no-ops, Pithing Needle never picks a name (its CantBeActivated static keys off Card.NamedCard, so the whole lock is inert) and Cranial Extraction exiles nothing. Both are likely BROKEN but UNCONFIRMED.
 Root cause class: missing ApiType::NameCard + the 'choose a card name' choice infra + Card.NamedCard predicate wiring. Needs targeted puzzles (force Pithing Needle ETB + try to activate a named source; force Cranial Extraction cast at an opponent with a known graveyard/hand/library). File per-card issues once confirmed.
 
+== B6 [BROKEN, HIGH VALUE for deck 02] Graveyard-targeting ChangeZone self-targets / drops its target ==
+Cards (ALL in deck 02 karsten_greater_gift, the recursion deck):
+  - cardsfolder/r/reclaim.txt        — SP$ ChangeZone | Origin$ Graveyard | Destination$ Library | ValidTgts$ Card.YouCtrl
+  - cardsfolder/r/recollect.txt      — SP$ ChangeZone | Origin$ Graveyard | Destination$ Hand    | ValidTgts$ Card.YouCtrl
+  - cardsfolder/d/debtors_knell.txt  — T:upkeep -> DB$ ChangeZone | Origin$ Graveyard | Destination$ Battlefield | GainControl$ True | ValidTgts$ Creature
+  - cardsfolder/g/goryos_vengeance.txt — SP$ ChangeZone | Origin$ Graveyard | Destination$ Battlefield | ValidTgts$ Creature.Legendary+YouCtrl | RememberChanged$ True -> DBPump Animate Haste on Remembered
+Symptom: a ChangeZone whose Origin is Graveyard and which TARGETS a graveyard card does NOT correctly solicit/bind the chosen card. Observed (puzzles debug/deepverify2005/{reclaim,recollect,debtors,goryo}.pzl, fixed-input forced cast, seed 7, v3):
+  - Goryo's Vengeance: 'Goryo's Vengeance (3) moves from Graveyard to Battlefield' (the INSTANT reanimates ITSELF, not the target Kokusho) + 'grants Unknown (0) gains Haste' — the 'Unknown (0)' SENTINEL proves the Remembered target is empty/unresolved.
+  - Reclaim: 'Reclaim (3) moves from Graveyard to Library' (moves itself, not the target Kokusho). Even an explicit 'target Kokusho' fixed-input is ignored; no target choice is offered.
+  - Recollect: 'Player 1 has no matching Card in graveyard to return' (target predicate Card.YouCtrl matches nothing — even though Reclaim with the IDENTICAL predicate self-matched).
+  - Debtors' Knell: upkeep trigger fires ('Debtors' Knell trigger effect') but NO creature is reanimated (Kokusho stays in gy; battlefield unchanged).
+Root cause class: target-resolution for ChangeZone with Origin$ Graveyard + ValidTgts. The targeting layer appears to (a) auto-bind the resolving spell's own card from the graveyard, or (b) fail the ValidTgts match entirely, rather than enumerating the legal graveyard cards and binding the chosen one to Remembered/Targeted. SAME class as 1994 mtg-713 B22 (Regrowth self-targeted itself from the graveyard — flagged there as "RE-VERIFY: fixed-input auto-target artifact?"; this pass CONFIRMS it is a genuine engine gap, reproduced with explicit targets and across 4 distinct cards). Generalizes to every graveyard-recursion / reanimation card (Goryo, Debtors' Knell, Reclaim, Recollect, Regrowth, Ink-Eyes, and similar). HIGH VALUE: it cripples deck 02's entire graveyard-recursion engine.
+Repro:
+
+```sh
+cat > /tmp/goryo.pzl <<'P'
+[metadata]
+Name=Goryos Vengeance reanimate legendary
+Goal=Win
+Turns=2
+[state]
+turn=3
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Goryo's Vengeance
+p0battlefield=Swamp;Swamp
+p0graveyard=Kokusho, the Evening Star
+p0library=Swamp;Swamp
+p1life=20
+p1battlefield=Plains
+p1library=Plains;Plains
+P
+./target/release/mtg tui --start-state /tmp/goryo.pzl --p1 fixed --p1-fixed-inputs "cast Goryo's Vengeance;*;*" --p2 zero --seed 7 -v 3 2>&1 | grep -iE "Goryo|Kokusho|Unknown|Battlefield"
+```
+Expected (BUG today): 'Goryo's Vengeance (3) moves from Graveyard to Battlefield' + 'grants Unknown (0) gains Haste' (self-reanimates, sentinel). After fix: 'Kokusho ... moves from Graveyard to Battlefield' + Kokusho gains Haste.
+
+== B7 [BROKEN] Dredge keyword has no draw-replacement firing logic ==
+Cards: cardsfolder/l/life_from_the_loam.txt (Dredge 3, deck 02), cardsfolder/n/nightmare_void.txt (Dredge 2, deck 02).
+Symptom: Dredge IS parsed (mtg-engine/src/core/keyword_set.rs: KeywordArgs::Dredge { amount }; loader/card.rs:1125 'Dredge' arm) but there is NO logic anywhere in mtg-engine/src/game/ that REPLACES a draw with "mill N, return this card from graveyard to hand" (grep for a draw-replacement-by-dredge site = zero hits). So a card with Dredge in the graveyard never offers the dredge option; the player just draws normally.
+EMPIRICAL: puzzle debug/deepverify2005/dredge.pzl (Life from the Loam in graveyard, draw step) -> 'Player 1 draws Mountain' (normal draw), NO dredge prompt, Loam stays in graveyard.
+Impact: Life from the Loam + Nightmare Void function ONLY as their one-shot spell (the spell halves WORK — Loam returns a land, Nightmare Void discards); their recursion engine (the entire reason they're in a recursion deck) is silently dead. Both deck 02.
+Root cause class: missing Dredge replacement effect — a "if you would draw, you may instead mill N and return this from gy to hand" replacement applied at the draw event for any card with Dredge in the graveyard. Generalizes to all Dredge cards.
+Repro:
+
+```sh
+cat > /tmp/dredge.pzl <<'P'
+[metadata]
+Name=Dredge Loam
+Goal=Win
+Turns=2
+[state]
+turn=3
+activeplayer=p0
+activephase=UPKEEP
+p0life=20
+p0battlefield=Forest;Forest
+p0graveyard=Life from the Loam
+p0library=Forest;Island;Swamp;Plains;Mountain
+p1life=20
+p1battlefield=Plains
+p1library=Plains;Plains
+P
+./target/release/mtg tui --start-state /tmp/dredge.pzl --p1 fixed --p1-fixed-inputs "*;*;*;*" --p2 zero --seed 7 -v 3 2>&1 | grep -iE "dredge|mill|Life from the Loam|draws"
+```
+Expected (BUG today): 'Player 1 draws Mountain' only — no dredge offered. After fix: a dredge prompt -> mill 3 -> 'returns Life from the Loam from graveyard to hand'.
+
 == Cross-links ==
-Tracker mtg-a4t4t. Umbrella mtg-684. Sibling backlogs: mtg-713 (1994), mtg-902 (2020), mtg-v59ll (2025). Survey artifacts (gitignored): debug/survey2005/{tourney.log, v3_0[1-4].log, honden_gainlife.pzl, unique_cards.txt, resolved.tsv}.
+Tracker mtg-a4t4t. Umbrella mtg-684. Sibling backlogs: mtg-713 (1994), mtg-902 (2020), mtg-v59ll (2025). Cross-year rollup epic mtg-b4aat. B6 is the SAME class as 1994 B22 (Regrowth) — now CONFIRMED a genuine engine gap (fold into the rollup epic's long-tail / a graveyard-target-resolution family). Survey artifacts (gitignored): debug/survey2005/{tourney.log, v3_0[1-4].log, honden_gainlife.pzl} + debug/deepverify2005/{v3_*.log (24 games), *.pzl (~14 puzzles), dredge.pzl, goryo.pzl}.

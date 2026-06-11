@@ -65,12 +65,42 @@ Birds of Paradise, Llanowar Elves, Wood Elves, Loxodon Hierarch, Selesnya Guildm
 - PARTIAL/BROKEN with filed gap: 4 (Honden B1, Sensei Top B2, Jitte B3, Yosei B4) + 2 unverified-NameCard (B5).
 Validated-WORKING rate = ~32% evidence-backed. 0% engine-failure (no-crash) bar MET; per-ability-WORKING bar NOT met for ~68%.
 
+== DEEP-VERIFICATION PASS (2026-06-10_#3180(d7cc1319), agent compat-2005-deepverify slot05) ==
+Method: 24 fresh verbosity-3 games (4 pairings x 6 seeds, ~29k lines) to let the heuristic exercise more cards, PLUS ~14 targeted fixed-input puzzles (debug/deepverify2005/*.pzl) forcing the "likely-fine but untested" cards to fire. Goal: promote parse-clean cards to evidence-backed WORKING and surface any newly-confirmed broken cards.
+
+NEWLY EVIDENCE-BACKED WORKING (log evidence captured this pass): 
+- Naturalize (destroys target enchantment: 'Naturalize destroys Ghostly Prison'); 
+- Carven Caryatid (ETB 'Player 1 draws Swamp', enters 2/5); 
+- Greater Good (sac Kodama -> draw=power -> 'discards' x3); 
+- Miren, the Moaning Well (sac Carven tou=5 -> 'gains 5 life' — correct toughness math); 
+- Faith's Fetters (ETB 'gains 4 life' + enchants permanent); 
+- Seed Spark (destroys target + ConditionManaSpent$ G makes exactly 2 Saproling tokens); 
+- Congregation at Dawn (searches 3 creatures, puts on Library top); 
+- Gifts Ungiven (searches library, moves chosen to graveyard, rest to hand, clears remembered); 
+- Nightmare Void (opp 'discards Brushland' — discard half works; dredge half is B7); 
+- Life from the Loam (returns a land card gy->hand — return half works; dredge half is B7); 
+- Selesnya Guildmage CAST (body resolves; its activated token/pump abilities still UNVERIFIED — AI never activated).
+=> +~10 cards promoted to evidence-backed WORKING.
+
+NEWLY CONFIRMED BROKEN (new backlog items B6, B7):
+- B6 [BROKEN] Graveyard-targeting ChangeZone self-targets / drops target. Reclaim, Recollect, Debtors' Knell, Goryo's Vengeance — ALL in deck 02 (karsten_greater_gift, the recursion deck). Goryo's Vengeance emits the 'Unknown (0)' SENTINEL ('grants Unknown (0) gains Haste') and reanimates ITSELF instead of the legendary creature; Reclaim moves itself gy->library; Recollect 'has no matching Card in graveyard to return'; Debtors' Knell upkeep trigger fires but reanimates nothing. Same class as 1994 B22 (Regrowth self-target). HIGH VALUE for deck 02.
+- B7 [BROKEN] Dredge keyword has NO draw-replacement firing logic. Parsed (keyword_set.rs KeywordArgs::Dredge{amount}) but nothing in game/ replaces a draw with mill-N+return. Life from the Loam (Dredge 3) + Nightmare Void (Dredge 2), both deck 02 — recur never; they function only as one-shot spells. Puzzle debug/deepverify2005/dredge.pzl: draw step just 'draws Mountain', no dredge offered.
+
+STILL BROKEN/PARTIAL (no regression, no fix — refactor not landed): B1 Honden /Times.2 (warns persist), B2 Sensei RearrangeTopOfLibrary (no-op persists), B3 Jitte ModalChoice->execute_effect (persists), B4 Yosei SkipPhase (no-op persists). B5 Pithing Needle/Cranial Extraction NameCard still un-deployed (not forced this pass).
+
+UPDATED HEADLINE (2026-06-10_#3180(d7cc1319)):
+- Evidence-backed WORKING: ~28 / 57 = ~49% (was ~18/57=~32%).
+- BROKEN/PARTIAL with filed gap: B1-B4 (unchanged) + B6 (4 gy-recursion cards) + B7 (2 dredge cards); B5 unverified.
+- Likely-fine-unvalidated remainder: ~21/57 (Glare of Subdual, Seedborn Muse, Hokori, Ghostly Prison, Solitary Confinement, Ivory Mask, CoP:Red, Meloku token, Selesnya Guildmage activated abilities, Vitu-Ghazi token, Ink-Eyes, Reclaim/Recollect target-half pending B6 fix). Most LIKELY work but not yet log-proven; Glare/Seedborn/Meloku activations the heuristic+fixed-input did not trigger this pass.
+Validated-WORKING rate rose ~32% -> ~49% evidence-backed. 0% engine-failure bar still MET.
+
 == Definition of done ==
 1. Every per-card issue reaches CARD STATUS: WORKING (or accepted PARTIAL w/ bug followup).
 2. Each deck has end-to-end log with each non-vanilla ability verified by targeted puzzle.
-3. Tournament 0% engine-failure (MET) AND each B1..B5 gap fixed or accepted.
+3. Tournament 0% engine-failure (MET) AND each B1..B7 gap fixed or accepted.
 
 == How agents pick work ==
-Open umbrella -> backlog bead (B1 Honden /Times.N count-multiplier first: smallest fix, wrong life) -> targeted_compatibility SKILL. Fixes DEFERRED until in-flight engine refactor lands (SURVEY-ONLY pass; no engine edits). Coordinate via mb; never duplicate.
+Open umbrella -> backlog bead (B1 Honden /Times.N count-multiplier first: smallest fix, wrong life; B6 gy-targeting + B7 dredge unblock the whole deck-02 recursion plan) -> targeted_compatibility SKILL. Fixes DEFERRED until in-flight engine refactor lands (SURVEY-ONLY pass; no engine edits). Coordinate via mb; never duplicate.
 
 Driven by agent compat-2005-survey (slot05), 2026-06-10, overnight autonomous survey. SURVEY/CLASSIFY/BEADS ONLY.
+DEEP-VERIFY UPDATE 2026-06-10_#3180(d7cc1319) by agent compat-2005-deepverify (slot05): +~10 cards promoted to evidence-backed WORKING (~32%->~49%); filed B6 (graveyard-targeting ChangeZone self-targets, deck 02, Unknown(0) sentinel on Goryo's Vengeance) + B7 (Dredge keyword has no draw-replacement logic). Puzzle artifacts in gitignored debug/deepverify2005/.
