@@ -538,8 +538,10 @@
                 <div class="cloud-tools">
                     <!-- Download relabelled (item 10): drop the leading "View /". -->
                     <a id="btn-download-decks" href="#" title="Re-mint a fresh link and download your real collection.tgz">Download deck collection</a>
-                    <!-- Direct link (item 11): copy a temporary presigned URL. -->
-                    <button id="btn-direct-link" class="ghost" title="Copy a temporary direct link to your cloud collection (expires)">Direct link</button>
+                    <!-- Direct link (item 11): copy a link to the cloud collection.
+                         Disabled when no cloud decks exist yet (no object in R2
+                         to link to). Tooltip explains why. -->
+                    <button id="btn-direct-link" class="ghost" title="No cloud decks — save a deck to cloud first" disabled>Direct link</button>
                 </div>
                 <div class="cloud-objpath" id="cloud-objpath"></div>
             </div>
@@ -1809,6 +1811,24 @@ function renderCloudChips() {
         deleteCloudDeck,
         'No cloud decks yet.',
     );
+    updateDirectLinkButton();
+}
+
+/**
+ * Keep the "Direct link" button in sync with whether the user has any cloud
+ * decks. When the cloud collection is empty there is no R2 object to link to,
+ * so the button is disabled with a tooltip explaining the situation. When decks
+ * exist it is enabled and its title is updated to reflect whether the link will
+ * be permanent (public bucket) or temporary (presigned URL).
+ */
+function updateDirectLinkButton() {
+    const btn = document.getElementById('btn-direct-link');
+    if (!btn) return;
+    const hasDecks = Object.keys(_cloudCollection).length > 0;
+    btn.disabled = !hasDecks;
+    btn.title = hasDecks
+        ? 'Copy a direct link to your cloud collection'
+        : 'No cloud decks — save a deck to cloud first';
 }
 
 /** Re-fetch the cloud collection from R2 and re-render the cloud list. */
@@ -2141,19 +2161,21 @@ loadEditTarget();
         });
     }
 
-    // Direct link (batch2 item 11). R2 objects are PRIVATE (served via
-    // time-limited presigned SigV4 URLs); a permanent public link would require
-    // a public bucket — a security risk (everyone's decks readable). So we
-    // implement option (a): copy the CURRENT presigned GET URL to the clipboard
-    // with a clear "(temporary link, expires)" note. A stable always-fresh app
-    // route (option b) needs a new server endpoint and is tracked as a TODO bead
-    // (mtg-920); the download button covers the durable path meanwhile.
+    // Direct link (batch2 item 11 / mtg-920). When the R2 bucket has public
+    // access enabled (R2_PUBLIC_BASE_URL set on the server), DeckStorage.directLink()
+    // returns a PERMANENT URL with no expiry. Otherwise it returns a short-TTL
+    // presigned URL and we note the expiry in the status message.
+    // The button is kept DISABLED when there are no cloud decks (enforced by
+    // updateDirectLinkButton / renderCloudChips) so we never generate a link for
+    // a non-existent R2 object (which would produce a NoSuchKey XML error page).
     const directBtn = document.getElementById('btn-direct-link');
     if (directBtn) {
         directBtn.addEventListener('click', async () => {
+            if (directBtn.disabled) return; // guarded by updateDirectLinkButton
             try {
-                const url = await DeckStorage.directLink();
-                if (!url) { showStatus('No direct link available (cloud not configured).', 'err'); return; }
+                const result = await DeckStorage.directLink();
+                if (!result) { showStatus('No direct link available (cloud not configured).', 'err'); return; }
+                const { url, permanent } = result;
                 let copied = false;
                 try {
                     if (navigator.clipboard && navigator.clipboard.writeText) {
@@ -2161,9 +2183,15 @@ loadEditTarget();
                         copied = true;
                     }
                 } catch (_) { copied = false; }
-                showStatus(copied
-                    ? '🔗 Temporary direct link copied (expires — re-copy when it lapses).'
-                    : '🔗 Direct link (temporary, expires): ' + url, copied ? 'ok' : '');
+                if (permanent) {
+                    showStatus(copied
+                        ? '🔗 Direct link copied (permanent — stays valid as you update your decks).'
+                        : '🔗 Direct link: ' + url, copied ? 'ok' : '');
+                } else {
+                    showStatus(copied
+                        ? '🔗 Temporary direct link copied (expires — re-copy when it lapses).'
+                        : '🔗 Direct link (temporary, expires): ' + url, copied ? 'ok' : '');
+                }
             } catch (err) {
                 showStatus('Could not make a direct link: ' + (err && err.message ? err.message : 'unknown'), 'err');
             }

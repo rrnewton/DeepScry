@@ -448,20 +448,26 @@
   }
 
   /**
-   * Mint a fresh, TEMPORARY presigned direct link to the user's cloud
-   * collection object (the "Direct link" button, mtg-742 batch2 item 11).
+   * Return the best available direct link to the user's cloud collection object
+   * (the "Direct link" button, mtg-742 batch2 item 11).
    *
-   * R2 objects are PRIVATE — there is no permanent public URL without making the
-   * whole bucket public (a security risk: every user's decks become world-
-   * readable). So this returns the SHORT-TTL presigned GET URL the server just
-   * minted; it works for a while and then EXPIRES, which the caller surfaces to
-   * the user. Prefers `get_url` (inline view); falls back to `download_url`.
-   * Returns the URL string, or null when cloud storage is not configured.
+   * Prefers `public_url` — a permanent, non-expiring URL that works when the R2
+   * bucket has public access enabled (R2_PUBLIC_BASE_URL set on the server).
+   * Falls back to `get_url` (a short-TTL presigned URL) when public access is
+   * not configured, then to `download_url` as a last resort.
+   *
+   * Returns { url, permanent } where `permanent` is true when the public URL is
+   * used (no expiry), or false when the presigned URL is used (expires after the
+   * server's presign TTL). Returns null when cloud storage is not configured.
    */
   async function directLink() {
     try {
       const creds = await fetchCredentials();
-      return creds.get_url || creds.download_url || null;
+      if (creds.public_url) {
+        return { url: creds.public_url, permanent: true };
+      }
+      const url = creds.get_url || creds.download_url || null;
+      return url ? { url, permanent: false } : null;
     } catch (_) {
       return null;
     }

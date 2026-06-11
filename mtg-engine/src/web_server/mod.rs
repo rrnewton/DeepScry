@@ -733,6 +733,11 @@ async fn deck_credentials_handler(headers: axum::http::HeaderMap, State(state): 
     // real .tgz. Same presigning machinery; the disposition is a separate
     // presigned GET so the in-app hydrate GET above stays a plain fetch.
     let download_url = r2.presign_download(&key, ttl, now, "deepscry-decks.tgz");
+    // Permanent public URL — present only when R2_PUBLIC_BASE_URL is set and
+    // the bucket has been enabled for public access in the Cloudflare dashboard.
+    // When present, the browser can use this as a stable, non-expiring "Direct
+    // link" instead of the short-TTL presigned get_url.
+    let public_url = r2.public_url(&key);
 
     (
         StatusCode::OK,
@@ -746,6 +751,9 @@ async fn deck_credentials_handler(headers: axum::http::HeaderMap, State(state): 
             "get_url": get_url,
             "head_url": head_url,
             "download_url": download_url,
+            // Permanent public URL (present when R2_PUBLIC_BASE_URL is set).
+            // Requires the bucket to be enabled for public access in Cloudflare.
+            "public_url": public_url,
             // Opaque storage contract (mtg-742): clients MUST send the body as
             // application/gzip with NO Content-Encoding so the bytes are stored
             // byte-clean (no CDN re-compression / auto-decompression).
