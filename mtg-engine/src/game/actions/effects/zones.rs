@@ -402,6 +402,20 @@ impl GameState {
                         zones.library.add_to_bottom(card_id);
                     }
                 }
+                // NETWORK SYNC (mtg-908, mirrors scry_apply_decision): on the
+                // SERVER in network mode, signal that the digger's new library
+                // order must be broadcast to clients so their shadow libraries
+                // re-sync the bottomed cards. The NetworkController drains this
+                // queue into the next ChoiceRequest. `reorder_ac` is the undo-log
+                // length right after `log_library_reorder` logged the
+                // ReorderLibrary action (the raw reorder ops above log nothing).
+                if !self.skip_reveals && !self.is_shadow_game {
+                    let reorder_ac = self.undo_log.len() as u64;
+                    self.sub_action_scratch
+                        .pending_library_reorders
+                        .borrow_mut()
+                        .push((digger, reorder_ac));
+                }
                 let rest_count = rest_cards.len();
                 self.logger.gamelog(&format!(
                     "{} puts {} card{} on the bottom of their library",
