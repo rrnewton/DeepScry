@@ -3560,32 +3560,7 @@ impl GameState {
             Effect::LoseLife { player, amount } => self.execute_lose_life(*player, *amount)?,
             Effect::DestroyPermanent {
                 target, no_regenerate, ..
-            } => {
-                // Skip if target is still placeholder (0) or unresolved sentinel
-                if target.is_placeholder() || target.is_self_target() {
-                    // Spell fizzles - no valid targets
-                    return Ok(());
-                }
-                // MTG Rules 702.12b: Permanents with indestructible can't be destroyed
-                let (owner, has_indestructible, has_regen_shield) = {
-                    let card = self.cards.get(*target)?;
-                    (card.owner, card.has_indestructible(), card.regeneration_shields > 0)
-                };
-                if has_indestructible {
-                    // Indestructible - can't be destroyed
-                } else if has_regen_shield && !*no_regenerate {
-                    // CR 701.15a: Regeneration replaces destruction.
-                    // When the destroy says "can't be regenerated" (NoRegen$ True,
-                    // e.g. The Abyss / Terror), the regeneration shield does NOT
-                    // apply (CR 701.15d) and the permanent is destroyed outright.
-                    self.apply_regeneration_shield(*target)?;
-                } else {
-                    let dest = self.death_destination_for_card(*target);
-                    // Check death triggers BEFORE moving the card (trigger still has access to card data)
-                    let _ = self.check_death_triggers(*target);
-                    self.move_card(*target, Zone::Battlefield, dest, owner)?;
-                }
-            }
+            } => self.execute_destroy_permanent(*target, *no_regenerate)?,
             Effect::GainControl {
                 target,
                 new_controller,
@@ -3759,97 +3734,17 @@ impl GameState {
                 counter_type,
                 amount,
             } => self.execute_remove_counter(*target, *counter_type, *amount)?,
-            Effect::ExilePermanent { target } => {
-                // Skip if target is still placeholder (0) or unresolved sentinel
-                if target.is_placeholder() || target.is_reuse_previous() {
-                    return Ok(());
-                }
-                // Exile the permanent by moving it from battlefield to exile
-                let owner = self.cards.get(*target)?.owner;
-                self.move_card(*target, Zone::Battlefield, Zone::Exile, owner)?;
-            }
-            Effect::ExileIfWouldDieThisTurn { target } => {
-                // Disintegrate's ReplaceDyingDefined clause: mark the targeted
-                // creature so that, if it would die this turn, it is exiled
-                // instead (CR 614). The flag is consulted by
-                // death_destination_for_card and cleared at cleanup. Skip if the
-                // target failed to resolve to a concrete creature.
-                if target.is_placeholder() || target.is_reuse_previous() {
-                    return Ok(());
-                }
-                if let Ok(card) = self.cards.get_mut(*target) {
-                    if card.is_creature() {
-                        card.exile_if_would_die_this_turn = true;
-                    }
-                }
-            }
+            Effect::ExilePermanent { target } => self.execute_exile_permanent(*target)?,
+            Effect::ExileIfWouldDieThisTurn { target } => self.execute_exile_if_would_die_this_turn(*target)?,
             Effect::SelfExileFromStack {
                 source,
                 remember_changed,
-            } => {
-                // `SP$ ChangeZone | Origin$ Stack | Destination$ Exile`
-                // (e.g. All Hallow's Eve). Move the resolving spell from the
-                // stack to exile so it doesn't get sent to the graveyard by the
-                // default sorcery resolution path; `resolve_spell_finalize` will
-                // notice the card is no longer on the stack and skip its move.
-                if source.is_placeholder() || source.is_self_target() {
-                    // resolve_self_target should have patched the source CardId;
-                    // if it didn't (effect was placed in an unexpected context),
-                    // fizzle silently rather than panicking.
-                    log::debug!(
-                        target: "self_exile",
-                        "SelfExileFromStack: source still placeholder/sentinel, skipping"
-                    );
-                    return Ok(());
-                }
-                if !self.stack.contains(*source) {
-                    log::debug!(
-                        target: "self_exile",
-                        "SelfExileFromStack: card {} no longer on stack",
-                        source.as_u32()
-                    );
-                    return Ok(());
-                }
-                let owner = self.cards.get(*source)?.owner;
-                self.move_card(*source, Zone::Stack, Zone::Exile, owner)?;
-                if *remember_changed {
-                    // Make the just-exiled card available to chained
-                    // SubAbilities with `Defined$ Remembered` (e.g. the
-                    // PutCounter that places two scream counters on it).
-                    self.remembered_cards.push(*source);
-                }
-            }
+            } => self.execute_self_exile_from_stack(*source, *remember_changed)?,
             Effect::MoveSelfBetweenZones {
                 source,
                 origin,
                 destination,
-            } => {
-                // `DB$ ChangeZone | Defined$ Self | Origin$ <zone> | Destination$ <zone>`
-                // executed by a triggered ability whose source lives outside the
-                // battlefield (e.g. All Hallow's Eve moving itself exile→graveyard
-                // once its last scream counter is removed).
-                if source.is_placeholder() || source.is_self_target() {
-                    log::debug!(
-                        target: "self_exile",
-                        "MoveSelfBetweenZones: source still placeholder/sentinel, skipping"
-                    );
-                    return Ok(());
-                }
-                // Verify the card is actually in the origin zone before moving so
-                // we never double-move (CR 400.7 / 608.2g object-no-longer-there).
-                let in_origin = self.find_card_zone(*source) == Some(*origin);
-                if !in_origin {
-                    log::debug!(
-                        target: "self_exile",
-                        "MoveSelfBetweenZones: card {} not in {:?}, skipping",
-                        source.as_u32(),
-                        origin
-                    );
-                    return Ok(());
-                }
-                let owner = self.cards.get(*source)?.owner;
-                self.move_card(*source, *origin, *destination, owner)?;
-            }
+            } => self.execute_move_self_between_zones(*source, *origin, *destination)?,
             Effect::ReturnCardsFromGraveyardToHand { player } => {
                 // Recall: "return a card from your graveyard to your hand for each
                 // card discarded this way" (CR 400.7 / 701.25).

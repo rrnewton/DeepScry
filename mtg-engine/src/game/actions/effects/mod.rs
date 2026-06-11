@@ -29,8 +29,9 @@
 //! - [`tokens`] — CreateToken / CopyPermanent / CopySpellAbility.
 //! - [`control`] — GainControl / Fight / GrantCantBeBlocked / Regenerate /
 //!   AttachEquipment.
-//! - [`zones`] — Dig (more zone-movement effects to follow). The Dig extraction
-//!   is the structural prerequisite for the mtg-908 network-desync fix.
+//! - [`zones`] — Dig + single-target removal/self-move (DestroyPermanent,
+//!   ExilePermanent, ExileIfWouldDieThisTurn, SelfExileFromStack,
+//!   MoveSelfBetweenZones); more zone-movement effects to follow.
 //! - [`bending`] — Airbend / Earthbend / Firebend (Avatar set mechanics).
 
 mod bending;
