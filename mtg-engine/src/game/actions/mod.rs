@@ -4143,136 +4143,18 @@ impl GameState {
                 target,
                 counter_type,
                 amount,
-            } => {
-                // Skip if target is still placeholder (0) or unresolved sentinel
-                if target.is_placeholder() || target.is_reuse_previous() {
-                    return Ok(());
-                }
-                // `Defined$ Remembered` (e.g. All Hallow's Eve's chained
-                // PutCounter after a RememberChanged self-exile) — apply the
-                // counters to every card currently in `remembered_cards`.
-                // Clone first to avoid the &self borrow held by `iter()`
-                // conflicting with `add_counters`'s &mut self.
-                if target.is_remembered_card() {
-                    let remembered: smallvec::SmallVec<[CardId; 4]> = self.remembered_cards.iter().copied().collect();
-                    if remembered.is_empty() {
-                        log::debug!(
-                            target: "put_counter",
-                            "PutCounter Defined$ Remembered with empty remembered_cards list, skipping"
-                        );
-                        return Ok(());
-                    }
-                    for cid in remembered {
-                        self.add_counters(cid, *counter_type, *amount)?;
-                    }
-                    return Ok(());
-                }
-                // Add counters using the GameState method (which logs for undo)
-                self.add_counters(*target, *counter_type, *amount)?;
-            }
+            } => self.execute_put_counter(*target, *counter_type, *amount)?,
             Effect::MultiplyCounter {
                 target,
                 counter_type,
                 multiplier,
-            } => {
-                if target.is_placeholder() {
-                    return Ok(());
-                }
-                // Multiply counters on the target card
-                if let Some(card) = self.cards.try_get(*target) {
-                    let counters_to_add: smallvec::SmallVec<[(crate::core::CounterType, u8); 4]> =
-                        if let Some(ct) = counter_type {
-                            // Multiply specific counter type
-                            let current = card.get_counter(*ct);
-                            if current > 0 {
-                                let to_add = current.saturating_mul(*multiplier - 1);
-                                smallvec::smallvec![(*ct, to_add)]
-                            } else {
-                                smallvec::SmallVec::new()
-                            }
-                        } else {
-                            // Multiply ALL counter types on the card
-                            card.counters
-                                .iter()
-                                .filter_map(|(ct, count)| {
-                                    if *count > 0 {
-                                        Some((*ct, count.saturating_mul(*multiplier - 1)))
-                                    } else {
-                                        None
-                                    }
-                                })
-                                .collect()
-                        };
-
-                    for (ct, amount) in counters_to_add {
-                        if amount > 0 {
-                            self.add_counters(*target, ct, amount)?;
-                        }
-                    }
-                }
-            }
+            } => self.execute_multiply_counter(*target, *counter_type, *multiplier)?,
             Effect::PutCounterAll {
                 restriction,
                 counter_type,
                 amount,
-            } => {
-                // Put counters on all permanents matching the restriction
-                let spell_controller = self.turn.active_player;
-                let targets: Vec<CardId> = self
-                    .battlefield
-                    .cards
-                    .iter()
-                    .copied()
-                    .filter(|&card_id| {
-                        self.cards.try_get(card_id).is_some_and(|card| {
-                            restriction.matches_with_controller(card, spell_controller, card.controller)
-                        })
-                    })
-                    .collect();
-
-                for card_id in targets {
-                    self.add_counters(card_id, *counter_type, *amount)?;
-                }
-            }
-            Effect::Proliferate => {
-                // Proliferate (CR 701.34a): choose any number of permanents and/or players
-                // that have a counter, then give each one additional counter of each kind
-                // that permanent or player already has.
-                //
-                // For automated play: proliferate all permanents with counters.
-                // The AI/controller choice of which permanents to skip is handled
-                // at the should_cast level; once resolved, we proliferate everything.
-                let permanents_with_counters: Vec<(CardId, Vec<crate::core::CounterType>)> = self
-                    .battlefield
-                    .cards
-                    .iter()
-                    .copied()
-                    .filter_map(|card_id| {
-                        let card = self.cards.try_get(card_id)?;
-                        if card.has_counters() {
-                            let counter_types: Vec<crate::core::CounterType> = card
-                                .counters
-                                .iter()
-                                .filter(|(_, count)| *count > 0)
-                                .map(|(ct, _)| *ct)
-                                .collect();
-                            if counter_types.is_empty() {
-                                None
-                            } else {
-                                Some((card_id, counter_types))
-                            }
-                        } else {
-                            None
-                        }
-                    })
-                    .collect();
-
-                for (card_id, counter_types) in permanents_with_counters {
-                    for ct in counter_types {
-                        self.add_counters(card_id, ct, 1)?;
-                    }
-                }
-            }
+            } => self.execute_put_counter_all(restriction, *counter_type, *amount)?,
+            Effect::Proliferate => self.execute_proliferate()?,
             Effect::ChangeZoneAll {
                 restriction,
                 origins,
@@ -4372,34 +4254,7 @@ impl GameState {
                 target,
                 counter_type,
                 amount,
-            } => {
-                // Skip if target is still placeholder (0) - no valid targets found
-                if target.is_placeholder() {
-                    // Spell fizzles - no valid targets
-                    return Ok(());
-                }
-                // Remove counters using the GameState method (which logs for undo)
-                if let Some(ct) = counter_type {
-                    // Specific counter type
-                    self.remove_counters(*target, *ct, *amount)?;
-                } else {
-                    // CounterType$ Any - remove counters of any type
-                    // Get all counter types present on the card and remove up to `amount` total
-                    let mut remaining = *amount;
-                    let counter_types: smallvec::SmallVec<[crate::core::CounterType; 4]> = {
-                        let card = self.cards.get(*target)?;
-                        card.counters.iter().map(|(ct, _)| *ct).collect()
-                    };
-
-                    for ct in counter_types {
-                        if remaining == 0 {
-                            break;
-                        }
-                        let removed = self.remove_counters(*target, ct, remaining)?;
-                        remaining = remaining.saturating_sub(removed);
-                    }
-                }
-            }
+            } => self.execute_remove_counter(*target, *counter_type, *amount)?,
             Effect::ExilePermanent { target } => {
                 // Skip if target is still placeholder (0) or unresolved sentinel
                 if target.is_placeholder() || target.is_reuse_previous() {

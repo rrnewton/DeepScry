@@ -16,7 +16,10 @@
 //!   PreventDamage / PreventDamageFromSource / PreventAllCombatDamageThisTurn.
 //! - [`life`] — GainLife / GainLifeDynamic / LoseLife / SetLife / DrainMana.
 //! - [`cards`] — DrawCards / Mill / Scry / Surveil (card-flow).
+//! - [`counters`] — PutCounter / PutCounterAll / MultiplyCounter / Proliferate /
+//!   RemoveCounter.
 
 mod cards;
+mod counters;
 mod damage;
 mod life;
