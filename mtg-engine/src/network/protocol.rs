@@ -1342,6 +1342,34 @@ pub enum ChoiceType {
         /// `revealed_card_ids[0]` is the current top of the library.
         revealed_card_ids: Vec<CardId>,
     },
+    /// Look at the top N cards of your library and choose which to KEEP
+    /// (move to the effect's destination zone); the rest go elsewhere
+    /// (mtg-908 — Impulse, Stock Up, Accumulate Wisdom; CR 120/701).
+    ///
+    /// Same visibility rules as [`ChoiceType::Scry`]: the server sends only the
+    /// FILTER-MATCHING revealed CardIds (`valid_card_ids`) and only ever to the
+    /// digging player's controller, so the embedded identities never leak to the
+    /// opponent.
+    ///
+    /// ## Wire encoding (response)
+    ///
+    /// The client returns `indices` listing the positions (into
+    /// `valid_card_ids`) of the cards to KEEP, in selection order. Cards whose
+    /// positions are not in `indices` (plus all non-matching revealed cards,
+    /// handled engine-side) are the "rest". An empty `indices` is a legal "keep
+    /// nothing" (the `optional` skip).
+    Dig {
+        /// Number of filter-matching cards offered (equals `valid_card_ids.len()`).
+        count: usize,
+        /// Max cards the digger may keep (the effect's `ChangeNum$`); `indices`
+        /// length must not exceed this unless `change_all` is set.
+        change_count: usize,
+        /// When true, the digger keeps ALL matching cards (`ChangeNum$ All`).
+        change_all: bool,
+        /// The FILTER-MATCHING revealed CardIds, top-down. A subset of the
+        /// digger's looked-at top-N (non-matching cards are not offered).
+        valid_card_ids: Vec<CardId>,
+    },
     /// Choose modes for a modal spell (e.g., "Choose one —")
     ///
     /// Modal spells like Heartless Act, Cryptic Command, or charms require
@@ -2179,6 +2207,12 @@ mod tests {
             ChoiceType::Surveil {
                 count: 3,
                 revealed_card_ids: vec![CardId::new(201), CardId::new(202), CardId::new(203)],
+            },
+            ChoiceType::Dig {
+                count: 4,
+                change_count: 2,
+                change_all: false,
+                valid_card_ids: vec![CardId::new(301), CardId::new(302), CardId::new(303), CardId::new(304)],
             },
         ];
 

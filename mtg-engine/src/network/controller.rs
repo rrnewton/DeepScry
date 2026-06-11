@@ -1264,6 +1264,62 @@ impl PlayerController for NetworkController {
         }
     }
 
+    fn choose_dig_partition(
+        &mut self,
+        view: &GameStateView,
+        valid: &[CardId],
+        change_count: u8,
+        change_all: bool,
+        _optional: bool,
+    ) -> ChoiceResult<crate::game::controller::DigDecision> {
+        // mtg-908: the SERVER's controller produced the kept-set against the
+        // real library; here on the CLIENT we forward the server-authoritative
+        // `valid` CardIds and receive the chosen KEEP indices. The client never
+        // re-decides from its own (hidden-shadowed) library — it just renders the
+        // server's revealed cards and echoes the keep selection back.
+        let options: Vec<String> = valid
+            .iter()
+            .map(|&card_id| format!("Dig keep: {}", self.format_card(view, card_id)))
+            .collect();
+
+        let state_hash = self.compute_view_hash(view);
+        let choice_type = ChoiceType::Dig {
+            count: valid.len(),
+            change_count: change_count as usize,
+            change_all,
+            valid_card_ids: valid.to_vec(),
+        };
+
+        // Wire encoding: client returns indices (into `valid`) of cards to KEEP,
+        // in selection order. An empty list is a legal "keep nothing".
+        match self.request_choice(view, choice_type, options, state_hash, None, None) {
+            Ok(result) => {
+                self.increment_choice_seq();
+                let keep_positions: SmallVec<[usize; 8]> = result.indices.iter().copied().collect();
+                let mut seen = SmallVec::<[usize; 8]>::new();
+                for &idx in &keep_positions {
+                    if idx >= valid.len() {
+                        return ChoiceResult::Error(format!("Invalid dig index {} (only {} valid)", idx, valid.len()));
+                    }
+                    if seen.contains(&idx) {
+                        return ChoiceResult::Error(format!("Duplicate dig index {}", idx));
+                    }
+                    seen.push(idx);
+                }
+
+                // Build kept pile in the order the client sent (selection order).
+                let mut kept: SmallVec<[CardId; 8]> = SmallVec::new();
+                for &idx in &keep_positions {
+                    kept.push(valid[idx]);
+                }
+
+                ChoiceResult::Ok(crate::game::controller::DigDecision { kept })
+            }
+            Err(NetworkError::Disconnected) => ChoiceResult::ExitGame,
+            Err(e) => ChoiceResult::Error(e.to_string()),
+        }
+    }
+
     fn set_pending_library_search_card_ids(&mut self, card_ids: &[CardId]) {
         self.pending_library_search_card_ids = Some(card_ids.to_vec());
     }

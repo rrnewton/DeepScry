@@ -70,6 +70,13 @@ pub enum ReplayChoice {
         top: SmallVec<[CardId; 4]>,
         graveyard: SmallVec<[CardId; 4]>,
     },
+    /// Choice for a Dig effect (mtg-908) — the AUTHORITATIVE set of revealed
+    /// cards the digger KEPT (moved to the effect's destination), in selection
+    /// order, exactly like [`crate::game::controller::DigDecision`]. Recorded so
+    /// rewind+replay (and the network shadow) APPLY the server's kept-set
+    /// instead of re-deriving it from the shadow's hidden-shadowed library view —
+    /// the divergence that desynced the user's 2025 04-vs-02 game.
+    Dig { kept: SmallVec<[CardId; 8]> },
 }
 
 /// Partition a turn's recorded [`crate::undo::GameAction::ChoicePoint`] actions
@@ -590,6 +597,29 @@ impl PlayerController for ReplayController {
             return ChoiceResult::Ok(decision);
         }
         self.inner.choose_surveil(view, revealed)
+    }
+
+    fn choose_dig_partition(
+        &mut self,
+        view: &GameStateView,
+        valid: &[CardId],
+        change_count: u8,
+        change_all: bool,
+        optional: bool,
+    ) -> ChoiceResult<crate::game::controller::DigDecision> {
+        // mtg-908: on rewind/replay (and on the network shadow) APPLY the
+        // recorded server-authoritative kept-set rather than re-deriving it from
+        // the (hidden-shadowed) library view.
+        if let Some(decision) = self.consume_replay_choice(|c| {
+            if let ReplayChoice::Dig { kept } = c {
+                Some(crate::game::controller::DigDecision { kept: kept.clone() })
+            } else {
+                None
+            }
+        }) {
+            return ChoiceResult::Ok(decision);
+        }
+        self.inner.choose_dig_partition(view, valid, change_count, change_all, optional)
     }
 
     fn choose_from_library(
