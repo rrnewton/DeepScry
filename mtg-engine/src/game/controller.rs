@@ -1219,6 +1219,51 @@ impl SurveilDecision {
     }
 }
 
+/// Decision returned by a controller for a Dig choice (the
+/// "look at the top N, keep some, put the rest elsewhere" effect — Impulse,
+/// Stock Up, Accumulate Wisdom, etc.).
+///
+/// Unlike Scry/Surveil (which reorder/partition within two fixed zones), a Dig
+/// moves a chosen subset to a `destination` zone (hand / exile / …) and the
+/// remainder to a `rest_destination`. The decision therefore is simply: which
+/// of the `revealed` cards go to the destination ("kept"), in selection order;
+/// every other revealed card is the "rest".
+///
+/// ## Why this is a controller decision (mtg-908)
+///
+/// The "which cards to keep" choice depends on the revealed (otherwise hidden)
+/// top-of-library identities. It MUST be made server-authoritatively and shipped
+/// to the client, exactly like [`ScryDecision`] — otherwise the client's shadow
+/// game re-decides from its hidden-shadowed library view and picks differently,
+/// desyncing the game (mtg-908: the user's 2025 04-vs-02 game died this way).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DigDecision {
+    /// Cards to move to the Dig's `destination` zone, in selection order
+    /// (a subset of the `revealed` slice passed to
+    /// [`PlayerController::choose_dig_partition`]).
+    pub kept: SmallVec<[CardId; 8]>,
+}
+
+impl DigDecision {
+    /// Build the deterministic default decision: keep the first `change_count`
+    /// of the cards that match the filter (`valid` is the filter-matching subset
+    /// of the revealed cards, in revealed order). This is the
+    /// information-independent fallback used by controllers that do not make a
+    /// richer choice (and by the no-controller `execute_dig` fallback).
+    ///
+    /// When `change_all` is set, every valid card is kept.
+    pub fn keep_first_n(valid: &[CardId], change_count: usize, change_all: bool) -> Self {
+        let take = if change_all {
+            valid.len()
+        } else {
+            change_count.min(valid.len())
+        };
+        Self {
+            kept: valid.iter().take(take).copied().collect(),
+        }
+    }
+}
+
 /// Result of a controller choice operation
 ///
 /// This enum allows controllers to return not just a choice, but also

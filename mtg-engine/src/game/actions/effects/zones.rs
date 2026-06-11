@@ -70,191 +70,33 @@ impl GameState {
         let mut moved_cards: Vec<CardId> = Vec::with_capacity(dig_count as usize);
 
         if target_self {
-            // Self-dig: look at top N cards of YOUR library
-            let library = self
-                .player_zones
-                .iter()
-                .find(|(id, _)| *id == digger)
-                .map(|(_, zones)| &zones.library);
+            // Self-dig: look at top N cards of YOUR library.
+            //
+            // mtg-908: the "which cards to keep" decision below is made by the
+            // CONTROLLER-LESS FALLBACK heuristic (`dig_default_decision`). On a
+            // network game this site is only reached when the Dig was NOT routed
+            // through the controller-interception path in `priority.rs`
+            // (`resolve_dig_with_controller`). When it IS routed there, the
+            // SERVER's controller picks and `dig_apply_self_decision` is called
+            // directly with the server-authoritative kept-set — so server and
+            // client never re-decide from divergent hidden-library views.
+            let Some((card_ids, valid_ids, invalid_ids)) = self.dig_self_snapshot(digger, dig_count, change_valid, reveal)?
+            else {
+                return Ok(());
+            };
 
-            if let Some(library) = library {
-                let take_count = dig_count as usize;
-                // Library top is at the end of the Vec, so use .rev()
-                let card_ids: smallvec::SmallVec<[CardId; 8]> =
-                    library.cards.iter().rev().take(take_count).copied().collect();
-
-                let digger_name = self.get_player(digger)?.name.to_string();
-
-                if !card_ids.is_empty() {
-                    let verb = if reveal { "reveals" } else { "looks at" };
-                    self.logger.gamelog(&format!(
-                        "{} {} the top {} card{} of their library",
-                        digger_name,
-                        verb,
-                        card_ids.len(),
-                        if card_ids.len() == 1 { "" } else { "s" }
-                    ));
-                }
-
-                // Separate cards into valid (matchable) and invalid (rest)
-                // If change_valid is empty, all cards are valid
-                let has_filter = !change_valid.is_empty();
-                let mut valid_ids: smallvec::SmallVec<[CardId; 8]> = smallvec::SmallVec::new();
-                let mut invalid_ids: smallvec::SmallVec<[CardId; 8]> = smallvec::SmallVec::new();
-
-                for &card_id in &card_ids {
-                    if has_filter {
-                        let matches = self
-                            .cards
-                            .try_get(card_id)
-                            .is_some_and(|card| change_valid.iter().any(|f| f.matches(card)));
-                        if matches {
-                            valid_ids.push(card_id);
-                        } else {
-                            invalid_ids.push(card_id);
-                        }
-                    } else {
-                        valid_ids.push(card_id);
-                    }
-                }
-
-                // Determine how many cards to select
-                let max_select = if change_all {
-                    valid_ids.len()
-                } else {
-                    (change_count as usize).min(valid_ids.len())
-                };
-
-                // AI heuristic: rank valid cards by value, pick best ones
-                // Score: creatures by (power+toughness)*10 + cmc*5 + 80,
-                //        lands by 100, others by 50 + cmc*30
-                if valid_ids.len() > 1 && max_select < valid_ids.len() {
-                    valid_ids.sort_by(|&a, &b| {
-                        let score_a = self.dig_card_score(a);
-                        let score_b = self.dig_card_score(b);
-                        score_b.cmp(&score_a) // Descending: best first
-                    });
-                }
-
-                // If optional and no good cards, AI may choose to skip
-                let select_count = if optional && max_select > 0 {
-                    // Simple heuristic: skip only if best card scores very low
-                    let best_score = valid_ids.first().map(|&id| self.dig_card_score(id)).unwrap_or(0);
-                    if best_score < 30 {
-                        0
-                    } else {
-                        max_select
-                    }
-                } else {
-                    max_select
-                };
-
-                // Move selected cards to destination
-                let selected: smallvec::SmallVec<[CardId; 8]> = valid_ids.iter().take(select_count).copied().collect();
-                let rest_from_valid: smallvec::SmallVec<[CardId; 8]> =
-                    valid_ids.iter().skip(select_count).copied().collect();
-
-                for &card_id in &selected {
-                    let card_name = self
-                        .cards
-                        .get(card_id)
-                        .map(|c| c.name.to_string())
-                        .unwrap_or_else(|_| format!("card#{}", card_id.as_u32()));
-
-                    self.move_card(card_id, Zone::Library, destination, digger)?;
-
-                    // mtg-212: the DISPLAYED name depends on async reveal
-                    // timing on a network shadow (the dug card's public
-                    // `RevealCard` may not have arrived on the shadow's
-                    // first forward pass — `card_name` falls back to
-                    // `card#<id>` — but is present on a rewind replay).
-                    // Supply the rewind/replay verifier a reveal-timing-
-                    // INDEPENDENT id form so the presentation asymmetry is
-                    // not flagged as a fatal desync (the card is in the
-                    // destination zone either way — the turn-start hash
-                    // proves the STATE). Same mechanism as the
-                    // discard-into-graveyard line (mtg-677).
-                    let action = if reveal { "reveals and puts" } else { "puts" };
-                    let stable = format!(
-                        "{} {} card#{} into {:?}",
-                        digger_name,
-                        action,
-                        card_id.as_u32(),
-                        destination
-                    );
-                    self.logger.gamelog_reveal_stable(
-                        &format!("{} {} {} into {:?}", digger_name, action, card_name, destination),
-                        &stable,
-                    );
-                    moved_cards.push(card_id);
-                }
-
-                // Handle rest: non-selected valid cards + invalid cards
-                let mut rest_cards: smallvec::SmallVec<[CardId; 8]> = smallvec::SmallVec::new();
-                rest_cards.extend(rest_from_valid.iter().copied());
-                rest_cards.extend(invalid_ids.iter().copied());
-
-                if !rest_cards.is_empty() {
-                    // Shuffle rest if RestRandomOrder$ True
-                    if rest_random {
-                        // Use a simple deterministic shuffle based on game state
-                        // (card IDs provide enough entropy for reasonable shuffling)
-                        let len = rest_cards.len();
-                        for i in (1..len).rev() {
-                            let j = (rest_cards[i].as_u32() as usize + i) % (i + 1);
-                            rest_cards.swap(i, j);
-                        }
-                    }
-
-                    // Move rest to rest_destination
-                    if rest_destination == Zone::Library {
-                        // Capture pre-reorder library order so a rewind
-                        // can restore it (mtg-ba6uq #2): the raw
-                        // remove/add_to_bottom below is not otherwise
-                        // undo-logged.
-                        self.log_library_reorder(digger, false);
-                        // Put on bottom of library: remove from current position,
-                        // then insert at index 0 (bottom)
-                        if let Some(zones) = self.get_player_zones_mut(digger) {
-                            for &card_id in &rest_cards {
-                                zones.library.remove(card_id);
-                                zones.library.add_to_bottom(card_id);
-                            }
-                        }
-                        let rest_count = rest_cards.len();
-                        self.logger.gamelog(&format!(
-                            "{} puts {} card{} on the bottom of their library",
-                            digger_name,
-                            rest_count,
-                            if rest_count == 1 { "" } else { "s" }
-                        ));
-                    } else {
-                        for &card_id in &rest_cards {
-                            let card_name = self
-                                .cards
-                                .get(card_id)
-                                .map(|c| c.name.to_string())
-                                .unwrap_or_else(|_| format!("card#{}", card_id.as_u32()));
-
-                            self.move_card(card_id, Zone::Library, rest_destination, digger)?;
-
-                            let dest_name = match rest_destination {
-                                Zone::Graveyard => "their graveyard",
-                                Zone::Exile => "exile",
-                                Zone::Hand => "their hand",
-                                Zone::Library | Zone::Battlefield | Zone::Stack | Zone::Command => "another zone",
-                            };
-                            // mtg-212: reveal-timing-independent verifier
-                            // key (see the selected-cards branch above).
-                            let stable = format!("{} puts card#{} into {}", digger_name, card_id.as_u32(), dest_name);
-                            self.logger.gamelog_reveal_stable(
-                                &format!("{} puts {} into {}", digger_name, card_name, dest_name),
-                                &stable,
-                            );
-                        }
-                    }
-                }
-            }
+            let decision = self.dig_default_decision(&valid_ids, change_count, change_all, optional);
+            self.dig_apply_self_decision(
+                digger,
+                &decision,
+                &card_ids,
+                &invalid_ids,
+                destination,
+                rest_destination,
+                reveal,
+                rest_random,
+                &mut moved_cards,
+            )?;
         } else {
             // Opponent-dig pattern (Fire Lord Ozai, Xander's Pact)
             let opponent_ids: smallvec::SmallVec<[PlayerId; 4]> =
@@ -327,13 +169,262 @@ impl GameState {
         Ok(())
     }
 
+    /// Snapshot the top `dig_count` cards of `digger`'s library for a self-dig,
+    /// emit the "looks at / reveals the top N" gamelog, and partition them into
+    /// the filter-matching `valid` set and the non-matching `invalid` set.
+    ///
+    /// Returns `None` only when the digger has no library zone (nothing to do).
+    /// Returns the full revealed top-N (`card_ids`, top-down) plus the partition.
+    /// This is the server-authoritative "reveal" that BOTH the controller-routed
+    /// path (priority.rs) and the no-controller fallback (`execute_dig`) share —
+    /// so the revealed CardIds shipped to the client match what the server saw.
+    pub(in crate::game::actions) fn dig_self_snapshot(
+        &mut self,
+        digger: PlayerId,
+        dig_count: u8,
+        change_valid: &[DigFilter],
+        reveal: bool,
+    ) -> Result<
+        Option<(
+            smallvec::SmallVec<[CardId; 8]>,
+            smallvec::SmallVec<[CardId; 8]>,
+            smallvec::SmallVec<[CardId; 8]>,
+        )>,
+    > {
+        let Some(library) = self
+            .player_zones
+            .iter()
+            .find(|(id, _)| *id == digger)
+            .map(|(_, zones)| &zones.library)
+        else {
+            return Ok(None);
+        };
+
+        let take_count = dig_count as usize;
+        // Library top is at the end of the Vec, so use .rev()
+        let card_ids: smallvec::SmallVec<[CardId; 8]> = library.cards.iter().rev().take(take_count).copied().collect();
+
+        let digger_name = self.get_player(digger)?.name.to_string();
+
+        if !card_ids.is_empty() {
+            let verb = if reveal { "reveals" } else { "looks at" };
+            self.logger.gamelog(&format!(
+                "{} {} the top {} card{} of their library",
+                digger_name,
+                verb,
+                card_ids.len(),
+                if card_ids.len() == 1 { "" } else { "s" }
+            ));
+        }
+
+        // Separate cards into valid (matchable) and invalid (rest).
+        // If change_valid is empty, all cards are valid.
+        let has_filter = !change_valid.is_empty();
+        let mut valid_ids: smallvec::SmallVec<[CardId; 8]> = smallvec::SmallVec::new();
+        let mut invalid_ids: smallvec::SmallVec<[CardId; 8]> = smallvec::SmallVec::new();
+
+        for &card_id in &card_ids {
+            if has_filter {
+                let matches = self
+                    .cards
+                    .try_get(card_id)
+                    .is_some_and(|card| change_valid.iter().any(|f| f.matches(card)));
+                if matches {
+                    valid_ids.push(card_id);
+                } else {
+                    invalid_ids.push(card_id);
+                }
+            } else {
+                valid_ids.push(card_id);
+            }
+        }
+
+        Ok(Some((card_ids, valid_ids, invalid_ids)))
+    }
+
+    /// The controller-LESS fallback Dig decision: rank the `valid` cards by
+    /// [`GameState::dig_card_score`] and keep the best `change_count` (all when
+    /// `change_all`), with the existing `optional`-skip heuristic. This is the
+    /// behavior the engine used inline before mtg-908; it is kept as the
+    /// fallback used by [`GameState::execute_dig`] (when Dig is not routed
+    /// through a controller) and mirrored by the heuristic controller.
+    ///
+    /// NOTE (mtg-908): this reads hidden top-of-library identities, so it is
+    /// information-DEPENDENT and MUST NOT be the deciding authority on a client
+    /// shadow. The controller-routed path makes the SERVER's result authoritative
+    /// and ships it to the client; this fallback only runs server-side or in
+    /// pure-local games where there is no shadow to diverge.
+    pub(in crate::game::actions) fn dig_default_decision(
+        &self,
+        valid_ids: &[CardId],
+        change_count: u8,
+        change_all: bool,
+        optional: bool,
+    ) -> crate::game::controller::DigDecision {
+        let mut ranked: smallvec::SmallVec<[CardId; 8]> = valid_ids.iter().copied().collect();
+
+        // Determine how many cards to select
+        let max_select = if change_all {
+            ranked.len()
+        } else {
+            (change_count as usize).min(ranked.len())
+        };
+
+        // AI heuristic: rank valid cards by value, pick best ones.
+        if ranked.len() > 1 && max_select < ranked.len() {
+            ranked.sort_by(|&a, &b| {
+                let score_a = self.dig_card_score(a);
+                let score_b = self.dig_card_score(b);
+                score_b.cmp(&score_a) // Descending: best first
+            });
+        }
+
+        // If optional and no good cards, AI may choose to skip.
+        let select_count = if optional && max_select > 0 {
+            let best_score = ranked.first().map(|&id| self.dig_card_score(id)).unwrap_or(0);
+            if best_score < 30 {
+                0
+            } else {
+                max_select
+            }
+        } else {
+            max_select
+        };
+
+        crate::game::controller::DigDecision {
+            kept: ranked.iter().take(select_count).copied().collect(),
+        }
+    }
+
+    /// Apply a self-dig `decision` (the server-authoritative kept-set): move the
+    /// kept cards to `destination`, then everything else (non-kept valid + all
+    /// invalid) to `rest_destination`, honoring `rest_random` and emitting the
+    /// reveal-timing-independent gamelog lines.
+    ///
+    /// `card_ids` is the full revealed top-N (top-down) from
+    /// [`GameState::dig_self_snapshot`]; `decision.kept` is a subset of the
+    /// valid cards. The "rest" is computed here as "every revealed card not in
+    /// `kept`", preserving revealed order — identical to the pre-mtg-908 result
+    /// (non-selected valid cards, in their order, followed by invalid cards).
+    #[allow(clippy::too_many_arguments)]
+    pub(in crate::game::actions) fn dig_apply_self_decision(
+        &mut self,
+        digger: PlayerId,
+        decision: &crate::game::controller::DigDecision,
+        card_ids: &[CardId],
+        invalid_ids: &[CardId],
+        destination: Zone,
+        rest_destination: Zone,
+        reveal: bool,
+        rest_random: bool,
+        moved_cards: &mut Vec<CardId>,
+    ) -> Result<()> {
+        let digger_name = self.get_player(digger)?.name.to_string();
+        let kept = &decision.kept;
+
+        // Move selected (kept) cards to destination, in selection order.
+        for &card_id in kept.iter() {
+            let card_name = self
+                .cards
+                .get(card_id)
+                .map(|c| c.name.to_string())
+                .unwrap_or_else(|_| format!("card#{}", card_id.as_u32()));
+
+            self.move_card(card_id, Zone::Library, destination, digger)?;
+
+            // mtg-212: the DISPLAYED name depends on async reveal timing on a
+            // network shadow; supply the rewind/replay verifier a reveal-timing-
+            // INDEPENDENT id form so the presentation asymmetry is not flagged as
+            // a fatal desync. Same mechanism as the discard-into-graveyard line.
+            let action = if reveal { "reveals and puts" } else { "puts" };
+            let stable = format!("{} {} card#{} into {:?}", digger_name, action, card_id.as_u32(), destination);
+            self.logger.gamelog_reveal_stable(
+                &format!("{} {} {} into {:?}", digger_name, action, card_name, destination),
+                &stable,
+            );
+            moved_cards.push(card_id);
+        }
+
+        // Handle rest: every revealed card NOT kept, in revealed order. This
+        // reproduces the pre-mtg-908 "non-selected valid cards then invalid
+        // cards" set — `card_ids` is valid-and-invalid interleaved in reveal
+        // order, but the kept set is drawn only from valid cards, so filtering
+        // `card_ids` by "not kept" yields exactly the same multiset; we order it
+        // as (non-kept valid in reveal order) ++ (invalid in reveal order) to
+        // match the legacy concatenation `rest_from_valid ++ invalid_ids`.
+        let mut rest_cards: smallvec::SmallVec<[CardId; 8]> = smallvec::SmallVec::new();
+        for &card_id in card_ids {
+            if !kept.contains(&card_id) && !invalid_ids.contains(&card_id) {
+                rest_cards.push(card_id);
+            }
+        }
+        rest_cards.extend(invalid_ids.iter().copied());
+
+        if !rest_cards.is_empty() {
+            // Shuffle rest if RestRandomOrder$ True.
+            if rest_random {
+                // Deterministic shuffle based on game state (card IDs provide
+                // enough entropy for reasonable shuffling).
+                let len = rest_cards.len();
+                for i in (1..len).rev() {
+                    let j = (rest_cards[i].as_u32() as usize + i) % (i + 1);
+                    rest_cards.swap(i, j);
+                }
+            }
+
+            // Move rest to rest_destination.
+            if rest_destination == Zone::Library {
+                // Capture pre-reorder library order so a rewind can restore it
+                // (mtg-ba6uq #2): the raw remove/add_to_bottom below is not
+                // otherwise undo-logged.
+                self.log_library_reorder(digger, false);
+                if let Some(zones) = self.get_player_zones_mut(digger) {
+                    for &card_id in &rest_cards {
+                        zones.library.remove(card_id);
+                        zones.library.add_to_bottom(card_id);
+                    }
+                }
+                let rest_count = rest_cards.len();
+                self.logger.gamelog(&format!(
+                    "{} puts {} card{} on the bottom of their library",
+                    digger_name,
+                    rest_count,
+                    if rest_count == 1 { "" } else { "s" }
+                ));
+            } else {
+                for &card_id in &rest_cards {
+                    let card_name = self
+                        .cards
+                        .get(card_id)
+                        .map(|c| c.name.to_string())
+                        .unwrap_or_else(|_| format!("card#{}", card_id.as_u32()));
+
+                    self.move_card(card_id, Zone::Library, rest_destination, digger)?;
+
+                    let dest_name = match rest_destination {
+                        Zone::Graveyard => "their graveyard",
+                        Zone::Exile => "exile",
+                        Zone::Hand => "their hand",
+                        Zone::Library | Zone::Battlefield | Zone::Stack | Zone::Command => "another zone",
+                    };
+                    let stable = format!("{} puts card#{} into {}", digger_name, card_id.as_u32(), dest_name);
+                    self.logger.gamelog_reveal_stable(
+                        &format!("{} puts {} into {}", digger_name, card_name, dest_name),
+                        &stable,
+                    );
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// AI heuristic scoring a card for Dig selection: creatures by P/T + CMC,
     /// lands at a fixed 100, other cards by CMC. Higher = more desirable to keep.
     ///
     /// NOTE (mtg-908): this reads the real (potentially hidden) card identity,
-    /// which is the network-desync hazard. On the fix it becomes a legitimate
-    /// controller-side decision over the controller's OWN view (server-
-    /// authoritative). Kept here verbatim for the behavior-preserving extraction.
+    /// which is the network-desync hazard. The controller-routed path makes this
+    /// a server-authoritative decision shipped to the client; this scorer is the
+    /// shared ranking used by both the fallback and the heuristic controller.
     pub(in crate::game::actions) fn dig_card_score(&self, card_id: CardId) -> i32 {
         let Some(card) = self.cards.try_get(card_id) else {
             return 0;
