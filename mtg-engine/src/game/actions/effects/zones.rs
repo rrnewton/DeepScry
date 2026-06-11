@@ -130,43 +130,61 @@ impl GameState {
         }
 
         // If may_play is true, create persistent effect to allow playing exiled cards
-        if may_play && !moved_cards.is_empty() {
-            let mana_cost_text = if may_play_without_mana_cost {
-                " without paying its mana cost"
-            } else {
-                ""
-            };
-
-            self.logger.gamelog(&format!(
-                "Until end of turn, you may play one of those cards{}",
-                mana_cost_text
-            ));
-
-            use crate::core::{CleanupCondition, PersistentEffectKind};
-
-            if may_play_without_mana_cost {
-                let source_card = moved_cards[0];
-                let num_moved = moved_cards.len();
-
-                self.persistent_effects.add(
-                    PersistentEffectKind::MayPlayOneWithoutManaCost {
-                        tracked_cards: std::mem::take(&mut moved_cards),
-                        beneficiary: digger,
-                    },
-                    source_card,
-                    digger,
-                    CleanupCondition::EndOfTurn,
-                );
-
-                log::debug!(
-                    target: "dig",
-                    "Created MayPlayOneWithoutManaCost effect for {} cards, beneficiary: player {}",
-                    num_moved,
-                    digger.as_u32()
-                );
-            }
-        }
+        self.dig_apply_may_play(digger, may_play, may_play_without_mana_cost, &mut moved_cards);
         Ok(())
+    }
+
+    /// Apply the Dig `MayPlay$` rider: if `may_play` and any cards were moved,
+    /// announce the "until end of turn you may play one of those cards" grant,
+    /// and (for `may_play_without_mana_cost`) install the
+    /// `MayPlayOneWithoutManaCost` persistent effect over `moved_cards`
+    /// (Impulse-style). Shared by [`GameState::execute_dig`] (no-controller
+    /// fallback) and the priority.rs controller-routed Dig interception so the
+    /// rider behaves identically on both paths (mtg-908).
+    pub(crate) fn dig_apply_may_play(
+        &mut self,
+        digger: PlayerId,
+        may_play: bool,
+        may_play_without_mana_cost: bool,
+        moved_cards: &mut Vec<CardId>,
+    ) {
+        if !may_play || moved_cards.is_empty() {
+            return;
+        }
+        let mana_cost_text = if may_play_without_mana_cost {
+            " without paying its mana cost"
+        } else {
+            ""
+        };
+
+        self.logger.gamelog(&format!(
+            "Until end of turn, you may play one of those cards{}",
+            mana_cost_text
+        ));
+
+        use crate::core::{CleanupCondition, PersistentEffectKind};
+
+        if may_play_without_mana_cost {
+            let source_card = moved_cards[0];
+            let num_moved = moved_cards.len();
+
+            self.persistent_effects.add(
+                PersistentEffectKind::MayPlayOneWithoutManaCost {
+                    tracked_cards: std::mem::take(moved_cards),
+                    beneficiary: digger,
+                },
+                source_card,
+                digger,
+                CleanupCondition::EndOfTurn,
+            );
+
+            log::debug!(
+                target: "dig",
+                "Created MayPlayOneWithoutManaCost effect for {} cards, beneficiary: player {}",
+                num_moved,
+                digger.as_u32()
+            );
+        }
     }
 
     /// Snapshot the top `dig_count` cards of `digger`'s library for a self-dig,
@@ -178,7 +196,7 @@ impl GameState {
     /// This is the server-authoritative "reveal" that BOTH the controller-routed
     /// path (priority.rs) and the no-controller fallback (`execute_dig`) share —
     /// so the revealed CardIds shipped to the client match what the server saw.
-    pub(in crate::game::actions) fn dig_self_snapshot(
+    pub(crate) fn dig_self_snapshot(
         &mut self,
         digger: PlayerId,
         dig_count: u8,
@@ -254,7 +272,7 @@ impl GameState {
     /// shadow. The controller-routed path makes the SERVER's result authoritative
     /// and ships it to the client; this fallback only runs server-side or in
     /// pure-local games where there is no shadow to diverge.
-    pub(in crate::game::actions) fn dig_default_decision(
+    pub(crate) fn dig_default_decision(
         &self,
         valid_ids: &[CardId],
         change_count: u8,
@@ -307,7 +325,7 @@ impl GameState {
     /// `kept`", preserving revealed order — identical to the pre-mtg-908 result
     /// (non-selected valid cards, in their order, followed by invalid cards).
     #[allow(clippy::too_many_arguments)]
-    pub(in crate::game::actions) fn dig_apply_self_decision(
+    pub(crate) fn dig_apply_self_decision(
         &mut self,
         digger: PlayerId,
         decision: &crate::game::controller::DigDecision,
