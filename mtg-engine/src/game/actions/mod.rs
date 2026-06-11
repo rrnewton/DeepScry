@@ -3748,35 +3748,7 @@ impl GameState {
                 target,
                 remember_mana_value,
                 ..
-            } => {
-                // Counter a spell on the stack
-                // Fizzle if target is placeholder (no valid target found) or not on stack
-                // This happens when triggered counter effects (e.g., Ulamog's Nullifier ETB)
-                // fire when no spell is on the stack to target
-                if target.is_placeholder() || !self.stack.contains(*target) {
-                    log::debug!("CounterSpell fizzles - target {} not on stack", target.as_u32());
-                } else {
-                    // Mana Drain (RememberCounteredCMC$ True): record the
-                    // countered spell's mana value (including any X paid) BEFORE
-                    // it leaves the stack, so the chained delayed trigger can
-                    // add that much {C} at the controller's next main phase.
-                    if *remember_mana_value {
-                        let mana_value = self
-                            .cards
-                            .try_get(*target)
-                            .map(|c| u32::from(c.mana_cost.cmc()) + u32::from(c.x_paid))
-                            .unwrap_or(0);
-                        let prior_log_size = self.logger.log_count();
-                        let previous = self.remembered_amount;
-                        self.remembered_amount = Some(mana_value);
-                        self.undo_log.log(
-                            crate::undo::GameAction::SetRememberedAmount { previous },
-                            prior_log_size,
-                        );
-                    }
-                    self.counter_spell(*target)?;
-                }
-            }
+            } => self.execute_counter_spell(*target, *remember_mana_value)?,
             Effect::AddMana {
                 player,
                 mana,
@@ -4135,29 +4107,7 @@ impl GameState {
                 source,
                 condition,
                 inner,
-            } => {
-                // Run the inner effect only if `source` currently satisfies the
-                // counter condition (CR 603.4 intervening-if style gating for a
-                // mid-chain sub-ability). For All Hallow's Eve the source is the
-                // AHE card and the inner effects (exile→graveyard move, then mass
-                // resurrection) only fire on the upkeep where the final scream
-                // counter was removed (counters_EQ0_SCREAM).
-                if source.is_placeholder() || source.is_self_target() {
-                    log::debug!(
-                        target: "self_exile",
-                        "ConditionalSelfCounter: source still placeholder/sentinel, skipping"
-                    );
-                    return Ok(());
-                }
-                let satisfied = self
-                    .cards
-                    .try_get(*source)
-                    .map(|c| condition.evaluate(c.get_counter(condition.counter_type)))
-                    .unwrap_or(false);
-                if satisfied {
-                    self.execute_effect(inner)?;
-                }
-            }
+            } => self.execute_conditional_self_counter(*source, condition, inner)?,
             Effect::SetBasePowerToughness {
                 target,
                 power,
@@ -5056,19 +5006,7 @@ impl GameState {
                 );
             }
 
-            Effect::ModalChoice { modes, .. } => {
-                // Modal spells are handled during casting, not execution.
-                // When the spell resolves, only the selected mode's effect is executed.
-                // This variant should not be encountered during execute_effect.
-                //
-                // If we get here, it means the modal choice wasn't processed during casting.
-                // Log a warning and skip execution.
-                log::warn!(
-                    target: "actions",
-                    "ModalChoice effect reached execute_effect - should have been resolved during casting. {} modes available.",
-                    modes.len()
-                );
-            }
+            Effect::ModalChoice { modes, .. } => self.execute_modal_choice_fallback(modes.len())?,
 
             Effect::CopyPermanent {
                 target,
@@ -5558,27 +5496,7 @@ impl GameState {
                 }
             }
             Effect::ImmediateTrigger { condition, sub_effects } => {
-                // Check if remembered cards match the condition
-                let condition_met = match condition {
-                    crate::core::ImmediateTriggerCondition::RememberedNonLand => {
-                        // Check if any remembered card is a nonland
-                        self.remembered_cards.iter().any(|&card_id| {
-                            if let Some(card) = self.cards.try_get(card_id) {
-                                !card.is_land()
-                            } else {
-                                false
-                            }
-                        })
-                    }
-                    crate::core::ImmediateTriggerCondition::AnyRemembered => !self.remembered_cards.is_empty(),
-                };
-
-                if condition_met {
-                    // Execute sub-effects
-                    for sub_effect in sub_effects {
-                        self.execute_effect(sub_effect)?;
-                    }
-                }
+                self.execute_immediate_trigger(condition, sub_effects)?
             }
             Effect::ClearRemembered => self.execute_clear_remembered()?,
             Effect::UnlessCostWrapper {

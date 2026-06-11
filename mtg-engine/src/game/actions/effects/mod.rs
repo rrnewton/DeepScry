@@ -24,6 +24,8 @@
 //!   PumpAllCreatures / AnimateAll (stat modification).
 //! - [`misc`] — AddMana / ChooseColor / AddTurn / AddPhase / ClearRemembered /
 //!   Clone (routing guard) / Unimplemented / NoOp.
+//! - [`stack`] — CounterSpell / ConditionalSelfCounter / ModalChoice (routing
+//!   guard) / ImmediateTrigger.
 
 mod cards;
 mod counters;
@@ -31,4 +33,5 @@ mod damage;
 mod life;
 mod misc;
 mod pump;
+mod stack;
 mod tapping;
