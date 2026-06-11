@@ -1638,6 +1638,95 @@ mod tests {
         }
     }
 
+    /// mtg-789: the server's `spell_ability` cross-check is index-canonical +
+    /// always-on. When the client (native OR — since mtg-789 #2 — the WASM/web
+    /// client) sends the chosen `SpellAbility`, the server asserts the
+    /// index-selected ability equals it. A MATCH resolves normally; this proves
+    /// the cross-check does not reject agreeing submissions. Runs in native
+    /// nextest (the WASM unit-test harness is not wired into validate), so it
+    /// is the runnable lock for the cross-check the web path now feeds.
+    #[test]
+    fn test_spell_ability_cross_check_match_ok() {
+        let (request_tx, request_rx) = mpsc::channel();
+        let (response_tx, response_rx) = mpsc::channel();
+        let shared_reveal_index = Arc::new(AtomicUsize::new(0));
+
+        let mut controller = NetworkController::new(PlayerId::new(1), request_tx, response_rx, shared_reveal_index);
+        let game = create_test_game_state();
+        let view = GameStateView::new(&game, PlayerId::new(1));
+
+        // One castable ability at index 1 (index 0 is the "Pass" placeholder).
+        let ability = SpellAbility::CastSpell {
+            card_id: CardId::new(7),
+        };
+        let available = [ability.clone()];
+
+        let ability_for_handler = ability.clone();
+        std::thread::spawn(move || {
+            let _request: ChoiceRequest = request_rx.recv().unwrap();
+            response_tx
+                .send(ChoiceResponse {
+                    choice_seq: 1,
+                    choice_indices: vec![1], // select the ability (1-based; 0 = Pass)
+                    spell_ability: Some(ability_for_handler), // AGREES with index 1
+                    target_card_ids: None,
+                })
+                .unwrap();
+        });
+
+        let result = controller.choose_spell_ability_to_play(&view, &available);
+        if let ChoiceResult::Ok(Some(chosen)) = result {
+            assert_eq!(chosen, ability);
+        } else {
+            panic!("expected Ok(Some(ability)) on a matching cross-check, got {result:?}");
+        }
+    }
+
+    /// mtg-789: the cross-check is FATAL on disagreement. The index selects one
+    /// ability but the client claims a DIFFERENT `spell_ability` → state has
+    /// diverged → fatal (NETWORK_ARCHITECTURE.md: desync is ALWAYS fatal). This
+    /// is the protection the deployed web path gained in mtg-789 #2; the index
+    /// stays canonical, the ability is the early-detection cross-check.
+    #[test]
+    fn test_spell_ability_cross_check_mismatch_is_fatal() {
+        let (request_tx, request_rx) = mpsc::channel();
+        let (response_tx, response_rx) = mpsc::channel();
+        let shared_reveal_index = Arc::new(AtomicUsize::new(0));
+
+        let mut controller = NetworkController::new(PlayerId::new(1), request_tx, response_rx, shared_reveal_index);
+        let game = create_test_game_state();
+        let view = GameStateView::new(&game, PlayerId::new(1));
+
+        // Index 1 selects CastSpell(7); the client claims CastSpell(999) instead.
+        let available = [SpellAbility::CastSpell {
+            card_id: CardId::new(7),
+        }];
+
+        std::thread::spawn(move || {
+            let _request: ChoiceRequest = request_rx.recv().unwrap();
+            response_tx
+                .send(ChoiceResponse {
+                    choice_seq: 1,
+                    choice_indices: vec![1],
+                    spell_ability: Some(SpellAbility::CastSpell {
+                        card_id: CardId::new(999),
+                    }), // DISAGREES
+                    target_card_ids: None,
+                })
+                .unwrap();
+        });
+
+        let result = controller.choose_spell_ability_to_play(&view, &available);
+        if let ChoiceResult::Error(ref msg) = result {
+            assert!(
+                msg.contains("FATAL DESYNC"),
+                "cross-check failure must be fatal desync: {msg}"
+            );
+        } else {
+            panic!("expected a FATAL DESYNC Error on a mismatched cross-check, got {result:?}");
+        }
+    }
+
     #[test]
     fn test_network_error_display() {
         assert_eq!(NetworkError::Disconnected.to_string(), "Client disconnected");

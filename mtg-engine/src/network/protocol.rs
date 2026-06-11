@@ -371,10 +371,13 @@ pub enum ClientMessage {
         /// `spell_ability` and treats any mismatch as a FATAL desync (early
         /// detection by CardId). It is NOT used "directly instead of the index".
         /// See `NetworkController` priority handling and
-        /// `docs/NETWORK_ARCHITECTURE.md` ("desync is always fatal"). The
-        /// native local controller populates this for all priority choices; the
-        /// WASM/web client currently sends `None`, so the cross-check is a no-op
-        /// on the deployed web path until it is threaded through (mtg-789 #2).
+        /// `docs/NETWORK_ARCHITECTURE.md` ("desync is always fatal"). BOTH the
+        /// native local controller (`local_controller.rs`) AND the WASM/web
+        /// client (`wasm/network/local_controller.rs`
+        /// `choose_spell_ability_to_play` → `submit_choice_to_server_with_ability`,
+        /// landed mtg-789 #2 / mtg-j4krs) populate this for every priority choice,
+        /// so the cross-check now protects the deployed web path, not just
+        /// native-vs-native.
         spell_ability: Option<SpellAbility>,
         /// Actual target CardIds for target choices
         ///
