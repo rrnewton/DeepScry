@@ -14,13 +14,12 @@
 //! including the existing undo-log bookkeeping that lets a rewind+replay
 //! reproduce these until-EOT modifications bit-identically (mtg-610 / mtg-731).
 //!
-//! KNOWN SMELL (tracked by mtg-907): `execute_animate_all` filters candidates
-//! with raw `filter.contains("YouCtrl")` / `filter.contains("Creature")`
-//! substring checks instead of the structured `TargetRestriction` matcher that
-//! `execute_pump_all_creatures` already uses. This is a "No Hacky String
-//! Operations On Structured Data" violation and a divergent filter; it is
-//! preserved verbatim here (behavior-preserving extraction) and slated for the
-//! Valid$/target-filter consolidation in mtg-907.
+//! Both [`GameState::execute_pump_all_creatures`] and
+//! [`GameState::execute_animate_all`] filter their `ValidCards$` candidates
+//! through the canonical [`crate::core::TargetRestriction`] (mtg-907 — the raw
+//! `filter.contains(...)` substring matching that `execute_animate_all` used was
+//! removed, eliminating the "No Hacky String Operations On Structured Data"
+//! violation and the divergence between the two mass-effects).
 
 use crate::core::{CardId, CountExpression, Keyword, PlayerId};
 use crate::game::GameState;
@@ -247,9 +246,10 @@ impl GameState {
     /// [`Effect::AnimateAll`]: set base P/T and/or grant keywords to all matching
     /// permanents (like `PumpAllCreatures` but sets base P/T instead of bonuses).
     ///
-    /// NOTE (mtg-907): the candidate filter here uses raw `filter.contains(...)`
-    /// substring checks rather than the structured `TargetRestriction` matcher.
-    /// Preserved verbatim from the original inline arm; slated for consolidation.
+    /// mtg-907: candidates are filtered through the canonical
+    /// [`crate::core::TargetRestriction`] (parsed from the `ValidCards$` string),
+    /// matching the sibling `execute_pump_all_creatures` — no raw substring
+    /// matching.
     pub(in crate::game::actions) fn execute_animate_all(
         &mut self,
         controller: PlayerId,
@@ -259,31 +259,32 @@ impl GameState {
         keywords_granted: &[Keyword],
     ) -> Result<()> {
         // AnimateAll: set base P/T and/or grant keywords to all matching permanents
-        // Similar to PumpAllCreatures but sets base P/T instead of bonuses
+        // Similar to PumpAllCreatures but sets base P/T instead of bonuses.
+        //
+        // mtg-907: `filter` is the card's `ValidCards$` string (the ValidTgts
+        // grammar — e.g. `Creature.YouCtrl`, `Planeswalker.YouCtrl`,
+        // `Permanent.OppCtrl`). Parse it once with the canonical
+        // `TargetRestriction` and match via `matches_with_controller`, EXACTLY
+        // like the sibling `execute_pump_all_creatures`. This replaces the old
+        // raw `filter.contains("Creature")` / `.contains("YouCtrl")` substring
+        // checks (a "No Hacky String Operations On Structured Data" violation
+        // that silently ignored qualifiers like `.powerGE4` / `.nonArtifact` and
+        // could false-match a subtype string against a type token). The result is
+        // identical for every ValidCards$ string shipping today (verified:
+        // Creature/Planeswalker/Permanent + YouCtrl/OppCtrl) and is now also
+        // correct for qualified filters — see the commit's rules review.
+        let restriction = crate::core::TargetRestriction::parse(filter);
         let targets: Vec<CardId> = self
             .battlefield
             .cards
             .iter()
             .filter_map(|&card_id| {
                 let card = self.cards.try_get(card_id)?;
-                // Check controller filters
-                if filter.contains("YouCtrl") && card.controller != controller {
-                    return None;
+                if restriction.matches_with_controller(card, controller, card.controller) {
+                    Some(card_id)
+                } else {
+                    None
                 }
-                if filter.contains("OppCtrl") && card.controller == controller {
-                    return None;
-                }
-                // Check type filters
-                if filter.contains("Creature") && !card.is_creature() {
-                    return None;
-                }
-                if filter.contains("Planeswalker") && !card.is_planeswalker() {
-                    return None;
-                }
-                if filter.contains("Land") && !card.is_land() {
-                    return None;
-                }
-                Some(card_id)
             })
             .collect();
 
