@@ -3820,7 +3820,7 @@ impl GameState {
                         .cards
                         .get(*source)
                         .map(|c| c.owner)
-                        .unwrap_or_else(|_| self.players.first().map(|p| p.id).unwrap_or(PlayerId::new(0)));
+                        .unwrap_or_else(|_| self.players.first().map(|p| p.id).unwrap_or_else(|| PlayerId::new(0)));
                     let dest = self.death_destination_for_card(*source);
                     self.move_card(*source, Zone::Battlefield, dest, owner)?;
                     log::debug!("SacrificeSelf: {:?} moved to {:?}", source, dest);

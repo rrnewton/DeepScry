@@ -1055,7 +1055,7 @@ impl<'a> GameLoop<'a> {
                     .cards
                     .try_get(*source)
                     .map(|c| c.name.as_str().to_owned())
-                    .unwrap_or_else(|| format!("{source_name}"));
+                    .unwrap_or_else(|| source_name.to_string());
                 let message = format!("{card_name} is sacrificed");
                 self.game.logger.gamelog(&message);
             }
