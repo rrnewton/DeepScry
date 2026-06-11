@@ -853,7 +853,7 @@ fn test_destroy_ability_classification() {
     // Test that the ability is classified as Destroy
     let ability_type = controller.classify_activated_ability(&destroy_ability);
     assert!(
-        matches!(ability_type, ActivatedAbilityType::Destroy),
+        matches!(ability_type, ActivatedAbilityType::Destroy { .. }),
         "Royal Assassin's ability should be classified as Destroy"
     );
 
@@ -956,7 +956,7 @@ fn test_royal_assassin_from_cardsfolder() {
     let controller = HeuristicController::new(p1_id);
     let ability_type = controller.classify_activated_ability(ability);
     assert!(
-        matches!(ability_type, ActivatedAbilityType::Destroy),
+        matches!(ability_type, ActivatedAbilityType::Destroy { .. }),
         "Royal Assassin's ability should be classified as Destroy by AI"
     );
 }
@@ -992,7 +992,7 @@ fn test_has_valuable_destroy_target() {
 
     // Test that we detect this as a valuable target
     assert!(
-        controller.has_valuable_destroy_target(&view),
+        controller.has_valuable_destroy_target(&view, true),
         "Should detect 3/3 tapped creature as valuable destroy target"
     );
 }
@@ -2221,7 +2221,7 @@ fn test_northern_paladin_from_cardsfolder() {
     let controller = HeuristicController::new(p1_id);
     let ability_type = controller.classify_activated_ability(ability);
     assert!(
-        matches!(ability_type, ActivatedAbilityType::Destroy),
+        matches!(ability_type, ActivatedAbilityType::Destroy { .. }),
         "Northern Paladin's ability should be classified as Destroy by AI"
     );
 }
