@@ -31,7 +31,9 @@
 //!   AttachEquipment.
 //! - [`zones`] — Dig (more zone-movement effects to follow). The Dig extraction
 //!   is the structural prerequisite for the mtg-908 network-desync fix.
+//! - [`bending`] — Airbend / Earthbend / Firebend (Avatar set mechanics).
 
+mod bending;
 mod cards;
 mod control;
 mod counters;
