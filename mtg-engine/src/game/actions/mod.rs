@@ -103,6 +103,7 @@ fn expand_all_players_effect(effect: &Effect, player_ids: &[PlayerId]) -> smallv
         | Effect::MoveSelfBetweenZones { .. }
         | Effect::ReturnCardsFromGraveyardToHand { .. }
         | Effect::ReturnGraveyardCardToHand { .. }
+        | Effect::ReturnGraveyardCardToZone { .. }
         | Effect::PreventAllCombatDamageThisTurn { .. }
         | Effect::ConditionalSelfCounter { .. }
         | Effect::Unimplemented { .. }
@@ -228,6 +229,7 @@ fn expand_all_players_effect(effect: &Effect, player_ids: &[PlayerId]) -> smallv
             | Effect::MoveSelfBetweenZones { .. }
             | Effect::ReturnCardsFromGraveyardToHand { .. }
             | Effect::ReturnGraveyardCardToHand { .. }
+            | Effect::ReturnGraveyardCardToZone { .. }
             | Effect::PreventAllCombatDamageThisTurn { .. }
             | Effect::ConditionalSelfCounter { .. }
             | Effect::Unimplemented { .. }
@@ -3041,6 +3043,21 @@ impl GameState {
                     type_filter: type_filter.clone(),
                 }
             }
+            // "Return one matching card from graveyard to any zone" — resolve
+            // player placeholder to the spell/trigger controller.
+            Effect::ReturnGraveyardCardToZone {
+                player,
+                type_filter,
+                destination,
+                gain_control,
+                library_position,
+            } if player.is_placeholder() => Effect::ReturnGraveyardCardToZone {
+                player: card_owner,
+                type_filter: type_filter.clone(),
+                destination: *destination,
+                gain_control: *gain_control,
+                library_position: *library_position,
+            },
             // Maze of Ith's "prevent all combat damage": the target creature is the
             // same creature targeted by the preceding UntapPermanent effect in the
             // sub-ability chain. Reuse `last_resolved_target` (set by UntapPermanent).
@@ -3683,6 +3700,19 @@ impl GameState {
             Effect::ReturnGraveyardCardToHand { player, type_filter } => {
                 self.execute_return_graveyard_card_to_hand(*player, type_filter)?
             }
+            Effect::ReturnGraveyardCardToZone {
+                player,
+                type_filter,
+                destination,
+                gain_control,
+                library_position,
+            } => self.execute_return_graveyard_card_to_zone(
+                *player,
+                type_filter,
+                *destination,
+                *gain_control,
+                *library_position,
+            )?,
 
             Effect::ConditionalSelfCounter {
                 source,
@@ -7717,9 +7747,10 @@ impl GameState {
         use crate::core::CountExpression;
         match expr {
             CountExpression::Fixed(n) => Ok(*n),
-            CountExpression::ValidPermanents { filter } => {
+            CountExpression::ValidPermanents { filter, modifier } => {
                 let count = self.count_permanents_matching(filter, controller);
-                Ok(i32::try_from(count).unwrap_or(i32::MAX))
+                let raw = i32::try_from(count).unwrap_or(i32::MAX);
+                Ok(modifier.clone().apply(raw))
             }
             CountExpression::CardsDrawnThisTurn => {
                 if let Ok(player) = self.get_player(controller) {
@@ -7850,10 +7881,16 @@ impl GameState {
                         "Island" => card.definition.cache.has_island_subtype,
                         "Mountain" => card.definition.cache.has_mountain_subtype,
                         "Forest" => card.definition.cache.has_forest_subtype,
-                        _ => {
-                            // Unknown type, assume it matches if we can't parse
-                            log::warn!(target: "count", "Unknown filter type in count expression: {}", filter);
-                            true
+                        other => {
+                            // Fall back to a subtype check (e.g. "Shrine", "Sliver",
+                            // "Goblin"). Subtypes are stored as `Subtype` wrappers
+                            // whose `as_str()` returns the raw string. CR 205.3
+                            // (enchantment subtypes), 205.2 (creature types), etc.
+                            card.subtypes.iter().any(|st| st.as_str().eq_ignore_ascii_case(other))
+                                || card
+                                    .temp_animate_subtypes
+                                    .iter()
+                                    .any(|st| st.as_str().eq_ignore_ascii_case(other))
                         }
                     };
 

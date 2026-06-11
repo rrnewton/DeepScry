@@ -306,9 +306,16 @@ pub enum CountExpression {
 
     /// Count permanents matching a filter (Count$Valid filter)
     /// Filter examples: "Artifact.OppCtrl", "Creature.YouCtrl", "Land.YouCtrl"
+    ///
+    /// The optional `modifier` is applied to the raw count after counting.
+    /// Forge encodes per-copy multiplication as `/Times.N` (e.g.
+    /// `Count$Valid Shrine.YouCtrl/Times.2` = "2 × Shrines you control").
     ValidPermanents {
         /// The filter string (e.g., "Artifact.OppCtrl")
         filter: String,
+        /// Arithmetic post-modifier applied to the raw count (`/Times.N`,
+        /// `/Plus.N`, `/Minus.N`). Defaults to `None`.
+        modifier: CountModifier,
     },
 
     /// Count cards drawn this turn (Count$YouDrewThisTurn)
@@ -477,6 +484,12 @@ pub enum CountModifier {
     Minus(i32),
     /// Add N to the raw count (`/Plus.N`).
     Plus(i32),
+    /// Multiply the raw count by N (`/Times.N`).
+    /// Used by per-Shrine life gain: `Count$Valid Shrine.YouCtrl/Times.2`
+    /// means "count Shrines I control, then multiply by 2" (CR 700.4:
+    /// "for each" iterates the counted objects; the /Times.N suffix is
+    /// Forge's compact encoding of that per-copy multiplication).
+    Times(i32),
 }
 
 impl CountModifier {
@@ -494,6 +507,11 @@ impl CountModifier {
                 .ok()
                 .map(CountModifier::Plus)
                 .unwrap_or(CountModifier::None)
+        } else if let Some(rest) = suffix.strip_prefix("Times.") {
+            rest.parse()
+                .ok()
+                .map(CountModifier::Times)
+                .unwrap_or(CountModifier::None)
         } else {
             CountModifier::None
         }
@@ -505,6 +523,7 @@ impl CountModifier {
             CountModifier::None => value,
             CountModifier::Minus(n) => value - n,
             CountModifier::Plus(n) => value + n,
+            CountModifier::Times(n) => value * n,
         }
     }
 }
@@ -577,9 +596,16 @@ impl CountExpression {
                     };
                     return CountExpression::ValidGraveyard { filter, modifier };
                 } else if rest.starts_with("Valid ") {
-                    // Count$Valid filter
-                    let filter = rest.strip_prefix("Valid ").unwrap_or(rest).to_string();
-                    return CountExpression::ValidPermanents { filter };
+                    // Count$Valid filter[/Modifier]
+                    // Examples:
+                    //   Count$Valid Artifact.OppCtrl        → filter="Artifact.OppCtrl", modifier=None
+                    //   Count$Valid Shrine.YouCtrl/Times.2  → filter="Shrine.YouCtrl", modifier=Times(2)
+                    let raw = rest.strip_prefix("Valid ").unwrap_or(rest);
+                    let (filter, modifier) = match raw.split_once('/') {
+                        Some((f, suffix)) => (f.to_string(), CountModifier::parse(suffix)),
+                        None => (raw.to_string(), CountModifier::None),
+                    };
+                    return CountExpression::ValidPermanents { filter, modifier };
                 } else if rest == "YouDrewThisTurn" {
                     return CountExpression::CardsDrawnThisTurn;
                 } else if rest == "YouCastThisTurn" {
@@ -1770,6 +1796,47 @@ pub enum Effect {
         type_filter: String,
     },
 
+    /// Return exactly one card matching a `ValidTgts$` filter from a player's
+    /// graveyard to any destination zone (Library, Battlefield, etc.).
+    ///
+    /// Generalises `ReturnGraveyardCardToHand` for non-Hand destinations.
+    ///
+    /// Corresponds to `SP$/DB$ ChangeZone | Origin$ Graveyard |
+    /// Destination$ <Library|Battlefield|…> | ValidTgts$ <filter>` without
+    /// `ChangeNum$`. Examples:
+    ///   - Reclaim: `Origin$ Graveyard | Destination$ Library | ValidTgts$ Card.YouCtrl`
+    ///   - Goryo's Vengeance: `Origin$ Graveyard | Destination$ Battlefield |
+    ///                         ValidTgts$ Creature.Legendary+YouCtrl | GainControl$ True`
+    ///   - Debtors' Knell trigger: `Origin$ Graveyard | Destination$ Battlefield |
+    ///                              ValidTgts$ Creature | GainControl$ True`
+    ///
+    /// `gain_control` mirrors `GainControl$ True` — puts the card under the
+    /// caster's control (reanimation) rather than its owner's. MTG CR 701.3:
+    /// a player puts a card onto the battlefield under their control unless
+    /// stated otherwise.
+    ///
+    /// The `player` is a placeholder until resolution (bound to the spell/
+    /// trigger's controller). The AI picks the highest-value matching card from
+    /// the graveyard of `player` (for `YouCtrl` effects) or any player's
+    /// graveyard (for `ValidTgts$ Creature` without ownership restriction).
+    ReturnGraveyardCardToZone {
+        /// Controller of the spell/ability that triggered this effect.
+        /// `PlayerId::placeholder()` until resolved at spell resolution time.
+        player: PlayerId,
+        /// Comma-separated card type filter (e.g. `"Creature.Legendary"`, `"Card"`).
+        /// Empty string means any card.
+        type_filter: String,
+        /// Destination zone (Library, Battlefield, Hand — anything except Graveyard).
+        destination: crate::zones::Zone,
+        /// If true, the card enters the battlefield under the caster's control
+        /// regardless of who owns it (`GainControl$ True`). Used for reanimation.
+        gain_control: bool,
+        /// Library position for `Destination$ Library`:
+        /// `0` = top (Reclaim puts the card on TOP of library, CR 401.4),
+        /// `1` = bottom.  Ignored for non-Library destinations.
+        library_position: u8,
+    },
+
     /// Execute an inner effect only if the source card currently satisfies a
     /// counter-count condition (e.g. `ConditionPresent$ Card.counters_EQ0_SCREAM`).
     ///
@@ -2553,6 +2620,7 @@ impl Effect {
             // cast-time target — the class_card_id is baked in at ability creation.
             | Effect::ClassLevelUp { .. }
             | Effect::ReturnGraveyardCardToHand { .. }
+            | Effect::ReturnGraveyardCardToZone { .. }
             | Effect::Unimplemented { .. }
             | Effect::NoOp { .. } => EffectTargetCategory::NoTargetNeeded,
 
@@ -4763,8 +4831,35 @@ mod tests {
 
         let expr = CountExpression::parse("+X", &svars);
         assert!(
-            matches!(&expr, CountExpression::ValidPermanents { filter } if filter == "Artifact.OppCtrl"),
+            matches!(&expr, CountExpression::ValidPermanents { filter, .. } if filter == "Artifact.OppCtrl"),
             "Expected ValidPermanents with Artifact.OppCtrl filter, got {:?}",
+            expr
+        );
+    }
+
+    /// B1 fix regression: `Count$Valid Shrine.YouCtrl/Times.2` must parse the
+    /// `/Times.2` suffix as `CountModifier::Times(2)` and strip it from the filter.
+    ///
+    /// Before the fix the whole string was stored as the filter
+    /// (`"Shrine.YouCtrl/Times.2"`) with no modifier, causing:
+    ///   1. `count_permanents_matching` to warn "Unknown filter type" and
+    ///      count ALL permanents (wrong).
+    ///   2. The ×2 multiplier to never be applied (gain was 1× instead of 2×).
+    #[test]
+    fn test_count_expression_parse_valid_permanents_times_modifier() {
+        let mut svars = std::collections::HashMap::new();
+        svars.insert("X".to_string(), "Count$Valid Shrine.YouCtrl/Times.2".to_string());
+
+        let expr = CountExpression::parse("X", &svars);
+        assert!(
+            matches!(
+                &expr,
+                CountExpression::ValidPermanents {
+                    filter,
+                    modifier: CountModifier::Times(2)
+                } if filter == "Shrine.YouCtrl"
+            ),
+            "Expected ValidPermanents {{ filter: \"Shrine.YouCtrl\", modifier: Times(2) }}, got {:?}",
             expr
         );
     }
@@ -4897,7 +4992,7 @@ mod tests {
             } => {
                 // Check the nested source was resolved
                 match source.as_ref() {
-                    CountExpression::ValidPermanents { filter } => {
+                    CountExpression::ValidPermanents { filter, .. } => {
                         assert_eq!(filter, "Creature.YouCtrl+powerGE4");
                     }
                     CountExpression::Fixed(_)

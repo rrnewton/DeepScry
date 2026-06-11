@@ -6110,7 +6110,7 @@ mod tests {
             "Karma damages the triggered (active) player, not its own controller"
         );
         assert!(
-            matches!(count, CountExpression::ValidPermanents { filter } if filter == "Swamp.ActivePlayerCtrl"),
+            matches!(count, CountExpression::ValidPermanents { filter, .. } if filter == "Swamp.ActivePlayerCtrl"),
             "Karma's damage count must be Count$Valid Swamp.ActivePlayerCtrl. Got: {:?}",
             count
         );
@@ -7931,6 +7931,193 @@ mod tests {
         assert!(
             game.battlefield.contains(target_id),
             "Pattern of Rebirth trigger must put a creature from library onto the battlefield"
+        );
+    }
+
+    /// Card compat: Honden of Cleansing Fire — B1 fix.
+    ///
+    /// Script:
+    ///   SVar:X:Count$Valid Shrine.YouCtrl/Times.2
+    ///
+    /// The `/Times.2` suffix is Forge's compact encoding of "for each Shrine you
+    /// control, gain 2 life" (CR 700.4). Before the fix the filter was stored
+    /// verbatim (`"Shrine.YouCtrl/Times.2"`) in `ValidPermanents { filter }`:
+    ///
+    ///   1. `count_permanents_matching` hit the "Unknown filter type" fallback
+    ///      (because `"Shrine"` was not a recognised card type) and returned
+    ///      `true` for ALL permanents — so the life gain counted the entire
+    ///      battlefield, not just Shrines.
+    ///   2. The `/Times.2` multiplier was never applied, so the count was
+    ///      already wrong and un-multiplied.
+    ///
+    /// Fix (B1): split on `/Times.N` in `CountExpression::parse` to separate
+    /// the filter from the multiplier, add `modifier: CountModifier::Times(2)`
+    /// to `ValidPermanents`, and fall back to subtype-string matching in
+    /// `count_permanents_matching` for unknown card-type tokens (CR 205.3c
+    /// — enchantment subtypes like "Shrine", "Aura", etc. are valid).
+    #[test]
+    fn test_card_compat_honden_of_cleansing_fire_shrine_times_modifier() {
+        use crate::core::{CountExpression, CountModifier, TriggerEvent};
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("../cardsfolder/h/honden_of_cleansing_fire.txt");
+        if !path.exists() {
+            eprintln!("Skipping: cardsfolder not present at {:?}", path);
+            return;
+        }
+        let def = crate::loader::CardLoader::load_from_file(&path).expect("Honden of Cleansing Fire should load");
+
+        assert_eq!(def.name.as_str(), "Honden of Cleansing Fire");
+
+        let card = def.instantiate(CardId::new(1), PlayerId::new(0));
+
+        // Must have a BeginningOfUpkeep trigger.
+        let upkeep_trigger = card
+            .triggers
+            .iter()
+            .find(|t| t.event == TriggerEvent::BeginningOfUpkeep)
+            .expect("Honden of Cleansing Fire must have a BeginningOfUpkeep trigger");
+
+        // The trigger's GainLifeDynamic effect must carry the correct count expression.
+        // Honden: `LifeAmount$ X` with `SVar:X:Count$Valid Shrine.YouCtrl/Times.2`
+        // → GainLifeDynamic { amount: DynamicAmount::Count(ValidPermanents{…}) }
+        let gain_life = upkeep_trigger
+            .effects
+            .iter()
+            .find(|e| matches!(e, Effect::GainLifeDynamic { .. }))
+            .expect(
+                "Honden upkeep trigger must have a GainLifeDynamic effect. \
+                 If only GainLife (fixed) was found the SVar resolved to 0 (B1 bug).",
+            );
+
+        if let Effect::GainLifeDynamic { amount, .. } = gain_life {
+            use crate::core::effects::DynamicAmount;
+            let DynamicAmount::Count(count) = amount else {
+                panic!("Honden GainLifeDynamic must use DynamicAmount::Count, got {:?}", amount);
+            };
+            // B1 fix: filter must be "Shrine.YouCtrl" (split from "/Times.2"),
+            // and modifier must be CountModifier::Times(2).
+            assert!(
+                matches!(
+                    count,
+                    CountExpression::ValidPermanents {
+                        filter,
+                        modifier: CountModifier::Times(2)
+                    } if filter == "Shrine.YouCtrl"
+                ),
+                "Honden GainLifeDynamic count must be ValidPermanents {{ filter: \"Shrine.YouCtrl\", \
+                 modifier: Times(2) }}. Got: {:?}",
+                count
+            );
+        } else {
+            panic!("Expected GainLifeDynamic effect");
+        }
+    }
+
+    /// Card compat: Reclaim — B6 fix (graveyard-targeting ChangeZone).
+    ///
+    /// Script:
+    ///   A:SP$ ChangeZone | Origin$ Graveyard | Destination$ Library |
+    ///   LibraryPosition$ 0 | ValidTgts$ Card.YouCtrl
+    ///
+    /// Before the B6 fix the converter emitted `None` for this pattern (no arm
+    /// matched `Origin$ Graveyard | Destination$ Library | ValidTgts$`), so
+    /// Reclaim silently resolved with no effect. The fix adds a
+    /// `ReturnGraveyardCardToZone` arm that handles any
+    /// `Origin$ Graveyard | ValidTgts$ … | Destination$ <non-Hand>` combination.
+    ///
+    /// MTG CR 701.25a: "Return [a card] from your graveyard to [zone]" is a
+    /// zone-change from Graveyard to the named zone; the card is chosen on
+    /// resolution (a targeted effect). CR 401.4: putting a card on top of your
+    /// library (LibraryPosition 0) places it there face down.
+    #[test]
+    fn test_card_compat_reclaim_graveyard_to_library() {
+        use crate::core::Effect;
+        use crate::zones::Zone;
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("../cardsfolder/r/reclaim.txt");
+        if !path.exists() {
+            eprintln!("Skipping: cardsfolder not present at {:?}", path);
+            return;
+        }
+        let def = crate::loader::CardLoader::load_from_file(&path).expect("Reclaim should load");
+
+        assert_eq!(def.name.as_str(), "Reclaim");
+
+        let card = def.instantiate(CardId::new(1), PlayerId::new(0));
+
+        // Reclaim must have a ReturnGraveyardCardToZone effect.
+        let gy_effect = card
+            .effects
+            .iter()
+            .find(|e| matches!(e, Effect::ReturnGraveyardCardToZone { .. }))
+            .expect(
+                "Reclaim must have a ReturnGraveyardCardToZone effect (B6 fix). \
+                 If this fails the converter still emits None for Graveyard→Library \
+                 with ValidTgts$, so Reclaim is a silent no-op.",
+            );
+
+        if let Effect::ReturnGraveyardCardToZone {
+            destination,
+            library_position,
+            gain_control,
+            ..
+        } = gy_effect
+        {
+            assert_eq!(
+                *destination,
+                Zone::Library,
+                "Reclaim must return to Library, not {:?}",
+                destination
+            );
+            assert_eq!(
+                *library_position, 0,
+                "Reclaim puts the card on TOP (position 0) of the library (CR 401.4)"
+            );
+            assert!(!gain_control, "Reclaim returns to your own library — no GainControl");
+        } else {
+            panic!("Expected ReturnGraveyardCardToZone");
+        }
+    }
+
+    /// Card compat: Recollect — B6 fix (graveyard-targeting ChangeZone to Hand).
+    ///
+    /// Script:
+    ///   A:SP$ ChangeZone | Origin$ Graveyard | Destination$ Hand |
+    ///   ValidTgts$ Card.YouCtrl
+    ///
+    /// Recollect targets a card in YOUR graveyard and returns it to hand.
+    /// Before B6 this correctly mapped to ReturnGraveyardCardToHand (Destination$
+    /// Hand with ValidTgts$). This test pins that it still does after the refactor
+    /// (the new ReturnGraveyardCardToZone arm should NOT swallow Destination$ Hand
+    /// because that branch has a higher-priority check for Hand).
+    #[test]
+    fn test_card_compat_recollect_graveyard_to_hand() {
+        use crate::core::Effect;
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("../cardsfolder/r/recollect.txt");
+        if !path.exists() {
+            eprintln!("Skipping: cardsfolder not present at {:?}", path);
+            return;
+        }
+        let def = crate::loader::CardLoader::load_from_file(&path).expect("Recollect should load");
+
+        assert_eq!(def.name.as_str(), "Recollect");
+
+        let card = def.instantiate(CardId::new(1), PlayerId::new(0));
+
+        // Recollect with Destination$ Hand + ValidTgts$ must use
+        // ReturnGraveyardCardToHand (the existing hand-specific path),
+        // NOT ReturnGraveyardCardToZone.
+        assert!(
+            card.effects
+                .iter()
+                .any(|e| matches!(e, Effect::ReturnGraveyardCardToHand { .. })),
+            "Recollect must have ReturnGraveyardCardToHand (Destination$ Hand path). \
+             If this fails the new ReturnGraveyardCardToZone arm incorrectly swallowed \
+             the Hand destination."
         );
     }
 }

@@ -1,0 +1,26 @@
+[metadata]
+Name:Honden of Cleansing Fire Times-2 multiplier (B1 regression)
+Goal:Win
+Difficulty:Easy
+Description:P1 controls two Honden of Cleansing Fire + one Honden of Seeing Winds (3 Shrines total). Each Honden of Cleansing Fire upkeep trigger should read Count$Valid Shrine.YouCtrl/Times.2, gaining 3*2=6 life per trigger (12 total per upkeep across both copies). Pre-fix bug: filter "Shrine.YouCtrl/Times.2" caused Unknown-filter warning and wrong life total. Regression test for B1 fix (mtg-910).
+
+[state]
+turn=2
+activeplayer=p1
+activephase=UPKEEP
+
+# P0 is about to lose (1 life)
+p0life=1
+p0hand=Forest
+p0battlefield=Forest
+p0library=Forest; Forest; Forest; Forest; Forest
+
+# P1 controls 3 Shrines (2x Honden of Cleansing Fire, 1x Honden of Seeing Winds)
+# Each upkeep, both Cleansing Fire triggers fire:
+#   Each counts 3 Shrines * 2 = 6 life gained.
+#   Total: 2 triggers * 6 = 12 life per upkeep.
+# P1 starts at 20, should reach 32 after upkeep resolves.
+p1life=20
+p1hand=Forest
+p1battlefield=Honden of Cleansing Fire; Honden of Cleansing Fire; Honden of Seeing Winds
+p1library=Forest; Forest; Forest; Forest; Forest

@@ -494,15 +494,8 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
                     player: PlayerId::placeholder(),
                 })
             }
-            // Return-self from a non-battlefield, non-stack zone to another zone.
-            // E.g. A:AB$ ChangeZone | Origin$ Graveyard | Destination$ Hand
-            //        | ActivationZone$ Graveyard
-            // (Earthquake Dragon: "Return CARDNAME from your graveyard to your hand.")
-            // The card source is implicit (the ability's host card); use self_target()
-            // so MoveSelfBetweenZones patches it to the real CardId at resolve time.
-            // Targeted return: graveyard → hand for a card matching ValidTgts$
-            // (e.g. Stormchaser's Talent level-2 trigger: return target instant
-            //  or sorcery from your graveyard to hand).
+            // Targeted graveyard → hand (e.g. Stormchaser's Talent level-2,
+            // Recollect): `Origin$ Graveyard | Destination$ Hand | ValidTgts$`.
             else if params.get("Origin") == Some("Graveyard")
                 && params.get("Destination") == Some("Hand")
                 && params.get("ValidTgts").is_some()
@@ -521,7 +514,44 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
                     player: PlayerId::placeholder(),
                     type_filter,
                 })
-            } else if matches!(params.get("Origin"), Some("Graveyard" | "Hand" | "Exile"))
+            }
+            // Targeted graveyard → non-Hand zone (Reclaim: gy→library;
+            // Goryo's Vengeance / Debtors' Knell: gy→battlefield).
+            // `Origin$ Graveyard | Destination$ <Library|Battlefield|…> |
+            //  ValidTgts$ <filter>` without ChangeNum$.
+            // GainControl$ True means reanimation (card enters under the
+            // caster's control). LibraryPosition$ 0 = top, 1 = bottom.
+            else if params.get("Origin") == Some("Graveyard")
+                && params.get("ValidTgts").is_some()
+                && params.get("Defined").is_none()
+                && !params.contains_key("ChangeNum")
+            {
+                let destination = params
+                    .get("Destination")
+                    .and_then(crate::zones::Zone::from_str_lenient)
+                    .unwrap_or(crate::zones::Zone::Hand);
+                let valid_tgts = params.get("ValidTgts").unwrap_or("Card");
+                // Strip controller/ownership qualifiers — keep base type only.
+                let type_filter: String = valid_tgts
+                    .split(',')
+                    .filter_map(|part| part.split('.').next())
+                    .collect::<Vec<_>>()
+                    .join(",");
+                let gain_control = params.get("GainControl") == Some("True");
+                let library_position: u8 = params.get("LibraryPosition").and_then(|v| v.parse().ok()).unwrap_or(0);
+                Some(Effect::ReturnGraveyardCardToZone {
+                    player: PlayerId::placeholder(),
+                    type_filter,
+                    destination,
+                    gain_control,
+                    library_position,
+                })
+            }
+            // Self-return from a non-battlefield, non-stack zone to another zone.
+            // E.g. A:AB$ ChangeZone | Origin$ Graveyard | Destination$ Hand
+            //        | ActivationZone$ Graveyard (Earthquake Dragon)
+            // No ValidTgts$ → the source card itself is the subject.
+            else if matches!(params.get("Origin"), Some("Graveyard" | "Hand" | "Exile"))
                 && params.get("Destination").is_some()
                 && params.get("Defined").is_none()
             {

@@ -1145,7 +1145,9 @@ impl<'a> GameLoop<'a> {
                 let message = format!("{source_name} ({source_id}) moves from {origin:?} to {destination:?}");
                 self.game.logger.gamelog(&message);
             }
-            Effect::ReturnCardsFromGraveyardToHand { .. } | Effect::ReturnGraveyardCardToHand { .. } => {
+            Effect::ReturnCardsFromGraveyardToHand { .. }
+            | Effect::ReturnGraveyardCardToHand { .. }
+            | Effect::ReturnGraveyardCardToZone { .. } => {
                 // Individual card-return log lines are emitted inside execute_effect.
                 // Nothing to surface at the top level.
             }

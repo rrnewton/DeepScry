@@ -7563,12 +7563,12 @@ Oracle:Reach\nAt the beginning of combat on your turn, this creature gets +1/+1 
         {
             // Both power and toughness should use the same Count$ expression
             assert!(
-                matches!(power_count, crate::core::CountExpression::ValidPermanents { filter } if filter.contains("Artifact")),
+                matches!(power_count, crate::core::CountExpression::ValidPermanents { filter, .. } if filter.contains("Artifact")),
                 "Power count should be ValidPermanents with Artifact filter: {:?}",
                 power_count
             );
             assert!(
-                matches!(toughness_count, crate::core::CountExpression::ValidPermanents { filter } if filter.contains("Artifact")),
+                matches!(toughness_count, crate::core::CountExpression::ValidPermanents { filter, .. } if filter.contains("Artifact")),
                 "Toughness count should be ValidPermanents with Artifact filter: {:?}",
                 toughness_count
             );

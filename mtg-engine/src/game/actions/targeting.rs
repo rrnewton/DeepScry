@@ -686,6 +686,7 @@ impl GameState {
                             | Effect::MoveSelfBetweenZones { .. }
                             | Effect::ReturnCardsFromGraveyardToHand { .. }
                             | Effect::ReturnGraveyardCardToHand { .. }
+                            | Effect::ReturnGraveyardCardToZone { .. }
                             | Effect::PreventAllCombatDamageThisTurn { .. }
                             | Effect::ExileIfWouldDieThisTurn { .. }
                             | Effect::ConditionalSelfCounter { .. }
@@ -748,6 +749,7 @@ impl GameState {
                 | Effect::MoveSelfBetweenZones { .. }
                 | Effect::ReturnCardsFromGraveyardToHand { .. }
                 | Effect::ReturnGraveyardCardToHand { .. }
+                | Effect::ReturnGraveyardCardToZone { .. }
                 | Effect::PreventAllCombatDamageThisTurn { .. }
                 | Effect::ConditionalSelfCounter { .. }
                 | Effect::CreateTokenDynamic { .. } => {
@@ -759,6 +761,7 @@ impl GameState {
                     // SelfExileFromStack: operates on the resolving spell itself, no targets
                     // ReturnCardsFromGraveyardToHand: works on the caster's graveyard, no targeting
                     // ReturnGraveyardCardToHand: AI picks matching card, no cast-time targeting
+                    // ReturnGraveyardCardToZone: AI picks matching card, no cast-time targeting
                     // PreventAllCombatDamageThisTurn: reuses last_resolved_target, no cast-time target
                 }
                 // Effects with already-specified targets (non-zero target field)
@@ -1355,6 +1358,7 @@ impl GameState {
                 | Effect::MoveSelfBetweenZones { .. }
                 | Effect::ReturnCardsFromGraveyardToHand { .. }
                 | Effect::ReturnGraveyardCardToHand { .. }
+                | Effect::ReturnGraveyardCardToZone { .. }
                 | Effect::PreventAllCombatDamageThisTurn { .. }
                 | Effect::ConditionalSelfCounter { .. }
                 | Effect::UnlessCostWrapper { .. }
@@ -1689,6 +1693,7 @@ impl GameState {
             | Effect::MoveSelfBetweenZones { .. }
             | Effect::ReturnCardsFromGraveyardToHand { .. }
             | Effect::ReturnGraveyardCardToHand { .. }
+            | Effect::ReturnGraveyardCardToZone { .. }
             | Effect::PreventAllCombatDamageThisTurn { .. }
             | Effect::ConditionalSelfCounter { .. }
             | Effect::CreateTokenDynamic { .. }

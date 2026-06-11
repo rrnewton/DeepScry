@@ -818,6 +818,170 @@ impl GameState {
         Ok(())
     }
 
+    /// [`Effect::ReturnGraveyardCardToZone`]: return exactly one card matching
+    /// `type_filter` from a player's graveyard to `destination` (Library,
+    /// Battlefield, etc.), optionally under the caster's control
+    /// (`gain_control`).
+    ///
+    /// Examples:
+    /// - Reclaim: graveyard → top of library (any card the caster owns).
+    ///   CR 700.4: putting a card on top of your library is a zone-change; the
+    ///   card keeps its identity (it is NOT shuffled in unless another effect
+    ///   says so). `library_position$ 0` = top.
+    /// - Goryo's Vengeance: graveyard → battlefield, haste, GainControl$ True.
+    ///   The spell's SubAbility chain handles the haste grant + EOT exile;
+    ///   this effect handles only the zone move. CR 701.3: when a card is put
+    ///   onto the battlefield with "under your control", its controller is
+    ///   overridden to the casting player regardless of ownership.
+    /// - Debtors' Knell trigger: graveyard → battlefield, GainControl$ True,
+    ///   any creature from any graveyard.
+    ///
+    /// The AI picks the highest-power creature (for battlefield) or highest-CMC
+    /// non-land (for library/hand) from the graveyard of `player` when
+    /// `type_filter` has no ownership restriction, otherwise from any player's
+    /// graveyard. This is deterministic across server/clients (graveyards are
+    /// public, CR 400.2) so it is information-independent for network safety.
+    #[allow(clippy::too_many_arguments)]
+    pub(in crate::game::actions) fn execute_return_graveyard_card_to_zone(
+        &mut self,
+        player: PlayerId,
+        type_filter: &str,
+        destination: Zone,
+        gain_control: bool,
+        library_position: u8,
+    ) -> Result<()> {
+        // Collect all player IDs so we can search across graveyards when needed.
+        let all_players: smallvec::SmallVec<[PlayerId; 4]> = self.players.iter().map(|p| p.id).collect();
+
+        // Build candidate list: (card_id, owner, score)
+        // Cards are only reachable from graveyards (public zone, CR 400.2).
+        let filter_types: Vec<&str> = if type_filter.is_empty() {
+            vec![]
+        } else {
+            type_filter.split(',').map(|s| s.trim()).collect()
+        };
+        // Determine whether ownership is restricted to the caster.
+        // Forge's `Card.YouCtrl` / `Card.YouOwn` suffix on ValidTgts$ restricts
+        // to the casting player's graveyard; bare types (e.g. "Creature") do not.
+        let own_graveyard_only = type_filter.contains("YouCtrl") || type_filter.contains("YouOwn");
+
+        let search_players: smallvec::SmallVec<[PlayerId; 4]> = if own_graveyard_only {
+            smallvec::smallvec![player]
+        } else {
+            all_players
+        };
+
+        // Helper: type matches a card by the base type token(s).
+        let type_matches = |card: &crate::core::Card| -> bool {
+            if filter_types.is_empty() {
+                return true;
+            }
+            filter_types.iter().any(|&t| match t {
+                "Card" => true,
+                "Creature" => card.is_creature(),
+                "Instant" => card.is_instant(),
+                "Sorcery" => card.is_sorcery(),
+                "Land" => card.is_land(),
+                "Artifact" => card.is_artifact(),
+                "Enchantment" => card.is_enchantment(),
+                other => card.subtypes.iter().any(|st| st.as_str().eq_ignore_ascii_case(other)),
+            })
+        };
+
+        // Collect candidates with a simple value score (power for creatures,
+        // CMC for others). Deterministic low-to-high CardId tiebreak ensures
+        // identical picks on server and both clients (CR 400.2 — graveyard is
+        // public, no hidden info).
+        let mut candidates: smallvec::SmallVec<[(CardId, PlayerId, i32); 8]> = smallvec::SmallVec::new();
+        for &pid in &search_players {
+            if let Some(zones) = self.get_player_zones(pid) {
+                let gy: smallvec::SmallVec<[CardId; 8]> = zones.graveyard.cards.iter().copied().collect();
+                for card_id in gy {
+                    if let Some(card) = self.cards.try_get(card_id) {
+                        if type_matches(card) {
+                            let score = if card.is_creature() {
+                                i32::from(card.current_power()) + i32::from(card.current_toughness())
+                            } else {
+                                i32::from(card.mana_cost.cmc())
+                            };
+                            candidates.push((card_id, pid, score));
+                        }
+                    }
+                }
+            }
+        }
+
+        if candidates.is_empty() {
+            let player_name = self
+                .get_player(player)
+                .ok()
+                .map(|p| p.name.as_str())
+                .unwrap_or("?")
+                .to_string();
+            self.logger.gamelog(&format!(
+                "{} has no matching {} in graveyard to return",
+                player_name,
+                if type_filter.is_empty() { "card" } else { type_filter }
+            ));
+            return Ok(());
+        }
+
+        // Pick: highest score, then lowest CardId for determinism.
+        candidates.sort_by(|a, b| b.2.cmp(&a.2).then_with(|| a.0.as_u32().cmp(&b.0.as_u32())));
+        let (chosen, card_owner, _) = candidates[0];
+
+        let card_name = self
+            .cards
+            .try_get(chosen)
+            .map(|c| c.name.as_str())
+            .unwrap_or("?")
+            .to_string();
+        let player_name = self
+            .get_player(player)
+            .ok()
+            .map(|p| p.name.as_str())
+            .unwrap_or("?")
+            .to_string();
+
+        // Move from graveyard → destination.
+        // `gain_control` → move under `player`'s ownership for the purpose of
+        // zone placement (CR 701.3). We pass `player` as the "owner" so the card
+        // lands in the right player's Battlefield slot and the controller is set
+        // correctly by `move_card`.
+        let effective_owner = if gain_control { player } else { card_owner };
+        self.move_card(chosen, Zone::Graveyard, destination, effective_owner)?;
+
+        // For Library destination, honour `library_position`: 0 = top, 1 = bottom.
+        // `move_card` appends to the top by default; for bottom, move the card to
+        // position 0 (index 0 = bottom of library Vec).
+        if destination == Zone::Library && library_position != 0 {
+            if let Some(zones) = self.get_player_zones_mut(effective_owner) {
+                zones.library.remove(chosen);
+                zones.library.add_to_bottom(chosen);
+            }
+        }
+
+        let dest_label = match destination {
+            Zone::Library => {
+                if library_position == 0 {
+                    "the top of library"
+                } else {
+                    "the bottom of library"
+                }
+            }
+            Zone::Battlefield => "the battlefield",
+            Zone::Hand => "hand",
+            Zone::Exile => "exile",
+            Zone::Graveyard => "graveyard",
+            Zone::Stack | Zone::Command => "another zone",
+        };
+        self.logger.gamelog(&format!(
+            "{} returns {} from graveyard to {}",
+            player_name, card_name, dest_label
+        ));
+        Ok(())
+    }
+
     /// [`Effect::ChangeZoneAll`]: move every card matching `restriction` from
     /// each `origin` zone to `destination` (Timetwister / Wheel / mass bounce).
     /// `Shuffle$ True` into the library shuffles every library afterward
