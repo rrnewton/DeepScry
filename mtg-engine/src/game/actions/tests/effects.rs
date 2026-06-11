@@ -7809,8 +7809,6 @@ mod tests {
     /// asserts exactly two tokens land on the battlefield.
     #[test]
     fn test_execute_create_token_comma_separated_wurmcoil() {
-        use crate::loader::CardLoader;
-
         let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
         let p1_id = game.players.first().unwrap().id;
 
