@@ -362,7 +362,7 @@
 
         <div class="card" style="margin-bottom: 18px;">
             <h2>Lobby <span style="float: right; font-weight: normal; font-size: 13px; color: var(--muted);">
-                Welcome, <strong id="welcome-name" style="color: var(--accent-2);"></strong>
+                Welcome, <strong id="welcome-name" style="color: var(--accent-2);"></strong><span id="welcome-acct-type" style="color: var(--muted); font-weight: normal;"></span>
                 &middot; <a href="#" id="btn-logout">change name</a>
             </span></h2>
 
@@ -1178,8 +1178,19 @@
         sendRegister(name);
     }
 
+    // Short, subtle account-type suffix for the lobby welcome banner so the
+    // user can tell GitHub vs Google vs ephemeral sessions apart: OAuth →
+    // " (google acct)" / " (github acct)" (from /auth/status `provider`);
+    // ephemeral → " (guest)".
+    function welcomeAcctTypeSuffix() {
+        if (oauthLoggedIn && oauthProvider) return ' (' + oauthProvider + ' acct)';
+        return ' (guest)';
+    }
+
     function enterLobby(name) {
         document.getElementById('welcome-name').textContent = name;
+        var acctEl = document.getElementById('welcome-acct-type');
+        if (acctEl) acctEl.textContent = welcomeAcctTypeSuffix();
         document.getElementById('pane-name').classList.add('hidden');
         document.getElementById('pane-lobby').classList.remove('hidden');
         applyLaunchLinks();

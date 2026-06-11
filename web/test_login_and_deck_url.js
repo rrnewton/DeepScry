@@ -224,6 +224,79 @@ function check(cond, msg) {
       await ctx.close();
     }
 
+    // ── Part 1c-acct: lobby "Welcome, <name> (<acct type>)" banner ─────────
+    // The welcome banner appends a subtle account-type tag so the user can tell
+    // GitHub / Google / ephemeral sessions apart. We drive the REAL flow:
+    // /auth/status sets the OAuth provider, then a FAKE WebSocket replies to the
+    // name Register with register_result success, firing the genuine enterLobby()
+    // → exercising welcomeAcctTypeSuffix() end to end. Helper opens index.html
+    // with a stub WebSocket installed before any page script runs.
+    async function openLobbyWith(statusBody) {
+      const ctx = await browser.newContext();
+      const page = await ctx.newPage();
+      page.on('pageerror', (e) => failures.push('pageerror(lobby): ' + e.message));
+      await page.route('**/auth/status', (route) =>
+        route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(statusBody) })
+      );
+      // Stub WebSocket: on a Register message, echo a register_result success so
+      // the page's real handleRegisterResult → enterLobby runs.
+      await page.addInitScript(() => {
+        window.MTG_WS_URL = 'ws://stub.invalid/lobby';
+        class FakeWS {
+          constructor() { this.readyState = 1; FakeWS.last = this; setTimeout(() => this.onopen && this.onopen(), 0); }
+          send(raw) {
+            let m; try { m = JSON.parse(raw); } catch (_) { return; }
+            if (m && m.type === 'register') {
+              setTimeout(() => this.onmessage && this.onmessage({ data: JSON.stringify({ type: 'register_result', success: true, player_name: m.player_name }) }), 0);
+            }
+          }
+          close() { this.readyState = 3; }
+        }
+        FakeWS.OPEN = 1;
+        window.WebSocket = FakeWS;
+      });
+      await page.goto(`http://127.0.0.1:${PORT}/index.html`);
+      return { ctx, page };
+    }
+    // Helper: sign in (provider) → submit the pre-filled name → read the banner.
+    async function lobbyBannerFor(statusBody, expectName) {
+      const { ctx, page } = await openLobbyWith(statusBody);
+      // Wait for the sign-in pane to settle (OAuth view or ephemeral).
+      await page.waitForSelector('#btn-name', { timeout: 5000 });
+      await page.fill('#username', expectName);
+      await Promise.all([
+        page.waitForSelector('#pane-lobby:not(.hidden)', { timeout: 5000 }),
+        page.click('#btn-name'),
+      ]);
+      const out = {
+        name: await page.textContent('#welcome-name'),
+        acct: await page.textContent('#welcome-acct-type'),
+        weight: await page.evaluate(() => getComputedStyle(document.getElementById('welcome-acct-type')).fontWeight),
+      };
+      await ctx.close();
+      return out;
+    }
+    {
+      const g = await lobbyBannerFor(
+        { providers: { github: true, google: true }, oauth_enabled: true, logged_in: true, provider: 'google', display_name: 'my_google@example.org', suggested_name: 'my_google', user_id: 'google-1' },
+        'my_google'
+      );
+      check(g.name === 'my_google' && g.acct === ' (google acct)', 'Google session → lobby banner "Welcome, my_google (google acct)"');
+      check(g.weight === '400' || g.weight === 'normal', 'account-type tag is visually subtle (non-bold muted text)');
+
+      const gh = await lobbyBannerFor(
+        { providers: { github: true, google: true }, oauth_enabled: true, logged_in: true, provider: 'github', display_name: '@my_github', suggested_name: 'my_github', user_id: 'github-1' },
+        'my_github'
+      );
+      check(gh.acct === ' (github acct)', 'GitHub session → lobby banner "Welcome, my_github (github acct)"');
+
+      const guest = await lobbyBannerFor(
+        { oauth_enabled: false, logged_in: false },
+        'rando'
+      );
+      check(guest.acct === ' (guest)', 'ephemeral session → lobby banner "Welcome, rando (guest)"');
+    }
+
     // ── Part 1d: lobby layout redesign (structural, no WS needed) ──────────
     {
       const { ctx, page } = await openIndexWith({ oauth_enabled: false, logged_in: false });
