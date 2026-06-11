@@ -233,11 +233,15 @@ impl Identity for OAuthIdentity {
 struct Session {
     provider: Provider,
     subject_id: String,
-    /// Friendly provider handle (GitHub `login`, or the local-part of the
-    /// Google email / the OIDC `name`) used ONLY to pre-fill the lobby
-    /// display-name box. NON-AUTHORITATIVE: nothing security-relevant keys on
-    /// it — the stable `subject_id` drives identity + the R2 prefix. May be
-    /// empty when the provider gave us nothing usable.
+    /// RECOGNIZABLE account label for the user to confirm who they signed in as
+    /// (GitHub `@login`, Google full email). Shown only to the signed-in user
+    /// in their own browser, never to other players. NON-AUTHORITATIVE.
+    display_name: String,
+    /// EDITABLE PUBLIC username default (GitHub `login`, Google email
+    /// local-part) used to pre-fill the lobby display-name box. The user can
+    /// change it; this is what other players will see. NON-AUTHORITATIVE:
+    /// nothing security-relevant keys on it — the stable `subject_id` drives
+    /// identity + the R2 prefix. May be empty when the provider gave nothing.
     suggested_name: String,
     expires: Instant,
 }
@@ -253,31 +257,42 @@ pub struct SessionInfo {
     /// Which provider this session authenticated with (for "Signed in via
     /// GitHub/Google"). Display-only.
     pub provider: Provider,
-    /// Friendly handle for pre-filling the lobby name box (may be empty). This
-    /// is the same provider handle used as the [`display_name`](Self::display_name).
+    /// RECOGNIZABLE account label ("who you signed in as"): GitHub `@login`,
+    /// Google full email. Shown only to the user, never to other players. May
+    /// be empty when the provider gave nothing usable.
+    pub display_name: String,
+    /// EDITABLE PUBLIC username default for pre-filling the lobby name box
+    /// (GitHub `login`, Google email local-part). May be empty.
     pub suggested_name: String,
 }
 
 impl SessionInfo {
-    /// The friendly handle to show in the logged-in view ("Signed in via
-    /// GitHub as <name>"). `None` when the provider gave us nothing usable, so
-    /// the UI can fall back to a bare "Signed in via GitHub". This is the same
-    /// non-authoritative handle as [`suggested_name`](Self::suggested_name);
+    /// The recognizable account label for the logged-in confirmation line
+    /// ("Signed in via GitHub — @octocat" / "Signed in via Google —
+    /// alice@example.com"). `None` when the provider gave nothing usable, so
+    /// the UI falls back to a bare "Signed in via GitHub". Non-authoritative;
     /// the stable identity never keys on it.
     pub fn display_name(&self) -> Option<&str> {
-        if self.suggested_name.is_empty() {
+        if self.display_name.is_empty() {
             None
         } else {
-            Some(&self.suggested_name)
+            Some(&self.display_name)
         }
     }
 }
 
-/// What `exchange_code_for_subject` resolves: the provider's stable subject id
-/// plus a friendly handle for UI pre-fill (empty if the provider gave none).
+/// What `exchange_code_for_subject` resolves from the provider:
+/// - `subject_id`: the STABLE identity key (GitHub numeric id / Google `sub`).
+/// - `display_name`: a RECOGNIZABLE account label for the user to confirm WHO
+///   they signed in as — GitHub `@login`, Google full email. Shown only to the
+///   user in their own browser; never to other players. Empty if unavailable.
+/// - `suggested_name`: the EDITABLE PUBLIC username default — GitHub `login`,
+///   Google email local-part. This becomes the lobby display name unless the
+///   user edits it. Empty if unavailable.
 #[derive(Debug, Clone)]
 pub struct ResolvedSubject {
     pub subject_id: String,
+    pub display_name: String,
     pub suggested_name: String,
 }
 
@@ -356,10 +371,10 @@ impl OAuthState {
         }
     }
 
-    /// Create a session for a verified subject; returns the session id to set
-    /// as a cookie. `suggested_name` is the non-authoritative friendly handle
-    /// for UI pre-fill (pass an empty string when none is available).
-    pub fn create_session(&self, provider: Provider, subject_id: String, suggested_name: String) -> String {
+    /// Create a session from a verified [`ResolvedSubject`]; returns the
+    /// session id to set as a cookie. The display fields (`display_name`,
+    /// `suggested_name`) are non-authoritative UI sugar and may be empty.
+    pub fn create_session(&self, provider: Provider, resolved: ResolvedSubject) -> String {
         let sid = self.random_token();
         if sid.is_empty() {
             return sid;
@@ -370,8 +385,9 @@ impl OAuthState {
             sid.clone(),
             Session {
                 provider,
-                subject_id,
-                suggested_name,
+                subject_id: resolved.subject_id,
+                display_name: resolved.display_name,
+                suggested_name: resolved.suggested_name,
                 expires: Instant::now() + SESSION_TTL,
             },
         );
@@ -389,6 +405,7 @@ impl OAuthState {
         Some(SessionInfo {
             identity: OAuthIdentity::new(s.provider, &s.subject_id),
             provider: s.provider,
+            display_name: s.display_name.clone(),
             suggested_name: s.suggested_name.clone(),
         })
     }
@@ -456,11 +473,20 @@ impl OAuthState {
                     .json()
                     .await
                     .map_err(|e| format!("userinfo decode failed: {e}"))?;
-                // `login` is the @handle — friendly, but the user can rename it,
-                // so it is UI sugar only; the numeric `id` is the stable key.
+                // `login` is the @handle — friendly, but the user can rename
+                // it, so it is UI sugar only; the numeric `id` is the stable
+                // key. The recognizable account label is "@login"; the editable
+                // public-username default is the bare login.
+                let login = user.login.unwrap_or_default();
+                let display_name = if login.is_empty() {
+                    String::new()
+                } else {
+                    format!("@{login}")
+                };
                 Ok(ResolvedSubject {
                     subject_id: user.id.to_string(),
-                    suggested_name: user.login.unwrap_or_default(),
+                    display_name,
+                    suggested_name: login,
                 })
             }
             Provider::Google => {
@@ -473,6 +499,7 @@ impl OAuthState {
                 let claims = jwt_claims(&id_token).ok_or_else(|| "no sub in id_token".to_string())?;
                 Ok(ResolvedSubject {
                     subject_id: claims.subject_id,
+                    display_name: claims.display_name,
                     suggested_name: claims.suggested_name,
                 })
             }
@@ -525,37 +552,46 @@ fn prune_expired_sessions(sessions: &mut HashMap<String, Session>) {
     sessions.retain(|_, s| s.expires > now);
 }
 
-/// The claims we read out of a Google OIDC id_token: the stable `sub` plus a
-/// non-authoritative friendly handle for UI pre-fill.
+/// The claims we read out of a Google OIDC id_token: the stable `sub` plus two
+/// non-authoritative display strings. `display_name` is the recognizable
+/// account label (full email) the user confirms; `suggested_name` is the
+/// editable public-username default (email local-part).
 struct JwtClaims {
     subject_id: String,
+    display_name: String,
     suggested_name: String,
 }
 
-/// Extract the `sub` claim (and a friendly handle) from a JWT's payload WITHOUT
-/// verifying the signature. Safe here ONLY because the JWT came directly from
-/// Google over the authenticated server-to-server token exchange (not from the
-/// browser), so its integrity is already established by TLS + the client
-/// secret. We are not using it as a bearer credential, only reading the stable
-/// subject id (`sub`) and a friendly display name. Returns `None` when there is
-/// no usable `sub`.
+/// Extract the `sub` claim (and friendly display strings) from a JWT's payload
+/// WITHOUT verifying the signature. Safe here ONLY because the JWT came
+/// directly from Google over the authenticated server-to-server token exchange
+/// (not from the browser), so its integrity is already established by TLS + the
+/// client secret. We are not using it as a bearer credential, only reading the
+/// stable subject id (`sub`) and display sugar. Returns `None` when there is no
+/// usable `sub`.
 fn jwt_claims(jwt: &str) -> Option<JwtClaims> {
     let payload_b64 = jwt.split('.').nth(1)?;
     let bytes = base64url_decode(payload_b64)?;
     let json: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
     let subject_id = json.get("sub").and_then(|v| v.as_str())?.to_owned();
-    // Prefer the email local-part (before '@') as the friendly handle; fall
-    // back to the OIDC `name` claim; empty string if neither is present.
-    let suggested_name = json
-        .get("email")
-        .and_then(|v| v.as_str())
+    let email = json.get("email").and_then(|v| v.as_str()).filter(|s| !s.is_empty());
+    let name = json.get("name").and_then(|v| v.as_str()).filter(|s| !s.is_empty());
+    // Recognizable account label: the FULL email (e.g. "alice@example.com" —
+    // note Google accounts are not always @gmail). Fall back to the OIDC `name`
+    // claim, then empty.
+    let display_name = email.or(name).unwrap_or("").to_owned();
+    // Editable public-username default: the email LOCAL-PART (before '@'), so
+    // the user does not expose their full email as their public name. Fall back
+    // to `name`, then empty.
+    let suggested_name = email
         .and_then(|e| e.split('@').next())
         .filter(|s| !s.is_empty())
-        .or_else(|| json.get("name").and_then(|v| v.as_str()))
+        .or(name)
         .unwrap_or("")
         .to_owned();
     Some(JwtClaims {
         subject_id,
+        display_name,
         suggested_name,
     })
 }
@@ -622,23 +658,36 @@ mod tests {
         let fake_jwt = format!("header.{payload}.sig");
         let claims = jwt_claims(&fake_jwt).expect("sub present");
         assert_eq!(claims.subject_id, "42");
-        // No email/name claim → empty suggested handle.
+        // No email/name claim → empty display + suggested handles.
+        assert_eq!(claims.display_name, "");
         assert_eq!(claims.suggested_name, "");
     }
 
     #[test]
-    fn jwt_claims_derive_suggested_name() {
-        // {"sub":"77","email":"alice@example.com"} → handle = local-part.
+    fn jwt_claims_derive_display_and_suggested_name() {
+        // {"sub":"77","email":"alice@example.com"} →
+        //   display_name = FULL email (recognizable account label),
+        //   suggested_name = local-part (editable public default).
         let payload = b64url(r#"{"sub":"77","email":"alice@example.com"}"#);
         let jwt = format!("h.{payload}.s");
         let claims = jwt_claims(&jwt).expect("sub present");
         assert_eq!(claims.subject_id, "77");
+        assert_eq!(claims.display_name, "alice@example.com");
         assert_eq!(claims.suggested_name, "alice");
 
-        // No email, but a `name` claim → fall back to name.
+        // Non-gmail email is preserved verbatim as the account label.
+        let payload = b64url(r#"{"sub":"77","email":"rrnewton@example.org"}"#);
+        let jwt = format!("h.{payload}.s");
+        let claims = jwt_claims(&jwt).expect("sub present");
+        assert_eq!(claims.display_name, "rrnewton@example.org");
+        assert_eq!(claims.suggested_name, "rrnewton");
+
+        // No email, but a `name` claim → both fall back to the name.
         let payload = b64url(r#"{"sub":"77","name":"Bob Builder"}"#);
         let jwt = format!("h.{payload}.s");
-        assert_eq!(jwt_claims(&jwt).unwrap().suggested_name, "Bob Builder");
+        let claims = jwt_claims(&jwt).unwrap();
+        assert_eq!(claims.display_name, "Bob Builder");
+        assert_eq!(claims.suggested_name, "Bob Builder");
     }
 
     /// Tiny base64url (no padding) encoder for building test JWT payloads.
@@ -692,14 +741,22 @@ mod tests {
             callback_base: "https://example.com/auth/callback".into(),
         };
         let st = OAuthState::new(cfg);
-        let sid = st.create_session(Provider::GitHub, "999".into(), "octocat".into());
+        let sid = st.create_session(
+            Provider::GitHub,
+            ResolvedSubject {
+                subject_id: "999".into(),
+                display_name: "@octocat".into(),
+                suggested_name: "octocat".into(),
+            },
+        );
         let info = st.identity_for(&sid).expect("session resolves");
         assert_eq!(info.identity.user_id(), "github-999");
-        // The friendly handle rides alongside the stable identity for UI sugar.
+        // The editable public-username default rides alongside the identity.
         assert_eq!(info.suggested_name, "octocat");
-        // Display fields for the logged-in view: provider + a friendly name.
+        // The recognizable account label is DISTINCT from the public default:
+        // "@octocat" (display) vs "octocat" (editable public name).
         assert_eq!(info.provider, Provider::GitHub);
-        assert_eq!(info.display_name(), Some("octocat"));
+        assert_eq!(info.display_name(), Some("@octocat"));
         st.destroy_session(&sid);
         assert!(st.identity_for(&sid).is_none(), "logout drops session");
     }
@@ -715,9 +772,16 @@ mod tests {
             callback_base: "https://example.com/auth/callback".into(),
         };
         let st = OAuthState::new(cfg);
-        // A provider that gave us no friendly handle → empty suggested_name →
+        // A provider that gave us no handle → empty display fields →
         // display_name() is None so the UI shows a bare "Signed in via Google".
-        let sid = st.create_session(Provider::Google, "sub-123".into(), String::new());
+        let sid = st.create_session(
+            Provider::Google,
+            ResolvedSubject {
+                subject_id: "sub-123".into(),
+                display_name: String::new(),
+                suggested_name: String::new(),
+            },
+        );
         let info = st.identity_for(&sid).expect("session resolves");
         assert_eq!(info.provider, Provider::Google);
         assert_eq!(info.suggested_name, "");

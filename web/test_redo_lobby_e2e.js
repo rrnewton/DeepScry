@@ -598,9 +598,15 @@ async function testLauncherParityAndNav() {
         } else {
             fail('parity-gate-default-hidden', '#img-src-local must be ABSENT without allow_local_img_load');
         }
+        // mtg-742: the dev-only ?advanced_options flag is no longer ADVERTISED
+        // in the UI. When Local is gated off we remove the option SILENTLY — the
+        // gate note stays hidden (and carries no flag-advertising text).
         const noteVisible = note ? await note.isVisible() : false;
-        if (noteVisible) pass('parity-gate-note', 'gate explanatory note shown by default');
-        else fail('parity-gate-note', 'gate note must be visible when Local is hidden');
+        if (!noteVisible) pass('parity-gate-note-silent', 'gate note stays hidden (no advanced_options advertising)');
+        else fail('parity-gate-note-silent', 'gate note must NOT be shown — the dev flag is no longer advertised');
+        const noteText = note ? ((await note.textContent()) || '').trim() : '';
+        if (!/advanced_options/.test(noteText)) pass('parity-gate-no-advert', 'gate note carries no advanced_options advertising text');
+        else fail('parity-gate-no-advert', 'gate note still advertises ?advanced_options: ' + noteText);
         await ctx.close();
     }
 
@@ -1141,18 +1147,18 @@ async function testLauncherWaitingRoomAutoStart() {
     }
     await shot(creatorPage, '09_wr_creator_opponent_joined.png');
 
-    // --- (2b) Creator button label flips to "Start Game!" once P2 is READY (mtg-682). ---
-    // On mere JOIN the creator button must STILL read "Ready — autostart on P2
-    // ready" (NOT flipped); it flips to "Start Game!" only after the joiner SETS
-    // READY — at which point the creator clicking it readies and both navigate.
+    // --- (2b) Creator button label flips to "Start Game!" once the opponent is READY (mtg-682). ---
+    // On mere JOIN the creator button must STILL read "Ready — autostart on
+    // opponent ready" (NOT flipped); it flips to "Start Game!" only after the
+    // joiner SETS READY — at which point the creator clicking it readies and both navigate.
     if (creatorSawJoin) {
         // Right after join (joiner not yet ready): creator label must NOT have flipped.
         const labelOnJoin = await creatorPage.$eval('#btn-play', (b) => b.textContent.trim()).catch(() => '');
-        if (labelOnJoin === 'Ready — autostart on P2 ready') {
-            pass('wr-creator-label-on-join', 'creator button stays "Ready — autostart on P2 ready" on mere join (not flipped)');
+        if (labelOnJoin === 'Ready — autostart on opponent ready') {
+            pass('wr-creator-label-on-join', 'creator button stays "Ready — autostart on opponent ready" on mere join (not flipped)');
         } else {
             fail('wr-creator-label-on-join',
-                `creator button should read "Ready — autostart on P2 ready" on join (saw "${labelOnJoin}")`);
+                `creator button should read "Ready — autostart on opponent ready" on join (saw "${labelOnJoin}")`);
         }
         // Joiner-side label reads "Ready" before it readies (mirrored joiner semantics).
         const joinerLabel = await joinerPage.$eval('#btn-play', (b) => b.textContent.trim()).catch(() => '');

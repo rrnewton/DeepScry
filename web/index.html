@@ -88,6 +88,9 @@
         input:focus, select:focus { outline: none; border-color: var(--accent); }
         .row { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; }
         .row > * { flex: 1 1 auto; }
+        /* Log out control: ~half width, centered (mtg-742 corrections). */
+        .logout-row { display: flex; justify-content: center; margin: 4px 0; }
+        .logout-row button { flex: 0 0 auto; width: 50%; max-width: 220px; }
 
         button {
             background: var(--accent-3);
@@ -284,16 +287,13 @@
         <div id="oauth-signed-in" style="display:none; margin: 4px 0 16px;">
             <p style="margin: 4px 0 12px; font-size: 15px;">
                 ✅ <strong>Signed in</strong> via <strong id="oauth-provider-name">your provider</strong><span id="oauth-as-name"></span>.
-                Your custom decks save to the cloud and follow you across devices.
+                Your custom decks save to your account and follow you across devices.
             </p>
-            <div class="row" style="gap: 10px;">
+            <div class="logout-row">
                 <button type="button" id="btn-oauth-logout">Log out</button>
             </div>
-            <div style="height: 16px;"></div>
+            <div style="height: 12px;"></div>
             <div style="border-top: 1px solid var(--border); margin: 4px 0 14px;"></div>
-            <p style="color: var(--muted); margin: 4px 0 6px; font-size: 13px;">
-                Pick a display name for the lobby below to continue.
-            </p>
         </div>
 
         <!-- OAuth login choices. Shown only when the server has the matching
@@ -312,17 +312,39 @@
             <div style="border-top: 1px solid var(--border); margin: 4px 0 14px;"></div>
         </div>
 
-        <!-- Ephemeral (name-only) account. Always available; no OAuth. -->
-        <h3 style="margin: 0 0 4px;">Ephemeral account</h3>
-        <p style="color: var(--muted); margin: 4px 0 6px;">
-            Just pick a display name &mdash; no account is created on the server. The
-            (globally unique) username is only <strong>reserved while you are logged in</strong>
-            and released as soon as you log out or disconnect.
-        </p>
-        <p id="ephemeral-warning" style="color: var(--warn, #d98c00); margin: 4px 0 12px; font-size: 13px;">
-            ⚠ An ephemeral account <strong>cannot save decks to the cloud</strong>. Decks you build stay
-            only in this browser (localStorage) and can be lost. Sign in with GitHub or Google for cloud deck saving.
-        </p>
+        <!-- Ephemeral (name-only) account prose. Shown ONLY on the ephemeral
+             (non-OAuth) path; hidden once signed in (toggled in
+             renderSignedIn / renderSignedOut). -->
+        <div id="ephemeral-prose">
+            <h3 style="margin: 0 0 4px;">Ephemeral account</h3>
+            <p style="color: var(--muted); margin: 4px 0 6px;">
+                Just pick a display name &mdash; no account is created on the server. The
+                (globally unique) username is only <strong>reserved while you are logged in</strong>
+                and released as soon as you log out or disconnect.
+            </p>
+            <p id="ephemeral-warning" style="color: var(--warn, #d98c00); margin: 4px 0 12px; font-size: 13px;">
+                ⚠ An ephemeral account <strong>cannot save decks to the cloud</strong>. Decks you build stay
+                only in this browser (localStorage) and can be lost. Sign in with GitHub or Google for cloud deck saving.
+            </p>
+        </div>
+
+        <!-- Dedicated prose for the SIGNED-IN (OAuth) path. Replaces the
+             ephemeral copy, which is wrong/confusing for a logged-in user.
+             Shown only when signed in (toggled in renderSignedIn). -->
+        <div id="oauth-name-prose" style="display:none;">
+            <h3 style="margin: 0 0 4px;">Choose your display name</h3>
+            <p style="color: var(--muted); margin: 4px 0 6px;">
+                This is the name other players see in the lobby and in games.
+                <strong>Only this name is shown to others</strong> &mdash; your email and your
+                Google/GitHub identity are <strong>never revealed</strong> to anyone you play with.
+                Your deck collection is <strong>saved to your account</strong> and follows you across devices.
+            </p>
+            <p style="color: var(--muted); margin: 4px 0 12px; font-size: 13px;">
+                For now, your display name is only <strong>reserved while you're signed in</strong>
+                (permanent name reservation is coming later).
+            </p>
+        </div>
+
         <form id="name-form" class="row" autocomplete="off">
             <div style="flex: 2 1 220px;">
                 <label for="username">Username</label>
@@ -332,16 +354,6 @@
                 <button type="submit" id="btn-name">Continue as ephemeral</button>
             </div>
         </form>
-        <!-- Privacy reassurance for SIGNED-IN (OAuth) users picking a lobby
-             name: only the chosen username is public; email / GitHub / Google
-             identity stay private; the sign-in identity is what your saved deck
-             collection is tied to. Shown only on the OAuth path (toggled in
-             renderSignedIn / renderSignedOut). -->
-        <p id="oauth-privacy-note" style="display:none; color: var(--muted); margin: 8px 0 0; font-size: 13px; line-height: 1.5;">
-            🔒 Only the <strong>username you pick above</strong> is shown to other players. Your
-            <strong>email and your GitHub/Google identity are never revealed</strong> to anyone you play with.
-            Your sign-in is used privately to <strong>save and load your deck collection</strong> across devices.
-        </p>
         <p id="name-status" class="status-line"></p>
     </div>
 
@@ -649,6 +661,20 @@
     var currentUsername = sessionStorage.getItem('mtg.username') || '';
     // True once the server confirms Register success.
     var nameRegistered = false;
+    // True once the user has EXPLICITLY chosen a lobby name — by submitting the
+    // name form, or by re-hydrating a name they committed earlier this session.
+    // The WS onopen handler only auto-(re)registers a name that was explicitly
+    // committed; it MUST NOT auto-commit a server-suggested pre-fill. This is
+    // the guard against the auto-proceed bug where a freshly signed-in user was
+    // dropped into the lobby under their suggested name without clicking
+    // "Continue to lobby" (mtg-742 corrections).
+    var nameCommitted = !!currentUsername;
+    // Auto-register coordination: the WS onopen and the async /auth/status
+    // resolution race on first load. We only auto-register a committed name
+    // once BOTH the socket is open AND auth status is known, so a signed-in
+    // user is never auto-advanced before we can clear a stale committed name.
+    var wsReady = false;
+    var authStatusResolved = false;
     // OAuth login state from /auth/status. When `loggedIn` is true the lobby's
     // logout control becomes a real "Log out" (POST /auth/logout); otherwise it
     // is the ephemeral "change name" name-reset. `provider`/`displayName` drive
@@ -802,6 +828,18 @@
         document.getElementById('ws-state').textContent = text;
     }
 
+    // Auto-(re)register the committed name once the socket is open AND we know
+    // the auth status (so a signed-in user's name-commit guard has been applied
+    // first). Only an EXPLICITLY-COMMITTED name is auto-registered; a merely
+    // pre-filled suggested name is never auto-committed — the signed-in user
+    // must click "Continue to lobby". This guards the auto-proceed bug.
+    function maybeAutoRegister() {
+        if (!wsReady || !authStatusResolved) return;
+        if (currentUsername && nameCommitted && !nameRegistered) {
+            sendRegister(currentUsername);
+        }
+    }
+
     function connect() {
         setConnState('warn', 'Connecting to lobby…');
         try {
@@ -812,19 +850,16 @@
         }
         ws.onopen = function () {
             setConnState('ok', 'Connected');
-            if (currentUsername && !nameRegistered) {
-                // We have a username but haven't registered on this WS yet
-                // (fresh connect, reconnect after cancel, or reconnect after drop).
-                // Re-register; requestGameList() fires inside handleRegisterResult
-                // on success.
-                sendRegister(currentUsername);
-            } else if (!currentUsername) {
-                // No username yet — just fetch the game list (lobby-only browsing).
-                requestGameList();
-            }
-            // If nameRegistered is already true (shouldn't happen since we
-            // reset it on close/cancel), the WS was reused without reset; just
-            // continue browsing.
+            wsReady = true;
+            // On the FIRST connect we wait until /auth/status has resolved before
+            // deciding whether to auto-register: a signed-in user must NOT be
+            // auto-advanced under a stale/suggested name (we clear nameCommitted
+            // for them once status is known). On a later reconnect, auth status
+            // is already resolved, so this fires immediately.
+            maybeAutoRegister();
+            // Always refresh the game list so lobby-only browsing works even
+            // when no name is (yet) committed.
+            requestGameList();
         };
         ws.onerror = function () {
             setConnState('err', 'Connection error');
@@ -832,6 +867,7 @@
         ws.onclose = function () {
             setConnState('err', 'Disconnected — retrying in 5s');
             ws = null;
+            wsReady = false;
             nameRegistered = false;
             setTimeout(connect, 5000);
         };
@@ -1135,6 +1171,9 @@
         document.getElementById('btn-name').disabled = true;
         setNameStatus('Registering…', '');
         currentUsername = name;
+        // The user has EXPLICITLY chosen this name (clicked Continue / submitted
+        // the form), so a later reconnect may re-register it automatically.
+        nameCommitted = true;
         // Send Register; the lobby pane is revealed on RegisterResult success.
         sendRegister(name);
     }
@@ -1150,6 +1189,7 @@
     function logout() {
         currentUsername = '';
         nameRegistered = false;
+        nameCommitted = false;
         sessionStorage.removeItem('mtg.username');
         document.getElementById('pane-lobby').classList.add('hidden');
         document.getElementById('pane-name').classList.remove('hidden');
@@ -1302,7 +1342,8 @@
     }
 
     // Render the sign-in pane for the SIGNED-OUT (but oauth-enabled) state:
-    // provider buttons visible, logged-in view hidden.
+    // provider buttons visible, logged-in view + OAuth prose hidden, ephemeral
+    // prose shown.
     function renderSignedOut(providers) {
         var choices = document.getElementById('oauth-choices');
         var signedIn = document.getElementById('oauth-signed-in');
@@ -1312,13 +1353,19 @@
         var ggBtn = document.getElementById('btn-login-google');
         if (providers && providers.github && ghBtn) ghBtn.style.display = '';
         if (providers && providers.google && ggBtn) ggBtn.style.display = '';
-        // Privacy note is OAuth-only; ephemeral users have no identity/email.
-        var priv = document.getElementById('oauth-privacy-note');
-        if (priv) priv.style.display = 'none';
+        // Ephemeral prose on; dedicated OAuth prose off. Ephemeral users have no
+        // identity/email, so the OAuth privacy/account copy must not show.
+        var eph = document.getElementById('ephemeral-prose');
+        if (eph) eph.style.display = '';
+        var oap = document.getElementById('oauth-name-prose');
+        if (oap) oap.style.display = 'none';
+        var btn = document.getElementById('btn-name');
+        if (btn) btn.textContent = 'Continue as ephemeral';
     }
 
     // Render the sign-in pane for the SIGNED-IN (OAuth) state: hide the provider
-    // buttons, show "Signed in via <Provider> as <name>" + Log out.
+    // buttons + ephemeral prose, show the confirmation line ("Signed in via
+    // <Provider> — <account label>") + Log out + dedicated OAuth prose.
     function renderSignedIn() {
         var choices = document.getElementById('oauth-choices');
         var signedIn = document.getElementById('oauth-signed-in');
@@ -1326,17 +1373,20 @@
         if (signedIn) signedIn.style.display = '';
         var pn = document.getElementById('oauth-provider-name');
         if (pn) pn.textContent = providerLabel(oauthProvider);
+        // Show the RECOGNIZABLE account label after an em-dash so the user can
+        // confirm WHO they signed in as: "Signed in via Google — alice@x.com" /
+        // "Signed in via GitHub — @octocat". (display_name carries the @handle /
+        // full email from the server.)
         var an = document.getElementById('oauth-as-name');
-        if (an) an.textContent = oauthDisplayName ? (' as ' + oauthDisplayName) : '';
+        if (an) an.textContent = oauthDisplayName ? (' — ' + oauthDisplayName) : '';
         // A signed-in user is NOT ephemeral — relabel the continue button and
-        // soften the ephemeral warning copy for this state.
+        // swap the ephemeral prose for the dedicated OAuth prose.
         var btn = document.getElementById('btn-name');
         if (btn) btn.textContent = 'Continue to lobby';
-        // Reassure the signed-in user, while they pick a name, about what is
-        // and isn't shared (username public; email/identity private; identity
-        // used privately to save their decks).
-        var priv = document.getElementById('oauth-privacy-note');
-        if (priv) priv.style.display = '';
+        var eph = document.getElementById('ephemeral-prose');
+        if (eph) eph.style.display = 'none';
+        var oap = document.getElementById('oauth-name-prose');
+        if (oap) oap.style.display = '';
     }
 
     // POST /auth/logout: invalidate the server session + clear the session
@@ -1376,10 +1426,17 @@
         if (ggBtn) ggBtn.addEventListener('click', function () { window.location.href = '/auth/login/google'; });
         var logoutBtn = document.getElementById('btn-oauth-logout');
         if (logoutBtn) logoutBtn.addEventListener('click', function (ev) { ev.preventDefault(); oauthLogout(); });
+        // Mark auth status resolved and release any pending auto-register. Runs
+        // on EVERY completion path (oauth-on, oauth-off, network error) so the
+        // first-connect auto-register decision is never left blocked.
+        function finishAuthStatus() {
+            authStatusResolved = true;
+            maybeAutoRegister();
+        }
         fetch('/auth/status', { cache: 'no-store' }).then(function (r) {
             return r.ok ? r.json() : null;
         }).then(function (s) {
-            if (!s || !s.oauth_enabled) return; // no OAuth → only ephemeral shown.
+            if (!s || !s.oauth_enabled) { finishAuthStatus(); return; } // no OAuth → only ephemeral.
             lastOAuthProviders = s.providers || null;
             oauthLoggedIn = !!s.logged_in;
             oauthProvider = s.provider || null;
@@ -1392,20 +1449,35 @@
                 // common case is just "Continue". The field stays editable.
                 try { sessionStorage.setItem('mtg.cloudIdentity', s.user_id || '1'); } catch (_) {}
                 renderSignedIn();
+                // A freshly signed-in user MUST explicitly pick/confirm a lobby
+                // name — never auto-advance. If we have NOT already registered
+                // on the socket, clear any committed-name carryover (e.g. a
+                // stale sessionStorage name from earlier in this tab) so the
+                // name form stays in control until they click Continue.
+                if (!nameRegistered) {
+                    nameCommitted = false;
+                }
                 var inp = document.getElementById('username');
-                // Only pre-fill if the user hasn't already typed/restored a name.
+                // PRE-FILL the input value ONLY — do NOT set currentUsername /
+                // nameCommitted. The suggested name is a default the user can
+                // accept or edit; it is committed only when they click
+                // "Continue to lobby" (prevents the auto-proceed bug).
                 if (inp && s.suggested_name && !inp.value) {
                     inp.value = s.suggested_name;
-                    currentUsername = s.suggested_name;
                 }
                 var ns = document.getElementById('name-status');
-                if (ns) ns.textContent = 'Signed in — your decks will save to the cloud. Pick a lobby name (pre-filled) and continue.';
+                if (ns) ns.textContent = 'Signed in — your decks save to your account. Pick a lobby name (pre-filled) and continue.';
             } else {
                 try { sessionStorage.removeItem('mtg.cloudIdentity'); } catch (_) {}
                 renderSignedOut(lastOAuthProviders);
             }
             updateLobbyLogoutControl();
-        }).catch(function () { /* offline / no server: ephemeral path still works */ });
+            finishAuthStatus();
+        }).catch(function () {
+            // offline / no server: ephemeral path still works; let any committed
+            // (sessionStorage) name auto-register so reload-in-lobby still works.
+            finishAuthStatus();
+        });
     })();
 
     document.getElementById('create-form').addEventListener('submit', function (ev) {

@@ -102,7 +102,9 @@ function check(cond, msg) {
       check(await page.isVisible('#btn-login-github'), 'GitHub sign-in button shown when provider configured');
       check(await page.isVisible('#btn-login-google'), 'Google sign-in button shown when provider configured');
       check(!(await page.isVisible('#oauth-signed-in')), 'logged-out → no logged-in view');
-      check(!(await page.isVisible('#oauth-privacy-note')), 'logged-out → OAuth privacy note hidden (no identity to reassure about)');
+      // Signed-out users see the EPHEMERAL prose, not the OAuth account prose.
+      check(await page.isVisible('#ephemeral-prose'), 'logged-out → ephemeral prose shown');
+      check(!(await page.isVisible('#oauth-name-prose')), 'logged-out → OAuth account prose hidden (no identity to reassure about)');
       const warnText = (await page.textContent('#ephemeral-warning')) || '';
       check(/cannot save decks to the cloud/i.test(warnText), 'Ephemeral warning states decks cannot be saved to the cloud');
       check(await page.isVisible('text=Ephemeral account'), '"Ephemeral account" option is present');
@@ -117,14 +119,16 @@ function check(cond, msg) {
       await ctx.close();
     }
 
-    // ── Part 1c: oauth ENABLED, logged IN → logged-in view + Log out ───────
+    // ── Part 1c: oauth ENABLED, logged IN (GitHub) → corrected signed-in view ─
     {
       const { ctx, page } = await openIndexWith({
         providers: { github: true, google: true },
         oauth_enabled: true,
         logged_in: true,
         provider: 'github',
-        display_name: 'octocat',
+        // display_name = recognizable account label (@handle for GitHub);
+        // suggested_name = editable public default (bare login).
+        display_name: '@octocat',
         suggested_name: 'octocat',
         user_id: 'github-99',
       });
@@ -134,22 +138,42 @@ function check(cond, msg) {
       );
       check(!(await page.isVisible('#oauth-choices')), 'logged-in → provider buttons hidden');
       check(await page.isVisible('#btn-oauth-logout'), 'logged-in → Log out button visible');
-      const signedInText = (await page.textContent('#oauth-signed-in')) || '';
-      check(/GitHub/.test(signedInText), 'logged-in view names the provider (GitHub)');
-      check(/octocat/.test(signedInText), 'logged-in view shows the display name (octocat)');
-      // Username field is auto-populated from suggested_name, still editable.
+      // Confirmation line shows the RECOGNIZABLE account label after an em-dash:
+      // "Signed in via GitHub — @octocat".
+      const signedInText = (await page.textContent('#oauth-signed-in')).replace(/\s+/g, ' ');
+      check(/Signed in via GitHub — @octocat/.test(signedInText), 'confirmation line: "Signed in via GitHub — @octocat" (recognizable account label)');
+      // Log out button is ~half width and centered (not full column width).
+      const logoutHalf = await page.evaluate(() => {
+        const btn = document.getElementById('btn-oauth-logout');
+        const row = btn.closest('.logout-row');
+        if (!row) return false;
+        const centered = getComputedStyle(row).justifyContent === 'center';
+        const ratio = btn.getBoundingClientRect().width / row.getBoundingClientRect().width;
+        return centered && ratio < 0.75; // clearly not full-width
+      });
+      check(logoutHalf, 'Log out button is ~half width and centered (not full column width)');
+      // DEDICATED OAuth prose — NOT the ephemeral "no account is created" copy.
+      check(await page.isVisible('#oauth-name-prose'), 'logged-in → dedicated OAuth name prose shown');
+      check(!(await page.isVisible('#ephemeral-prose')), 'logged-in → ephemeral prose hidden (its "no account on the server" copy is wrong here)');
+      const proseText = (await page.textContent('#oauth-name-prose')).replace(/\s+/g, ' ');
+      check(/name other players see/i.test(proseText), 'OAuth prose: explains the name is what others see');
+      check(/never revealed/i.test(proseText), 'OAuth prose: email + Google/GitHub identity never revealed');
+      check(/saved to your account/i.test(proseText), 'OAuth prose: deck collection saved to your account');
+      check(/reserved while you're signed in/i.test(proseText), 'OAuth prose: name-reservation caveat present');
+      check(!/no account is created on the server/i.test(proseText), 'OAuth prose does NOT reuse the ephemeral "no account is created" copy');
+      // Username field is pre-filled from suggested_name, still editable.
       const prefill = await page.inputValue('#username');
       check(prefill === 'octocat', 'logged-in → username field pre-filled from suggested_name');
       const editable = await page.evaluate(() => !document.getElementById('username').readOnly && !document.getElementById('username').disabled);
       check(editable, 'logged-in → pre-filled username stays editable');
       check((await page.textContent('#btn-name')) === 'Continue to lobby', 'logged-in → continue button relabeled (not "ephemeral")');
-      // Privacy reassurance is shown only on the OAuth path and covers the
-      // three user-requested points.
-      check(await page.isVisible('#oauth-privacy-note'), 'logged-in → OAuth privacy note shown by the username field');
-      const privText = (await page.textContent('#oauth-privacy-note')) || '';
-      check(/only the .*username you pick/i.test(privText.replace(/\s+/g, ' ')), 'privacy note: only the chosen username is public');
-      check(/email and your GitHub\/Google identity are never revealed/i.test(privText.replace(/\s+/g, ' ')), 'privacy note: email + provider identity never revealed to other players');
-      check(/save and load your deck collection/i.test(privText.replace(/\s+/g, ' ')), 'privacy note: sign-in identity is used to save your deck collection');
+      // NO AUTO-PROCEED: the user must explicitly click Continue. The sign-in
+      // pane stays visible, the lobby pane stays hidden, and the suggested name
+      // is NOT committed (currentUsername stays empty) until an explicit submit.
+      check(await page.isVisible('#pane-name'), 'no auto-proceed → sign-in pane still visible');
+      check(await page.evaluate(() => document.getElementById('pane-lobby').classList.contains('hidden')), 'no auto-proceed → lobby pane stays hidden');
+      const notCommitted = await page.evaluate(() => !sessionStorage.getItem('mtg.username'));
+      check(notCommitted, 'no auto-proceed → suggested name NOT committed to sessionStorage until Continue');
       const cloudId = await page.evaluate(() => sessionStorage.getItem('mtg.cloudIdentity'));
       check(cloudId === 'github-99', 'logged-in stamps mtg.cloudIdentity for cloud deck save');
 
@@ -172,6 +196,31 @@ function check(cond, msg) {
       check(!(await page.isVisible('#oauth-signed-in')), 'after Log out → logged-in view hidden');
       const cloudId2 = await page.evaluate(() => sessionStorage.getItem('mtg.cloudIdentity'));
       check(cloudId2 === null, 'after Log out → cloud identity cleared from sessionStorage');
+      await ctx.close();
+    }
+
+    // ── Part 1c-google: Google login shows the FULL EMAIL as the account label ─
+    // (the user's complaint: a Google login showed just "rrnewton" — ambiguous,
+    //  and Google accounts aren't always @gmail.) display_name = full email;
+    //  suggested_name = editable local-part default.
+    {
+      const { ctx, page } = await openIndexWith({
+        providers: { github: true, google: true },
+        oauth_enabled: true,
+        logged_in: true,
+        provider: 'google',
+        display_name: 'rrnewton@example.org',
+        suggested_name: 'rrnewton',
+        user_id: 'google-12345',
+      });
+      await page.waitForFunction(
+        () => document.getElementById('oauth-signed-in') && document.getElementById('oauth-signed-in').style.display !== 'none',
+        { timeout: 5000 }
+      );
+      const signedInText = (await page.textContent('#oauth-signed-in')).replace(/\s+/g, ' ');
+      check(/Signed in via Google — rrnewton@example\.org/.test(signedInText), 'Google: confirmation shows the FULL email account label (not just the local-part)');
+      const prefill = await page.inputValue('#username');
+      check(prefill === 'rrnewton', 'Google: public username default is the email local-part (editable), not the full email');
       await ctx.close();
     }
 

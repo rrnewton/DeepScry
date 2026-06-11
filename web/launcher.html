@@ -265,10 +265,10 @@
             <label class="cb-row" id="img-src-local-label"><input type="checkbox" id="img-src-local"> Load from DeepScry server</label>
             <label class="cb-row"><input type="checkbox" id="img-src-scryfall" checked> Scryfall (high quality)</label>
             <label class="cb-row"><input type="checkbox" id="img-src-gatherer" checked> Gatherer (official)</label>
-            <div id="img-src-local-gate-note" class="gate-note" style="display:none;">
-                Local images hidden pending licensing clarity around card images.
-                Append <code>?advanced_options=true</code> to the URL to enable.
-            </div>
+            <!-- Gate note kept (empty) as a stable hook; when the local-image
+                 source is gated off we simply remove the option silently rather
+                 than advertise the dev-only ?advanced_options flag (mtg-742). -->
+            <div id="img-src-local-gate-note" class="gate-note" style="display:none;"></div>
         </div>
     </div>
 
@@ -892,8 +892,9 @@ import { buildRedirectQuery, IMAGE_SOURCE_IDS, forwardStickyParamsOnAnchor, forw
         if (imgSrcLocalCb) imgSrcLocalCb.checked = false;
         const localLabel = document.getElementById('img-src-local-label');
         if (localLabel) localLabel.remove();
-        const note = document.getElementById('img-src-local-gate-note');
-        if (note) note.style.display = 'block';
+        // Gate the local-image source SILENTLY — no user-facing advertising of
+        // the dev-only ?advanced_options flag (mtg-742). The (empty) note stays
+        // hidden; devs still enable local images via the URL gate.
     }
 
     /** The checked image sources, in canonical fallback order. */
@@ -1096,10 +1097,12 @@ import { buildRedirectQuery, IMAGE_SOURCE_IDS, forwardStickyParamsOnAnchor, forw
     const lobbyWsUrl = qs.get('ws') || window.MTG_WS_URL;
 
     // Initial button intent (no joiner yet). refreshReadyButton() keeps it in
-    // sync afterward, flipping the creator label to "Start Game!" only once P2 is
-    // READY (not merely joined) — at that point clicking it readies the creator
-    // and immediately triggers WaitingRoomReady so both navigate (mtg-682).
-    playBtn.textContent = isCreator ? 'Ready — autostart on P2 ready' : 'Ready';
+    // sync afterward, flipping the creator label to "Start Game!" only once the
+    // opponent is READY (not merely joined) — at that point clicking it readies
+    // the creator and immediately triggers WaitingRoomReady so both navigate
+    // (mtg-682). "Opponent" rather than "P2": the other player is not
+    // necessarily seat P2 from this client's perspective.
+    playBtn.textContent = isCreator ? 'Ready — autostart on opponent ready' : 'Ready';
 
     const connEl = document.getElementById('wr-conn');
     const creatorNameEl = document.getElementById('wr-creator-name');
@@ -1114,9 +1117,9 @@ import { buildRedirectQuery, IMAGE_SOURCE_IDS, forwardStickyParamsOnAnchor, forw
     let createdOrJoined = false;
     // True once WE (this client) have sent SetReady{true} and not yet un-readied.
     let weAreReady = false;
-    // True once the joiner (P2) has SET READY in the waiting room (driven by
-    // WaitingRoomUpdate's joiner.ready). Drives the creator's button label flip
-    // from "Ready — autostart on P2 ready" → "Start Game!" — at which point the
+    // True once the joiner (the opponent) has SET READY in the waiting room
+    // (driven by WaitingRoomUpdate's joiner.ready). Drives the creator's button
+    // label flip from "Ready — autostart on opponent ready" → "Start Game!" — at which point the
     // creator clicking it readies and immediately triggers WaitingRoomReady, so
     // the label genuinely means "click to start" (mtg-682). The game still
     // auto-starts only when BOTH are ready (Variant-1 semantics).
@@ -1377,17 +1380,19 @@ import { buildRedirectQuery, IMAGE_SOURCE_IDS, forwardStickyParamsOnAnchor, forw
 
     // ==================== READY HANDSHAKE ====================
     /** The text for the ready/start button given the current state. The creator's
-     *  label reacts to the joiner's READY state (mtg-682): before P2 has readied
-     *  it reads "Ready — autostart on P2 ready"; once P2 is ready it reads
-     *  "Start Game!" — because the creator clicking it then readies and the server
-     *  immediately sends WaitingRoomReady (both ready), so both navigate. The game
-     *  auto-starts only when BOTH players are ready (Variant-1 semantics); keying
-     *  the label on P2-ready (not P2-join) makes "Start Game!" mean exactly
-     *  "click to start". The joiner side stays "Ready". */
+     *  label reacts to the OPPONENT's READY state (mtg-682): before the opponent
+     *  has readied it reads "Ready — autostart on opponent ready"; once the
+     *  opponent is ready it reads "Start Game!" — because the creator clicking it
+     *  then readies and the server immediately sends WaitingRoomReady (both
+     *  ready), so both navigate. The game auto-starts only when BOTH players are
+     *  ready (Variant-1 semantics); keying the label on opponent-ready (not
+     *  opponent-join) makes "Start Game!" mean exactly "click to start". We say
+     *  "opponent" rather than "P2": the other player is not necessarily seat P2
+     *  from this client's perspective. The joiner side stays "Ready". */
     function readyButtonLabel() {
         if (weAreReady) return 'Cancel ready';
         if (!isCreator) return 'Ready';
-        return joinerReady ? 'Start Game!' : 'Ready — autostart on P2 ready';
+        return joinerReady ? 'Start Game!' : 'Ready — autostart on opponent ready';
     }
 
     function refreshReadyButton() {
