@@ -18,8 +18,14 @@
 //! - [`cards`] — DrawCards / Mill / Scry / Surveil (card-flow).
 //! - [`counters`] — PutCounter / PutCounterAll / MultiplyCounter / Proliferate /
 //!   RemoveCounter.
+//! - [`tapping`] — TapPermanent / UntapPermanent / TapOrUntapPermanent /
+//!   TapAll / UntapAll.
+//! - [`pump`] — PumpCreature / PumpCreatureVariable / DebuffCreature /
+//!   PumpAllCreatures / AnimateAll (stat modification).
 
 mod cards;
 mod counters;
 mod damage;
 mod life;
+mod pump;
+mod tapping;
