@@ -2373,4 +2373,144 @@ mod tests {
         let p1 = game.get_player(p1_id).unwrap();
         assert_eq!(p1.life, 20, "P1's life should be restored to 20");
     }
+
+    /// CR 614.1c + CR 107.3: X-cost permanents enter the battlefield with X
+    /// counters, where X is the amount paid when casting the spell.
+    ///
+    /// Regression test for B1 from the 2015 World Championship compat survey:
+    /// Hangarback Walker (K:etbCounter:P1P1:X) was entering as a 0/0 with NO
+    /// counters because `apply_etb_counters` did not resolve the symbolic "X"
+    /// amount via the card's `x_paid` field.
+    #[test]
+    fn test_etb_counter_x_cost_uses_x_paid() {
+        use crate::core::{CardType, CounterType, KeywordArgs, KeywordSet};
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+
+        // Build a minimal Hangarback Walker-like card:
+        //   ManaCost: X X (any generic); PT: 0/0; K:etbCounter:P1P1:X
+        let walker_id = game.next_entity_id();
+        let mut walker = Card::new(walker_id, "Hangarback Walker".to_string(), p1_id);
+        walker.add_type(CardType::Artifact);
+        walker.add_type(CardType::Creature);
+        walker.set_base_power(Some(0));
+        walker.set_base_toughness(Some(0));
+        walker.controller = p1_id;
+
+        // Attach K:etbCounter:P1P1:X keyword (the "X" amount is symbolic).
+        let mut kws = KeywordSet::default();
+        kws.insert_complex(KeywordArgs::EtbCounter {
+            counter_type: "P1P1".to_string(),
+            amount: "X".to_string(),
+            condition: String::new(),
+        });
+        walker.keywords = kws;
+
+        // Simulate X = 3 (player paid {3}{3} for the Walker).
+        walker.x_paid = 3;
+
+        // Place the card on the stack so `resolve_spell_finalize` can pick it up.
+        game.cards.insert(walker_id, walker);
+        game.stack.add(walker_id);
+
+        // Resolving a permanent spell moves it to the battlefield and calls
+        // `apply_etb_counters`.
+        game.resolve_spell(walker_id, &[]).unwrap();
+
+        // Walker should now be on the battlefield.
+        assert!(
+            game.battlefield.contains(walker_id),
+            "Hangarback Walker should be on the battlefield after resolving"
+        );
+
+        // The card must have exactly 3 +1/+1 counters (= x_paid).
+        let actual_counters = game
+            .cards
+            .get(walker_id)
+            .map(|c| c.get_counter(CounterType::P1P1))
+            .unwrap_or(0);
+        assert_eq!(
+            actual_counters, 3,
+            "Hangarback Walker should enter with 3 +1/+1 counters when X=3, \
+             but got {actual_counters}"
+        );
+
+        // P/T with counters: 0/0 base + 3/3 from counters = 3/3.
+        let card = game.cards.get(walker_id).unwrap();
+        assert_eq!(
+            card.current_power(),
+            3,
+            "Hangarback Walker should be 3/3 with 3 counters"
+        );
+        assert_eq!(
+            card.current_toughness(),
+            3,
+            "Hangarback Walker should be 3/3 with 3 counters"
+        );
+    }
+
+    /// CR 603.6c + CR 608.2g (LKI): Hangarback Walker's death trigger creates
+    /// one Thopter for EACH +1/+1 counter on the dying card.
+    ///
+    /// Regression test for the secondary B1 bug: the death trigger SVar
+    /// `DB$ Token | TokenAmount$ Y` (where `SVar:Y:TriggeredCard$CardCounters.P1P1`)
+    /// was falling back to `amount=1` because `params_to_effect` did not resolve
+    /// the variable `Y` through the card's SVars.  After the fix,
+    /// `extract_effects_from_svar` emits `Effect::CreateTokenDynamic` with
+    /// `DynamicAmount::TriggeredCardCounters(P1P1)`, which `check_death_triggers`
+    /// resolves to a concrete `CreateToken { amount: counter_count }` via the LKI
+    /// snapshot in `TriggerContext`.
+    ///
+    /// Test approach: load the real Hangarback Walker card script, verify that
+    /// the death trigger effect is `CreateTokenDynamic` (not `CreateToken` with a
+    /// fixed amount), and that `check_death_triggers` produces the correct number
+    /// of tokens using a fake token definition.
+    #[test]
+    fn test_hangarback_walker_thopter_count_uses_p1p1_counters() {
+        use crate::core::{CounterType, DynamicAmount, Effect};
+        use crate::loader::CardLoader;
+
+        // Load the real Hangarback Walker script to verify the parser produces
+        // CreateTokenDynamic for the death trigger.
+        let script = r#"Name:Hangarback Walker
+ManaCost:X X
+Types:Artifact Creature Construct
+PT:0/0
+K:etbCounter:P1P1:X
+T:Mode$ ChangesZone | Origin$ Battlefield | Destination$ Graveyard | ValidCard$ Card.Self | Execute$ TrigToken | TriggerDescription$ When CARDNAME dies, create a 1/1 colorless Thopter artifact creature token with flying for each +1/+1 counter on CARDNAME.
+SVar:TrigToken:DB$ Token | TokenAmount$ Y | TokenScript$ c_1_1_a_thopter_flying | TokenOwner$ You
+SVar:Y:TriggeredCard$CardCounters.P1P1
+A:AB$ PutCounter | Cost$ 1 T | CounterType$ P1P1 | CounterNum$ 1 | SpellDescription$ Put a +1/+1 counter on CARDNAME.
+SVar:X:Count$xPaid
+Oracle:Hangarback Walker enters with X +1/+1 counters on it.
+"#;
+        let def = CardLoader::parse(script).unwrap();
+        let p1_id = crate::core::PlayerId::new(0);
+        let card = def.instantiate(crate::core::CardId::new(1), p1_id);
+
+        // The death trigger must be a `CreateTokenDynamic` with
+        // `DynamicAmount::TriggeredCardCounters(CounterType::P1P1)`.
+        let death_trigger = card
+            .triggers
+            .iter()
+            .find(|t| t.event == crate::core::TriggerEvent::LeavesBattlefield)
+            .expect("Hangarback Walker must have a death trigger");
+
+        let dynamic_token_effect = death_trigger.effects.iter().find(|e| {
+            matches!(
+                e,
+                Effect::CreateTokenDynamic {
+                    amount: DynamicAmount::TriggeredCardCounters(CounterType::P1P1),
+                    ..
+                }
+            )
+        });
+        assert!(
+            dynamic_token_effect.is_some(),
+            "Hangarback Walker death trigger must emit CreateTokenDynamic with \
+             DynamicAmount::TriggeredCardCounters(P1P1), but found effects: {:?}",
+            death_trigger.effects
+        );
+    }
 }

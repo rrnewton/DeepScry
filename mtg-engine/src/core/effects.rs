@@ -210,6 +210,18 @@ pub enum DynamicAmount {
     /// toughness is public information, so it is information-independent
     /// (network determinism). Clamped to >= 0.
     SacrificedToughness,
+
+    /// The number of counters of a specific type on the card that triggered the
+    /// effect (the "triggered card", read via last-known information per CR
+    /// 608.2g/603.6c). Used by Hangarback Walker's death trigger: "create a
+    /// 1/1 Thopter for each +1/+1 counter on CARDNAME." The count is captured
+    /// into the `TriggerContext` before the card leaves the battlefield,
+    /// ensuring deterministic network behavior (the counter count is public
+    /// information — always visible on the battlefield).
+    ///
+    /// Parsed from SVar bodies of the form `TriggeredCard$CardCounters.<type>`,
+    /// e.g. `SVar:Y:TriggeredCard$CardCounters.P1P1`.
+    TriggeredCardCounters(crate::core::CounterType),
 }
 
 impl DynamicAmount {
@@ -255,6 +267,14 @@ impl DynamicAmount {
             // SVar-store machinery.
             ("SVar", rest) if rest.contains("/LimitMax.") => {
                 Some(DynamicAmount::DamageDealtCappedByTarget { cap: None })
+            }
+            // Hangarback Walker et al.: SVar:Y:TriggeredCard$CardCounters.P1P1
+            // The token count equals the number of counters of type <T> on the
+            // card that just triggered the effect (last-known information).
+            ("TriggeredCard", counter_ref) => {
+                let counter_str = counter_ref.strip_prefix("CardCounters.")?;
+                let ct = crate::core::CounterType::parse(counter_str)?;
+                Some(DynamicAmount::TriggeredCardCounters(ct))
             }
             // Count$… bodies (hand size, permanent counts, …) drive a dynamic
             // life amount evaluated against the recipient at resolution time.
@@ -1809,6 +1829,27 @@ pub enum Effect {
         for_each_player: bool,
     },
 
+    /// Create token(s) whose count is determined at trigger-resolution time from
+    /// a dynamic amount (e.g. the number of counters on the triggering card).
+    ///
+    /// Corresponds to: DB$ Token | TokenAmount$ Y | TokenScript$ c_1_1_a_thopter_flying
+    /// where SVar:Y:TriggeredCard$CardCounters.P1P1.
+    ///
+    /// This is the `CreateToken` shape with a `DynamicAmount` instead of a
+    /// static `u8`. `resolve_effect_placeholder` converts it to `CreateToken`
+    /// with the concrete amount filled in from the `TriggerContext`, after which
+    /// `execute_effect` processes it via the normal `CreateToken` path.
+    CreateTokenDynamic {
+        /// Player who will control the tokens (ignored if for_each_player is true)
+        controller: PlayerId,
+        /// Token script name (e.g., "c_1_1_a_thopter_flying" for Thopter token)
+        token_script: String,
+        /// Dynamic amount resolved at trigger-fire time
+        amount: DynamicAmount,
+        /// If true, each player creates the tokens (TokenOwner$ Player)
+        for_each_player: bool,
+    },
+
     /// Create a token that's a copy of an existing permanent
     /// Example: Cackling Counterpart, Ember Island Production
     /// Corresponds to: DB$ CopyPermanent | ValidTgts$ Creature.YouCtrl | SetPower$ 4 | AddTypes$ Hero
@@ -2477,6 +2518,7 @@ impl Effect {
             | Effect::AddMana { .. }
             | Effect::Balance { .. }
             | Effect::CreateToken { .. }
+            | Effect::CreateTokenDynamic { .. }
             | Effect::Dig { .. }
             | Effect::SearchLibrary { .. }
             | Effect::Firebend { .. }

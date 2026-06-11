@@ -109,7 +109,8 @@ fn expand_all_players_effect(effect: &Effect, player_ids: &[PlayerId]) -> smallv
         | Effect::NoOp { .. }
         | Effect::GainLifeDynamic { .. }
         | Effect::ClassLevelUp { .. }
-        | Effect::UnlessCostWrapper { .. } => false,
+        | Effect::UnlessCostWrapper { .. }
+        | Effect::CreateTokenDynamic { .. } => false,
     };
 
     if !is_all_players {
@@ -233,7 +234,8 @@ fn expand_all_players_effect(effect: &Effect, player_ids: &[PlayerId]) -> smallv
             | Effect::NoOp { .. }
             | Effect::GainLifeDynamic { .. }
             | Effect::ClassLevelUp { .. }
-            | Effect::UnlessCostWrapper { .. } => unreachable!(),
+            | Effect::UnlessCostWrapper { .. }
+            | Effect::CreateTokenDynamic { .. } => unreachable!(),
         })
         .collect()
 }
@@ -1356,15 +1358,22 @@ impl GameState {
                 );
                 return Ok(());
             };
-            let Ok(amt) = amount.parse::<u8>() else {
-                // TODO(mtg-400): symbolic amounts like "X" / "Y" require an
-                // evaluation context (caster's choice, X paid, etc.).
-                log::warn!(
-                    "apply_etb_counters: non-numeric amount '{}' on {} not yet supported",
-                    amount,
-                    card.name
-                );
-                return Ok(());
+            // Resolve the counter amount: numeric literal or the symbolic "X" /
+            // "Y" variables that refer to the X paid when casting the spell
+            // (CR 107.3, CR 614.1c).  For X-cost permanents like Hangarback
+            // Walker the card's `x_paid` field is set by the priority loop
+            // before the spell resolves, so it carries the correct value here.
+            let amt = match amount.parse::<u8>() {
+                Ok(n) => n,
+                Err(_) if amount.eq_ignore_ascii_case("X") || amount.eq_ignore_ascii_case("Y") => card.x_paid,
+                Err(_) => {
+                    log::warn!(
+                        "apply_etb_counters: non-numeric amount '{}' on {} not yet supported",
+                        amount,
+                        card.name
+                    );
+                    return Ok(());
+                }
             };
             (ct, amt, card.name.clone())
         };
@@ -3882,6 +3891,26 @@ impl GameState {
             } => {
                 self.execute_class_level_up(*class_card_id, *target_level)?;
             }
+
+            // CreateTokenDynamic should be resolved to CreateToken by
+            // resolve_effect_placeholder() in the trigger-fire path before
+            // reaching execute_effect.  If it arrives here unresolved (e.g.
+            // a non-death-trigger path that doesn't call
+            // resolve_effect_placeholder), fall back to amount=1 so the card
+            // does something visible rather than silently no-op.
+            Effect::CreateTokenDynamic {
+                controller,
+                token_script,
+                for_each_player,
+                ..
+            } => {
+                log::warn!(
+                    "CreateTokenDynamic reached execute_effect unresolved — \
+                     falling back to amount=1 (token: {})",
+                    token_script
+                );
+                self.execute_create_token(*controller, token_script, 1, *for_each_player)?;
+            }
         }
         Ok(())
     }
@@ -6293,10 +6322,11 @@ impl GameState {
     /// Returns an error if the card cannot be found or effect execution fails.
     #[allow(clippy::wildcard_enum_match_arm)]
     pub fn check_death_triggers(&mut self, dying_card_id: CardId) -> Result<()> {
-        // Get the card's triggers, controller, and creature-ness while it's
-        // still on battlefield (the `is_creature` flag gates the broad
-        // "whenever a creature dies" scan below — mtg-913 B12).
-        let (effects_to_execute, controller, dying_is_creature): (Vec<Effect>, PlayerId, bool) = {
+        // Get the card's triggers, controller, creature-ness, and counter
+        // snapshot while it's still on battlefield (CR 608.2g — LKI).
+        // The `is_creature` flag gates the broad "whenever a creature dies"
+        // scan below — mtg-913 B12.
+        let (effects_to_execute, controller, dying_is_creature, counter_snapshot) = {
             let card = self.cards.get(dying_card_id)?;
 
             // Collect LeavesBattlefield triggers (which we use for "dies" events)
@@ -6307,7 +6337,11 @@ impl GameState {
                 .flat_map(|trigger| trigger.effects.clone())
                 .collect();
 
-            (effects, card.controller, card.is_creature())
+            // Capture counter amounts for LKI (needed by CreateTokenDynamic /
+            // DynamicAmount::TriggeredCardCounters, e.g. Hangarback Walker).
+            let counters = card.counters.clone();
+
+            (effects, card.controller, card.is_creature(), counters)
         };
 
         if !effects_to_execute.is_empty() {
@@ -6321,8 +6355,9 @@ impl GameState {
                 }
             }
 
-            // Build trigger context for placeholder resolution
-            let ctx = TriggerContext::new(dying_card_id, controller);
+            // Build trigger context with LKI counter snapshot for
+            // DynamicAmount::TriggeredCardCounters resolution.
+            let ctx = TriggerContext::new(dying_card_id, controller).with_triggered_card_counters(counter_snapshot);
 
             // Execute each effect with placeholder resolution
             for effect in effects_to_execute {
@@ -7652,6 +7687,15 @@ impl GameState {
                 .cards
                 .try_get(reference)
                 .map(|c| i32::from(c.current_toughness()).max(0))
+                .unwrap_or(0),
+            // TriggeredCardCounters is resolved via TriggerContext before this
+            // function is called (see resolve_effect_placeholder in triggers.rs).
+            // If it somehow reaches here, read the counter count from the
+            // reference card directly (last-known information fallback).
+            DynamicAmount::TriggeredCardCounters(counter_type) => self
+                .cards
+                .try_get(reference)
+                .map(|c| i32::from(c.get_counter(*counter_type)))
                 .unwrap_or(0),
         }
     }

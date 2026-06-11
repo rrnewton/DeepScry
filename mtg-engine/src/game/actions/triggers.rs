@@ -18,6 +18,7 @@
 
 use crate::core::{CardId, Effect, PlayerId, TargetRef};
 use crate::game::GameState;
+use smallvec::SmallVec;
 
 /// Per-creature breakdown of combat damage dealt in a single combat-damage step,
 /// used to fire `DealsCombatDamage` triggers and select the amount each trigger
@@ -120,6 +121,15 @@ pub struct TriggerContext {
     /// amount of damage the event source just dealt this combat/resolution.
     /// `None` for triggers that carry no damage amount.
     pub damage_amount: Option<i32>,
+
+    /// Counter amounts on the triggering card at the time the trigger fired,
+    /// captured via last-known information (CR 608.2g / 603.6c). Used by death
+    /// triggers that scale on the dying card's counters — e.g. Hangarback
+    /// Walker's "create one Thopter for each +1/+1 counter" fired on death.
+    /// Populated by `check_death_triggers` before the card moves to the
+    /// graveyard. Empty if the trigger source carries no counters or if this
+    /// context was built for a non-death trigger.
+    pub triggered_card_counter_amounts: SmallVec<[(crate::core::CounterType, u8); 2]>,
 }
 
 impl TriggerContext {
@@ -135,12 +145,21 @@ impl TriggerContext {
             sacrificed_power: 0,
             drawing_player: None,
             damage_amount: None,
+            triggered_card_counter_amounts: SmallVec::new(),
         }
     }
 
     /// Builder method to set the damage amount (for damage-dealt triggers)
     pub fn with_damage_amount(mut self, amount: i32) -> Self {
         self.damage_amount = Some(amount);
+        self
+    }
+
+    /// Builder method to record the counter amounts on the triggering card
+    /// (last-known information, captured before zone change). Used to resolve
+    /// `DynamicAmount::TriggeredCardCounters` in `resolve_effect_placeholder`.
+    pub fn with_triggered_card_counters(mut self, counters: SmallVec<[(crate::core::CounterType, u8); 2]>) -> Self {
+        self.triggered_card_counter_amounts = counters;
         self
     }
 
@@ -462,6 +481,46 @@ pub fn resolve_effect_placeholder(effect: &Effect, ctx: &TriggerContext) -> Effe
             amount: *amount,
             for_each_player: *for_each_player,
         },
+
+        // Dynamic token creation: resolve the DynamicAmount using the trigger
+        // context, then emit a concrete CreateToken.
+        //
+        // The two most common shapes:
+        // 1. Placeholder controller + TriggeredCardCounters — death trigger on
+        //    the dying card itself (Hangarback Walker, Chasm Skulker).
+        // 2. Concrete controller + TriggeredCardCounters — trigger on a
+        //    different permanent watching another card die (Boss's Chauffeur).
+        //
+        // We resolve TriggeredCardCounters using the counter snapshot in
+        // `ctx.triggered_card_counter_amounts`, captured LKI before zone move
+        // (CR 608.2g / 603.6c). All other DynamicAmount variants fall through
+        // to the wildcard arm below (no-op clone), which means those shapes
+        // remain unresolved and create 0 tokens — a log-visible failure that
+        // is preferable to a panic.
+        Effect::CreateTokenDynamic {
+            controller,
+            token_script,
+            amount: crate::core::DynamicAmount::TriggeredCardCounters(counter_type),
+            for_each_player,
+        } => {
+            let resolved_controller = if controller.is_placeholder() {
+                ctx.controller
+            } else {
+                *controller
+            };
+            let count = ctx
+                .triggered_card_counter_amounts
+                .iter()
+                .find(|(ct, _)| ct == counter_type)
+                .map(|(_, n)| *n)
+                .unwrap_or(0);
+            Effect::CreateToken {
+                controller: resolved_controller,
+                token_script: token_script.clone(),
+                amount: count,
+                for_each_player: *for_each_player,
+            }
+        }
 
         // =========================================================================
         // Mass pump: controller placeholder

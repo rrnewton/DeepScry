@@ -688,7 +688,8 @@ impl GameState {
                             | Effect::ReturnGraveyardCardToHand { .. }
                             | Effect::PreventAllCombatDamageThisTurn { .. }
                             | Effect::ExileIfWouldDieThisTurn { .. }
-                            | Effect::ConditionalSelfCounter { .. } => {
+                            | Effect::ConditionalSelfCounter { .. }
+                            | Effect::CreateTokenDynamic { .. } => {
                                 // Non-Destroy/Copy modes in modal spells
                                 // TODO(mtg-30): Add handlers for targeting modes that need them
                             }
@@ -748,7 +749,8 @@ impl GameState {
                 | Effect::ReturnCardsFromGraveyardToHand { .. }
                 | Effect::ReturnGraveyardCardToHand { .. }
                 | Effect::PreventAllCombatDamageThisTurn { .. }
-                | Effect::ConditionalSelfCounter { .. } => {
+                | Effect::ConditionalSelfCounter { .. }
+                | Effect::CreateTokenDynamic { .. } => {
                     // These effects target players or have no targeting requirements
                     // AttachEquipment targeting is handled via Equip keyword abilities
                     // ChooseColor is a player choice effect (no permanent targets)
@@ -1355,7 +1357,8 @@ impl GameState {
                 | Effect::ReturnGraveyardCardToHand { .. }
                 | Effect::PreventAllCombatDamageThisTurn { .. }
                 | Effect::ConditionalSelfCounter { .. }
-                | Effect::UnlessCostWrapper { .. } => {
+                | Effect::UnlessCostWrapper { .. }
+                | Effect::CreateTokenDynamic { .. } => {
                     // These effects target players or have no targeting requirements
                     // CreateDelayedTrigger targets creatures - handled via ValidTgts$ Creature
                     // CopySpellAbility doesn't need explicit targets - copies triggering spell
@@ -1688,6 +1691,7 @@ impl GameState {
             | Effect::ReturnGraveyardCardToHand { .. }
             | Effect::PreventAllCombatDamageThisTurn { .. }
             | Effect::ConditionalSelfCounter { .. }
+            | Effect::CreateTokenDynamic { .. }
             // ExileIfWouldDieThisTurn reuses the parent DealDamage's target, so
             // it never needs its own target check.
             | Effect::ExileIfWouldDieThisTurn { .. }

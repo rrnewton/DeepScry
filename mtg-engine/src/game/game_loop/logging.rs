@@ -1157,6 +1157,11 @@ impl<'a> GameLoop<'a> {
                 // The wrapper itself produces no log; the inner effect logs when
                 // (and if) it executes. Nothing to surface here.
             }
+            Effect::CreateTokenDynamic { .. } => {
+                // Resolved to CreateToken by resolve_effect_placeholder before
+                // execute_effect; the concrete CreateToken arm above handles
+                // logging at execution time.
+            }
         }
     }
 }

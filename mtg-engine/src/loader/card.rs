@@ -2240,6 +2240,9 @@ impl CardDefinition {
         // DamageDealt / Count(...) — routes through GainLifeDynamic.
         let amount = match DynamicAmount::parse(life_amount, &self.svars)? {
             DynamicAmount::Fixed(_) => return None,
+            // TriggeredCardCounters is not a valid LifeAmount shape for GainLife;
+            // fall through to let params_to_effect produce the fixed-amount path.
+            DynamicAmount::TriggeredCardCounters(_) => return None,
             dynamic @ (DynamicAmount::TargetPower
             | DynamicAmount::TargetManaValue
             | DynamicAmount::DamageDealt
@@ -2262,6 +2265,57 @@ impl CardDefinition {
             player,
             amount,
             reference: CardId::reuse_previous(),
+        })
+    }
+
+    /// Build a `CreateTokenDynamic` effect when `TokenAmount$` resolves to a
+    /// non-fixed `DynamicAmount` through the card's SVars.
+    ///
+    /// Returns `None` for fixed-integer amounts (let `params_to_effect` handle
+    /// those as `CreateToken`) and for non-Token ApiTypes.
+    ///
+    /// Used by `extract_effects_from_svar` to handle patterns like Hangarback
+    /// Walker: `DB$ Token | TokenAmount$ Y | TokenScript$ c_1_1_a_thopter_flying`
+    /// with `SVar:Y:TriggeredCard$CardCounters.P1P1` — the counter count on the
+    /// dying card is not known at load time and must be resolved dynamically.
+    fn create_token_dynamic_from_params(
+        &self,
+        params: &super::ability_parser::AbilityParams,
+    ) -> Option<crate::core::Effect> {
+        use super::ability_parser::ApiType;
+        use crate::core::{DynamicAmount, Effect, PlayerId};
+
+        if params.api_type != ApiType::Token {
+            return None;
+        }
+        let token_amount_str = params.get("TokenAmount")?;
+        // A plain integer is the fixed-amount case — let params_to_effect handle it.
+        let amount = match DynamicAmount::parse(token_amount_str, &self.svars)? {
+            DynamicAmount::Fixed(_) => return None,
+            dynamic @ DynamicAmount::TriggeredCardCounters(_) => dynamic,
+            // Other DynamicAmount variants are not yet used by token-creation
+            // effects; fall through to params_to_effect (amount=1 safe default).
+            DynamicAmount::TargetPower
+            | DynamicAmount::TargetManaValue
+            | DynamicAmount::DamageDealt
+            | DynamicAmount::DamageDealtCappedByTarget { .. }
+            | DynamicAmount::Count(_)
+            | DynamicAmount::SacrificedToughness => return None,
+        };
+
+        let token_script = params.get("TokenScript")?.to_string();
+        let token_owner = params.get("TokenOwner");
+        let for_each_player = token_owner == Some("Player");
+        let controller = match token_owner {
+            Some("Opponent") => PlayerId::new(1), // Placeholder — resolved at runtime
+            _ => PlayerId::new(0),                // Placeholder — controller
+        };
+
+        Some(Effect::CreateTokenDynamic {
+            controller,
+            token_script,
+            amount,
+            for_each_player,
         })
     }
 
@@ -2330,6 +2384,17 @@ impl CardDefinition {
         // it through the SVar-aware dynamic builder first (DRY with the
         // SubAbility-chain path in follow_sub_ability_chain).
         if let Some(effect) = self.gain_life_dynamic_from_params(svar_params) {
+            effects.push(effect);
+            return effects;
+        }
+
+        // A `DB$ Token` with a variable `TokenAmount$` (e.g. Hangarback Walker's
+        // `TokenAmount$ Y` / `SVar:Y:TriggeredCard$CardCounters.P1P1`) is not
+        // expressible as a fixed `Effect::CreateToken` — params_to_effect would
+        // silently fall back to amount=1 (the default). Route it through the
+        // SVar-aware dynamic builder first (DRY with the GainLifeDynamic path
+        // above).
+        if let Some(effect) = self.create_token_dynamic_from_params(svar_params) {
             effects.push(effect);
             return effects;
         }
