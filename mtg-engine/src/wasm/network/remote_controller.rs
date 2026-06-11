@@ -9,11 +9,17 @@
 //! of blocking on a channel, it checks the network client's queue and returns
 //! `NeedInput` if empty.
 //!
-//! ## Code Sharing Note
+//! ## Code Sharing Note (mtg-788 C1)
 //!
-//! The choice processing logic (extracting spell_ability, falling back to index)
-//! mirrors `crate::network::remote_controller::RemoteController`. Consider
-//! extracting common helpers if this logic grows more complex.
+//! The pure index→CardId DECODE logic (attackers / blockers / multi-select
+//! subsets / the lethal+remaining-damage CardId-vs-index resolver) is now shared
+//! with the native `RemoteController` via `crate::network::choice_decode`. Both
+//! controllers must decode the server's `choice_indices` IDENTICALLY or the two
+//! shadows desync, so the decode lives in ONE place. Only the divergent glue
+//! stays here: the non-blocking `try_get_choice` fetch + `NeedInput` yield, and
+//! the genuinely-different bodies (`choose_damage_assignment_order` appends the
+//! unlisted blockers; `choose_from_library` carries the server-CardId fallback;
+//! `choose_spell_ability_to_play` has the server-ability fallback).
 
 use super::client::SharedNetworkClient;
 use crate::core::{CardId, ManaCost, PlayerId, SpellAbility};
@@ -209,13 +215,7 @@ impl PlayerController for WasmRemoteController {
         // Multi-mana costs (e.g. {R}{R}) send multiple indices (e.g. [0, 1]).
         // We must return ALL selected sources, not just the first.
         match self.try_get_choice() {
-            ChoiceResult::Ok(indices) => {
-                let sources: SmallVec<[CardId; 8]> = indices
-                    .into_iter()
-                    .filter_map(|idx| available_sources.get(idx).copied())
-                    .collect();
-                ChoiceResult::Ok(sources)
-            }
+            ChoiceResult::Ok(indices) => ChoiceResult::Ok(crate::network::decode_subset(&indices, available_sources)),
             ChoiceResult::NeedInput(ctx) => ChoiceResult::NeedInput(ctx),
             ChoiceResult::ExitGame => ChoiceResult::ExitGame,
             ChoiceResult::Error(e) => ChoiceResult::Error(e),
@@ -231,17 +231,7 @@ impl PlayerController for WasmRemoteController {
         // Server sends indices: [0] = no attackers, [N, M, ...] = creature indices (1-based)
         match self.try_get_choice() {
             ChoiceResult::Ok(indices) => {
-                let mut attackers = SmallVec::new();
-                for idx in indices {
-                    if idx == 0 {
-                        continue; // 0 means "done selecting"
-                    }
-                    let creature_idx = idx - 1;
-                    if creature_idx < available_creatures.len() {
-                        attackers.push(available_creatures[creature_idx]);
-                    }
-                }
-                ChoiceResult::Ok(attackers)
+                ChoiceResult::Ok(crate::network::decode_attackers(&indices, available_creatures))
             }
             ChoiceResult::NeedInput(ctx) => ChoiceResult::NeedInput(ctx),
             ChoiceResult::ExitGame => ChoiceResult::ExitGame,
@@ -259,19 +249,7 @@ impl PlayerController for WasmRemoteController {
         // Server sends indices: [0] = no blockers, [N, M, ...] = encoded blocker-attacker pairs (1-based)
         match self.try_get_choice() {
             ChoiceResult::Ok(indices) => {
-                let mut blocks = SmallVec::new();
-                for idx in indices {
-                    if idx == 0 {
-                        continue; // 0 means "done selecting"
-                    }
-                    let pair_idx = idx - 1;
-                    let blocker_idx = pair_idx / attackers.len();
-                    let attacker_idx = pair_idx % attackers.len();
-                    if blocker_idx < available_blockers.len() && attacker_idx < attackers.len() {
-                        blocks.push((available_blockers[blocker_idx], attackers[attacker_idx]));
-                    }
-                }
-                ChoiceResult::Ok(blocks)
+                ChoiceResult::Ok(crate::network::decode_blockers(&indices, available_blockers, attackers))
             }
             ChoiceResult::NeedInput(ctx) => ChoiceResult::NeedInput(ctx),
             ChoiceResult::ExitGame => ChoiceResult::ExitGame,
@@ -337,44 +315,18 @@ impl PlayerController for WasmRemoteController {
 
         match self.try_get_choice() {
             ChoiceResult::Ok(indices) => {
-                // The server-provided target CardId (if any) is authoritative.
-                if let Some(ids) = target_card_ids {
-                    if let Some(&blocker_id) = ids.first() {
-                        if killable_blockers.iter().any(|(id, _)| *id == blocker_id) {
-                            log::debug!(
-                                "WasmRemoteController::choose_blocker_for_lethal_damage: using target CardId {:?}",
-                                blocker_id
-                            );
-                            return ChoiceResult::Ok(blocker_id);
-                        }
-                        // HARD ERROR (mtg-731): the opponent's submitted blocker
-                        // CardId is NOT in this shadow's killable_blockers →
-                        // combat-state divergence. The old index fallback masked
-                        // it (order-dependent wrong blocker → later view-hash
-                        // desync). Desync is ALWAYS fatal.
-                        let msg = format!(
-                            "FATAL DESYNC: WasmRemoteController lethal-damage blocker {:?} not in killable_blockers {:?} \
-                             (combat-state divergence; index fallback removed — mtg-731)",
-                            blocker_id,
-                            killable_blockers.iter().map(|(id, _)| id).collect::<Vec<_>>()
-                        );
+                let valid: SmallVec<[CardId; 8]> = killable_blockers.iter().map(|(id, _)| *id).collect();
+                match crate::network::resolve_combat_blocker(
+                    &indices,
+                    target_card_ids.as_deref(),
+                    &valid,
+                    "lethal-damage",
+                ) {
+                    Ok(id) => ChoiceResult::Ok(id),
+                    Err(msg) => {
                         log::error!("{}", msg);
-                        return ChoiceResult::Error(msg);
+                        ChoiceResult::Error(msg)
                     }
-                }
-                // Index-based selection ONLY when no CardId was provided.
-                let idx = indices.first().copied().unwrap_or(0);
-                if let Some((blocker_id, _)) = killable_blockers.get(idx) {
-                    ChoiceResult::Ok(*blocker_id)
-                } else {
-                    let msg = format!(
-                        "FATAL DESYNC: WasmRemoteController received invalid lethal-damage \
-                         blocker index {} (only {} killable)",
-                        idx,
-                        killable_blockers.len(),
-                    );
-                    log::error!("{}", msg);
-                    ChoiceResult::Error(msg)
                 }
             }
             ChoiceResult::NeedInput(ctx) => ChoiceResult::NeedInput(ctx),
@@ -400,40 +352,17 @@ impl PlayerController for WasmRemoteController {
 
         match self.try_get_choice() {
             ChoiceResult::Ok(indices) => {
-                if let Some(ids) = target_card_ids {
-                    if let Some(&blocker_id) = ids.first() {
-                        if remaining_blockers.contains(&blocker_id) {
-                            log::debug!(
-                                "WasmRemoteController::choose_blocker_for_remaining_damage: using target CardId {:?}",
-                                blocker_id
-                            );
-                            return ChoiceResult::Ok(blocker_id);
-                        }
-                        // HARD ERROR (mtg-731): submitted CardId not in this
-                        // shadow's remaining_blockers → combat-state divergence.
-                        // Index fallback removed (it masked the desync). Fatal.
-                        let msg = format!(
-                            "FATAL DESYNC: WasmRemoteController remaining-damage blocker {:?} not in remaining_blockers {:?} \
-                             (combat-state divergence; index fallback removed — mtg-731)",
-                            blocker_id, remaining_blockers
-                        );
+                match crate::network::resolve_combat_blocker(
+                    &indices,
+                    target_card_ids.as_deref(),
+                    remaining_blockers,
+                    "remaining-damage",
+                ) {
+                    Ok(id) => ChoiceResult::Ok(id),
+                    Err(msg) => {
                         log::error!("{}", msg);
-                        return ChoiceResult::Error(msg);
+                        ChoiceResult::Error(msg)
                     }
-                }
-                // Index-based selection ONLY when no CardId was provided.
-                let idx = indices.first().copied().unwrap_or(0);
-                if let Some(&blocker_id) = remaining_blockers.get(idx) {
-                    ChoiceResult::Ok(blocker_id)
-                } else {
-                    let msg = format!(
-                        "FATAL DESYNC: WasmRemoteController received invalid remaining-damage \
-                         blocker index {} (only {} remaining)",
-                        idx,
-                        remaining_blockers.len(),
-                    );
-                    log::error!("{}", msg);
-                    ChoiceResult::Error(msg)
                 }
             }
             ChoiceResult::NeedInput(ctx) => ChoiceResult::NeedInput(ctx),
@@ -451,15 +380,7 @@ impl PlayerController for WasmRemoteController {
     ) -> ChoiceResult<SmallVec<[CardId; 7]>> {
         // Server sends indices of cards to discard (multi-select)
         match self.try_get_choice() {
-            ChoiceResult::Ok(indices) => {
-                let mut discards = SmallVec::new();
-                for idx in indices {
-                    if idx < hand.len() {
-                        discards.push(hand[idx]);
-                    }
-                }
-                ChoiceResult::Ok(discards)
-            }
+            ChoiceResult::Ok(indices) => ChoiceResult::Ok(crate::network::decode_subset(&indices, hand)),
             ChoiceResult::NeedInput(ctx) => ChoiceResult::NeedInput(ctx),
             ChoiceResult::ExitGame => ChoiceResult::ExitGame,
             ChoiceResult::Error(e) => ChoiceResult::Error(e),
@@ -604,15 +525,7 @@ impl PlayerController for WasmRemoteController {
     ) -> ChoiceResult<SmallVec<[CardId; 8]>> {
         // Server sends indices of permanents to sacrifice (multi-select)
         match self.try_get_choice() {
-            ChoiceResult::Ok(indices) => {
-                let mut sacrifices = SmallVec::new();
-                for idx in indices {
-                    if idx < valid_permanents.len() {
-                        sacrifices.push(valid_permanents[idx]);
-                    }
-                }
-                ChoiceResult::Ok(sacrifices)
-            }
+            ChoiceResult::Ok(indices) => ChoiceResult::Ok(crate::network::decode_subset(&indices, valid_permanents)),
             ChoiceResult::NeedInput(ctx) => ChoiceResult::NeedInput(ctx),
             ChoiceResult::ExitGame => ChoiceResult::ExitGame,
             ChoiceResult::Error(e) => ChoiceResult::Error(e),

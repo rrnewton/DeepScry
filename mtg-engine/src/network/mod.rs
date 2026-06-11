@@ -46,6 +46,12 @@ pub use state_sync::*;
 mod choice_entry;
 pub use choice_entry::*;
 
+// Pure opponent-choice index decoders shared by the native RemoteController and
+// the WASM WasmRemoteController (mtg-788 C1). Ungated: both the `network` and
+// `wasm-network` controllers depend on it.
+mod choice_decode;
+pub use choice_decode::*;
+
 // Native controller types (require std::sync::mpsc and network feature)
 #[cfg(feature = "network")]
 mod client;

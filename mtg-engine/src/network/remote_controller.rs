@@ -306,11 +306,7 @@ impl PlayerController for RemoteController {
             | ChoiceResult::NeedInput(_) => return ChoiceResult::ExitGame,
         };
 
-        let sources: SmallVec<[CardId; 8]> = indices
-            .into_iter()
-            .filter_map(|idx| available_sources.get(idx).copied())
-            .collect();
-        ChoiceResult::Ok(sources)
+        ChoiceResult::Ok(crate::network::decode_subset(&indices, available_sources))
     }
 
     fn choose_attackers(
@@ -326,22 +322,7 @@ impl PlayerController for RemoteController {
             | ChoiceResult::NeedInput(_) => return ChoiceResult::ExitGame,
         };
 
-        // Index 0 = pass (no attackers), index N = creature N-1
-        if indices.first().copied() == Some(0) {
-            return ChoiceResult::Ok(SmallVec::new());
-        }
-
-        let attackers: SmallVec<[CardId; 8]> = indices
-            .into_iter()
-            .filter_map(|idx| {
-                if idx > 0 {
-                    available_creatures.get(idx - 1).copied()
-                } else {
-                    None
-                }
-            })
-            .collect();
-        ChoiceResult::Ok(attackers)
+        ChoiceResult::Ok(crate::network::decode_attackers(&indices, available_creatures))
     }
 
     fn choose_blockers(
@@ -358,27 +339,7 @@ impl PlayerController for RemoteController {
             | ChoiceResult::NeedInput(_) => return ChoiceResult::ExitGame,
         };
 
-        // Index 0 = pass (no blockers), index N = (blocker_idx, attacker_idx) + 1
-        if indices.first().copied() == Some(0) {
-            return ChoiceResult::Ok(SmallVec::new());
-        }
-
-        let blocks: SmallVec<[(CardId, CardId); 8]> = indices
-            .into_iter()
-            .filter_map(|idx| {
-                if idx > 0 {
-                    let idx = idx - 1;
-                    let blocker_idx = idx / attackers.len();
-                    let attacker_idx = idx % attackers.len();
-                    let blocker = available_blockers.get(blocker_idx).copied()?;
-                    let attacker = attackers.get(attacker_idx).copied()?;
-                    Some((blocker, attacker))
-                } else {
-                    None
-                }
-            })
-            .collect();
-        ChoiceResult::Ok(blocks)
+        ChoiceResult::Ok(crate::network::decode_blockers(&indices, available_blockers, attackers))
     }
 
     fn choose_damage_assignment_order(
@@ -426,52 +387,13 @@ impl PlayerController for RemoteController {
             killable_blockers.iter().map(|(id, _)| id.as_u32()).collect::<Vec<_>>()
         );
 
-        // Prefer the actual CardId if provided (more reliable than index)
-        if let Some(ref card_ids) = blocker_card_ids {
-            if let Some(&blocker_id) = card_ids.first() {
-                log::info!(
-                    "RemoteController: using blocker_card_id {} from target_card_ids",
-                    blocker_id.as_u32()
-                );
-                // Validate the CardId exists in killable_blockers
-                if killable_blockers.iter().any(|(id, _)| *id == blocker_id) {
-                    return ChoiceResult::Ok(blocker_id);
-                }
-                // HARD ERROR (mtg-731): a CardId WAS submitted but is NOT in
-                // our authoritative killable_blockers — the two sides' combat
-                // state has diverged. The old index fallback MASKED this by
-                // silently picking a different, order-dependent blocker, which
-                // cascades into a later view-hash desync. Desync is ALWAYS fatal:
-                // surface it at the exact divergence point instead of recovering
-                // with the wrong blocker (the recovery hack the rewind vision
-                // forbids).
-                let error_msg = format!(
-                    "FATAL DESYNC: RemoteController lethal-damage blocker {:?} not in killable_blockers {:?} \
-                     (combat-state divergence; index fallback removed — mtg-731)",
-                    card_ids,
-                    killable_blockers.iter().map(|(id, _)| id.as_u32()).collect::<Vec<_>>()
-                );
-                log::error!("{}", error_msg);
-                return ChoiceResult::Error(error_msg);
+        let valid: SmallVec<[CardId; 8]> = killable_blockers.iter().map(|(id, _)| *id).collect();
+        match crate::network::resolve_combat_blocker(&indices, blocker_card_ids.as_deref(), &valid, "lethal-damage") {
+            Ok(id) => ChoiceResult::Ok(id),
+            Err(msg) => {
+                log::error!("{}", msg);
+                ChoiceResult::Error(msg)
             }
-        }
-
-        // Index-based selection ONLY when no CardId was provided (legacy/no-id
-        // peers). The CardId path above is authoritative for the rewind+replay
-        // network protocol.
-        let idx = indices.first().copied().unwrap_or(0);
-        if let Some((blocker_id, _)) = killable_blockers.get(idx) {
-            ChoiceResult::Ok(*blocker_id)
-        } else {
-            // FATAL: Invalid index indicates client/server desync
-            let error_msg = format!(
-                "DESYNC: RemoteController received invalid blocker index {} (only {} killable blockers). \
-                 This indicates client/server state divergence - a bug that must be fixed.",
-                idx,
-                killable_blockers.len()
-            );
-            log::error!("{}", error_msg);
-            ChoiceResult::Error(error_msg)
         }
     }
 
@@ -492,42 +414,17 @@ impl PlayerController for RemoteController {
             | ChoiceResult::NeedInput(_) => return ChoiceResult::ExitGame,
         };
 
-        // Prefer the actual CardId if provided (more reliable than index)
-        if let Some(card_ids) = blocker_card_ids {
-            if let Some(&blocker_id) = card_ids.first() {
-                // Validate the CardId exists in remaining_blockers
-                if remaining_blockers.contains(&blocker_id) {
-                    return ChoiceResult::Ok(blocker_id);
-                }
-                // HARD ERROR (mtg-731): submitted CardId not in our
-                // authoritative remaining_blockers → combat-state divergence.
-                // Index fallback removed (it masked the desync by picking a
-                // different order-dependent blocker). Desync is ALWAYS fatal.
-                let error_msg = format!(
-                    "FATAL DESYNC: RemoteController remaining-damage blocker {:?} not in remaining_blockers {:?} \
-                     (combat-state divergence; index fallback removed — mtg-731)",
-                    card_ids, remaining_blockers
-                );
-                log::error!("{}", error_msg);
-                return ChoiceResult::Error(error_msg);
+        match crate::network::resolve_combat_blocker(
+            &indices,
+            blocker_card_ids.as_deref(),
+            remaining_blockers,
+            "remaining-damage",
+        ) {
+            Ok(id) => ChoiceResult::Ok(id),
+            Err(msg) => {
+                log::error!("{}", msg);
+                ChoiceResult::Error(msg)
             }
-        }
-
-        // Index-based selection ONLY when no CardId was provided (legacy/no-id
-        // peers). The CardId path above is authoritative.
-        let idx = indices.first().copied().unwrap_or(0);
-        if let Some(&blocker_id) = remaining_blockers.get(idx) {
-            ChoiceResult::Ok(blocker_id)
-        } else {
-            // FATAL: Invalid index indicates client/server desync
-            let error_msg = format!(
-                "DESYNC: RemoteController received invalid remaining blocker index {} (only {} remaining). \
-                 This indicates client/server state divergence - a bug that must be fixed.",
-                idx,
-                remaining_blockers.len()
-            );
-            log::error!("{}", error_msg);
-            ChoiceResult::Error(error_msg)
         }
     }
 
@@ -545,8 +442,7 @@ impl PlayerController for RemoteController {
             | ChoiceResult::NeedInput(_) => return ChoiceResult::ExitGame,
         };
 
-        let discards: SmallVec<[CardId; 7]> = indices.into_iter().filter_map(|idx| hand.get(idx).copied()).collect();
-        ChoiceResult::Ok(discards)
+        ChoiceResult::Ok(crate::network::decode_subset(&indices, hand))
     }
 
     fn choose_from_library(
@@ -600,11 +496,7 @@ impl PlayerController for RemoteController {
             | ChoiceResult::NeedInput(_) => return ChoiceResult::ExitGame,
         };
 
-        let sacrifices: SmallVec<[CardId; 8]> = indices
-            .into_iter()
-            .filter_map(|idx| valid_permanents.get(idx).copied())
-            .collect();
-        ChoiceResult::Ok(sacrifices)
+        ChoiceResult::Ok(crate::network::decode_subset(&indices, valid_permanents))
     }
 
     fn choose_permanents_to_not_untap(
@@ -620,11 +512,7 @@ impl PlayerController for RemoteController {
             | ChoiceResult::NeedInput(_) => return ChoiceResult::ExitGame,
         };
 
-        let stay_tapped: SmallVec<[CardId; 8]> = indices
-            .into_iter()
-            .filter_map(|idx| may_not_untap_permanents.get(idx).copied())
-            .collect();
-        ChoiceResult::Ok(stay_tapped)
+        ChoiceResult::Ok(crate::network::decode_subset(&indices, may_not_untap_permanents))
     }
 
     fn choose_modes(
