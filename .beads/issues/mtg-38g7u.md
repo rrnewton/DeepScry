@@ -1,0 +1,79 @@
+---
+title: 'TRACK: 2010 World Championship decks — full deck compatibility'
+status: open
+priority: 1
+issue_type: task
+depends_on:
+  mtg-684: parent-child
+created_at: 2026-06-11T05:43:15.012736671+00:00
+updated_at: 2026-06-11T05:43:15.012736671+00:00
+---
+
+# Description
+
+TRACK: full play-tested gameplay compatibility for all 2010 Magic World Championship decks (Chiba, Japan; Standard / Scars-Zendikar-M11 era). Sibling of mtg-709 (1994), mtg-881 (2025), mtg-901 (2020), mtg-a4t4t (2005); rolls up under the championship-collections umbrella mtg-684.
+
+User goal: each 2010 World Championship deck plays COMPLETE games with NO engine errors, and every card's abilities/keywords/effects classified WORKING (or PARTIAL/BROKEN then FIXED) per the targeted_compatibility + compatibility_tracking SKILLs.
+
+== Scope ==
+decks/championship/2010/ (4 Top-4 decks, incl sideboards):
+- 01_matignon_ub_control     (1st, World Champion, Guillaume Matignon FR — Blue-Black Control w/ Jace TMS)
+- 02_wafotapa_ub_control     (2nd, Guillaume Wafo-Tapa FR — Blue-Black Control, near-identical to Matignon; Ratchet Bomb main, Stoic Rebuttal over Cancel)
+- 03_pvddr_ub_control        (3rd-4th, Paulo Vitor Damo da Rosa BR — Blue-Black Control; NOTE deck file APPROXIMATE — exact PVDDR 75 unconfirmed, filed as Matignon-shell archetype template; source 403'd)
+- 04_janse_eldrazi_green     (3rd-4th, Love Janse SE — Mono-Green Eldrazi Ramp w/ Primeval Titan, Emrakul, Ulamog)
+
+2010-STANDARD pool (Scars of Mirrodin, Zendikar block, M11) — UB Control with Jace the Mind Sculptor at its apex (Jace banned Feb 2011); Eldrazi Ramp the outlier. Distinct from 1994/Vintage, 2005/Kamigawa, and 2020/2025 modern pools.
+
+== Baseline survey (2026-06-10_#3177(9e100acf), agent compat-2010-survey slot05) ==
+- 47 unique cards across all 4 decks (union, incl sideboards). ALL 47 resolve to a single cardsfolder file — ZERO missing cards.
+- 'mtg tourney' all 4 decks x 200 games (seed 7): ALL completed, ZERO panics/crashes. Win-rates sane (UB ~43-48%, Eldrazi ~68%). debug/2010survey/tourney.log.
+- 15 per-pairing heuristic games at verbosity 3 (UB-vs-Eldrazi, UB-mirror, Eldrazi-mirror; debug/2010survey/v3_*.log, ~22k lines): all play to a real win/loss, no panics.
+
+KEY NUANCE (same as prior surveys): zero panics != every ability works. Heuristic AI exercises only a subset of abilities; several gaps are SILENT at runtime (dropped at converter, debug/WARN-level only). Runtime WARN lines + static ApiType scan surfaced the real gaps.
+
+== Runtime WARN census (200-game tourney + v3 logs) ==
+- 46x  apply_etb_counters: non-numeric amount 'XKicked' on Everflowing Chalice not yet supported  -> B1
+- 11x  Unimplemented effect 'RepeatEach' resolved as no-op                                          -> Terastodon token-payoff (B2)
+- 10x  Token script 'c_3_3_a_phyrexian_wurm_deathtouch,c_3_3_a_phyrexian_wurm_lifelink' not found   -> Wurmcoil Engine comma-list token bug (B3)
+-  3x  Token definition not found: 'c_3_3_a_phyrexian_wurm_...' - skipping token creation           -> B3 (same)
+(NO panics, NO Unknown(*) sentinels, NO illegal-action drops.)
+
+== ApiType / construct survey (static scan of all 47 scripts vs effect_converter.rs + ability_parser.rs) ==
+IMPL converter arms (verified present): Mana, Tap, Untap, Pump, Token, Draw, Discard, GainLife, SetLife, DealDamage, Destroy, DestroyAll, ChangeZone, ChangeZoneAll, Cleanup, Effect, PutCounter, PutCounterAll, Counter, Dig (maps to DigMultiple), Mill, Animate, Scry, AddTurn, DelayedTrigger.
+GAP — ApiType NOT in the enum (ability_parser.rs) -> parses as Unknown -> converter catch-all -> Effect::Unimplemented no-op:
+  * RepeatEach   (Terastodon token-per-destroyed-permanent payoff) -> B2  [confirmed firing no-op]
+  * NameCard     (Memoricide choose-a-name + exile) -> B4            [not deployed in survey; suspect BROKEN]
+  * ControlPlayer(Sorin Markov -7 ultimate) -> B5                    [not deployed; suspect no-op]
+  * StoreSVar    (Summoning Trap countered-creature tracking) -> B6  [not triggered in survey; AlternativeCost path unverified]
+ETB-COUNTER GAP: Everflowing Chalice 'etbCounter:CHARGE:XKicked' — XKicked (Count$TimesKicked) is non-numeric -> apply_etb_counters bails, enters with 0 counters -> B1.
+TOKEN-LIST GAP: TokenScript$ with a comma-separated list ('a,b') taken as ONE token name -> not found -> B3.
+
+== BROKEN / PARTIAL findings (see backlog bead B1..B6) ==
+B1 [BROKEN] Everflowing Chalice (decks 04, ramp): Multikicker charge-counter ETB drops 'XKicked'. apply_etb_counters logs 'non-numeric amount XKicked not yet supported' (46x) and adds ZERO charge counters -> a kicked Chalice produces no mana. Unkicked (0 counters) is harmless. Ramp payoff silently dead.
+B2 [BROKEN/PARTIAL] Terastodon (deck 04, 1x): ETB destroy-up-to-3 sub-payoff uses RepeatEach (make a 3/3 Elephant for each destroyed permanent's controller) -> Unimplemented no-op (11x). The Destroy half likely works; the compensatory Elephant tokens are never made (BROKEN payoff half). Confirms RepeatEach gap (also hit by 2005 — sibling).
+B3 [BROKEN] Wurmcoil Engine (deck 04, 1x + Eldrazi): dies-trigger fires ('When CARDNAME dies, create ... deathtouch token and ... lifelink token') but TokenScript$ 'c_3_3_a_phyrexian_wurm_deathtouch,c_3_3_a_phyrexian_wurm_lifelink' is treated as ONE name -> 'token script not found' -> ZERO tokens created (both halves lost). Both individual token files EXIST; the bug is missing comma-split in effect_converter.rs. Death payoff silently dead.
+B4 [UNVERIFIED] Memoricide (deck 02 main + SB, deck 01 SB): NameCard ApiType::Unknown -> no-op. Choose-a-name + search/exile from gy/hand/library likely BROKEN; never cast by heuristic in survey -> no log evidence. Need puzzle.
+B5 [UNVERIFIED] Sorin Markov (decks 01/02 SB, 1x): -7 ControlPlayer ultimate ApiType::Unknown -> no-op. +2 DealDamage+GainLife and -3 SetLife use IMPL arms (likely WORKING). Never activated in survey -> ultimate unverified. Need planeswalker puzzle.
+B6 [UNVERIFIED] Summoning Trap (deck 04, 4x): the {0} AlternativeCost-when-creature-countered relies on StoreSVar trackers (ApiType::Unknown) -> the cost-reduction trigger likely never arms. The Dig-7-for-creature main ability (ApiType Dig) is IMPL. Never countered-then-cast-free in survey. Need counter-a-creature puzzle.
+
+== UNTESTED but parse-clean (never deployed / activated by heuristic in survey seeds) ==
+Consume the Meek (DestroyAll cmcLE3), Deprive (Return-land additional-cost counter), Disfigure (-2/-2 Pump), Flashfreeze (color-restricted Counter), Stoic Rebuttal (Metalcraft ReduceCost), Cancel, Cultivate (search 2 land split), Explore (extra land + draw), Joraga Treespeaker (Level up mana), Overgrown Battlement (defender-count mana), Oracle of Mul Daya (play-from-top static), Obstinate Baloth (gain 4 + discard-replacement ETB), Acidic Slime (ETB destroy), Eldrazi Temple / Eye of Ugin (Eldrazi cost reduction + restricted mana), Mystifying Maze (exile-attacker DelayedTrigger), Jace Beleren (planeswalker draws), Emrakul/Ulamog (Annihilator, cast-triggers, cant-be-countered, graveyard-shuffle). Most LIKELY work (IMPL arms) but lack game-log evidence.
+
+== Evidence-backed WORKING (ability visibly fired in survey logs) ==
+Grave Titan (2x Zombie tokens on ETB), Avenger of Zendikar (Plant tokens per land), Khalni Garden (ETB-tapped + Plant token + {G}), Growth Spasm (search basic land tapped), Primeval Titan (search 2 lands), Doom Blade (destroy resolved), Mana Leak (resolved on stack), Jace the Mind Sculptor (cast, enters w/ 3 loyalty, 0-ability draw-3-put-2), Jace +2 Dig (puts cards on bottom), Sea Gate Oracle (cast + ETB body), Tectonic Edge (activated land-destroy + {C} mana), Spreading Seas (cast), Inquisition of Kozilek + Duress (opponent reveals + discards chosen card), Wurmcoil Engine body+dies-trigger-fires (token creation BROKEN, see B3), all basic + dual lands produce mana and honor ETB-tapped conditions. ~16 / 47.
+
+== HEADLINE % VALIDATED (2026-06-10_#3177(9e100acf)) ==
+- Evidence-backed WORKING (ability seen firing in a real game log): ~16 / 47 = ~34%.
+- Likely-fine-unvalidated (parse clean, construct IMPL, ability never exercised): ~25 / 47.
+- BROKEN/PARTIAL with filed gap: 3 confirmed (Everflowing Chalice B1, Terastodon B2, Wurmcoil B3) + 3 unverified-suspect (Memoricide B4, Sorin ultimate B5, Summoning Trap B6).
+Validated-WORKING rate = ~34% evidence-backed. 0% engine-failure (no-crash) bar MET; per-ability-WORKING bar NOT met for ~66%.
+
+== Definition of done ==
+1. Every per-card issue reaches CARD STATUS: WORKING (or accepted PARTIAL w/ bug followup).
+2. Each deck has end-to-end log with each non-vanilla ability verified by targeted puzzle.
+3. Tournament 0% engine-failure (MET) AND each B1..B6 gap fixed or accepted.
+
+== How agents pick work ==
+Open umbrella -> backlog bead (B3 Wurmcoil comma-token-split first: smallest fix, clear root cause, sibling-general; then B1 Everflowing XKicked; then B2 RepeatEach) -> targeted_compatibility SKILL. Fixes DEFERRED until in-flight engine refactor lands (SURVEY-ONLY pass; no engine edits). Coordinate via mb; never duplicate.
+
+Driven by agent compat-2010-survey (slot05), 2026-06-10, overnight autonomous survey. SURVEY/CLASSIFY/BEADS ONLY.
