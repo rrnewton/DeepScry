@@ -1387,7 +1387,16 @@ impl GameState {
                         match expr {
                             crate::core::CountExpression::TimesKicked => times_kicked,
                             crate::core::CountExpression::Fixed(n) => n.max(0) as u8,
-                            _ => {
+                            crate::core::CountExpression::ValidPermanents { .. }
+                            | crate::core::CountExpression::CardsDrawnThisTurn
+                            | crate::core::CountExpression::CardsInHand { .. }
+                            | crate::core::CountExpression::XPaid
+                            | crate::core::CountExpression::TargetedCardPower
+                            | crate::core::CountExpression::SpellsCastThisTurn
+                            | crate::core::CountExpression::ValidGraveyard { .. }
+                            | crate::core::CountExpression::Compare { .. }
+                            | crate::core::CountExpression::Kicked { .. }
+                            | crate::core::CountExpression::Bargain { .. } => {
                                 log::warn!(
                                     "apply_etb_counters: SVar '{}' on {} resolves to unsupported \
                                      expression '{}' — skipping",
@@ -1853,12 +1862,12 @@ impl GameState {
             if let Some(crate::core::KeywordArgs::Multikicker { cost }) =
                 card.keywords.get_args(crate::core::Keyword::Multikicker)
             {
-                let kick_generic = cost.generic * u8::from(card.times_kicked);
-                let kick_white = cost.white * u8::from(card.times_kicked);
-                let kick_blue = cost.blue * u8::from(card.times_kicked);
-                let kick_black = cost.black * u8::from(card.times_kicked);
-                let kick_red = cost.red * u8::from(card.times_kicked);
-                let kick_green = cost.green * u8::from(card.times_kicked);
+                let kick_generic = cost.generic * card.times_kicked;
+                let kick_white = cost.white * card.times_kicked;
+                let kick_blue = cost.blue * card.times_kicked;
+                let kick_black = cost.black * card.times_kicked;
+                let kick_red = cost.red * card.times_kicked;
+                let kick_green = cost.green * card.times_kicked;
                 effective_cost.generic = effective_cost.generic.saturating_add(kick_generic);
                 effective_cost.white = effective_cost.white.saturating_add(kick_white);
                 effective_cost.blue = effective_cost.blue.saturating_add(kick_blue);

@@ -1184,7 +1184,7 @@ impl<'a> GameLoop<'a> {
                                             }
                                         });
                                     if let Some(kick_cost) = multikicker_cost {
-                                        let kick_cmc = u8::from(kick_cost.cmc());
+                                        let kick_cmc = kick_cost.cmc();
                                         if kick_cmc > 0 {
                                             self.mana_engine.update_mut(self.game, current_priority);
                                             let untapped_sources =
