@@ -26,6 +26,7 @@
 //!   Clone (routing guard) / Unimplemented / NoOp.
 //! - [`stack`] — CounterSpell / ConditionalSelfCounter / ModalChoice (routing
 //!   guard) / ImmediateTrigger.
+//! - [`tokens`] — CreateToken / CopyPermanent / CopySpellAbility.
 
 mod cards;
 mod counters;
@@ -35,3 +36,4 @@ mod misc;
 mod pump;
 mod stack;
 mod tapping;
+mod tokens;
