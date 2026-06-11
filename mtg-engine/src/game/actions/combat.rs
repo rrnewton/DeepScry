@@ -977,9 +977,7 @@ impl GameState {
         // Torbran boosts damage from a red source controlled by the Torbran-controller to
         // an opponent player. Since in combat the defending player is always the opponent
         // of the attacker, get_damage_boost_for_source handles the opponent check.
-        for (attacker_id, defending_player, ref mut recorded_amount) in
-            creatures_that_dealt_player_damage.iter_mut()
-        {
+        for (attacker_id, defending_player, ref mut recorded_amount) in creatures_that_dealt_player_damage.iter_mut() {
             let (attacker_id, defending_player) = (*attacker_id, *defending_player);
             let boost = self.get_damage_boost_for_source(attacker_id, defending_player);
             if boost > 0 {
