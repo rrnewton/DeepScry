@@ -6381,15 +6381,22 @@ impl GameState {
             }
         }
 
-        // Check equipment on the battlefield that was attached to the dying creature
-        // for EquippedCreatureDies triggers (e.g., Skullclamp "draw two cards")
+        // Check equipment and auras on the battlefield that were attached to the dying
+        // permanent for EquippedCreatureDies triggers.
+        // Equipment: Skullclamp — "Whenever equipped creature dies, draw two cards."
+        //   (ValidCard$ Card.EquippedBy)
+        // Auras: Pattern of Rebirth — "When enchanted creature dies, search library …"
+        //   (ValidCard$ Card.AttachedBy)
+        // Both are parsed as TriggerEvent::EquippedCreatureDies.
         let equipment_triggers: Vec<(CardId, PlayerId, Vec<Effect>, String)> = self
             .battlefield
             .cards
             .iter()
             .filter_map(|&equip_id| {
                 let equip = self.cards.try_get(equip_id)?;
-                if !equip.is_equipment() || equip.attached_to != Some(dying_card_id) {
+                // Accept both equipment (is_equipment()) and auras (is_aura()) as long
+                // as they are attached to the dying permanent.
+                if !(equip.is_equipment() || equip.is_aura()) || equip.attached_to != Some(dying_card_id) {
                     return None;
                 }
                 let effects: Vec<Effect> = equip

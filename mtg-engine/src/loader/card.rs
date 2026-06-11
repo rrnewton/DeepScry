@@ -2667,13 +2667,22 @@ impl CardDefinition {
                 triggers.push(Trigger::new(TriggerEvent::LeavesBattlefield, effects, description));
             }
 
-            // Parse "equipped creature dies" triggers
+            // Parse "equipped creature dies" / "enchanted creature dies" triggers
             // T:Mode$ ChangesZone | Origin$ Battlefield | Destination$ Graveyard | ValidCard$ Card.EquippedBy | Execute$ TrigDraw
-            // Example: Skullclamp - "Whenever equipped creature dies, draw two cards."
+            // T:Mode$ ChangesZone | Origin$ Battlefield | Destination$ Graveyard | ValidCard$ Card.AttachedBy | Execute$ TrigSearch
+            // Example: Skullclamp — "Whenever equipped creature dies, draw two cards."
+            // Example: Pattern of Rebirth — "When enchanted creature dies, search library for a creature."
+            // Both use EquippedCreatureDies: the trigger fires on the attachment (equipment
+            // or aura) when the permanent it is attached to moves to the graveyard.
+            // check_death_triggers scans both is_equipment() and is_aura() cards whose
+            // attached_to matches the dying card.
             if mode == Some("ChangesZone")
                 && params.get("Origin").map(|s| s.as_str()) == Some("Battlefield")
                 && params.get("Destination").map(|s| s.as_str()) == Some("Graveyard")
-                && params.get("ValidCard").map(|s| s.as_str()) == Some("Card.EquippedBy")
+                && matches!(
+                    params.get("ValidCard").map(|s| s.as_str()),
+                    Some("Card.EquippedBy" | "Card.AttachedBy")
+                )
             {
                 let mut effects = Vec::new();
 
@@ -2686,7 +2695,7 @@ impl CardDefinition {
                 let description = params
                     .get("TriggerDescription")
                     .map(|s| s.to_string())
-                    .unwrap_or_else(|| "When equipped creature dies".to_string());
+                    .unwrap_or_else(|| "When equipped/enchanted permanent dies".to_string());
 
                 triggers.push(Trigger::new(TriggerEvent::EquippedCreatureDies, effects, description));
             }
@@ -6733,6 +6742,44 @@ Oracle:Whenever a creature dies, that creature's controller may draw a card.
         assert!(creature_dies_filter(Some("Creature.Token")).is_none());
         assert!(creature_dies_filter(Some("Creature,Artifact")).is_none());
         assert!(creature_dies_filter(None).is_none());
+    }
+
+    /// Parser regression for mtg-913 B12 (Pattern of Rebirth follow-up):
+    /// `ValidCard$ Card.AttachedBy` on a dies trigger must produce an
+    /// `EquippedCreatureDies` trigger, just like `ValidCard$ Card.EquippedBy`.
+    /// Before this fix, `Card.AttachedBy` was unrecognized and the trigger was
+    /// silently dropped.
+    #[test]
+    fn test_parse_attached_by_dies_trigger() {
+        use crate::core::TriggerEvent;
+
+        // Minimal Pattern-of-Rebirth script fragment (Aura with Card.AttachedBy trigger).
+        let content = r#"
+Name:Pattern of Rebirth
+ManaCost:3 G
+Types:Enchantment Aura
+K:Enchant:Creature
+T:Mode$ ChangesZone | Origin$ Battlefield | Destination$ Graveyard | ValidCard$ Card.AttachedBy | Execute$ TrigSearch | TriggerDescription$ When enchanted creature dies, that creature's controller may search their library for a creature card, put that card onto the battlefield, then shuffle.
+SVar:TrigSearch:DB$ ChangeZone | Optional$ True | DefinedPlayer$ TriggeredCardController | ChangeType$ Creature | ChangeNum$ 1 | Hidden$ True | Origin$ Library | Destination$ Battlefield | ShuffleNonMandatory$ True
+Oracle:Enchant creature
+When enchanted creature dies, that creature's controller may search their library for a creature card, put that card onto the battlefield, then shuffle.
+"#;
+
+        let def = CardLoader::parse(content).unwrap();
+        let triggers = def.parse_triggers();
+
+        assert_eq!(
+            triggers.len(),
+            1,
+            "Pattern of Rebirth should parse exactly one trigger; got {:?}",
+            triggers.iter().map(|t| &t.event).collect::<Vec<_>>()
+        );
+        assert_eq!(
+            triggers[0].event,
+            TriggerEvent::EquippedCreatureDies,
+            "Card.AttachedBy should produce EquippedCreatureDies trigger. Got: {:?}",
+            triggers[0].event
+        );
     }
 
     #[test]

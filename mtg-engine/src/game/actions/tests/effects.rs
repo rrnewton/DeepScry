@@ -7853,4 +7853,84 @@ mod tests {
              before={before}, after={after}"
         );
     }
+
+    /// Card compat: Pattern of Rebirth — Card.AttachedBy dies trigger (mtg-913 B12 follow-up).
+    ///
+    /// When the enchanted creature dies, Pattern of Rebirth's trigger must fire
+    /// and search the controller's library for a creature to put onto the
+    /// battlefield (the library search behavior is exercised here).
+    ///
+    /// MTG Rules: CR 603.6a/b/c — triggered abilities on Auras watch for the
+    /// enchanted permanent dying. The Aura remains on the battlefield long enough
+    /// for its trigger to fire; state-based actions then move the Aura to the
+    /// graveyard. The search goes to the Aura controller's library (same player
+    /// who owned the enchanted creature in all typical Pattern-of-Rebirth cases).
+    #[test]
+    fn test_card_compat_pattern_of_rebirth_attached_by_trigger() {
+        use crate::core::{Card, CardType, TriggerEvent};
+        use std::path::PathBuf;
+
+        if !PathBuf::from("../cardsfolder/p/pattern_of_rebirth.txt").exists() {
+            eprintln!("Skipping: cardsfolder not present");
+            return;
+        }
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+
+        // Load Pattern of Rebirth from cardsfolder to get its real trigger.
+        let por_id = load_test_card(&mut game, "Pattern of Rebirth", p1_id).expect("Pattern of Rebirth should load");
+
+        // Verify the parser produces exactly one EquippedCreatureDies trigger.
+        let por_card = game.cards.get(por_id).unwrap();
+        assert_eq!(
+            por_card.triggers.len(),
+            1,
+            "Pattern of Rebirth should have exactly one trigger"
+        );
+        assert_eq!(
+            por_card.triggers[0].event,
+            TriggerEvent::EquippedCreatureDies,
+            "Pattern of Rebirth trigger should be EquippedCreatureDies"
+        );
+
+        // Place Pattern of Rebirth on the battlefield (as Aura).
+        game.cards.get_mut(por_id).unwrap().definition.cache.is_aura = true;
+        game.battlefield.add(por_id);
+
+        // Create a creature for p1 that Pattern of Rebirth is attached to.
+        let creature_id = game.next_card_id();
+        let mut creature = Card::new(creature_id, "Llanowar Elves".to_string(), p1_id);
+        creature.add_type(CardType::Creature);
+        creature.set_base_power(Some(1));
+        creature.set_base_toughness(Some(1));
+        game.cards.insert(creature_id, creature);
+        game.battlefield.add(creature_id);
+
+        // Attach Pattern of Rebirth to the creature.
+        game.cards.get_mut(por_id).unwrap().attached_to = Some(creature_id);
+
+        // Add a creature to p1's library so the search can find it.
+        let target_id = game.next_card_id();
+        let mut target = Card::new(target_id, "Grizzly Bears".to_string(), p1_id);
+        target.add_type(CardType::Creature);
+        target.set_base_power(Some(2));
+        target.set_base_toughness(Some(2));
+        game.cards.insert(target_id, target);
+        if let Some(zones) = game.player_zones.iter_mut().find(|(id, _)| *id == p1_id) {
+            zones.1.library.add(target_id);
+        }
+
+        // Simulate the creature dying: move it off the battlefield and fire death triggers.
+        game.battlefield.remove(creature_id);
+        game.check_death_triggers(creature_id)
+            .expect("death triggers should not error");
+
+        // After the trigger fires, Pattern of Rebirth should have put Grizzly Bears
+        // onto the battlefield (SearchLibrary puts the first matching creature there).
+        assert!(
+            game.battlefield.contains(target_id),
+            "Pattern of Rebirth trigger must put a creature from library onto the battlefield"
+        );
+    }
 }

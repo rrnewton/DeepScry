@@ -307,6 +307,25 @@ pub fn resolve_effect_placeholder(effect: &Effect, ctx: &TriggerContext) -> Effe
             count: *count,
         },
 
+        // Library-search triggered abilities (e.g. Pattern of Rebirth: "when
+        // enchanted creature dies, search your library for a creature and put it
+        // onto the battlefield"). The converter emits PlayerId::new(0) as a
+        // placeholder; resolve it to the trigger context's controller so the search
+        // targets the right library.
+        Effect::SearchLibrary {
+            player,
+            card_type_filter,
+            destination,
+            enters_tapped,
+            shuffle,
+        } if player.is_placeholder() => Effect::SearchLibrary {
+            player: ctx.controller,
+            card_type_filter: card_type_filter.clone(),
+            destination: *destination,
+            enters_tapped: *enters_tapped,
+            shuffle: *shuffle,
+        },
+
         Effect::Loot {
             player,
             discard_count,
