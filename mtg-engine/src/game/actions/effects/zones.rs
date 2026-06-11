@@ -7,27 +7,29 @@
 //! elsewhere" effect — because that extraction is the structural prerequisite
 //! for the mtg-908 network-desync fix.
 //!
-//! ## mtg-908 follow-on (READ BEFORE editing `execute_dig`)
+//! ## mtg-677/mtg-908 fix (READ BEFORE editing `execute_dig`)
 //!
-//! [`Effect::Dig`]'s "which cards to keep" decision currently runs an INLINE AI
-//! heuristic ([`GameState::dig_card_score`]) that peeks at the actual (hidden)
-//! library contents. On a network game the server scores the real top-N while
-//! the client shadow scores its hidden-shadowed top-N, so the two pick
-//! different cards → fatal state-hash desync (mtg-908: the user's 2025 04-vs-02
-//! game died this way at turn 13).
+//! The `execute_dig` self-dig path previously used an inline AI heuristic
+//! ([`GameState::dig_card_score`]) that peeked at actual (potentially hidden)
+//! library card identities to rank which cards to keep. On a network game the
+//! server scores the real top-N while each client shadow scores its own
+//! (different) hidden view of the top-N, so they pick different cards →
+//! fatal state-hash desync (mtg-908: user's 2025 04-vs-02 game died at
+//! turn 13 this way).
 //!
-//! The fix (tracked in mtg-908, NOT done here) mirrors how Scry is handled:
-//! intercept Dig in the `priority.rs` effect-resolution loop where the
-//! `controller` handle is in scope, call a new
-//! `controller.choose_dig_partition(...)` (server-authoritative, sent to the
-//! client), and reduce THIS `execute_dig` to a controller-less fallback
-//! (default keep-first-N), exactly like [`GameState::execute_scry`].
+//! The fix (mtg-677/mtg-908, DONE HERE) follows the same broadcast pattern
+//! as `LibraryReordered` (the scry/surveil fix from mtg-420):
 //!
-//! THIS slice is purely structural / behavior-preserving: `execute_dig` keeps
-//! the existing hidden-info heuristic verbatim. Keeping the whole self-dig
-//! decision + application in one cohesive method is deliberate — it makes the
-//! mtg-908 swap (decision → controller, application → a `dig_apply_decision`
-//! helper) a clean follow-on rather than surgery on the giant dispatcher.
+//! - **Server**: runs the heuristic, records the kept-list in
+//!   `sub_action_scratch.pending_dig_decisions`, which `NetworkController`
+//!   drains into a `ChoiceRequest`. The coordinator broadcasts it to BOTH
+//!   clients as `ServerMessage::DigDecision` before the choice.
+//! - **Shadow**: `apply_state_sync_at` / `apply_state_sync_up_to_frontier`
+//!   delivers the kept-list via `StateSyncEntry::DigDecision` into
+//!   `sub_action_scratch.pending_dig_authoritative_decision`. `execute_dig`
+//!   checks that field FIRST and uses it if present, bypassing the heuristic.
+//! - **Non-network / local AI** games: neither field is set; the heuristic
+//!   runs as before (hidden info is acceptable when there is no network shadow).
 
 use crate::core::{CardId, DigFilter, PlayerId};
 use crate::game::GameState;
@@ -45,11 +47,12 @@ impl GameState {
     /// 2. `!target_self` (Fire Lord Ozai, Xander's Pact): exile the top N from
     ///    each opponent's library.
     ///
-    /// NOTE (mtg-908): the self-dig "which cards to keep" ranking below uses
-    /// [`GameState::dig_card_score`] against the real (hidden) library — a
-    /// network-desync hazard slated to move behind a server-authoritative
-    /// controller choice. Preserved verbatim here (behavior-preserving
-    /// extraction); see the module doc.
+    /// Network-safety: on a shadow game (mtg-677/mtg-908) the server's kept-list
+    /// arrives via `sub_action_scratch.pending_dig_authoritative_decision` (set by
+    /// `apply_state_sync_at` before the shadow reaches this call) and is used
+    /// instead of the hidden-info `dig_card_score` heuristic. On a server or local
+    /// AI game the heuristic runs and the result is recorded in
+    /// `sub_action_scratch.pending_dig_decisions` for broadcast. See module doc.
     #[allow(clippy::too_many_arguments)]
     pub(in crate::game::actions) fn execute_dig(
         &mut self,
@@ -125,34 +128,76 @@ impl GameState {
                     (change_count as usize).min(valid_ids.len())
                 };
 
-                // AI heuristic: rank valid cards by value, pick best ones
-                // Score: creatures by (power+toughness)*10 + cmc*5 + 80,
-                //        lands by 100, others by 50 + cmc*30
-                if valid_ids.len() > 1 && max_select < valid_ids.len() {
-                    valid_ids.sort_by(|&a, &b| {
-                        let score_a = self.dig_card_score(a);
-                        let score_b = self.dig_card_score(b);
-                        score_b.cmp(&score_a) // Descending: best first
-                    });
-                }
-
-                // If optional and no good cards, AI may choose to skip
-                let select_count = if optional && max_select > 0 {
-                    // Simple heuristic: skip only if best card scores very low
-                    let best_score = valid_ids.first().map(|&id| self.dig_card_score(id)).unwrap_or(0);
-                    if best_score < 30 {
-                        0
+                // --- MTG-677/MTG-908: Authoritative Dig decision ---
+                //
+                // On a SHADOW game, the server has already pushed the
+                // authoritative kept-list via `StateSyncEntry::DigDecision`
+                // which `apply_state_sync_at` stored in
+                // `sub_action_scratch.pending_dig_authoritative_decision`.
+                // We consume it here instead of running the hidden-info
+                // heuristic, eliminating the information leak that caused
+                // state-hash desync (the heuristic peeked at real hidden
+                // card identities that the shadow does not know).
+                //
+                // On the SERVER, we run the heuristic as before and then
+                // record the decision in `pending_dig_decisions` so
+                // `NetworkController` can broadcast it to clients.
+                let selected: smallvec::SmallVec<[CardId; 8]> = if let Some(authoritative) =
+                    self.sub_action_scratch.pending_dig_authoritative_decision.take()
+                {
+                    // Shadow path: use the server's decision verbatim.
+                    // Only keep IDs that are actually in `valid_ids` (the
+                    // shadow may have dummy IDs for unidentified cards, but
+                    // the server's CardIds are globally unique and stable).
+                    log::debug!(
+                        target: "dig",
+                        "execute_dig (shadow): using authoritative kept list: {:?}",
+                        authoritative
+                    );
+                    authoritative.into_iter().filter(|id| valid_ids.contains(id)).collect()
+                } else {
+                    // Server path (or non-network local AI game): run the
+                    // heuristic, then record for broadcast.
+                    if valid_ids.len() > 1 && max_select < valid_ids.len() {
+                        valid_ids.sort_by(|&a, &b| {
+                            let score_a = self.dig_card_score(a);
+                            let score_b = self.dig_card_score(b);
+                            score_b.cmp(&score_a) // Descending: best first
+                        });
+                    }
+                    let select_count = if optional && max_select > 0 {
+                        let best_score = valid_ids.first().map(|&id| self.dig_card_score(id)).unwrap_or(0);
+                        if best_score < 30 {
+                            0
+                        } else {
+                            max_select
+                        }
                     } else {
                         max_select
+                    };
+                    let kept: smallvec::SmallVec<[CardId; 8]> = valid_ids.iter().take(select_count).copied().collect();
+                    // Record for network broadcast (no-op in non-network games).
+                    if !self.is_shadow_game {
+                        let ac = self.undo_log.len() as u64;
+                        self.sub_action_scratch
+                            .pending_dig_decisions
+                            .borrow_mut()
+                            .push((digger, kept.clone(), ac));
+                        log::debug!(
+                            target: "dig",
+                            "execute_dig (server): recorded kept list ({} cards) at ac={}",
+                            kept.len(),
+                            ac
+                        );
                     }
-                } else {
-                    max_select
+                    kept
                 };
-
-                // Move selected cards to destination
-                let selected: smallvec::SmallVec<[CardId; 8]> = valid_ids.iter().take(select_count).copied().collect();
+                // Rest = valid cards NOT in `selected` (order-independent: valid_ids
+                // may have been sorted by the heuristic, or `selected` came from the
+                // authoritative server list; either way, "rest" is "every valid card
+                // that was NOT kept").
                 let rest_from_valid: smallvec::SmallVec<[CardId; 8]> =
-                    valid_ids.iter().skip(select_count).copied().collect();
+                    valid_ids.iter().copied().filter(|id| !selected.contains(id)).collect();
 
                 for &card_id in &selected {
                     let card_name = self
@@ -330,10 +375,11 @@ impl GameState {
     /// AI heuristic scoring a card for Dig selection: creatures by P/T + CMC,
     /// lands at a fixed 100, other cards by CMC. Higher = more desirable to keep.
     ///
-    /// NOTE (mtg-908): this reads the real (potentially hidden) card identity,
-    /// which is the network-desync hazard. On the fix it becomes a legitimate
-    /// controller-side decision over the controller's OWN view (server-
-    /// authoritative). Kept here verbatim for the behavior-preserving extraction.
+    /// This heuristic reads the real (potentially hidden) card identity, so it
+    /// is only safe on the SERVER side (authoritative game state). On a shadow
+    /// game `execute_dig` bypasses this heuristic entirely — it uses the
+    /// server-authoritative kept-list from `pending_dig_authoritative_decision`
+    /// instead (mtg-677/mtg-908 fix).
     pub(in crate::game::actions) fn dig_card_score(&self, card_id: CardId) -> i32 {
         let Some(card) = self.cards.try_get(card_id) else {
             return 0;
@@ -1145,5 +1191,149 @@ impl GameState {
             self.shuffle_library(player);
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::Card;
+    use crate::game::GameState;
+
+    /// Regression for mtg-677/mtg-908: on the SERVER side `execute_dig` must
+    /// enqueue the kept card IDs into `pending_dig_decisions` so
+    /// `NetworkController` can broadcast the decision to both clients before
+    /// the next `ChoiceRequest`. Without this, the shadow re-derives the kept
+    /// list from hidden card data → different picks → fatal state-hash desync.
+    #[test]
+    fn test_execute_dig_server_enqueues_dig_decision() {
+        let mut game = GameState::new_two_player("P1".into(), "P2".into(), 20);
+        game.set_skip_reveals(false); // network mode
+                                      // NOT a shadow game → we are the server / authoritative
+        let p1_id = game.players[0].id;
+
+        // Construct a 3-card library for P1.
+        let card_a = game.next_card_id();
+        let card_b = game.next_card_id();
+        let card_c = game.next_card_id();
+        for cid in [card_a, card_b, card_c] {
+            game.cards.insert(cid, Card::new(cid, "Mountain".to_string(), p1_id));
+        }
+        if let Some(zones) = game.get_player_zones_mut(p1_id) {
+            // bottom-to-top: c is bottom, a is top
+            zones.library.cards = vec![card_c, card_b, card_a];
+        }
+
+        // execute_dig: look at top 2, keep 1, rest to bottom.
+        // Empty change_valid → all cards valid (no filter).
+        game.execute_dig(
+            2,             // dig_count
+            1,             // change_count
+            false,         // change_all
+            Zone::Hand,    // destination (kept)
+            Zone::Library, // rest_destination
+            false,         // may_play
+            false,         // may_play_without_mana_cost
+            true,          // target_self
+            false,         // optional
+            false,         // rest_random
+            false,         // reveal
+            &[],           // change_valid (empty = all cards valid)
+        )
+        .expect("execute_dig must not error");
+
+        // The server must have queued exactly one pending_dig_decision.
+        let decisions = game.sub_action_scratch.pending_dig_decisions.borrow().clone();
+        assert_eq!(
+            decisions.len(),
+            1,
+            "server execute_dig must enqueue exactly one pending_dig_decision (mtg-677/mtg-908)"
+        );
+        let (digger, kept, _ac) = &decisions[0];
+        assert_eq!(*digger, p1_id, "digger must be P1");
+        assert_eq!(kept.len(), 1, "kept must have exactly 1 card (change_count=1)");
+
+        // The shadow must NOT have a pending_dig_authoritative_decision
+        // (the field is only populated by apply_state_sync, never by execute_dig).
+        assert!(
+            game.sub_action_scratch.pending_dig_authoritative_decision.is_none(),
+            "pending_dig_authoritative_decision must remain None after server-side execute_dig"
+        );
+    }
+
+    /// Regression for mtg-677/mtg-908: on the SHADOW side `execute_dig` must
+    /// consume `pending_dig_authoritative_decision` and use it as the kept list
+    /// instead of re-deriving via the heuristic. This ensures the shadow picks
+    /// exactly the same cards as the server.
+    #[test]
+    fn test_execute_dig_shadow_uses_authoritative_decision() {
+        let mut game = GameState::new_two_player("P1".into(), "P2".into(), 20);
+        game.set_skip_reveals(false); // network mode
+        game.is_shadow_game = true; // we are a shadow
+        let p1_id = game.players[0].id;
+
+        // Construct a 3-card library for P1: card_a = top, card_b = next, card_c = bottom.
+        let card_a = game.next_card_id();
+        let card_b = game.next_card_id();
+        let card_c = game.next_card_id();
+        for cid in [card_a, card_b, card_c] {
+            game.cards
+                .insert(cid, Card::new(cid, "Lightning Bolt".to_string(), p1_id));
+        }
+        if let Some(zones) = game.get_player_zones_mut(p1_id) {
+            // bottom-to-top: c is bottom, a is top
+            zones.library.cards = vec![card_c, card_b, card_a];
+        }
+
+        // Pre-populate the authoritative decision: "keep card_b" (the second card
+        // from top). The heuristic would have picked card_a (top). This verifies
+        // the shadow respects the server decision rather than running the heuristic.
+        game.sub_action_scratch.pending_dig_authoritative_decision = Some(smallvec::smallvec![card_b]);
+
+        game.execute_dig(
+            2,             // dig_count
+            1,             // change_count
+            false,         // change_all
+            Zone::Hand,    // destination
+            Zone::Library, // rest_destination
+            false,         // may_play
+            false,         // may_play_without_mana_cost
+            true,          // target_self
+            false,         // optional
+            false,         // rest_random
+            false,         // reveal
+            &[],           // change_valid (all cards valid — no filter)
+        )
+        .expect("execute_dig must not error");
+
+        // card_b must now be in P1's hand (the authoritative kept card).
+        let hand_ids = game
+            .get_player_zones(p1_id)
+            .map(|z| z.hand.cards.clone())
+            .unwrap_or_default();
+        assert!(
+            hand_ids.contains(&card_b),
+            "shadow must keep card_b as directed by authoritative decision, but hand={:?}",
+            hand_ids
+        );
+
+        // card_a must NOT be in the hand (the heuristic would have kept it, but
+        // the shadow must use the server's decision).
+        assert!(
+            !hand_ids.contains(&card_a),
+            "shadow must NOT keep card_a when authoritative decision says keep card_b"
+        );
+
+        // The authoritative decision must have been consumed (cleared).
+        assert!(
+            game.sub_action_scratch.pending_dig_authoritative_decision.is_none(),
+            "pending_dig_authoritative_decision must be consumed (None) after shadow execute_dig"
+        );
+
+        // The shadow must NOT enqueue a pending_dig_decision (server-only path).
+        assert!(
+            game.sub_action_scratch.pending_dig_decisions.borrow().is_empty(),
+            "shadow execute_dig must NOT enqueue pending_dig_decisions"
+        );
     }
 }

@@ -11,6 +11,11 @@
 //!   `Demonic Tutor` reveal, `Sensei's Divining Top` look, etc).
 //! - `LibraryReorder` — server publishes a player's authoritative library
 //!   order after a shuffle / scry / surveil / search.
+//! - `DigDecision` — server publishes which cards the active player kept
+//!   during a Dig effect (e.g. Impulse, Thundertrap Trainer ETB). The shadow
+//!   must adopt this decision rather than re-deriving it from hidden library
+//!   contents (mtg-677/mtg-908). Keyed by the `action_count` of the
+//!   `ChoiceRequest` that follows the Dig.
 //!
 //! Future variants (any other server → shadow-state mutation that is not a
 //! controller choice) extend this enum; the `ActionLog<StateSyncEntry>`
@@ -25,6 +30,7 @@
 
 use crate::core::{CardId, PlayerId};
 use crate::network::{CardReveal, RevealReason};
+use smallvec::SmallVec;
 
 /// One server-pushed mutation to the shadow `GameState`, tagged with the
 /// `action_count` at which it should be applied. See module doc for
@@ -62,6 +68,24 @@ pub enum StateSyncEntry {
     /// `process_card_reveal_wasm` over each candidate (with `searcher` as the
     /// card owner, `RevealReason::Searched`).
     SearchCandidates { searcher: PlayerId, cards: Vec<CardReveal> },
+    /// Server-authoritative record of which cards the digger KEPT during a Dig
+    /// effect (e.g. Impulse, Thundertrap Trainer ETB, Brainstorm). The shadow
+    /// must consume this decision in `execute_dig` instead of re-deriving it
+    /// via the hidden-info `dig_card_score` heuristic — that heuristic reads
+    /// real (but hidden) card identities, producing a different pick on the
+    /// shadow → fatal state-hash desync (mtg-677 / mtg-908).
+    ///
+    /// `digger` — the player whose library was dug.
+    /// `kept` — the CardIds moved to `destination` (kept pile), in
+    ///   server-decision order.
+    ///
+    /// Keyed by the `action_count` of the `ChoiceRequest` that immediately
+    /// follows the Dig, i.e. the first choice where the shadow runs
+    /// `execute_dig` as part of catching up to the server's game position.
+    DigDecision {
+        digger: PlayerId,
+        kept: SmallVec<[CardId; 8]>,
+    },
 }
 
 /// True iff two `StateSyncEntry` values describe the SAME logical delta
@@ -115,6 +139,7 @@ pub fn state_sync_entries_equivalent(a: &StateSyncEntry, b: &StateSyncEntry) -> 
                     .zip(cb.iter())
                     .all(|(x, y)| x.card_id == y.card_id && x.name == y.name)
         }
+        (DigDecision { digger: da, kept: ka }, DigDecision { digger: db, kept: kb }) => da == db && ka == kb,
         _ => false,
     }
 }

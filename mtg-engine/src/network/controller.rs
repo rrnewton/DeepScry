@@ -99,6 +99,19 @@ pub struct ChoiceRequest {
     /// Always empty for non-network controllers and for client-built
     /// requests. See mtg-420 (Cycle/Mountaincycling FATAL DESYNC).
     pub library_reorders: Vec<(PlayerId, Vec<CardId>, u64)>,
+
+    /// Dig-effect kept-lists that must be broadcast to BOTH clients before the
+    /// `ChoiceRequest` itself (mtg-677/mtg-908).
+    ///
+    /// Queued by `execute_dig` on the server side when a hidden-info-dependent
+    /// heuristic selects which cards to keep. Each entry is
+    /// `(digger, kept_card_ids, action_count)`. The coordinator drains this list
+    /// and emits a `ServerMessage::DigDecision` to every connected client so each
+    /// shadow game can apply the authoritative kept-list in `execute_dig` instead
+    /// of re-deriving it.
+    ///
+    /// Always empty for non-network controllers and for client-built requests.
+    pub dig_decisions: Vec<(PlayerId, Vec<CardId>, u64)>,
 }
 
 /// Response received from the network handler
@@ -349,6 +362,20 @@ impl NetworkController {
             );
         }
 
+        // Drain any queued Dig-effect kept-lists (mtg-677/mtg-908).
+        // These must also be broadcast to BOTH clients before the ChoiceRequest
+        // so each shadow can apply the authoritative kept-list in execute_dig.
+        let dig_decisions = view.take_pending_dig_decisions();
+        if !dig_decisions.is_empty() {
+            log::debug!(
+                "NetworkController {:?}: collected {} dig decision(s) for ChoiceRequest \
+                 (action_count={})",
+                self.player_id,
+                dig_decisions.len(),
+                action_count
+            );
+        }
+
         let request = ChoiceRequest {
             choice_seq: self.choice_seq + 1,
             choice_type,
@@ -360,6 +387,7 @@ impl NetworkController {
             abilities,
             library_search_cards,
             library_reorders,
+            dig_decisions,
         };
 
         // Send request

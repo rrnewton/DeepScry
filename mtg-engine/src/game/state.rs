@@ -383,6 +383,41 @@ pub struct SubActionScratch {
     /// `#[serde(skip)]`-on-GameState smell.
     pub pending_library_reorders: std::cell::RefCell<Vec<(PlayerId, u64)>>,
 
+    /// Pending Dig-effect decisions to broadcast (server side, mtg-677/mtg-908).
+    ///
+    /// When the SERVER runs `execute_dig` for a self-dig it pushes
+    /// `(digger, kept_card_ids, action_count)` here, where `kept_card_ids` is
+    /// the authoritative list of cards that were moved to `destination`, and
+    /// `action_count` is the undo-log position at the time of the decision.
+    /// The `NetworkController` drains this list (alongside
+    /// `pending_library_reorders`) and includes it in the `ChoiceRequest`,
+    /// so the server coordinator can broadcast it to BOTH clients before
+    /// forwarding the choice.
+    ///
+    /// The **shadow** does NOT push here; instead it pops from
+    /// `pending_dig_authoritative_decision` (populated by `apply_state_sync_at`
+    /// before the shadow runs `execute_dig`).
+    ///
+    /// Like `pending_library_reorders`, this is a network side-channel
+    /// (not suspended-stack residue) that lives in `SubActionScratch` for the
+    /// `#[serde(skip)]` behaviour.
+    // clippy::type_complexity: this is a compact internal queue type; factoring
+    // into a named type alias would only add indirection for a single use site.
+    #[allow(clippy::type_complexity)]
+    pub pending_dig_decisions:
+        std::cell::RefCell<Vec<(crate::core::PlayerId, smallvec::SmallVec<[crate::core::CardId; 8]>, u64)>>,
+
+    /// Authoritative Dig decision delivered to the SHADOW by the state-sync
+    /// log (mtg-677/mtg-908).
+    ///
+    /// Before the shadow runs `execute_dig`, `apply_state_sync_at` /
+    /// `apply_state_sync_up_to_frontier` sets this to the server's kept-list.
+    /// `execute_dig` on the shadow checks this field FIRST: if `Some`, it
+    /// uses those card IDs as the "kept" set and clears the field; if `None`
+    /// it falls back to the heuristic (only safe for non-network / local AI
+    /// games where hidden info is acceptable).
+    pub pending_dig_authoritative_decision: Option<smallvec::SmallVec<[crate::core::CardId; 8]>>,
+
     /// The permanent most recently sacrificed to pay an activated-ability cost
     /// (`Cost$ Sac<N/Type>`), recorded during cost payment and consumed by the
     /// SAME ability's effects, then cleared.

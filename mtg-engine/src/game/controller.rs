@@ -1033,6 +1033,28 @@ impl<'a> GameStateView<'a> {
             .collect()
     }
 
+    /// Drain pending Dig-effect kept-lists from the engine for broadcast.
+    ///
+    /// Mirrors [`Self::take_pending_library_reorders`] for the
+    /// `StateSyncEntry::DigDecision` broadcast path (mtg-677/mtg-908).
+    ///
+    /// Returns `(digger, kept_card_ids, action_count)` triples, where
+    /// `kept_card_ids` is the authoritative list moved to `destination` by
+    /// `execute_dig`, and `action_count` is the undo-log position at the time
+    /// of the decision (used to key the entry in the shadow's state-sync log).
+    ///
+    /// Always empty for non-network controllers and for client-built requests.
+    pub fn take_pending_dig_decisions(&self) -> Vec<(PlayerId, Vec<crate::core::CardId>, u64)> {
+        let mut queue = self.game.sub_action_scratch.pending_dig_decisions.borrow_mut();
+        if queue.is_empty() {
+            return Vec::new();
+        }
+        queue
+            .drain(..)
+            .map(|(digger, kept, ac)| (digger, kept.into_vec(), ac))
+            .collect()
+    }
+
     /// Format the last N actions as a multi-line string for debugging
     ///
     /// Used for sync debugging in network mode. Returns a string with
