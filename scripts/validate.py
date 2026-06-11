@@ -351,6 +351,14 @@ def build_registry():
     add(Step("lint", "fmt", "cargo fmt --all --check", "make fmt-check"))
     add(Step("lint", "clippy", "clippy engine+benchmarks (-D warnings)", "make clippy"))
     add(Step("lint", "clippy-wasm", "clippy wasm32 target", "make clippy-wasm"))
+    # beads-dupkey: a duplicate top-level frontmatter key (commonly `updated_at`,
+    # from a 3-way TEXT merge of two branches that each `mb update`d the same
+    # tracker) makes the YAML ambiguous and breaks `mb list`/`mb show` for the
+    # WHOLE .beads dir. Fast pure-python scan; no build deps. (mtg-742 recurred
+    # four times in one night before this guard.)
+    add(Step("lint", "beads-dupkey",
+             "reject duplicate top-level YAML keys in .beads/issues/*.md",
+             "python3 scripts/check_beads_dup_keys.py .beads/issues"))
     # --- unit: `make test` (= cargo nextest run --features network). Under
     #     --use-prebuilt, CI sets NEXTEST_ARCHIVE and `make test` runs the
     #     prebuilt archive (--archive-file --workspace-remap .) instead of

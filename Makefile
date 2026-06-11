@@ -1,7 +1,7 @@
 # MTG Forge Rust - Development Makefile
 #
 # Quick reference for common development tasks
-.PHONY: help build test validate validate-desync-canary fuzz-determinism fuzz-equivalence fuzz-network fuzz-native-wasm fuzz-snapshot fuzz-expedition clean run check fmt fmt-check clippy clippy-wasm doc docs examples full-benchmark bench-snapshot bench-logging coverage coverage-full validate-coverage-step profile callgrindprofile perfprofile heapprofile dhatprofile count setup-claude claude-github claude-beads happy code-dups bench wasm wasm-export wasm-serve wasm-dev play-web-local-dev wasm-test wasm-test-fancy wasm-test-fancy-dev wasm-test-human wasm-test-game-gui-rebuild wasm-test-game-gui-playtest wasm-e2e wasm-e2e-dev wasm-e2e-network wasm-e2e-network-human play-web play-web-pvp play-web-local build-network
+.PHONY: help build test validate validate-desync-canary fuzz-determinism fuzz-equivalence fuzz-network fuzz-native-wasm fuzz-snapshot fuzz-expedition clean run check fmt fmt-check clippy clippy-wasm doc docs examples full-benchmark bench-snapshot bench-logging coverage coverage-full validate-coverage-step profile callgrindprofile perfprofile heapprofile dhatprofile count setup-claude claude-github claude-beads happy code-dups beads-check bench wasm wasm-export wasm-serve wasm-dev play-web-local-dev wasm-test wasm-test-fancy wasm-test-fancy-dev wasm-test-human wasm-test-game-gui-rebuild wasm-test-game-gui-playtest wasm-e2e wasm-e2e-dev wasm-e2e-network wasm-e2e-network-human play-web play-web-pvp play-web-local build-network
 
 # Configuration variables
 # NODE: Node.js binary (Playwright requires Node 18+)
@@ -129,6 +129,14 @@ clippy:
 clippy-wasm:
 	@echo "=== Running clippy on WASM target ==="
 	CARGO_TARGET_DIR=$(WASM_TARGET_DIR) cargo clippy -p mtg-engine --target wasm32-unknown-unknown --no-default-features --features wasm-tui -- -D warnings
+
+# Reject duplicate top-level YAML frontmatter keys in beads issue files.
+# A 3-way TEXT merge of two branches that each `mb update`d the same tracker
+# leaves a duplicate `updated_at:` line, which breaks `mb list`/`mb show` for
+# the whole .beads dir. Run with REPAIR=1 to auto-fix (keep the latest key).
+beads-check:
+	@echo "=== Checking beads frontmatter for duplicate top-level keys ==="
+	python3 scripts/check_beads_dup_keys.py .beads/issues $(if $(REPAIR),--repair,)
 
 # Detect code duplication
 code-dups:

@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
-# Pre-commit hook: check Rust formatting before allowing a commit.
+# Pre-commit hook: guard beads frontmatter, then check Rust formatting.
 #
 # CI's `fmt` job (.github/workflows/ci.yml) runs `cargo fmt --all -- --check`
 # against the nightly toolchain and a single mis-formatted line will fail the
-# build. This hook is a lightweight local guard so we catch formatting drift
-# before pushing.
+# build. CI's validate `lint.beads-dupkey` step rejects duplicate top-level YAML
+# keys in .beads/issues/*.md (a 3-way merge of two `mb update`s of the same
+# tracker leaves a dup `updated_at:` that breaks `mb list`/`mb show`). This hook
+# is a lightweight local guard so we catch both classes of drift before pushing.
 #
 # Install with: make install-hooks
 #
@@ -12,8 +14,31 @@
 
 set -euo pipefail
 
-# Only run when there are staged Rust files; this keeps the hook out of the
-# way for purely-docs commits or merge commits.
+# --- beads frontmatter dup-key guard -------------------------------------
+# Runs whenever a .beads/issues/*.md file is staged (independent of the Rust
+# fmt check below, so a beads-only commit is still guarded). Checks only the
+# STAGED files; a duplicate top-level key is a hard failure.
+mapfile -t staged_beads < <(git diff --cached --name-only --diff-filter=ACMR \
+    | grep -E '^\.beads/issues/.*\.md$' || true)
+if [ "${#staged_beads[@]}" -gt 0 ] && command -v python3 >/dev/null 2>&1; then
+    if ! python3 scripts/check_beads_dup_keys.py "${staged_beads[@]}"; then
+        cat >&2 <<'EOF'
+
+✗ pre-commit: duplicate top-level YAML key in a staged beads issue file.
+
+  Fix with:   make beads-check REPAIR=1     (keeps the latest updated_at)
+  Re-stage:   git add .beads/issues
+  Commit again.
+
+  CI's validate lint.beads-dupkey step will reject this otherwise. To bypass
+  for an emergency commit, re-run with --no-verify.
+EOF
+        exit 1
+    fi
+fi
+
+# Only run the Rust fmt check when there are staged Rust files; this keeps the
+# hook out of the way for purely-docs / beads-only commits or merge commits.
 if ! git diff --cached --name-only --diff-filter=ACMR | grep -qE '\.rs$'; then
     exit 0
 fi
