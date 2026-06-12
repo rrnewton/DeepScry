@@ -4031,6 +4031,37 @@ pub enum StaticAbility {
         /// Description for logging.
         description: String,
     },
+
+    /// Alternative-cost static ability.
+    ///
+    /// Corresponds to: `S:Mode$ AlternativeCost | ValidSA$ Spell.Self | EffectZone$ All
+    ///   | Cost$ 0 | CheckSVar$ <var> | Description$ ...`
+    ///
+    /// Example: Summoning Trap — may be cast for {0} instead of its normal {5}{G}{G}
+    /// cost when a creature spell you cast was countered earlier this turn.
+    ///
+    /// `condition`: which runtime flag must be true on the casting player.
+    /// `alt_cost`: the alternative mana cost (e.g. {0} = `ManaCost::zero()`).
+    /// `description`: for logging/display.
+    ///
+    /// Applied in `push_castable_spells` (actions.rs): when the condition is met,
+    /// the spell is offered a second time with `override_cost = Some(alt_cost)`.
+    AlternativeCost {
+        /// Runtime condition that must be satisfied for the alt cost to be offered.
+        condition: AltCostCondition,
+        /// The alternative mana cost to use when condition is met.
+        alt_cost: crate::core::ManaCost,
+        /// Description for logging/display.
+        description: String,
+    },
+}
+
+/// Condition checked at cast time for an [`StaticAbility::AlternativeCost`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AltCostCondition {
+    /// True when one of the casting player's creature spells was countered
+    /// this turn by an opponent's effect (Summoning Trap condition).
+    HadCreatureCounteredThisTurn,
 }
 
 /// Source expression for a CharacteristicDefiningPt static ability.
@@ -5125,12 +5156,28 @@ pub struct AbilityCache {
     pub targets_creature: bool,
     pub targets_land: bool,
     pub requires_target: bool,
+    /// True when the ability targets a player (any player), e.g. "target player".
+    /// Used to enumerate all players as valid targets for effects like SetLife
+    /// that target a player (e.g. "Target player's life total becomes 10").
+    pub targets_player: bool,
+    /// True when the ability targets an opponent specifically, e.g. "target opponent".
+    /// Used to enumerate only opponents as valid targets for effects like Sorin
+    /// Markov's -3 ("Target opponent's life total becomes 10.").
+    pub targets_opponent: bool,
 }
 
 impl AbilityCache {
     /// Create a new cache from ability description
     pub fn new(description: &str) -> Self {
         let desc_lower = description.to_lowercase();
+
+        // Check for "target opponent" before "target player" to distinguish them.
+        // "target opponent" is a subset of "target player" semantically, but the
+        // engine enumerates different player sets for each.
+        let targets_opponent = desc_lower.contains("target opponent");
+        // "target player" catches abilities that target any player (including self),
+        // but exclude the opponent-only case to avoid double-counting.
+        let targets_player = !targets_opponent && desc_lower.contains("target player");
 
         AbilityCache {
             // Store lowercase version
@@ -5149,6 +5196,8 @@ impl AbilityCache {
             // itself never needs a target — any "target" in the text belongs to the token's ability.
             requires_target: (desc_lower.contains("target") && !desc_lower.starts_with("create"))
                 || desc_lower.starts_with("equip"),
+            targets_player,
+            targets_opponent,
         }
     }
 }

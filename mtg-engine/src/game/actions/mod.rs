@@ -717,6 +717,11 @@ impl GameState {
             (card.owner, card.effects.len())
         };
 
+        // Set current_spell_controller so that execute_counter_spell can determine
+        // whether a countered creature spell was countered by an opponent (Summoning
+        // Trap condition). Cleared at the end of this function.
+        self.current_spell_controller = Some(card_owner);
+
         log::debug!(target: "resolve_spell", "resolve_spell card_id={}, chosen_targets={:?}, effects_len={}", card_id.as_u32(), chosen_targets.iter().map(|c| c.as_u32()).collect::<Vec<_>>(), effects_len);
 
         // Find opponent ID for untargeted damage (resolve once)
@@ -837,6 +842,9 @@ impl GameState {
                 self.check_triggers_with_damage(TriggerEvent::DealsCombatDamage, card_id, Some(dealt))?;
             }
         }
+
+        // Clear transient spell-controller context now that effects are done.
+        self.current_spell_controller = None;
 
         Ok(())
     }
@@ -3666,11 +3674,29 @@ impl GameState {
                 sac_type: sac_type.clone(),
                 count: *count,
             },
-            Effect::SetLife { player, amount } if player.is_placeholder() => Effect::SetLife {
-                // SetLife defaults to self (Angel of Grace: "Your life total becomes 10")
-                player: card_owner,
-                amount: *amount,
-            },
+            Effect::SetLife { player, amount } if player.is_placeholder() => {
+                // If a target was chosen (Sorin Markov -3: "target opponent's life total
+                // becomes 10"), consume the chosen target from the list and decode the
+                // player sentinel. If no target was chosen, default to card_owner
+                // (Angel of Grace: "your life total becomes 10"). (CR 119.5)
+                let resolved_player = if *target_index < chosen_targets.len() {
+                    let raw = chosen_targets[*target_index];
+                    if let Some(pid) = crate::core::player_target_from_sentinel(raw) {
+                        *target_index += 1;
+                        *last_resolved_target = Some(raw);
+                        pid
+                    } else {
+                        // Target is a permanent, not a player — fall back to card_owner
+                        card_owner
+                    }
+                } else {
+                    card_owner
+                };
+                Effect::SetLife {
+                    player: resolved_player,
+                    amount: *amount,
+                }
+            }
             Effect::Mill { player, count } if player.is_placeholder() => Effect::Mill {
                 player: card_owner,
                 count: *count,

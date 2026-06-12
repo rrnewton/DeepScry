@@ -5383,9 +5383,13 @@ impl CardDefinition {
             let is_reduce_cost = ability.contains("Mode$ ReduceCost");
             let is_raise_cost = ability.contains("Mode$ RaiseCost");
             let is_cast_with_flash = ability.contains("Mode$ CastWithFlash");
+            let is_alternative_cost = ability.contains("Mode$ AlternativeCost");
 
-            // Parse S:Mode$ Continuous, S:Mode$ ReduceCost, S:Mode$ RaiseCost, or S:Mode$ CastWithFlash lines
-            if !is_continuous && !is_reduce_cost && !is_raise_cost && !is_cast_with_flash {
+            // Parse S:Mode$ Continuous, S:Mode$ ReduceCost, S:Mode$ RaiseCost,
+            // S:Mode$ CastWithFlash, or S:Mode$ AlternativeCost lines
+            if !is_continuous && !is_reduce_cost && !is_raise_cost && !is_cast_with_flash
+                && !is_alternative_cost
+            {
                 continue;
             }
 
@@ -5430,6 +5434,12 @@ impl CardDefinition {
             // AddTrigger$-specific parameter: SVar name of the trigger to grant to
             // affected permanents (Energy Flux, Aura Flux: upkeep sacrifice-unless-pay).
             let mut add_trigger_svar: Option<String> = None;
+
+            // AlternativeCost-specific parameters.
+            // `alt_cost_mana`: the alternative mana cost (parsed from `Cost$`).
+            // `alt_cost_check_svar`: SVar variable name to check (e.g. `SetTrap`).
+            let mut alt_cost_mana: Option<crate::core::ManaCost> = None;
+            let mut _alt_cost_check_svar: Option<String> = None;
 
             // Split by | and parse each parameter
             for param in ability.split('|') {
@@ -5586,6 +5596,10 @@ impl CardDefinition {
                             }
                         }
                         "Cost" => {
+                            // AlternativeCost: parse Cost$ as a mana cost (e.g. "0", "2GG")
+                            if is_alternative_cost {
+                                alt_cost_mana = Some(crate::core::ManaCost::from_string(value));
+                            }
                             // Parse Cost$ for RaiseCost sacrifice costs
                             // Format: Sac<amount/type/description> or Sac<X/type/description>
                             // Examples: "Sac<1/Land>", "Sac<X/Land/land(s)>"
@@ -5691,6 +5705,14 @@ impl CardDefinition {
                             // `DB$ Sacrifice | UnlessPayer$ You | UnlessCost$ N` (sacrifice
                             // unless pay {N}) pattern is handled (Energy Flux, Aura Flux).
                             add_trigger_svar = Some(value.to_string());
+                        }
+                        "CheckSVar" => {
+                            // `CheckSVar$ <svar>` — for AlternativeCost, the SVar whose
+                            // value is checked at cast time. E.g. `CheckSVar$ SetTrap`
+                            // on Summoning Trap.
+                            if is_alternative_cost {
+                                _alt_cost_check_svar = Some(value.to_string());
+                            }
                         }
                         _ => {} // Ignore other parameters (e.g., AddType$, Type$, Activator$)
                     }
@@ -5873,6 +5895,27 @@ impl CardDefinition {
                             }
                         }
                     }
+                }
+            }
+
+            // AlternativeCost ability (Summoning Trap: may be cast for {0} when a
+            // creature spell you cast was countered this turn by an opponent).
+            // Shape: S:Mode$ AlternativeCost | ValidSA$ Spell.Self | Cost$ 0
+            //        | CheckSVar$ SetTrap | Description$ ...
+            // We currently only recognize CheckSVar$ values whose SVar body is a
+            // counter expression (Summoning Trap's SetTrap increments via StoreSVar).
+            // The condition maps to `AltCostCondition::HadCreatureCounteredThisTurn`.
+            if is_alternative_cost {
+                if let Some(alt_cost) = alt_cost_mana.take() {
+                    // CheckSVar$ links to the Summoning-Trap "SetTrap" counter; any
+                    // AlternativeCost with a CheckSVar is treated as the
+                    // HadCreatureCounteredThisTurn condition (the only one we support).
+                    let condition = crate::core::AltCostCondition::HadCreatureCounteredThisTurn;
+                    abilities.push(StaticAbility::AlternativeCost {
+                        condition,
+                        alt_cost,
+                        description: description.clone(),
+                    });
                 }
             }
         }
@@ -9356,6 +9399,80 @@ Oracle:[-6]: You get an emblem with "At the beginning of each opponent's upkeep,
             has_drain,
             "Dragons trigger must have a LoseLife(2) effect; effects={:?}",
             dragons.effects
+        );
+    }
+
+    /// Test that AlternativeCost static ability parses from card text (mtg-914).
+    ///
+    /// Summoning Trap has:
+    ///   `S:Mode$ AlternativeCost | ValidSA$ Spell.Self | EffectZone$ All | Cost$ 0
+    ///    | CheckSVar$ SetTrap | Description$ ...`
+    /// This should produce a `StaticAbility::AlternativeCost` with a zero mana cost.
+    #[test]
+    fn test_alternative_cost_static_ability_parses() {
+        use crate::core::{AltCostCondition, StaticAbility};
+
+        let content = r#"
+Name:Summoning Trap
+ManaCost:5GG
+Types:Instant
+Oracle:You may cast this spell for {0} if a creature spell you cast this turn was countered.
+S:Mode$ AlternativeCost | ValidSA$ Spell.Self | EffectZone$ All | Cost$ 0 | CheckSVar$ SetTrap | Description$ You may cast CARDNAME for {0} if a creature spell you cast this turn was countered.
+"#;
+
+        let def = CardLoader::parse(content).expect("Summoning Trap inline text should parse");
+        let statics = def.parse_static_abilities();
+
+        let alt_cost_statics: Vec<_> = statics
+            .iter()
+            .filter(|s| matches!(s, StaticAbility::AlternativeCost { .. }))
+            .collect();
+
+        assert_eq!(
+            alt_cost_statics.len(),
+            1,
+            "Should have exactly one AlternativeCost static; got {:?}",
+            statics
+        );
+
+        if let StaticAbility::AlternativeCost { condition, alt_cost, .. } = &alt_cost_statics[0] {
+            assert_eq!(
+                condition,
+                &AltCostCondition::HadCreatureCounteredThisTurn,
+                "Summoning Trap condition should be HadCreatureCounteredThisTurn"
+            );
+            assert_eq!(
+                alt_cost.cmc(),
+                0,
+                "Summoning Trap alt cost should be {{0}}"
+            );
+        }
+    }
+
+    /// Test that Summoning Trap from the cardsfolder has AlternativeCost parsed (mtg-914).
+    ///
+    /// Skipped if cardsfolder is not present (CI/unit test only environments).
+    #[test]
+    fn test_summoning_trap_from_cardsfolder_has_alt_cost() {
+        use crate::core::StaticAbility;
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("cardsfolder/s/summoning_trap.txt");
+        if !path.exists() {
+            return; // Skip if cardsfolder not present
+        }
+
+        let def = CardLoader::load_from_file(&path)
+            .expect("summoning_trap.txt should load");
+        let statics = def.parse_static_abilities();
+
+        let has_alt_cost = statics.iter().any(|s| {
+            matches!(s, StaticAbility::AlternativeCost { .. })
+        });
+        assert!(
+            has_alt_cost,
+            "Summoning Trap should have an AlternativeCost static; all statics: {:?}",
+            statics
         );
     }
 }

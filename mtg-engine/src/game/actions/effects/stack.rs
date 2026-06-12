@@ -65,6 +65,26 @@ impl GameState {
                     prior_log_size,
                 );
             }
+
+            // Summoning Trap: if this spell is a creature spell cast by
+            // its owner (not from an opponent's effect), and it is being
+            // countered by an opponent's effect, set the
+            // `had_creature_countered_this_turn` flag on the owner.
+            // Condition: current_spell_controller is set (= the player
+            // who controls the counter spell) and that player is NOT the
+            // owner of the countered spell.
+            if let Some(counter_controller) = self.current_spell_controller {
+                if let Some(countered_card) = self.cards.try_get(target) {
+                    let countered_owner = countered_card.owner;
+                    let is_creature_spell = countered_card.is_creature();
+                    if is_creature_spell && counter_controller != countered_owner {
+                        if let Some(player) = self.players.iter_mut().find(|p| p.id == countered_owner) {
+                            player.had_creature_countered_this_turn = true;
+                        }
+                    }
+                }
+            }
+
             self.counter_spell(target)?;
         }
         Ok(())

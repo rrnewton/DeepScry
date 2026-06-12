@@ -114,6 +114,10 @@ pub fn format_choice_menu(view: &GameStateView, available: &[SpellAbility], want
                 let name = view.adventure_name(*card_id).unwrap_or_default();
                 output.push_str(&format!("  [{}] cast {} (Adventure)\n", display_idx, name));
             }
+            SpellAbility::CastFromHandWithAltCost { card_id, alternative_cost } => {
+                let name = view.card_name(*card_id).unwrap_or_default();
+                output.push_str(&format!("  [{}] cast {} for {}\n", display_idx, name, alternative_cost));
+            }
         }
     }
 
@@ -301,6 +305,8 @@ fn spell_ability_sort_key(ability: &SpellAbility) -> u8 {
         SpellAbility::CastFromGraveyard { .. } => 6,
         // Adventure cast is a hand cast; order it next to CastSpell.
         SpellAbility::CastAdventure { .. } => 7,
+        // Alt-cost cast from hand (e.g. Summoning Trap for {0}) groups with CastSpell.
+        SpellAbility::CastFromHandWithAltCost { .. } => 1,
     }
 }
 
@@ -450,6 +456,10 @@ pub fn format_spell_ability_choice(view: &GameStateView, ability: &SpellAbility)
             // creature-half cast (`cast <CreatureName>`) for fixed-inputs.
             let name = view.adventure_name(*card_id).unwrap_or_default();
             format!("cast {} (Adventure)", name)
+        }
+        SpellAbility::CastFromHandWithAltCost { card_id, alternative_cost } => {
+            let name = view.card_name(*card_id).unwrap_or_default();
+            format!("cast {} for {}", name, alternative_cost)
         }
     }
 }

@@ -21,7 +21,8 @@ pub use delayed_trigger::{
     DelayedTriggerStore, TriggerPhase, TurnOwner,
 };
 pub use effects::{
-    AbilityCache, ActivatedAbility, ActivationCondition, ActivationPhaseWindow, AffectedSelector, CdaPtSource,
+    AbilityCache, ActivatedAbility, ActivationCondition, ActivationPhaseWindow, AffectedSelector,
+    AltCostCondition, CdaPtSource,
     CombatDamageTarget, CompareOp, ControllerRestriction, CostReductionCondition, CostReductionTarget, CountExpression,
     CountModifier, DamageDivision, DigFilter, DynamicAmount, Effect, ImmediateTriggerCondition, ModalMode,
     PresentSelfCondition, RaisedCost, RaisedCostAmount, RepeatEachIterate, SelfCounterCondition, StaticAbility,

@@ -554,6 +554,9 @@ impl GameStateEvaluator {
                     // Upkeep sacrifice-unless-pay (Energy Flux, Aura Flux): lives on the
                     // enchantment/artifact source, not an Aura; no enchanted-creature value.
                 }
+                StaticAbility::AlternativeCost { .. } => {
+                    // Alternative-cost static (Summoning Trap): no direct creature value.
+                }
             }
         }
 

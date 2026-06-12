@@ -93,6 +93,19 @@ pub struct Player {
     /// cleanup step (CR 514.2) alongside other per-turn replacements.
     #[serde(default)]
     pub island_sanctuary_protected: bool,
+
+    /// True if one of this player's creature spells was countered this turn by an
+    /// opponent's effect (CR 702.36a, Summoning Trap condition).
+    ///
+    /// Set in `counter_spell()` when a creature spell cast by this player is
+    /// countered by a source controlled by an opponent.  Cleared in the cleanup
+    /// step (CR 514.2) alongside other per-turn replacement flags.
+    ///
+    /// Drives the `AlternativeCost` condition on Summoning Trap: when this flag
+    /// is true the player may cast Summoning Trap for {0} instead of its normal
+    /// mana cost (see `push_castable_spells` in `actions.rs`).
+    #[serde(default)]
+    pub had_creature_countered_this_turn: bool,
 }
 
 impl Player {
@@ -116,6 +129,7 @@ impl Player {
             spells_cast_this_turn: 0,
             skip_untap_next_turn: false,
             island_sanctuary_protected: false,
+            had_creature_countered_this_turn: false,
         }
     }
 

@@ -194,7 +194,8 @@ impl<'a> GameLoop<'a> {
             | StaticAbility::LifeFloor { .. }
             | StaticAbility::DamageToExileLibrary { .. }
             | StaticAbility::CharacteristicDefiningPt { .. }
-            | StaticAbility::GrantUpkeepSacrificeUnlessPay { .. } => false,
+            | StaticAbility::GrantUpkeepSacrificeUnlessPay { .. }
+            | StaticAbility::AlternativeCost { .. } => false,
         }
     }
 
@@ -653,6 +654,37 @@ impl<'a> GameLoop<'a> {
                             // Also check if we can pay any additional sacrifice costs (RaiseCost)
                             let can_afford_mana = self.mana_engine.can_pay_with_pool(&effective_cost, &mana_pool);
                             let can_afford_sacrifice = self.can_pay_sacrifice_costs(card, player_id);
+
+                            // Check for AlternativeCost static abilities on this card.
+                            // E.g. Summoning Trap: may be cast for {0} when a creature spell
+                            // was countered this turn by an opponent.
+                            let player_had_creature_countered = self
+                                .game
+                                .try_get_player(player_id)
+                                .is_some_and(|p| p.had_creature_countered_this_turn);
+                            for static_ability in &card.static_abilities {
+                                if let crate::core::StaticAbility::AlternativeCost {
+                                    condition,
+                                    alt_cost,
+                                    ..
+                                } = static_ability
+                                {
+                                    let condition_met = match condition {
+                                        crate::core::AltCostCondition::HadCreatureCounteredThisTurn => {
+                                            player_had_creature_countered
+                                        }
+                                    };
+                                    if condition_met
+                                        && self.mana_engine.can_pay_with_pool(alt_cost, &mana_pool)
+                                    {
+                                        self.abilities_buffer
+                                            .push(SpellAbility::CastFromHandWithAltCost {
+                                                card_id,
+                                                alternative_cost: alt_cost.clone(),
+                                            });
+                                    }
+                                }
+                            }
 
                             if can_afford_mana && can_afford_sacrifice {
                                 // For Aura spells, check if there are valid targets

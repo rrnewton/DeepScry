@@ -159,6 +159,19 @@ pub struct GameState {
     #[serde(skip)]
     pub damage_dealt_by_source: Option<i32>,
 
+    /// Controller of the spell/ability whose effects are currently being
+    /// executed. Set at the start of `resolve_spell_execute_effects` and
+    /// cleared at the end; also set by priority.rs when executing activated
+    /// ability effects.  Like `current_damage_source` this is purely transient
+    /// resolution scratch (`#[serde(skip)]`) — snapshots and network state are
+    /// unaffected.
+    ///
+    /// Used by `execute_counter_spell` to set `had_creature_countered_this_turn`
+    /// on the owner of the countered spell when that owner is NOT the same player
+    /// as `current_spell_controller` (i.e. countered by an opponent).
+    #[serde(skip)]
+    pub current_spell_controller: Option<crate::core::PlayerId>,
+
     /// Delayed triggers waiting to fire on specific events.
     ///
     /// Delayed triggers are created by effects and fire when conditions are met:
@@ -506,6 +519,7 @@ impl GameState {
             persistent_effects: PersistentEffectStore::new(),
             current_damage_source: None,
             damage_dealt_by_source: None,
+            current_spell_controller: None,
             delayed_triggers: DelayedTriggerStore::new(),
             remembered_cards: smallvec::SmallVec::new(),
             remembered_players: smallvec::SmallVec::new(),
@@ -4728,6 +4742,7 @@ impl Clone for GameState {
             persistent_effects: self.persistent_effects.clone(),
             current_damage_source: self.current_damage_source,
             damage_dealt_by_source: self.damage_dealt_by_source,
+            current_spell_controller: self.current_spell_controller,
             delayed_triggers: self.delayed_triggers.clone(),
             remembered_cards: self.remembered_cards.clone(),
             remembered_players: self.remembered_players.clone(),

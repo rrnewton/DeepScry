@@ -1662,6 +1662,10 @@ impl GameState {
                         // Handled at upkeep time in check_grant_upkeep_sacrifice_statics();
                         // does not affect P/T.
                     }
+                    StaticAbility::AlternativeCost { .. } => {
+                        // Alternative-cost static (Summoning Trap). Handled at cast time
+                        // in push_castable_spells; does not affect P/T.
+                    }
                 }
             }
         }

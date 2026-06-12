@@ -1354,6 +1354,27 @@ impl GameState {
                 }
                 // ===== EXHAUSTIVE EFFECT HANDLING FOR ABILITY TARGETING =====
                 // Effects that don't need targets or have targets pre-specified
+                // SetLife that targets a player by name: Sorin Markov -3
+                // ("Target opponent's life total becomes 10."). The effect is parsed
+                // with player=placeholder; the ability description carries "target
+                // opponent" or "target player", so we enumerate the appropriate
+                // player set here using the ability's AbilityCache flags.
+                Effect::SetLife { player, .. } if player.is_placeholder() && ability.cache.requires_target => {
+                    if ability.cache.targets_opponent {
+                        // Enumerate opponents only
+                        for player in &self.players {
+                            if player.id != ability_controller {
+                                valid_targets.push(crate::core::player_as_target_sentinel(player.id));
+                            }
+                        }
+                    } else if ability.cache.targets_player {
+                        // Enumerate all players
+                        for player in &self.players {
+                            valid_targets.push(crate::core::player_as_target_sentinel(player.id));
+                        }
+                    }
+                }
+
                 Effect::DrawCards { .. }
                 | Effect::DrawCardsXPaid { .. }
                 | Effect::DiscardCards { .. }
@@ -2124,6 +2145,77 @@ mod tests {
         assert!(
             !targets.contains(&battlefield_creature_id),
             "Animate Dead should NOT target creatures on battlefield (this was the bug in mtg-239!)"
+        );
+    }
+
+    /// Test that AbilityCache correctly parses "target opponent" vs "target player"
+    #[test]
+    fn test_ability_cache_targets_opponent_vs_player() {
+        // Sorin Markov -3: targets only opponents
+        let cache_sorin = crate::core::AbilityCache::new("Target opponent's life total becomes 10.");
+        assert!(cache_sorin.targets_opponent, "Sorin -3 should have targets_opponent=true");
+        assert!(!cache_sorin.targets_player, "Sorin -3 should NOT have targets_player=true (exclusive)");
+        assert!(cache_sorin.requires_target, "Sorin -3 should require a target");
+
+        // Ancestral Recall-like ability targeting any player
+        let cache_player = crate::core::AbilityCache::new("Target player draws three cards.");
+        assert!(!cache_player.targets_opponent, "Target-player ability should NOT have targets_opponent=true");
+        assert!(cache_player.targets_player, "Target-player ability should have targets_player=true");
+        assert!(cache_player.requires_target, "Target-player ability should require a target");
+    }
+
+    /// Test that Sorin Markov's -3 ability enumerates opponents as valid targets (mtg-914 fix)
+    ///
+    /// The -3 ability is "Target opponent's life total becomes 10."
+    /// Before the fix, SetLife was in the no-target catch-all of get_valid_targets_for_ability,
+    /// so the ability was never shown (empty targets → can_activate=false).
+    #[test]
+    fn test_sorin_markov_minus3_targets_opponent_only() {
+        use crate::core::{ActivatedAbility, CardType, Effect, PlayerId};
+        use crate::game::state::GameState;
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let player1 = PlayerId::new(0);
+        let player2 = PlayerId::new(1);
+
+        // Create a Sorin Markov planeswalker card controlled by player1
+        let sorin_id = game.cards.next_id();
+        let mut sorin_card = crate::core::Card::new(sorin_id, "Sorin Markov", player1);
+        sorin_card.add_type(CardType::Planeswalker);
+        sorin_card.controller = player1;
+
+        // Add the -3 ability: SetLife targeting an opponent
+        // player=PlayerId::new(0) is the placeholder; the description drives targeting
+        let minus3_effect = Effect::SetLife {
+            player: PlayerId::new(0), // placeholder
+            amount: 10,
+        };
+        let minus3_ability = ActivatedAbility::new(
+            Cost::SubLoyalty { amount: 3 },
+            vec![minus3_effect],
+            "Target opponent's life total becomes 10.".to_string(),
+            false,
+        );
+        sorin_card.activated_abilities.push(minus3_ability);
+        game.cards.insert(sorin_id, sorin_card);
+        game.battlefield.cards.push(sorin_id);
+
+        // Get valid targets for the -3 ability (index 0)
+        let targets = game.get_valid_targets_for_ability(sorin_id, 0).unwrap();
+
+        // Should include player2 (opponent) as a sentinel
+        let p2_sentinel = crate::core::player_as_target_sentinel(player2);
+        assert!(
+            targets.contains(&p2_sentinel),
+            "Sorin -3 should target the opponent (player2); got {:?}",
+            targets
+        );
+
+        // Should NOT include player1 (the controller) — ability says "opponent"
+        let p1_sentinel = crate::core::player_as_target_sentinel(player1);
+        assert!(
+            !targets.contains(&p1_sentinel),
+            "Sorin -3 should NOT target player1 (the controller)"
         );
     }
 }

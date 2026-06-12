@@ -1688,6 +1688,11 @@ impl<'a> GameLoop<'a> {
                                         } // end if effect_start_idx == 0 (skip costs on effect resumption)
                                     } // end else (not resuming from effect_resume)
 
+                                    // Set transient controller context so execute_counter_spell can
+                                    // detect opponent-countered creature spells (Summoning Trap).
+                                    // Cleared below after the effects loop completes.
+                                    self.game.current_spell_controller = Some(current_priority);
+
                                     // Execute effects immediately (not on the stack)
                                     // TODO(mtg-70): Put non-mana abilities on the stack
                                     // Use enumerate to track index for WASM effect resumption.
@@ -2619,6 +2624,21 @@ impl<'a> GameLoop<'a> {
                                                     source: Some(card_id),
                                                 }
                                             }
+                                            // SetLife targeting a player (Sorin Markov -3: "Target
+                                            // opponent's life total becomes 10"). The chosen target
+                                            // is a player sentinel; decode it to a PlayerId.
+                                            crate::core::Effect::SetLife { player, amount }
+                                                if player.is_placeholder() && !chosen_targets_vec.is_empty() =>
+                                            {
+                                                let resolved = crate::core::player_target_from_sentinel(
+                                                    chosen_targets_vec[0],
+                                                )
+                                                .unwrap_or(current_priority);
+                                                crate::core::Effect::SetLife {
+                                                    player: resolved,
+                                                    amount: *amount,
+                                                }
+                                            }
                                             _ => effect.clone(),
                                         };
 
@@ -2628,6 +2648,10 @@ impl<'a> GameLoop<'a> {
                                             }
                                         }
                                     }
+
+                                    // Clear transient spell-controller context (set above for
+                                    // Summoning Trap / execute_counter_spell detection).
+                                    self.game.current_spell_controller = None;
 
                                     // Clear the cost-payment sacrifice scratch now that this
                                     // ability's effects have run. Keeps it provably None at
@@ -3373,6 +3397,57 @@ impl<'a> GameLoop<'a> {
                             // match, so it is never reached here.
                             crate::core::SpellAbility::CastAdventure { .. } => {
                                 unreachable!("CastAdventure is rewritten to CastSpell before dispatch")
+                            }
+
+                            crate::core::SpellAbility::CastFromHandWithAltCost {
+                                card_id,
+                                alternative_cost,
+                            } => {
+                                // Cast from hand with an alternative cost (e.g. Summoning Trap for {0}).
+                                // Uses the same 8-step casting process as CastFromExile, but from
+                                // Zone::Hand with the override cost.
+                                if self.verbosity >= VerbosityLevel::Normal && !self.replaying {
+                                    let card_name = self
+                                        .game
+                                        .cards
+                                        .get(card_id)
+                                        .map(|c| c.name.to_string())
+                                        .unwrap_or_else(|_| "Unknown".to_string());
+                                    let message = format!(
+                                        "{} casts {} for {} (alternative cost)",
+                                        self.get_player_name(current_priority),
+                                        card_name,
+                                        alternative_cost
+                                    );
+                                    self.game.logger.gamelog(&message);
+                                }
+
+                                self.mana_engine.update_mut(self.game, current_priority);
+
+                                if let Err(e) = self.game.cast_spell_8_step_from(
+                                    current_priority,
+                                    card_id,
+                                    |_, _| smallvec::smallvec![],
+                                    &self.mana_engine,
+                                    crate::zones::Zone::Hand,
+                                    Some(alternative_cost),
+                                ) {
+                                    if self.verbosity >= VerbosityLevel::Normal && !self.replaying {
+                                        let message = format!("Error casting with alt cost: {e}");
+                                        self.game.logger.normal(&message);
+                                    }
+                                    consecutive_passes += 1;
+                                    self.game.turn.consecutive_passes = consecutive_passes;
+                                    current_priority = if current_priority == active_player {
+                                        non_active_player
+                                    } else {
+                                        active_player
+                                    };
+                                    self.game.turn.priority_player = Some(current_priority);
+                                    continue;
+                                }
+
+                                // Spell is now on the stack - will resolve when both players pass
                             }
                         }
 

@@ -1093,10 +1093,12 @@ impl<'a> GameLoop<'a> {
         // Clear player damage prevention shields at end of turn (CR 514.2),
         // including source-filtered shields (Circle of Protection).
         // Also clear Island Sanctuary protection (duration "until your next turn").
+        // Also clear the Summoning Trap "creature was countered" flag (CR 702.36a).
         for player in &mut self.game.players {
             player.damage_prevention = 0;
             player.source_prevention_shields.clear();
             player.island_sanctuary_protected = false;
+            player.had_creature_countered_this_turn = false;
         }
 
         Ok(None)

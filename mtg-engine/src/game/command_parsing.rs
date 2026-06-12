@@ -157,6 +157,13 @@ pub fn parse_spell_ability_choice(
                         }
                     }
                 }
+                SpellAbility::CastFromHandWithAltCost { card_id, .. } => {
+                    if let Some(card_name) = view.card_name(*card_id) {
+                        if card_matches(&card_name, card_pattern) {
+                            return Some(ability.clone());
+                        }
+                    }
+                }
                 SpellAbility::PlayLand { .. } | SpellAbility::ActivateAbility { .. } | SpellAbility::Cycle { .. } => {}
             }
         }
