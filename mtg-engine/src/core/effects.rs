@@ -2498,6 +2498,36 @@ pub enum Effect {
         target_level: u8,
     },
 
+    /// Grant one-time permission to cast a targeted instant/sorcery from the
+    /// graveyard this turn (CR 400.7 + CR 614 replacement).
+    ///
+    /// Corresponds to `A:AB$ Play | TgtZone$ Graveyard | ...` on planeswalkers
+    /// such as Chandra, Acolyte of Flame (−2 loyalty).
+    ///
+    /// When executed:
+    /// 1. Creates a `PersistentEffectKind::CastTargetedSpellFromGraveyard` that
+    ///    tracks the chosen card and grants cast permission for the rest of the turn.
+    /// 2. If `exile_on_resolution` is true, also sets
+    ///    `Card::exile_if_would_go_to_graveyard_this_turn` on the targeted card,
+    ///    so that `resolve_spell_finalize` sends it to exile instead of the
+    ///    graveyard when it resolves (CR 614 zone-change replacement).
+    ///
+    /// The `target` is `CardId::placeholder()` until binding at cast time.
+    PlayFromGraveyard {
+        /// The graveyard card to cast. Placeholder until targeting binds it.
+        target: CardId,
+        /// If true, exile the card instead of putting it into the graveyard
+        /// when it would resolve (the `ReplaceGraveyard$ Exile` clause).
+        exile_on_resolution: bool,
+        /// Comma-separated card type filter (e.g. `"Instant,Sorcery"`).
+        /// The valid types come from the `ValidTgts$` parameter in the card script.
+        /// Empty string means any instant/sorcery (fallback).
+        type_filter: String,
+        /// Maximum mana value (CMC) for the targeted card, from `cmcLE<N>` in
+        /// the `ValidTgts$` qualifier. `None` = no maximum CMC restriction.
+        max_mana_value: Option<u8>,
+    },
+
     /// Placeholder for a recognized but unimplemented effect
     /// Produced instead of silently dropping the effect, so that spell resolution
     /// can warn/error instead of silently no-op'ing.
@@ -2787,7 +2817,9 @@ impl Effect {
             | Effect::PreventDamage { .. }
             | Effect::PreventDamageFromSource { .. }
             | Effect::CreateDelayedTrigger { .. }
-            | Effect::PumpCreatureVariable { .. } => EffectTargetCategory::RequiresTarget,
+            | Effect::PumpCreatureVariable { .. }
+            // PlayFromGraveyard targets the instant/sorcery card in the graveyard.
+            | Effect::PlayFromGraveyard { .. } => EffectTargetCategory::RequiresTarget,
         }
     }
 

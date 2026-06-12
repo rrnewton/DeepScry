@@ -493,6 +493,72 @@ impl GameState {
         Ok(())
     }
 
+    /// [`Effect::PlayFromGraveyard`]: `AB$ Play | TgtZone$ Graveyard` — grant
+    /// one-time permission to cast a targeted instant/sorcery from the graveyard
+    /// this turn (Chandra, Acolyte of Flame −2). Creates a
+    /// `PersistentEffectKind::CastTargetedSpellFromGraveyard` that the priority
+    /// loop offers as a `SpellAbility::CastFromGraveyard`. If `exile_on_resolution`
+    /// is set, also marks the card with `exile_if_would_go_to_graveyard_this_turn`
+    /// so `resolve_spell_finalize` sends it to exile instead (CR 614 replacement).
+    pub(in crate::game::actions) fn execute_play_from_graveyard(
+        &mut self,
+        target: CardId,
+        exile_on_resolution: bool,
+    ) -> Result<()> {
+        if target.is_placeholder() {
+            // Fizzle — no valid graveyard target was chosen.
+            return Ok(());
+        }
+
+        let (owner, card_name) = {
+            let card = self.cards.get(target)?;
+            (card.owner, card.name.to_string())
+        };
+
+        // Mark the card so resolve_spell_finalize exiles it on resolution
+        // (the ReplaceGraveyard$ Exile clause from the card script).
+        if exile_on_resolution {
+            if let Ok(card) = self.cards.get_mut(target) {
+                card.exile_if_would_go_to_graveyard_this_turn = true;
+            }
+        }
+
+        // Create the one-shot cast-permission persistent effect.
+        use crate::core::{persistent_effect::CleanupCondition, persistent_effect::PersistentEffectKind, CardId};
+        let cleanup = CleanupCondition::Any(vec![
+            // Remove once the card is cast (it leaves the graveyard).
+            CleanupCondition::TrackedCardIsCast { card: target },
+            // Also remove at end of turn if it was never cast.
+            CleanupCondition::EndOfTurn,
+        ]);
+        self.persistent_effects.add(
+            PersistentEffectKind::CastTargetedSpellFromGraveyard {
+                tracked_card: target,
+                owner,
+                exile_on_resolution,
+            },
+            // Source card: use a stable placeholder — the planewalker is on the
+            // battlefield but we don't have its CardId at this call site. The
+            // persistent effect store doesn't use source_card for tracking here.
+            CardId::placeholder(),
+            owner,
+            cleanup,
+        );
+
+        self.logger.gamelog(&format!(
+            "{} may cast {} from graveyard this turn{}",
+            self.player_display_name(owner),
+            card_name,
+            if exile_on_resolution {
+                " (exile instead of graveyard on resolution)"
+            } else {
+                ""
+            },
+        ));
+
+        Ok(())
+    }
+
     /// [`Effect::SelfExileFromStack`]: `SP$ ChangeZone | Origin$ Stack |
     /// Destination$ Exile` (All Hallow's Eve) — move the resolving spell from
     /// the stack to exile so the default sorcery resolution doesn't graveyard

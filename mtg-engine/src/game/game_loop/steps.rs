@@ -839,6 +839,9 @@ impl<'a> GameLoop<'a> {
                 // Disintegrate-style "exile instead of dying" lasts only this
                 // turn (CR 614, duration "this turn"); clear at cleanup.
                 card.exile_if_would_die_this_turn = false;
+                // Chandra-style "exile instead of going to graveyard" lasts only
+                // this turn (CR 614, duration "this turn"); clear at cleanup.
+                card.exile_if_would_go_to_graveyard_this_turn = false;
                 // Maze of Ith's "prevent all combat damage" lasts until end of
                 // turn (CR 615 replacement, duration "this turn"); clear at cleanup.
                 card.prevent_all_combat_damage_this_turn = false;

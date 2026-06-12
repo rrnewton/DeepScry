@@ -116,7 +116,8 @@ fn expand_all_players_effect(effect: &Effect, player_ids: &[PlayerId]) -> smallv
         | Effect::CreateTokenDynamic { .. }
         | Effect::CreateEmblem { .. }
         | Effect::PutCardsFromHandOnTopOfLibrary { .. }
-        | Effect::RevealCardsFromHand { .. } => false,
+        | Effect::RevealCardsFromHand { .. }
+        | Effect::PlayFromGraveyard { .. } => false,
     };
 
     if !is_all_players {
@@ -247,7 +248,8 @@ fn expand_all_players_effect(effect: &Effect, player_ids: &[PlayerId]) -> smallv
             | Effect::CreateTokenDynamic { .. }
             | Effect::CreateEmblem { .. }
             | Effect::PutCardsFromHandOnTopOfLibrary { .. }
-            | Effect::RevealCardsFromHand { .. } => unreachable!(),
+            | Effect::RevealCardsFromHand { .. }
+            | Effect::PlayFromGraveyard { .. } => unreachable!(),
         })
         .collect()
 }
@@ -865,6 +867,26 @@ impl GameState {
             self.move_card(card_id, Zone::Stack, Zone::Exile, owner)?;
             return Ok(());
         }
+
+        // CR 614 replacement: if `exile_if_would_go_to_graveyard_this_turn` is
+        // set (from `Effect::PlayFromGraveyard` / Chandra −2's
+        // `ReplaceGraveyard$ Exile`), redirect graveyard → exile instead.
+        let destination = if destination == Zone::Graveyard
+            && self
+                .cards
+                .get(card_id)
+                .map(|c| c.exile_if_would_go_to_graveyard_this_turn)
+                .unwrap_or(false)
+        {
+            log::debug!(
+                target: "resolve_spell",
+                "resolve_spell_finalize: card {} has exile_if_would_go_to_graveyard flag — exiling instead",
+                card_id.as_u32()
+            );
+            Zone::Exile
+        } else {
+            destination
+        };
 
         // Move card from stack to destination
         let owner = self.cards.get(card_id)?.owner;
@@ -3045,6 +3067,28 @@ impl GameState {
                     effect.clone()
                 }
             }
+            // PlayFromGraveyard: bind the chosen graveyard card to the effect's target.
+            Effect::PlayFromGraveyard {
+                target,
+                exile_on_resolution,
+                type_filter,
+                max_mana_value,
+            } if target.is_placeholder() => {
+                if *target_index < chosen_targets.len() {
+                    let resolved_target = chosen_targets[*target_index];
+                    *target_index += 1;
+                    *last_resolved_target = Some(resolved_target);
+                    Effect::PlayFromGraveyard {
+                        target: resolved_target,
+                        exile_on_resolution: *exile_on_resolution,
+                        type_filter: type_filter.clone(),
+                        max_mana_value: *max_mana_value,
+                    }
+                } else {
+                    effect.clone()
+                }
+            }
+
             // Player ID resolution for player-targeting effects
             Effect::DrawCards { player, count } if player.is_placeholder() => Effect::DrawCards {
                 player: card_owner,
@@ -3791,6 +3835,11 @@ impl GameState {
             } => self.execute_remove_counter(*target, *counter_type, *amount)?,
             Effect::ExilePermanent { target } => self.execute_exile_permanent(*target)?,
             Effect::ExileIfWouldDieThisTurn { target } => self.execute_exile_if_would_die_this_turn(*target)?,
+            Effect::PlayFromGraveyard {
+                target,
+                exile_on_resolution,
+                ..
+            } => self.execute_play_from_graveyard(*target, *exile_on_resolution)?,
             Effect::SelfExileFromStack {
                 source,
                 remember_changed,

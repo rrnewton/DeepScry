@@ -1133,6 +1133,19 @@ impl<'a> GameLoop<'a> {
             // NoOp is an INTENTIONAL no-op (e.g. StoreSVar): no gamelog line, in
             // contrast to Unimplemented which surfaces the gap.
             Effect::NoOp { .. } => {}
+            Effect::PlayFromGraveyard { target, .. } => {
+                // Log is emitted inside execute_play_from_graveyard (which has
+                // the card name in context). If still placeholder, nothing to log.
+                if !target.is_placeholder() {
+                    if let Some(card) = self.game.cards.try_get(*target) {
+                        let message = format!(
+                            "{source_name} ({source_id}): may cast {} from graveyard this turn",
+                            card.name
+                        );
+                        self.game.logger.gamelog(&message);
+                    }
+                }
+            }
             // ClassLevelUp logging is handled inside execute_class_level_up
             // (the level advance is logged there with full context).
             Effect::ClassLevelUp { .. } => {}

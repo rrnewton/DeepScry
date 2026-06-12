@@ -861,6 +861,54 @@ impl<'a> GameLoop<'a> {
                     }
                 }
 
+                PersistentEffectKind::CastTargetedSpellFromGraveyard {
+                    tracked_card, owner, ..
+                } => {
+                    if *owner != player_id {
+                        continue;
+                    }
+
+                    // Verify the card is still in the graveyard
+                    let is_in_graveyard = self
+                        .game
+                        .get_player_zones(player_id)
+                        .map(|zones| zones.graveyard.cards.contains(tracked_card))
+                        .unwrap_or(false);
+                    if !is_in_graveyard {
+                        continue;
+                    }
+
+                    // Check timing: instants can be cast any time, sorceries need sorcery speed
+                    let can_cast_now = if let Some(card) = self.game.cards.try_get(*tracked_card) {
+                        if card.is_instant() {
+                            true
+                        } else {
+                            is_sorcery_speed && is_active_player && stack_is_empty
+                        }
+                    } else {
+                        continue;
+                    };
+
+                    if !can_cast_now {
+                        continue;
+                    }
+
+                    // Check mana affordability
+                    let mana_cost = self
+                        .game
+                        .cards
+                        .try_get(*tracked_card)
+                        .map(|c| c.mana_cost)
+                        .unwrap_or_default();
+                    if self.mana_engine.can_pay_with_pool(&mana_cost, &mana_pool) {
+                        self.abilities_buffer.push(SpellAbility::CastFromGraveyard {
+                            card_id: *tracked_card,
+                            effect_id: effect.id,
+                            add_finality_counter: false, // Chandra -2 doesn't add finality
+                        });
+                    }
+                }
+
                 // Other persistent effect kinds don't grant casting permission
                 PersistentEffectKind::Imprint { .. }
                 | PersistentEffectKind::Suspend { .. }

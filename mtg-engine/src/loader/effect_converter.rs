@@ -1925,6 +1925,52 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
             }
         }
 
+        // `AB$ Play | TgtZone$ Graveyard` — cast a targeted instant/sorcery from
+        // the graveyard this turn. Corresponds to Chandra, Acolyte of Flame −2:
+        //   "You may cast target instant or sorcery card with mana value 3 or less
+        //    from your graveyard. If that card would be put into your graveyard this
+        //    turn, exile it instead."
+        //
+        // `ValidTgts$`: Instant.YouCtrl+cmcLE3,Sorcery.YouCtrl+cmcLE3
+        //   → type_filter = "Instant,Sorcery", max_mana_value = Some(3)
+        // `TgtZone$ Graveyard`: targets graveyard (handled in targeting.rs)
+        // `ReplaceGraveyard$ Exile`: exile instead of graveyard on resolution
+        ApiType::Play if params.get("TgtZone") == Some("Graveyard") => {
+            // Parse ValidTgts to derive type_filter and max_mana_value
+            let valid_tgts = params.get("ValidTgts").unwrap_or("");
+            // Extract unique card types (before the first '.' per token)
+            let mut types_seen: std::collections::BTreeSet<&str> = Default::default();
+            let mut max_cmc: Option<u8> = None;
+            for token in valid_tgts.split(',') {
+                let token = token.trim();
+                // First segment before '.' is the base type (e.g. "Instant")
+                let base_type = token.split('.').next().unwrap_or(token);
+                if !base_type.is_empty() {
+                    types_seen.insert(base_type);
+                }
+                // Look for cmcLE<N> qualifier in any segment
+                for part in token.split('.') {
+                    if let Some(rest) = part.strip_prefix("cmcLE") {
+                        if let Ok(n) = rest.parse::<u8>() {
+                            max_cmc = Some(match max_cmc {
+                                Some(prev) => prev.min(n), // take the strictest bound
+                                None => n,
+                            });
+                        }
+                    }
+                }
+            }
+            let type_filter = types_seen.into_iter().collect::<Vec<_>>().join(",");
+            let exile_on_resolution =
+                params.get("ReplaceGraveyard") == Some("Exile") || params.get("ExileOnMoved") == Some("Graveyard");
+            Some(Effect::PlayFromGraveyard {
+                target: CardId::new(0), // Placeholder — bound at targeting time
+                exile_on_resolution,
+                type_filter,
+                max_mana_value: max_cmc,
+            })
+        }
+
         // `StoreSVar` (Forge pseudo-API: stash a computed value into a card SVar
         // for a later effect to read) is an INTENTIONAL no-op in this engine.
         // Drain Life uses a StoreSVar chain only to compute its life-gain cap

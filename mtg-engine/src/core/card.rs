@@ -931,6 +931,14 @@ pub struct Card {
     #[serde(default)]
     pub exile_if_would_die_this_turn: bool,
 
+    /// If set, a zone-change replacement applies: should this card go to the
+    /// graveyard this turn (e.g. after resolving as an instant/sorcery), it is
+    /// exiled instead (CR 614). Set by `Effect::PlayFromGraveyard` (Chandra,
+    /// Acolyte of Flame's −2 `ReplaceGraveyard$ Exile` clause) and cleared at
+    /// the cleanup step. Honored by `resolve_spell_finalize`.
+    #[serde(default)]
+    pub exile_if_would_go_to_graveyard_this_turn: bool,
+
     /// Maze of Ith: prevent ALL combat damage this creature would deal OR receive
     /// this turn (CR 615 replacement effect, "prevent all combat damage dealt to
     /// and dealt by CARDNAME"). Set by `Effect::PreventAllCombatDamageThisTurn`
@@ -1053,6 +1061,7 @@ pub struct CardStateSnapshot {
     pub x_paid: u8,
     pub times_kicked: u8,
     pub exile_if_would_die_this_turn: bool,
+    pub exile_if_would_go_to_graveyard_this_turn: bool,
     pub prevent_all_combat_damage_this_turn: bool,
     pub dealt_damage_to_opponent_this_turn: bool,
     pub attacked_this_turn: bool,
@@ -1127,6 +1136,7 @@ impl Card {
             x_paid: 0,
             times_kicked: 0,
             exile_if_would_die_this_turn: false,
+            exile_if_would_go_to_graveyard_this_turn: false,
             prevent_all_combat_damage_this_turn: false,
             dealt_damage_to_opponent_this_turn: false,
             attacked_this_turn: false,
@@ -1178,6 +1188,7 @@ impl Card {
             x_paid: self.x_paid,
             times_kicked: self.times_kicked,
             exile_if_would_die_this_turn: self.exile_if_would_die_this_turn,
+            exile_if_would_go_to_graveyard_this_turn: self.exile_if_would_go_to_graveyard_this_turn,
             prevent_all_combat_damage_this_turn: self.prevent_all_combat_damage_this_turn,
             dealt_damage_to_opponent_this_turn: self.dealt_damage_to_opponent_this_turn,
             attacked_this_turn: self.attacked_this_turn,
@@ -1228,6 +1239,7 @@ impl Card {
         self.x_paid = snapshot.x_paid;
         self.times_kicked = snapshot.times_kicked;
         self.exile_if_would_die_this_turn = snapshot.exile_if_would_die_this_turn;
+        self.exile_if_would_go_to_graveyard_this_turn = snapshot.exile_if_would_go_to_graveyard_this_turn;
         self.prevent_all_combat_damage_this_turn = snapshot.prevent_all_combat_damage_this_turn;
         self.dealt_damage_to_opponent_this_turn = snapshot.dealt_damage_to_opponent_this_turn;
         self.attacked_this_turn = snapshot.attacked_this_turn;
@@ -1414,6 +1426,7 @@ impl Card {
         self.x_paid = 0;
         self.times_kicked = 0;
         self.exile_if_would_die_this_turn = false;
+        self.exile_if_would_go_to_graveyard_this_turn = false;
         self.prevent_all_combat_damage_this_turn = false;
         self.dealt_damage_to_opponent_this_turn = false;
         self.exhausted_abilities = SmallVec::new();

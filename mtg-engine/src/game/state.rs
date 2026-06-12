@@ -3310,6 +3310,9 @@ impl GameState {
         // as the `regeneration_shields` reset.
         for card in self.cards.values_mut() {
             card.clear_temp_keywords_until_eot();
+            // CR 614: "exile instead of going to graveyard this turn" flag set by
+            // PlayFromGraveyard (Chandra −2). Clear at end-of-turn across all zones.
+            card.exile_if_would_go_to_graveyard_this_turn = false;
         }
 
         if any_mana_source_typeline_reverted {
@@ -4213,7 +4216,8 @@ impl GameState {
                     | crate::core::Effect::GainLifeDynamic { .. }
                     | crate::core::Effect::DiscardCardsXPaid { .. }
                     | crate::core::Effect::CreateTokenDynamic { .. }
-                    | crate::core::Effect::CreateEmblem { .. } => {
+                    | crate::core::Effect::CreateEmblem { .. }
+                    | crate::core::Effect::PlayFromGraveyard { .. } => {
                         // Other effect types not yet implemented for delayed triggers
                         // Note: CopySpellAbility inside ExecuteEffect is unusual;
                         // typically CopySpellAbility should be used with DelayedEffect::CopySpellAbility

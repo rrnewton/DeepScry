@@ -695,7 +695,8 @@ impl GameState {
                             | Effect::ExileIfWouldDieThisTurn { .. }
                             | Effect::ConditionalSelfCounter { .. }
                             | Effect::CreateTokenDynamic { .. }
-                            | Effect::CreateEmblem { .. } => {
+                            | Effect::CreateEmblem { .. }
+                            | Effect::PlayFromGraveyard { .. } => {
                                 // Non-Destroy/Copy modes in modal spells
                                 // TODO(mtg-30): Add handlers for targeting modes that need them
                             }
@@ -762,7 +763,10 @@ impl GameState {
                 | Effect::PreventAllCombatDamageThisTurn { .. }
                 | Effect::ConditionalSelfCounter { .. }
                 | Effect::CreateTokenDynamic { .. }
-                | Effect::CreateEmblem { .. } => {
+                | Effect::CreateEmblem { .. }
+                // PlayFromGraveyard is triggered from a planeswalker activated ability;
+                // targeting is handled through get_valid_targets_for_ability, not here.
+                | Effect::PlayFromGraveyard { .. } => {
                     // These effects target players or have no targeting requirements
                     // AttachEquipment targeting is handled via Equip keyword abilities
                     // ChooseColor is a player choice effect (no permanent targets)
@@ -776,6 +780,7 @@ impl GameState {
                     // ReturnGraveyardCardToZone: AI picks matching card, no cast-time targeting
                     // ReturnSelfAsEnchantment: death trigger self-return, no cast-time targeting
                     // PreventAllCombatDamageThisTurn: reuses last_resolved_target, no cast-time target
+                    // PlayFromGraveyard: targeting via get_valid_targets_for_ability (activated ability path)
                 }
                 // Effects with already-specified targets (non-zero target field)
                 // The handlers above only match when target.is_placeholder()
@@ -1396,6 +1401,48 @@ impl GameState {
                     // ReturnSelfAsEnchantment: death trigger self-return, no cast-time targeting
                     // PreventAllCombatDamageThisTurn: reuses UntapPermanent's last_resolved_target
                 }
+                Effect::PlayFromGraveyard {
+                    target,
+                    type_filter,
+                    max_mana_value,
+                    ..
+                } if target.is_placeholder() => {
+                    // Target: an instant or sorcery card in the controller's graveyard
+                    // that matches the type_filter and (optionally) has CMC <= max_mana_value.
+                    // Per Chandra's −2: ValidTgts$ Instant.YouCtrl+cmcLE3,Sorcery.YouCtrl+cmcLE3
+                    if let Some(zones) = self.get_player_zones(ability_controller) {
+                        let graveyard_cards: SmallVec<[CardId; 16]> =
+                            zones.graveyard.cards.iter().copied().collect();
+                        for card_id in graveyard_cards {
+                            if let Ok(card) = self.cards.get(card_id) {
+                                // Must be instant or sorcery (from type_filter, or default)
+                                let type_ok = if type_filter.is_empty() {
+                                    card.is_type(&crate::core::CardType::Instant)
+                                        || card.is_type(&crate::core::CardType::Sorcery)
+                                } else {
+                                    type_filter.split(',').any(|t| {
+                                        let t = t.trim().split('.').next().unwrap_or(t);
+                                        match t {
+                                            "Instant" => card.is_type(&crate::core::CardType::Instant),
+                                            "Sorcery" => card.is_type(&crate::core::CardType::Sorcery),
+                                            _ => false,
+                                        }
+                                    })
+                                };
+                                if !type_ok {
+                                    continue;
+                                }
+                                // Check CMC restriction
+                                if let Some(max_cmc) = max_mana_value {
+                                    if card.mana_cost.cmc() > *max_cmc {
+                                        continue;
+                                    }
+                                }
+                                valid_targets.push(card_id);
+                            }
+                        }
+                    }
+                }
                 // Effects with pre-specified targets (guard failed: target.as_u32() != 0)
                 Effect::DealDamage { .. }
                 | Effect::DealDamageXPaid { .. }
@@ -1431,11 +1478,16 @@ impl GameState {
                 | Effect::LoseLife { .. }
                 | Effect::Earthbend { .. }
                 | Effect::GainControl { .. }
-                | Effect::Fight { .. } => {
+                | Effect::Fight { .. }
+                // PlayFromGraveyard targets a graveyard card; targeting is handled
+                // through get_valid_targets_for_ability (activated ability path).
+                // If it ever appears as a spell sub-effect, target is pre-specified.
+                | Effect::PlayFromGraveyard { .. } => {
                     // Target already specified (guard failed: target.as_u32() != 0)
                     // PumpAllCreatures doesn't use explicit targets - it affects all matching creatures
                     // Earthbend target was handled above when target.is_placeholder()
                     // ChooseColor doesn't require any targets - it's a player choice effect
+                    // PlayFromGraveyard: activated-ability targeting via get_valid_targets_for_ability
                 }
             }
         }
@@ -1753,7 +1805,11 @@ impl GameState {
             | Effect::PutCounter { .. }
             | Effect::MultiplyCounter { .. }
             | Effect::Earthbend { .. }
-            | Effect::CopyPermanent { .. } => {
+            | Effect::CopyPermanent { .. }
+            // PlayFromGraveyard is an activated-ability effect; valid-target check
+            // is done in get_valid_targets_for_ability. When it appears on a spell
+            // the target has already been pre-specified, so always return true here.
+            | Effect::PlayFromGraveyard { .. } => {
                 // Target already specified (guard failed: target.as_u32() != 0)
                 // If a target was pre-assigned, we assume it's valid
                 true

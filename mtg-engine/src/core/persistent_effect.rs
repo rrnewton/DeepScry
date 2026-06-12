@@ -182,6 +182,27 @@ pub enum PersistentEffectKind {
         /// If true, creatures cast this way enter with a finality counter
         add_finality_counter: bool,
     },
+
+    /// CastTargetedSpellFromGraveyard: one-time permission to cast a specific
+    /// instant or sorcery from the graveyard.
+    ///
+    /// Created by: Chandra, Acolyte of Flame −2 (`AB$ Play | TgtZone$ Graveyard`)
+    /// Effect: "You may cast [tracked_card] from your graveyard this turn."
+    /// If `exile_on_resolution` is true, the card is exiled instead of going to
+    /// the graveyard when it resolves (CR 614 replacement applied by
+    /// `resolve_spell_finalize` reading `Card::exile_if_would_go_to_graveyard_this_turn`).
+    ///
+    /// Cleanup: when the tracked card is cast OR at end of turn (whichever first).
+    CastTargetedSpellFromGraveyard {
+        /// The specific card in the graveyard that may be cast
+        tracked_card: CardId,
+
+        /// The player who may cast it
+        owner: PlayerId,
+
+        /// If true, exile instead of graveyard on resolution (ReplaceGraveyard$ Exile)
+        exile_on_resolution: bool,
+    },
 }
 
 /// Condition that triggers automatic cleanup of a persistent effect.
