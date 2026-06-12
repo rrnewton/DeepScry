@@ -3533,6 +3533,79 @@ impl<'a> GameLoop<'a> {
 
                                 // Spell is now on the stack - will resolve when both players pass
                             }
+
+                            crate::core::SpellAbility::CastFromLibrary { card_id } => {
+                                // Cast the top card of the library (Experimental Frenzy).
+                                // Uses the standard 8-step casting process from Zone::Library.
+                                if self.verbosity >= VerbosityLevel::Normal && !self.replaying {
+                                    let card_name = self
+                                        .game
+                                        .cards
+                                        .get(card_id)
+                                        .map(|c| c.name.to_string())
+                                        .unwrap_or_else(|_| "Unknown".to_string());
+                                    let message = format!(
+                                        "{} casts {} from the top of their library",
+                                        self.get_player_name(current_priority),
+                                        card_name,
+                                    );
+                                    self.game.logger.gamelog(&message);
+                                }
+
+                                self.mana_engine.update_mut(self.game, current_priority);
+
+                                if let Err(e) = self.game.cast_spell_8_step_from(
+                                    current_priority,
+                                    card_id,
+                                    |_, _| smallvec::smallvec![],
+                                    &self.mana_engine,
+                                    crate::zones::Zone::Library,
+                                    None, // pay printed mana cost
+                                ) {
+                                    if self.verbosity >= VerbosityLevel::Normal && !self.replaying {
+                                        let message = format!("Error casting from library: {e}");
+                                        self.game.logger.normal(&message);
+                                    }
+                                    consecutive_passes += 1;
+                                    self.game.turn.consecutive_passes = consecutive_passes;
+                                    current_priority = if current_priority == active_player {
+                                        non_active_player
+                                    } else {
+                                        active_player
+                                    };
+                                    self.game.turn.priority_player = Some(current_priority);
+                                    continue;
+                                }
+                                // Spell is now on the stack
+                            }
+
+                            crate::core::SpellAbility::PlayLandFromLibrary { card_id } => {
+                                // Play the top card of the library as a land (Experimental Frenzy).
+                                // Behaves exactly like playing a land from hand: no stack, immediate
+                                // battlefield entry, consumes the land play for the turn.
+                                if self.verbosity >= VerbosityLevel::Normal && !self.replaying {
+                                    let card_name = self
+                                        .game
+                                        .cards
+                                        .get(card_id)
+                                        .map(|c| c.name.to_string())
+                                        .unwrap_or_else(|_| "Unknown".to_string());
+                                    let message = format!(
+                                        "{} plays {} from the top of their library",
+                                        self.get_player_name(current_priority),
+                                        card_name,
+                                    );
+                                    self.game.logger.gamelog(&message);
+                                }
+
+                                if let Err(e) = self.game.play_land_from_library(current_priority, card_id) {
+                                    if self.verbosity >= VerbosityLevel::Normal && !self.replaying {
+                                        let message = format!("Error playing land from library: {e}");
+                                        self.game.logger.normal(&message);
+                                    }
+                                }
+                                // Land play complete — no stack entry
+                            }
                         }
 
                         // After taking an action, switch priority to other player

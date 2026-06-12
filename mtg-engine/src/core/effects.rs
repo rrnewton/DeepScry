@@ -4,6 +4,26 @@ use crate::core::{CardId, Color, Keyword, PlayerId};
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 
+/// Who is subject to a `CantBeCast` prohibition.
+///
+/// Parsed from the `Caster$` field in `S:Mode$ CantBeCast | Caster$ <value>` lines.
+/// - `Any`         — no `Caster$` key present; applies to all players.
+/// - `You`         — only the source card's *controller* is restricted.
+/// - `YouNonActive`— only the controller while they are the **non-active** player.
+/// - `Opponent`    — only opponents of the source's controller are restricted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum CasterRestriction {
+    /// Applies to all players (default when `Caster$` is absent).
+    #[default]
+    Any,
+    /// Restricts only the source's controller.
+    You,
+    /// Restricts the source's controller only while they are non-active.
+    YouNonActive,
+    /// Restricts opponents of the source's controller only.
+    Opponent,
+}
+
 /// Target reference for effects
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TargetRef {
@@ -3894,9 +3914,19 @@ pub enum StaticAbility {
     /// while the source is on the battlefield. Corresponds to
     /// `S:Mode$ CantBeCast | ValidCard$ <filter>` (City in a Bottle:
     /// `ValidCard$ Card.setARN`). General color/set/type-hoser machinery.
+    ///
+    /// The optional `caster_restriction` narrows who is prohibited:
+    /// - `None` / `CasterRestriction::Any` — applies to everyone (all players)
+    /// - `CasterRestriction::YouNonActive` — restricts the source's controller
+    ///   only while they are the **non-active** player (Fires of Invention line 1)
+    /// - `CasterRestriction::You` — restricts the source's controller only
+    ///   (Fires of Invention line 2: NumLimitEachTurn, Form of the Squirrel)
+    /// - `CasterRestriction::Opponent` — restricts opponents only
     CantBeCast {
         /// Which cards may not be cast (a card filter such as `Card.setARN`).
         valid_card: TargetRestriction,
+        /// Who is prohibited from casting matching cards.
+        caster_restriction: CasterRestriction,
         /// Description for logging.
         description: String,
     },
@@ -4150,6 +4180,41 @@ pub enum StaticAbility {
         condition: AltCostCondition,
         /// The alternative mana cost to use when condition is met.
         alt_cost: crate::core::ManaCost,
+        /// Description for logging/display.
+        description: String,
+    },
+
+    /// Continuous static: while the source is on the battlefield, the controller
+    /// may cast nonland spells with CMC ≤ the value of `cmc_limit_svar` without
+    /// paying their mana costs (Fires of Invention, CR 702.25).
+    ///
+    /// Corresponds to:
+    ///   `S:Mode$ Continuous | Affected$ Card.nonLand+cmcLEX | MayPlay$ True
+    ///    | MayPlayWithoutManaCost$ True | AffectedZone$ Hand,...`
+    /// with `SVar:X:Count$Valid Land.YouCtrl`
+    ///
+    /// Applied in `push_castable_spells`: cards in hand whose CMC ≤ land count
+    /// are offered as `CastFromHandWithAltCost { alternative_cost: ManaCost::zero() }`.
+    MayPlayWithoutManaCost {
+        /// SVar name that holds the CMC limit expression (e.g. "X" →
+        /// "Count$Valid Land.YouCtrl").
+        cmc_limit_svar: String,
+        /// Description for logging/display.
+        description: String,
+    },
+
+    /// Continuous static: while the source is on the battlefield, the controller
+    /// may cast or play the top card of their library (Experimental Frenzy,
+    /// Future Sight, etc.; CR 702.150).
+    ///
+    /// Corresponds to:
+    ///   `S:Mode$ Continuous | Affected$ Card.TopLibrary+YouCtrl
+    ///    | AffectedZone$ Library | MayPlay$ True`
+    ///
+    /// Applied in `push_castable_from_library`: the top card of the controlling
+    /// player's library is offered as `SpellAbility::CastFromLibrary` (for
+    /// non-land spells) or `SpellAbility::PlayLandFromLibrary` (for land cards).
+    MayPlayFromLibrary {
         /// Description for logging/display.
         description: String,
     },

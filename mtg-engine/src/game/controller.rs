@@ -121,6 +121,14 @@ pub fn format_choice_menu(view: &GameStateView, available: &[SpellAbility], want
                 let name = view.card_name(*card_id).unwrap_or_default();
                 output.push_str(&format!("  [{}] cast {} for {}\n", display_idx, name, alternative_cost));
             }
+            SpellAbility::CastFromLibrary { card_id } => {
+                let name = view.card_name(*card_id).unwrap_or_default();
+                output.push_str(&format!("  [{}] cast {} from top of library\n", display_idx, name));
+            }
+            SpellAbility::PlayLandFromLibrary { card_id } => {
+                let name = view.card_name(*card_id).unwrap_or_default();
+                output.push_str(&format!("  [{}] play {} from top of library\n", display_idx, name));
+            }
         }
     }
 
@@ -310,6 +318,9 @@ fn spell_ability_sort_key(ability: &SpellAbility) -> u8 {
         SpellAbility::CastAdventure { .. } => 7,
         // Alt-cost cast from hand (e.g. Summoning Trap for {0}) groups with CastSpell.
         SpellAbility::CastFromHandWithAltCost { .. } => 1,
+        // Library casts group with CastSpell.
+        SpellAbility::CastFromLibrary { .. } => 1,
+        SpellAbility::PlayLandFromLibrary { .. } => 0,
     }
 }
 
@@ -466,6 +477,14 @@ pub fn format_spell_ability_choice(view: &GameStateView, ability: &SpellAbility)
         } => {
             let name = view.card_name(*card_id).unwrap_or_default();
             format!("cast {} for {}", name, alternative_cost)
+        }
+        SpellAbility::CastFromLibrary { card_id } => {
+            let name = view.card_name(*card_id).unwrap_or_default();
+            format!("cast {} from top of library", name)
+        }
+        SpellAbility::PlayLandFromLibrary { card_id } => {
+            let name = view.card_name(*card_id).unwrap_or_default();
+            format!("play {} from top of library", name)
         }
     }
 }

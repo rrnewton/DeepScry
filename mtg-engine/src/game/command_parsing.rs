@@ -103,14 +103,25 @@ pub fn parse_spell_ability_choice(
 
     // Parse verb + card name
     if let Some(card_pattern) = cmd.strip_prefix("play ") {
-        // Find matching PlayLand ability
+        // Find matching PlayLand or PlayLandFromLibrary ability
         for ability in available {
-            if let SpellAbility::PlayLand { card_id } = ability {
-                if let Some(card_name) = view.card_name(*card_id) {
-                    if card_matches(&card_name, card_pattern) {
-                        return Some(ability.clone());
+            match ability {
+                SpellAbility::PlayLand { card_id } | SpellAbility::PlayLandFromLibrary { card_id } => {
+                    if let Some(card_name) = view.card_name(*card_id) {
+                        if card_matches(&card_name, card_pattern) {
+                            return Some(ability.clone());
+                        }
                     }
                 }
+                SpellAbility::CastSpell { .. }
+                | SpellAbility::ActivateAbility { .. }
+                | SpellAbility::CastFromExile { .. }
+                | SpellAbility::CastFromCommand { .. }
+                | SpellAbility::Cycle { .. }
+                | SpellAbility::CastFromGraveyard { .. }
+                | SpellAbility::CastAdventure { .. }
+                | SpellAbility::CastFromHandWithAltCost { .. }
+                | SpellAbility::CastFromLibrary { .. } => {}
             }
         }
     } else if let Some(card_pattern) = cmd.strip_prefix("cast ") {
@@ -157,14 +168,17 @@ pub fn parse_spell_ability_choice(
                         }
                     }
                 }
-                SpellAbility::CastFromHandWithAltCost { card_id, .. } => {
+                SpellAbility::CastFromHandWithAltCost { card_id, .. } | SpellAbility::CastFromLibrary { card_id } => {
                     if let Some(card_name) = view.card_name(*card_id) {
                         if card_matches(&card_name, card_pattern) {
                             return Some(ability.clone());
                         }
                     }
                 }
-                SpellAbility::PlayLand { .. } | SpellAbility::ActivateAbility { .. } | SpellAbility::Cycle { .. } => {}
+                SpellAbility::PlayLand { .. }
+                | SpellAbility::ActivateAbility { .. }
+                | SpellAbility::Cycle { .. }
+                | SpellAbility::PlayLandFromLibrary { .. } => {}
             }
         }
     } else if let Some(card_pattern) = cmd.strip_prefix("equip ") {

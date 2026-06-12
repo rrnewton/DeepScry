@@ -1666,6 +1666,14 @@ impl GameState {
                         // Alternative-cost static (Summoning Trap). Handled at cast time
                         // in push_castable_spells; does not affect P/T.
                     }
+                    StaticAbility::MayPlayWithoutManaCost { .. } => {
+                        // Fires of Invention free-cast grant. Handled at cast time in
+                        // push_castable_with_fires; does not affect P/T.
+                    }
+                    StaticAbility::MayPlayFromLibrary { .. } => {
+                        // Experimental Frenzy top-of-library grant. Handled at cast time in
+                        // push_castable_from_library; does not affect P/T.
+                    }
                 }
             }
         }

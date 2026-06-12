@@ -556,6 +556,76 @@ impl GameState {
         Ok(())
     }
 
+    /// Play the top card of the library as a land (Experimental Frenzy, Future Sight).
+    ///
+    /// Mirrors `play_land` but sources the card from `Zone::Library` rather than
+    /// `Zone::Hand`.  The card must be both a land and the top card of the
+    /// controller's library.
+    ///
+    /// # Errors
+    ///
+    /// Returns `MtgError::InvalidAction` if the player cannot play a land, the
+    /// card is not a land, or the card is not at the top of the library.
+    pub fn play_land_from_library(&mut self, player_id: PlayerId, card_id: CardId) -> Result<()> {
+        if !self.can_play_land_effective(player_id) {
+            return Err(MtgError::InvalidAction("Cannot play more lands this turn".to_string()));
+        }
+
+        let card = self.cards.get(card_id)?;
+        if !card.is_land() {
+            return Err(MtgError::InvalidAction("Card is not a land".to_string()));
+        }
+
+        // Verify it is the top of the library.
+        let owner = card.owner;
+        let is_top = self
+            .get_player_zones(owner)
+            .and_then(|z| z.library.cards.last().copied())
+            == Some(card_id);
+        if !is_top {
+            return Err(MtgError::InvalidAction("Card is not the top of library".to_string()));
+        }
+
+        // Move card to battlefield (reveals automatically via move_card).
+        self.move_card(card_id, Zone::Library, Zone::Battlefield, player_id)?;
+
+        // Record turn entered battlefield.
+        if let Ok(card) = self.cards.get_mut(card_id) {
+            let old_value = card.turn_entered_battlefield;
+            let prior_log_size = self.logger.log_count();
+            let new_value = Some(self.turn.turn_number);
+            card.turn_entered_battlefield = new_value;
+            self.undo_log.log(
+                crate::undo::GameAction::SetTurnEnteredBattlefield {
+                    card_id,
+                    old_value,
+                    new_value,
+                },
+                prior_log_size,
+            );
+        }
+
+        // Increment lands played.
+        let old_value = self.get_player(player_id)?.lands_played_this_turn;
+        let prior_log_size = self.logger.log_count();
+        let player = self.get_player_mut(player_id)?;
+        player.play_land();
+        let new_value = player.lands_played_this_turn;
+        self.undo_log.log(
+            crate::undo::GameAction::SetLandsPlayedThisTurn {
+                player_id,
+                old_value,
+                new_value,
+            },
+            prior_log_size,
+        );
+
+        self.apply_etb_counters(card_id)?;
+        self.check_triggers(TriggerEvent::EntersBattlefield, card_id)?;
+
+        Ok(())
+    }
+
     /// Begin casting the Adventure (instant/sorcery) half of an Adventurer card
     /// (CR 715). Swaps the card's live spell-relevant characteristics — name,
     /// mana cost, types, subtypes, colors, P/T, oracle text, parsed effects /
@@ -2735,7 +2805,19 @@ impl GameState {
                     }
                 }
             }
-            Zone::Library | Zone::Battlefield | Zone::Graveyard | Zone::Stack => {
+            Zone::Library => {
+                // Casting from the top of library (Experimental Frenzy, Future Sight).
+                // The card must be the top card of the controller's library.
+                let owner = self.cards.get(card_id).map(|c| c.owner).unwrap_or(player_id);
+                let is_top = self
+                    .get_player_zones(owner)
+                    .and_then(|z| z.library.cards.last().copied())
+                    == Some(card_id);
+                if !is_top {
+                    return Err(MtgError::InvalidAction("Card is not the top of library".to_string()));
+                }
+            }
+            Zone::Battlefield | Zone::Graveyard | Zone::Stack => {
                 return Err(MtgError::InvalidAction(format!(
                     "Cannot cast spell from {:?}",
                     source_zone

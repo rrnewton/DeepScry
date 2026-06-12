@@ -557,6 +557,13 @@ impl GameStateEvaluator {
                 StaticAbility::AlternativeCost { .. } => {
                     // Alternative-cost static (Summoning Trap): no direct creature value.
                 }
+                StaticAbility::MayPlayWithoutManaCost { .. } => {
+                    // Fires of Invention free-cast grant: high-value enchantment, but
+                    // this evaluator is for Aura attachment decisions; not applicable.
+                }
+                StaticAbility::MayPlayFromLibrary { .. } => {
+                    // Experimental Frenzy top-library grant: not applicable to Aura value.
+                }
             }
         }
 

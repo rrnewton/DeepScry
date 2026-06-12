@@ -195,7 +195,9 @@ impl<'a> GameLoop<'a> {
             | StaticAbility::DamageToExileLibrary { .. }
             | StaticAbility::CharacteristicDefiningPt { .. }
             | StaticAbility::GrantUpkeepSacrificeUnlessPay { .. }
-            | StaticAbility::AlternativeCost { .. } => false,
+            | StaticAbility::AlternativeCost { .. }
+            | StaticAbility::MayPlayWithoutManaCost { .. }
+            | StaticAbility::MayPlayFromLibrary { .. } => false,
         }
     }
 
@@ -605,7 +607,7 @@ impl<'a> GameLoop<'a> {
                     // CantPlayLand on ARN-origin cards). A prohibited spell is
                     // never offered as a legal play. (CR 605: a spell can't be
                     // cast while a continuous effect says it can't.)
-                    if self.game.is_play_prohibited(card) {
+                    if self.game.is_play_prohibited(player_id, card) {
                         continue;
                     }
                     // Adventure (CR 715): if this card has an Adventure face, the
@@ -1091,6 +1093,217 @@ impl<'a> GameLoop<'a> {
                                 .push(SpellAbility::CastFromCommand { card_id, total_cost });
                         }
                     }
+                }
+            }
+        }
+    }
+
+    /// Push free-cast spells from hand when Fires of Invention (or a card with
+    /// `StaticAbility::MayPlayWithoutManaCost`) is on the battlefield.
+    ///
+    /// For each `MayPlayWithoutManaCost` static on any battlefield permanent
+    /// controlled by `player_id`, enumerate cards in hand whose CMC ≤ the
+    /// evaluated SVar (land count) and offer them as
+    /// `SpellAbility::CastFromHandWithAltCost { alternative_cost: ManaCost::zero() }`.
+    ///
+    /// Note: Fires of Invention ALSO has `CantBeCast | NumLimitEachTurn$ 2` and
+    /// `CantBeCast | Caster$ You.NonActive` statics that are handled separately by
+    /// `is_play_prohibited`.  Here we only handle the free-cast grant.
+    fn push_castable_with_fires(&mut self, player_id: PlayerId) {
+        use crate::core::{ManaCost, SpellAbility, StaticAbility};
+
+        // Collect MayPlayWithoutManaCost statics from battlefield permanents
+        // controlled by this player. We need the source card's SVars to evaluate
+        // the CMC limit. Collect (svar_name, source_svars) pairs.
+        let sources: smallvec::SmallVec<[String; 2]> = self
+            .game
+            .battlefield
+            .cards
+            .iter()
+            .filter_map(|&src_id| {
+                let src = self.game.cards.try_get(src_id)?;
+                if src.controller != player_id {
+                    return None;
+                }
+                src.static_abilities.iter().find_map(|sa| {
+                    if let StaticAbility::MayPlayWithoutManaCost { cmc_limit_svar, .. } = sa {
+                        // Resolve the SVar body from this source card
+                        src.svars.get(cmc_limit_svar.as_str()).cloned()
+                    } else {
+                        None
+                    }
+                })
+            })
+            .collect();
+
+        if sources.is_empty() {
+            return;
+        }
+
+        // For each CMC-limit SVar body, evaluate the max CMC.
+        // Body is "Count$Valid Land.YouCtrl" for Fires of Invention.
+        let max_cmc: usize = sources
+            .iter()
+            .map(|svar_body| {
+                // Parse "Count$Valid Land.YouCtrl" → count lands you control
+                if let Some(count_expr) = svar_body.strip_prefix("Count$Valid ") {
+                    let filter_type = count_expr.split('.').next().unwrap_or("");
+                    self.count_permanents_by_type(player_id, filter_type)
+                } else {
+                    svar_body.parse().unwrap_or(0)
+                }
+            })
+            .max()
+            .unwrap_or(0);
+
+        // Collect hand cards (avoid borrow conflict)
+        let hand_cards: smallvec::SmallVec<[crate::core::CardId; 16]> = self
+            .game
+            .get_player_zones(player_id)
+            .map(|z| z.hand.cards.iter().copied().collect())
+            .unwrap_or_default();
+
+        let is_active_player = self.game.turn.active_player == player_id;
+        let is_sorcery_speed = self.game.turn.current_step.is_sorcery_speed();
+        let stack_is_empty = self.game.stack.is_empty();
+
+        for card_id in hand_cards {
+            let Some(card) = self.game.cards.try_get(card_id) else {
+                continue;
+            };
+
+            // Must be a non-land spell
+            if card.is_land() {
+                continue;
+            }
+
+            // CMC restriction: card CMC must be ≤ land count
+            if card.mana_cost.cmc() as usize > max_cmc {
+                continue;
+            }
+
+            // Respect is_play_prohibited (CantBeCast statics, including the
+            // Fires of Invention CantBeCast | Caster$ You.NonActive restriction
+            // and the NumLimitEachTurn$ 2 limit).
+            if self.game.is_play_prohibited(player_id, card) {
+                continue;
+            }
+
+            // Timing restrictions
+            let has_flash =
+                card.has_keyword(crate::core::Keyword::Flash) || self.game.player_has_cast_with_flash(player_id, card);
+            let can_cast_now = if card.is_instant() || has_flash {
+                true
+            } else {
+                is_sorcery_speed && is_active_player && stack_is_empty
+            };
+
+            if !can_cast_now {
+                continue;
+            }
+
+            // Offer as free-cast from hand (zero mana cost)
+            self.abilities_buffer.push(SpellAbility::CastFromHandWithAltCost {
+                card_id,
+                alternative_cost: ManaCost::new(),
+            });
+        }
+    }
+
+    /// Push castable cards from the top of the library when a
+    /// `StaticAbility::MayPlayFromLibrary` is active (Experimental Frenzy).
+    ///
+    /// Offers the top card of the controller's library as
+    /// `SpellAbility::CastFromLibrary` (for non-land spells) or
+    /// `SpellAbility::PlayLandFromLibrary` (for lands), subject to normal
+    /// timing rules.
+    fn push_castable_from_library(&mut self, player_id: PlayerId) {
+        use crate::core::{SpellAbility, StaticAbility};
+
+        // Check whether any battlefield permanent controlled by this player
+        // has MayPlayFromLibrary.
+        let has_may_play_from_library = self.game.battlefield.cards.iter().any(|&src_id| {
+            self.game.cards.try_get(src_id).is_some_and(|src| {
+                src.controller == player_id
+                    && src
+                        .static_abilities
+                        .iter()
+                        .any(|sa| matches!(sa, StaticAbility::MayPlayFromLibrary { .. }))
+            })
+        });
+
+        if !has_may_play_from_library {
+            return;
+        }
+
+        // Get the top card of the player's library (last element = top).
+        let top_card_id = self
+            .game
+            .get_player_zones(player_id)
+            .and_then(|z| z.library.cards.last().copied());
+
+        let Some(top_card_id) = top_card_id else {
+            return;
+        };
+
+        // Extract the information we need from top_card without keeping a borrow.
+        let (is_land, is_prohibited, has_flash_kw, is_instant, effective_cost) = {
+            let Some(top_card) = self.game.cards.try_get(top_card_id) else {
+                return;
+            };
+            // Skip hidden (reserved) cards in shadow games — no instance to examine.
+            if top_card.name.as_str().is_empty() {
+                return;
+            }
+            let is_land = top_card.is_land();
+            let is_prohibited = self.game.is_play_prohibited(player_id, top_card);
+            let has_flash_kw = top_card.has_keyword(crate::core::Keyword::Flash);
+            let is_instant = top_card.is_instant();
+            let cost = self.calculate_effective_cost(top_card, player_id);
+            (is_land, is_prohibited, has_flash_kw, is_instant, cost)
+        };
+
+        let is_active_player = self.game.turn.active_player == player_id;
+        let is_sorcery_speed = self.game.turn.current_step.is_sorcery_speed();
+        let stack_is_empty = self.game.stack.is_empty();
+
+        if is_land {
+            // Land: offer PlayLandFromLibrary during sorcery speed, active player,
+            // empty stack, and if the player still has a land play available.
+            // (Experimental Frenzy also has CantPlayLand | Origin$ Hand, handled
+            // separately — this is the grant, not the restriction.)
+            if stack_is_empty && is_sorcery_speed && is_active_player && self.game.can_play_land_effective(player_id) {
+                self.abilities_buffer
+                    .push(SpellAbility::PlayLandFromLibrary { card_id: top_card_id });
+            }
+        } else {
+            // Non-land spell: apply normal timing rules.
+            if is_prohibited {
+                return;
+            }
+            let has_flash = has_flash_kw
+                || self
+                    .game
+                    .cards
+                    .try_get(top_card_id)
+                    .is_some_and(|c| self.game.player_has_cast_with_flash(player_id, c));
+            let can_cast_now = if is_instant || has_flash {
+                true
+            } else {
+                is_sorcery_speed && is_active_player && stack_is_empty
+            };
+
+            if can_cast_now {
+                // Mana cost check: must be able to pay printed mana cost.
+                self.mana_engine.update_mut(self.game, player_id);
+                let mana_pool = self
+                    .game
+                    .try_get_player(player_id)
+                    .map(|p| p.mana_pool)
+                    .unwrap_or_default();
+                if self.mana_engine.can_pay_with_pool(&effective_cost, &mana_pool) {
+                    self.abilities_buffer
+                        .push(SpellAbility::CastFromLibrary { card_id: top_card_id });
                 }
             }
         }
@@ -1586,7 +1799,7 @@ impl<'a> GameLoop<'a> {
                         .game
                         .cards
                         .try_get(land_id)
-                        .is_some_and(|c| self.game.is_play_prohibited(c))
+                        .is_some_and(|c| self.game.is_play_prohibited(player_id, c))
                 })
                 .collect();
             for land_id in playable {
@@ -1596,6 +1809,12 @@ impl<'a> GameLoop<'a> {
 
         // Add castable spells (pushes directly to abilities_buffer)
         self.push_castable_spells(player_id);
+
+        // Add free-cast spells from hand via Fires of Invention / MayPlayWithoutManaCost
+        self.push_castable_with_fires(player_id);
+
+        // Add castable top-of-library plays via Experimental Frenzy / MayPlayFromLibrary
+        self.push_castable_from_library(player_id);
 
         // Add castable spells from exile (Airbend, Suspend, etc.)
         self.push_castable_from_exile(player_id);

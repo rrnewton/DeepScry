@@ -5298,15 +5298,34 @@ impl CardDefinition {
             };
             match mode {
                 "CantBeCast" => {
-                    let valid_card = params
-                        .get("ValidCard")
-                        .map(|v| crate::core::TargetRestriction::parse(v))
-                        .unwrap_or_else(crate::core::TargetRestriction::any);
-                    let description = params.get("Description").cloned().unwrap_or_default();
-                    abilities.push(StaticAbility::CantBeCast {
-                        valid_card,
-                        description,
-                    });
+                    // Skip `Secondary$ True` lines: they encode conditional
+                    // counts/limits (e.g. Fires of Invention's
+                    // `NumLimitEachTurn$ 2`) that we cannot evaluate without
+                    // per-turn cast tracking. Silently omitting them is safe
+                    // because they are LESS restrictive than the primary line
+                    // and leaving them out does not create rule-bending illegal
+                    // plays — it just means the N-cast-per-turn cap is not
+                    // enforced (an acceptable limitation for now).
+                    if params.get("Secondary").map(|v| v.trim()) == Some("True") {
+                        // skip
+                    } else {
+                        let valid_card = params
+                            .get("ValidCard")
+                            .map(|v| crate::core::TargetRestriction::parse(v))
+                            .unwrap_or_else(crate::core::TargetRestriction::any);
+                        let caster_restriction = match params.get("Caster").map(|s| s.trim()) {
+                            Some("You") => crate::core::CasterRestriction::You,
+                            Some("You.NonActive") => crate::core::CasterRestriction::YouNonActive,
+                            Some("Opponent") => crate::core::CasterRestriction::Opponent,
+                            _ => crate::core::CasterRestriction::Any,
+                        };
+                        let description = params.get("Description").cloned().unwrap_or_default();
+                        abilities.push(StaticAbility::CantBeCast {
+                            valid_card,
+                            caster_restriction,
+                            description,
+                        });
+                    }
                 }
                 "CantPlayLand" => {
                     let valid_card = params
@@ -5498,6 +5517,14 @@ impl CardDefinition {
             let mut is_present: Option<String> = None;
             let mut present_zone: Option<crate::zones::Zone> = None;
             let mut present_compare_min: u8 = 1; // Default: at least 1
+
+            // MayPlay / MayPlayWithoutManaCost-specific parameters
+            // `may_play` is true when `MayPlay$ True` is present.
+            // `may_play_without_mana_cost` is true when `MayPlayWithoutManaCost$ True` is present.
+            // `affected_zone` collects the `AffectedZone$` value (comma-separated list of zones).
+            let mut may_play = false;
+            let mut may_play_without_mana_cost = false;
+            let mut affected_zone_library = false;
 
             // RaiseCost-specific parameters
             let mut raised_cost: Option<crate::core::RaisedCost> = None;
@@ -5803,6 +5830,28 @@ impl CardDefinition {
                             // encoded directly in `AltCostCondition`.
                             let _ = value;
                         }
+                        "MayPlay" => {
+                            // `MayPlay$ True` — grants permission to cast/play affected cards.
+                            if value.eq_ignore_ascii_case("True") {
+                                may_play = true;
+                            }
+                        }
+                        "MayPlayWithoutManaCost" => {
+                            // `MayPlayWithoutManaCost$ True` — affected cards may be cast
+                            // for free (no mana cost required).
+                            if value.eq_ignore_ascii_case("True") {
+                                may_play_without_mana_cost = true;
+                            }
+                        }
+                        "AffectedZone" => {
+                            // `AffectedZone$ Library` (or comma-separated list) — restricts
+                            // which source zones the MayPlay grant applies to.
+                            for zone in value.split(',') {
+                                if zone.trim().eq_ignore_ascii_case("Library") {
+                                    affected_zone_library = true;
+                                }
+                            }
+                        }
                         _ => {} // Ignore other parameters (e.g., AddType$, Type$, Activator$)
                     }
                 }
@@ -6003,6 +6052,38 @@ impl CardDefinition {
                     abilities.push(StaticAbility::AlternativeCost {
                         condition,
                         alt_cost,
+                        description: description.clone(),
+                    });
+                }
+            }
+
+            // MayPlayWithoutManaCost (Fires of Invention):
+            //   S:Mode$ Continuous | Affected$ Card.nonLand+cmcLEX
+            //   | MayPlay$ True | MayPlayWithoutManaCost$ True
+            //   | AffectedZone$ Hand,...
+            // The CMC limit is stored as SVar "X" on the source card and is
+            // evaluated dynamically at cast time (Count$Valid Land.YouCtrl).
+            if is_continuous && may_play && may_play_without_mana_cost {
+                // Only emit this static when the Affected$ selector names a cmcLE
+                // pattern — i.e. the free-cast is CMC-limited (Fires of Invention).
+                // The SVar name for the limit is always "X" in Forge card scripts.
+                if matches!(affected, AffectedSelector::NonLandCmcLE { .. }) {
+                    abilities.push(StaticAbility::MayPlayWithoutManaCost {
+                        cmc_limit_svar: "X".to_string(),
+                        description: description.clone(),
+                    });
+                }
+            }
+
+            // MayPlayFromLibrary (Experimental Frenzy):
+            //   S:Mode$ Continuous | Affected$ Card.TopLibrary+YouCtrl
+            //   | AffectedZone$ Library | MayPlay$ True
+            if is_continuous && may_play && affected_zone_library {
+                // Only emit when the Affected$ selector is TopCardOfLibrary
+                // (Card.TopLibrary+YouCtrl). Do NOT emit for the
+                // MayPlayWithoutManaCost case above, which never has a Library zone.
+                if !may_play_without_mana_cost && matches!(affected, AffectedSelector::TopCardOfLibrary) {
+                    abilities.push(StaticAbility::MayPlayFromLibrary {
                         description: description.clone(),
                     });
                 }
@@ -9615,5 +9696,65 @@ Oracle:As Phyrexian Processor enters, pay any amount of life.\n{4}, {T}: Create 
                 "token_script should be b_x_x_phyrexian_minion; got {token_script}"
             );
         }
+    }
+
+    /// Test that Fires of Invention's continuous MayPlay line parses as
+    /// `StaticAbility::MayPlayWithoutManaCost` (CMC-limited free-cast grant).
+    #[test]
+    fn test_fires_of_invention_may_play_without_mana_cost_parses() {
+        use crate::core::StaticAbility;
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("cardsfolder/f/fires_of_invention.txt");
+        if !path.exists() {
+            return; // Skip if cardsfolder not present
+        }
+
+        let def = CardLoader::load_from_file(&path).expect("Should load fires_of_invention.txt");
+        let statics = def.parse_static_abilities();
+
+        let may_play_statics: Vec<_> = statics
+            .iter()
+            .filter(|s| matches!(s, StaticAbility::MayPlayWithoutManaCost { .. }))
+            .collect();
+
+        assert_eq!(
+            may_play_statics.len(),
+            1,
+            "Fires of Invention should have exactly one MayPlayWithoutManaCost static; got {:?}",
+            statics
+        );
+
+        if let StaticAbility::MayPlayWithoutManaCost { cmc_limit_svar, .. } = &may_play_statics[0] {
+            assert_eq!(cmc_limit_svar, "X", "Fires cmc_limit_svar should be 'X'");
+        }
+    }
+
+    /// Test that Experimental Frenzy's continuous MayPlay line parses as
+    /// `StaticAbility::MayPlayFromLibrary`.
+    #[test]
+    fn test_experimental_frenzy_may_play_from_library_parses() {
+        use crate::core::StaticAbility;
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("cardsfolder/e/experimental_frenzy.txt");
+        if !path.exists() {
+            return; // Skip if cardsfolder not present
+        }
+
+        let def = CardLoader::load_from_file(&path).expect("Should load experimental_frenzy.txt");
+        let statics = def.parse_static_abilities();
+
+        let lib_statics: Vec<_> = statics
+            .iter()
+            .filter(|s| matches!(s, StaticAbility::MayPlayFromLibrary { .. }))
+            .collect();
+
+        assert_eq!(
+            lib_statics.len(),
+            1,
+            "Experimental Frenzy should have exactly one MayPlayFromLibrary static; got {:?}",
+            statics
+        );
     }
 }

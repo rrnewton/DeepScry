@@ -515,6 +515,14 @@ impl NetworkController {
                 let name = view.card_name(*card_id).unwrap_or_default();
                 format!("Cast {} for {}", name, alternative_cost)
             }
+            SpellAbility::CastFromLibrary { card_id } => {
+                let name = view.card_name(*card_id).unwrap_or_default();
+                format!("Cast {} from top of library", name)
+            }
+            SpellAbility::PlayLandFromLibrary { card_id } => {
+                let name = view.card_name(*card_id).unwrap_or_default();
+                format!("Play {} from top of library", name)
+            }
         }
     }
 

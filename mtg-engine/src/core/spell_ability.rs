@@ -135,6 +135,21 @@ pub enum SpellAbility {
         /// The alternative mana cost to pay instead of the card's printed cost.
         alternative_cost: ManaCost,
     },
+
+    /// Cast the top card of the library as a spell (Experimental Frenzy, Future Sight).
+    ///
+    /// The card moves from the library to the stack and resolves normally,
+    /// paying its printed mana cost (no alternative cost). The card must be
+    /// the top card of the controller's library.
+    ///
+    /// MTG CR 702.150 (Future Sight); CR 601 applies normally after the zone grant.
+    CastFromLibrary { card_id: CardId },
+
+    /// Play the top card of the library as a land (Experimental Frenzy, Future Sight).
+    ///
+    /// The land moves from the library directly to the battlefield (or is
+    /// played normally), consuming the player's land-play for the turn.
+    PlayLandFromLibrary { card_id: CardId },
 }
 
 impl SpellAbility {
@@ -150,6 +165,7 @@ impl SpellAbility {
             SpellAbility::CastFromGraveyard { card_id, .. } => *card_id,
             SpellAbility::CastAdventure { card_id } => *card_id,
             SpellAbility::CastFromHandWithAltCost { card_id, .. } => *card_id,
+            SpellAbility::CastFromLibrary { card_id } | SpellAbility::PlayLandFromLibrary { card_id } => *card_id,
         }
     }
 
@@ -158,7 +174,7 @@ impl SpellAbility {
         matches!(self, SpellAbility::PlayLand { .. })
     }
 
-    /// Check if this is a spell (includes casting from exile, command zone, or graveyard)
+    /// Check if this is a spell (includes casting from exile, command zone, graveyard, or library)
     pub fn is_spell(&self) -> bool {
         matches!(
             self,
@@ -168,6 +184,7 @@ impl SpellAbility {
                 | SpellAbility::CastFromGraveyard { .. }
                 | SpellAbility::CastAdventure { .. }
                 | SpellAbility::CastFromHandWithAltCost { .. }
+                | SpellAbility::CastFromLibrary { .. }
         )
     }
 

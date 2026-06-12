@@ -3089,13 +3089,39 @@ impl GameState {
     /// offered (City in a Bottle: ARN-origin cards can't be cast).
     ///
     /// General hoser machinery — works for any `S:Mode$ CantBeCast | ValidCard$ <filter>`.
-    pub fn is_cast_prohibited(&self, card: &crate::core::Card) -> bool {
-        use crate::core::StaticAbility;
+    /// True if some permanent on the battlefield has a `CantBeCast` static
+    /// whose `valid_card` matches `card` AND whose `caster_restriction` applies
+    /// to `caster_id` given the current turn's active player.
+    ///
+    /// - `CasterRestriction::Any`         — applies to all players.
+    /// - `CasterRestriction::You`         — applies only to the source's controller.
+    /// - `CasterRestriction::YouNonActive`— applies only to the source's controller
+    ///   while they are the non-active player.
+    /// - `CasterRestriction::Opponent`    — applies to all players who are NOT the
+    ///   source's controller.
+    pub fn is_cast_prohibited(&self, caster_id: crate::core::PlayerId, card: &crate::core::Card) -> bool {
+        use crate::core::{CasterRestriction, StaticAbility};
+        let active = self.turn.active_player;
         self.battlefield.cards.iter().any(|&id| {
             self.cards.try_get(id).is_some_and(|src| {
                 src.static_abilities.iter().any(|sa| {
-                    if let StaticAbility::CantBeCast { valid_card, .. } = sa {
-                        valid_card.matches(card)
+                    if let StaticAbility::CantBeCast {
+                        valid_card,
+                        caster_restriction,
+                        ..
+                    } = sa
+                    {
+                        // First check if the card matches the filter
+                        if !valid_card.matches(card) {
+                            return false;
+                        }
+                        // Then check if the caster restriction applies to this caster
+                        match caster_restriction {
+                            CasterRestriction::Any => true,
+                            CasterRestriction::You => caster_id == src.controller,
+                            CasterRestriction::YouNonActive => caster_id == src.controller && caster_id != active,
+                            CasterRestriction::Opponent => caster_id != src.controller,
+                        }
                     } else {
                         false
                     }
@@ -3158,8 +3184,11 @@ impl GameState {
     /// either a `CantBeCast` or a `CantPlayLand` static matches it. (Forge's
     /// `CantPlayLand` on City in a Bottle carries the "can't cast spells"
     /// clause too, so it applies to both lands and spells.)
-    pub fn is_play_prohibited(&self, card: &crate::core::Card) -> bool {
-        self.is_cast_prohibited(card) || self.is_land_play_prohibited(card)
+    ///
+    /// `caster_id` is the player attempting to cast or play the card; it is
+    /// forwarded to `is_cast_prohibited` to evaluate `CasterRestriction`.
+    pub fn is_play_prohibited(&self, caster_id: crate::core::PlayerId, card: &crate::core::Card) -> bool {
+        self.is_cast_prohibited(caster_id, card) || self.is_land_play_prohibited(card)
     }
 
     /// True if some permanent on the battlefield has a `CantAttackOrBlockMatching`

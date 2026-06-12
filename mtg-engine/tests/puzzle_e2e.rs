@@ -5282,7 +5282,7 @@ async fn test_city_in_a_bottle_arn_hoser() -> Result<()> {
     // -------- Construct 3: unplayability (pure gating logic, AI-independent) --------
     let camel_hand_card = game.cards.get(camel_hand[0])?;
     assert!(
-        game.is_play_prohibited(camel_hand_card),
+        game.is_play_prohibited(p0_id, camel_hand_card),
         "ARN Camel in hand must be play-prohibited while City in a Bottle is in play"
     );
     let grizzly_bf = by_name(&game, p0_id, "Grizzly Bears", Zone::Battlefield)[0];
@@ -5290,7 +5290,7 @@ async fn test_city_in_a_bottle_arn_hoser() -> Result<()> {
     {
         let grizzly_card = game.cards.get(grizzly_bf)?;
         assert!(
-            !game.is_play_prohibited(grizzly_card),
+            !game.is_play_prohibited(p0_id, grizzly_card),
             "non-ARN Grizzly Bears must NOT be play-prohibited"
         );
     }
