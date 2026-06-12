@@ -698,7 +698,8 @@ impl GameState {
                             | Effect::SkipUntapStep { .. }
                             | Effect::CreateTokenDynamic { .. }
                             | Effect::CreateEmblem { .. }
-                            | Effect::PlayFromGraveyard { .. } => {
+                            | Effect::PlayFromGraveyard { .. }
+                            | Effect::RepeatEach { .. } => {
                                 // Non-Destroy/Copy modes in modal spells
                                 // TODO(mtg-30): Add handlers for targeting modes that need them
                             }
@@ -770,7 +771,10 @@ impl GameState {
                 | Effect::CreateEmblem { .. }
                 // PlayFromGraveyard is triggered from a planeswalker activated ability;
                 // targeting is handled through get_valid_targets_for_ability, not here.
-                | Effect::PlayFromGraveyard { .. } => {
+                | Effect::PlayFromGraveyard { .. }
+                // RepeatEach targets are consumed from chosen_targets at resolve_effect_target
+                // time (Pattern A) or iterate over players (Pattern B) — no cast-time targeting.
+                | Effect::RepeatEach { .. } => {
                     // These effects target players or have no targeting requirements
                     // AttachEquipment targeting is handled via Equip keyword abilities
                     // ChooseColor is a player choice effect (no permanent targets)
@@ -1394,7 +1398,10 @@ impl GameState {
                 | Effect::SkipUntapStep { .. }
                 | Effect::UnlessCostWrapper { .. }
                 | Effect::CreateTokenDynamic { .. }
-                | Effect::CreateEmblem { .. } => {
+                | Effect::CreateEmblem { .. }
+                // RepeatEach targets are consumed from chosen_targets at resolve_effect_target
+                // time (Pattern A) or iterate over players (Pattern B) — no cast-time targeting.
+                | Effect::RepeatEach { .. } => {
                     // These effects target players or have no targeting requirements
                     // CreateDelayedTrigger targets creatures - handled via ValidTgts$ Creature
                     // CopySpellAbility doesn't need explicit targets - copies triggering spell
@@ -1411,6 +1418,7 @@ impl GameState {
                     // PreventAllCombatDamageThisTurn: reuses UntapPermanent's last_resolved_target
                     // RearrangeTopOfLibrary: controller looks at own library top, no targeting
                     // SkipUntapStep: opponent auto-targeted (ValidTgts$ resolved at init)
+                    // RepeatEach: targets resolved from chosen_targets at execution time
                 }
                 Effect::PlayFromGraveyard {
                     target,
@@ -1791,7 +1799,9 @@ impl GameState {
             // ExileIfWouldDieThisTurn reuses the parent DealDamage's target, so
             // it never needs its own target check.
             | Effect::ExileIfWouldDieThisTurn { .. }
-            | Effect::Fight { .. } => true, // Filter-based / no-target effects
+            | Effect::Fight { .. }
+            // RepeatEach has no cast-time targets; they are resolved at execute time.
+            | Effect::RepeatEach { .. } => true, // Filter-based / no-target effects
 
             // ===== EXHAUSTIVE EFFECT HANDLING =====
             // Effects with pre-specified targets (guard failed: target.as_u32() != 0)

@@ -119,7 +119,8 @@ fn expand_all_players_effect(effect: &Effect, player_ids: &[PlayerId]) -> smallv
         | Effect::CreateEmblem { .. }
         | Effect::PutCardsFromHandOnTopOfLibrary { .. }
         | Effect::RevealCardsFromHand { .. }
-        | Effect::PlayFromGraveyard { .. } => false,
+        | Effect::PlayFromGraveyard { .. }
+        | Effect::RepeatEach { .. } => false,
     };
 
     if !is_all_players {
@@ -253,7 +254,8 @@ fn expand_all_players_effect(effect: &Effect, player_ids: &[PlayerId]) -> smallv
             | Effect::CreateEmblem { .. }
             | Effect::PutCardsFromHandOnTopOfLibrary { .. }
             | Effect::RevealCardsFromHand { .. }
-            | Effect::PlayFromGraveyard { .. } => unreachable!(),
+            | Effect::PlayFromGraveyard { .. }
+            | Effect::RepeatEach { .. } => unreachable!(),
         })
         .collect()
 }
@@ -3588,6 +3590,32 @@ impl GameState {
                 triggers: triggers.clone(),
             },
 
+            // RepeatEach (Pattern A): fill in the chosen targets so execute_effect
+            // can iterate over them.  The targets list starts empty at parse time
+            // and is populated here once we know the spell's chosen_targets.
+            // Pattern B (AllPlayers) carries no targets so it passes through unchanged.
+            Effect::RepeatEach {
+                sub_effects,
+                iterate_over:
+                    crate::core::RepeatEachIterate::Cards {
+                        targets,
+                        require_in_graveyard,
+                    },
+            } if targets.is_empty() && !chosen_targets.is_empty() => {
+                // Consume ALL remaining chosen targets for this RepeatEach.
+                // target_index is left at chosen_targets.len() so subsequent
+                // effects in the same spell do not re-consume the same targets.
+                let resolved_targets = chosen_targets[*target_index..].to_vec();
+                *target_index = chosen_targets.len();
+                Effect::RepeatEach {
+                    sub_effects: sub_effects.clone(),
+                    iterate_over: crate::core::RepeatEachIterate::Cards {
+                        targets: resolved_targets,
+                        require_in_graveyard: *require_in_graveyard,
+                    },
+                }
+            }
+
             // No resolution needed - return clone of original
             _ => effect.clone(),
         }
@@ -4088,6 +4116,15 @@ impl GameState {
                 self.execute_immediate_trigger(condition, sub_effects)?
             }
             Effect::ClearRemembered => self.execute_clear_remembered()?,
+
+            // RepeatEach: for each member of iterate_over, set it as the
+            // remembered card/player, then execute each sub-effect once.
+            // CR 609.3: actions repeat sequentially for each member.
+            Effect::RepeatEach {
+                sub_effects,
+                iterate_over,
+            } => self.execute_repeat_each(sub_effects, iterate_over)?,
+
             Effect::UnlessCostWrapper {
                 inner_effect,
                 unless_cost,

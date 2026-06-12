@@ -24,8 +24,8 @@ pub use effects::{
     AbilityCache, ActivatedAbility, ActivationCondition, ActivationPhaseWindow, AffectedSelector, CombatDamageTarget,
     CompareOp, ControllerRestriction, CostReductionCondition, CostReductionTarget, CountExpression, CountModifier,
     DamageDivision, DigFilter, DynamicAmount, Effect, ImmediateTriggerCondition, ModalMode, PresentSelfCondition,
-    RaisedCost, RaisedCostAmount, SelfCounterCondition, StaticAbility, StaticCondition, TargetRef, TargetRestriction,
-    TargetType, Trigger, TriggerEvent,
+    RaisedCost, RaisedCostAmount, RepeatEachIterate, SelfCounterCondition, StaticAbility, StaticCondition, TargetRef,
+    TargetRestriction, TargetType, Trigger, TriggerEvent,
 };
 pub use entity::{EntityId, EntityStore, GameEntity};
 pub use keyword_set::{Keyword, KeywordArgs, KeywordSet};

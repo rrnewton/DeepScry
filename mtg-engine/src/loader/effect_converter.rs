@@ -4,7 +4,7 @@
 
 use super::ability_parser::{AbilityParams, ApiType};
 use super::svar_parser::{parse_svar, ParsedSVar, StaticAbilityMode};
-use crate::core::{CardId, Effect, Keyword, PlayerId, TargetRef, TargetRestriction};
+use crate::core::{CardId, Effect, Keyword, PlayerId, RepeatEachIterate, TargetRef, TargetRestriction};
 use smallvec::SmallVec;
 use std::collections::HashMap;
 
@@ -1244,13 +1244,17 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
             let token_script = params.get("TokenScript")?.to_string();
             let amount = params.get_u8("TokenAmount").unwrap_or(1);
 
-            // TokenOwner$ parsing - default to controller (You)
-            // "Player" means each player creates tokens
+            // TokenOwner$ parsing — default to controller (You)
+            // "Player"              → each player creates tokens
+            // "RememberedController"→ the controller of the currently-remembered card
+            //                        (Terastodon: token goes to destroyed permanent's owner)
+            // "Opponent"            → the opponent (placeholder resolved at runtime)
             let token_owner = params.get("TokenOwner");
             let for_each_player = token_owner == Some("Player");
             let controller = match token_owner {
                 Some("Opponent") => PlayerId::new(1), // Placeholder - will be resolved at runtime
-                _ => PlayerId::new(0),                // Placeholder - controller
+                Some("RememberedController") => PlayerId::remembered_controller(),
+                _ => PlayerId::new(0), // Placeholder - controller
             };
 
             Some(Effect::CreateToken {
@@ -2433,6 +2437,11 @@ pub fn params_to_effect_with_svars(params: &AbilityParams, svars: &HashMap<Strin
         }
     }
 
+    // RepeatEach needs SVars to resolve RepeatSubAbility$ and optional SubAbility$
+    if params.api_type == ApiType::RepeatEach {
+        return build_repeat_each_effect(params, svars);
+    }
+
     // For all other types, delegate to the base function
     params_to_effect(params)
 }
@@ -2714,6 +2723,158 @@ pub fn wrap_with_unless_cost(effect: Effect, params: &AbilityParams) -> Effect {
     } else {
         effect
     }
+}
+
+/// Build a `RepeatEach` effect from `DB$ RepeatEach` / `A:SP$ RepeatEach` params.
+///
+/// # Patterns handled
+///
+/// **Pattern A — iterate over chosen targets (Terastodon):**
+/// ```text
+/// DB$ RepeatEach | RepeatSubAbility$ DBToken | DefinedCards$ Targeted | ChangeZoneTable$ True
+/// SVar:DBToken:DB$ Token | TokenOwner$ RememberedController | ...
+/// ```
+///
+/// **Pattern B — iterate over players (Tragic Arrogance):**
+/// ```text
+/// A:SP$ RepeatEach | RepeatPlayers$ Player | RepeatSubAbility$ YouChoose | SubAbility$ SacAllOthers
+/// SVar:YouChoose:DB$ ChooseCard | ...
+/// SVar:SacAllOthers:DB$ SacrificeAll | ...
+/// ```
+///
+/// The `RepeatSubAbility$` SVar is resolved into `sub_effects` (all its effects
+/// including its own sub-ability chain). Any `SubAbility$` on the RepeatEach
+/// itself is also resolved and appended (Pattern B: SacAllOthers after YouChoose).
+fn build_repeat_each_effect(params: &AbilityParams, svars: &HashMap<String, String>) -> Option<Effect> {
+    debug_assert_eq!(params.api_type, ApiType::RepeatEach);
+
+    // --- Determine what to iterate over ---
+    let iterate_over = if let Some(repeat_players) = params.get("RepeatPlayers") {
+        if repeat_players == "Player" {
+            RepeatEachIterate::AllPlayers
+        } else {
+            // Unrecognized RepeatPlayers$ value; default to all players
+            log::warn!(
+                target: "effect_converter",
+                "RepeatEach: unknown RepeatPlayers$ '{}', defaulting to AllPlayers",
+                repeat_players
+            );
+            RepeatEachIterate::AllPlayers
+        }
+    } else if params.get("DefinedCards") == Some("Targeted") {
+        let require_in_graveyard = params
+            .get("ChangeZoneTable")
+            .is_some_and(|v| v.eq_ignore_ascii_case("True"));
+        // targets are empty at parse time; they will be filled in at
+        // resolve_effect_target time when the spell's chosen_targets are known.
+        RepeatEachIterate::Cards {
+            targets: Vec::new(),
+            require_in_graveyard,
+        }
+    } else {
+        // Fallback: unknown iteration target
+        log::warn!(
+            target: "effect_converter",
+            "RepeatEach: no RepeatPlayers$ or DefinedCards$ Targeted found; producing Unimplemented"
+        );
+        return Some(Effect::Unimplemented {
+            api_type: "RepeatEach(unknown-iterate-over)".to_string(),
+        });
+    };
+
+    // --- Resolve RepeatSubAbility$ into sub_effects ---
+    let mut sub_effects: Vec<Effect> = Vec::new();
+
+    let repeat_sub_name = match params.get("RepeatSubAbility") {
+        Some(name) => name,
+        None => {
+            log::warn!(
+                target: "effect_converter",
+                "RepeatEach: missing RepeatSubAbility$ parameter"
+            );
+            return Some(Effect::Unimplemented {
+                api_type: "RepeatEach(no-RepeatSubAbility)".to_string(),
+            });
+        }
+    };
+
+    let repeat_sub_body = match svars.get(repeat_sub_name) {
+        Some(body) => body.clone(),
+        None => {
+            log::warn!(
+                target: "effect_converter",
+                "RepeatEach: SVar '{}' not found for RepeatSubAbility$",
+                repeat_sub_name
+            );
+            return Some(Effect::Unimplemented {
+                api_type: format!("RepeatEach(missing-svar:{repeat_sub_name})"),
+            });
+        }
+    };
+
+    let ability_line = format!("A:{}", repeat_sub_body);
+    let sub_params = match AbilityParams::parse(&ability_line) {
+        Ok(p) => p,
+        Err(e) => {
+            log::warn!(
+                target: "effect_converter",
+                "RepeatEach: failed to parse RepeatSubAbility$ '{}': {}",
+                repeat_sub_name, e
+            );
+            return Some(Effect::Unimplemented {
+                api_type: format!("RepeatEach(parse-error:{repeat_sub_name})"),
+            });
+        }
+    };
+
+    // Convert the sub-ability effect (SVar-aware for nested chaining)
+    if let Some(sub_effect) = params_to_effect_with_svars(&sub_params, svars) {
+        sub_effects.push(wrap_with_unless_cost(sub_effect, &sub_params));
+    }
+    // Follow any sub-ability chain from the RepeatSubAbility$ svar
+    follow_sub_ability_chain_into(&sub_params, svars, &mut sub_effects);
+
+    // --- Also resolve any SubAbility$ on the RepeatEach itself ---
+    // (Pattern B: SacAllOthers runs after YouChoose for each player)
+    if let Some(sub_ability_name) = params.get("SubAbility") {
+        if let Some(sa_body) = svars.get(sub_ability_name) {
+            let sa_line = format!("A:{}", sa_body);
+            if let Ok(sa_params) = AbilityParams::parse(&sa_line) {
+                if let Some(sa_effect) = params_to_effect_with_svars(&sa_params, svars) {
+                    sub_effects.push(wrap_with_unless_cost(sa_effect, &sa_params));
+                }
+                follow_sub_ability_chain_into(&sa_params, svars, &mut sub_effects);
+            }
+        }
+    }
+
+    Some(Effect::RepeatEach {
+        sub_effects,
+        iterate_over,
+    })
+}
+
+/// Recursively follow the `SubAbility$` chain from `params` and push each
+/// resolved effect into `out`. Mirrors `CardLoader::follow_sub_ability_chain`
+/// but operates on a flat `Vec<Effect>` rather than a card's effects list.
+fn follow_sub_ability_chain_into(params: &AbilityParams, svars: &HashMap<String, String>, out: &mut Vec<Effect>) {
+    let sub_ability_name = match params.get("SubAbility") {
+        Some(name) => name,
+        None => return,
+    };
+    let svar_body = match svars.get(sub_ability_name) {
+        Some(body) => body,
+        None => return,
+    };
+    let ability_line = format!("A:{}", svar_body);
+    let sub_params = match AbilityParams::parse(&ability_line) {
+        Ok(p) => p,
+        Err(_) => return,
+    };
+    if let Some(effect) = params_to_effect_with_svars(&sub_params, svars) {
+        out.push(wrap_with_unless_cost(effect, &sub_params));
+    }
+    follow_sub_ability_chain_into(&sub_params, svars, out);
 }
 
 #[cfg(test)]

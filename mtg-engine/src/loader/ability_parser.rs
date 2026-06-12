@@ -315,6 +315,28 @@ pub enum ApiType {
     /// Example: A:SP$ Charm | Choices$ Destroy,Remove
     Charm,
 
+    // === Loop / Iteration ===
+    /// RepeatEach: For each member of a set, execute a sub-ability once.
+    ///
+    /// Two patterns:
+    ///   Pattern A — iterate over cards:
+    ///     `DB$ RepeatEach | RepeatSubAbility$ DBToken | DefinedCards$ Targeted | ChangeZoneTable$ True`
+    ///     Iterates over the spell's chosen targets (DefinedCards$ Targeted).
+    ///     ChangeZoneTable$ True means only include cards that actually changed zones
+    ///     (e.g., ended up in the graveyard after being destroyed).
+    ///   Pattern B — iterate over players:
+    ///     `A:SP$ RepeatEach | RepeatPlayers$ Player | RepeatSubAbility$ YouChoose | SubAbility$ SacAllOthers`
+    ///     Iterates over all players in turn order.
+    ///
+    /// For each iteration, the current member is stored as the "Remembered" card/player
+    /// so sub-abilities can reference it with Defined$ Remembered / ControlledByPlayer$ Remembered.
+    ///
+    /// CR 609.3: Effects that use "for each" repeat an action once per set member,
+    /// sequentially, with state-based actions between repetitions.
+    ///
+    /// Examples: Terastodon (token per destroyed permanent), Tragic Arrogance (per-player keep).
+    RepeatEach,
+
     // === Catch-all for unknown types ===
     Unknown(String),
 }
@@ -458,6 +480,9 @@ impl ApiType {
             // Modal Spells
             "Charm" => Self::Charm,
 
+            // Loop / Iteration
+            "RepeatEach" => Self::RepeatEach,
+
             // Unknown type - preserve original string for debugging
             unknown => Self::Unknown(unknown.to_string()),
         }
@@ -549,6 +574,7 @@ impl ApiType {
             Self::Airbend => "Airbend",
             Self::Earthbend => "Earthbend",
             Self::Charm => "Charm",
+            Self::RepeatEach => "RepeatEach",
             Self::Discard => "Discard",
             Self::ImmediateTrigger => "ImmediateTrigger",
             Self::Cleanup => "Cleanup",

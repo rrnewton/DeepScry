@@ -1204,6 +1204,9 @@ impl<'a> GameLoop<'a> {
                 // The gamelog line ("P? will skip their next untap step") is emitted
                 // inside execute_skip_untap_step. Nothing to surface here.
             }
+            // RepeatEach: individual sub-effect logs are emitted by each sub-ability's
+            // own log_effect call; no top-level summary log needed here.
+            Effect::RepeatEach { .. } => {}
         }
     }
 }

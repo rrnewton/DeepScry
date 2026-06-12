@@ -2554,6 +2554,36 @@ pub enum Effect {
         player: crate::core::PlayerId,
     },
 
+    /// For-each loop: execute `sub_effects` once for each member of `iterate_over`.
+    ///
+    /// Corresponds to: `DB$ RepeatEach | RepeatSubAbility$ <svar> | DefinedCards$ Targeted`
+    /// or: `A:SP$ RepeatEach | RepeatPlayers$ Player | RepeatSubAbility$ <svar>`
+    ///
+    /// CR 609.3: Effects that use "for each" repeat an action once per member of the
+    /// named set. Actions execute sequentially; state-based actions check between each.
+    ///
+    /// **Pattern A — iterate over cards** (`iterate_over = Cards { .. }`):
+    /// - Iterates over `targets` (the spell's chosen targets, resolved at spell-resolution time).
+    /// - If `require_in_graveyard` is true (`ChangeZoneTable$ True`), only includes cards
+    ///   that are currently in a graveyard or exiled zone (cards that were NOT actually
+    ///   destroyed — e.g., indestructible permanents — are skipped).
+    /// - For each qualifying card: sets `game.remembered_cards = [card_id]`, then executes
+    ///   each effect in `sub_effects`.
+    ///
+    /// **Pattern B — iterate over players** (`iterate_over = AllPlayers`):
+    /// - Iterates over all players in the current turn order.
+    /// - For each player: sets `game.remembered_players = [player_id]`, then executes
+    ///   each effect in `sub_effects`.
+    ///
+    /// Used by: Terastodon (token per destroyed permanent), Tragic Arrogance (player loop).
+    RepeatEach {
+        /// Effects to execute once per member (from `RepeatSubAbility$` chain,
+        /// including any `SubAbility$` chains chained off the RepeatEach itself)
+        sub_effects: Vec<Effect>,
+        /// What to iterate over (resolved at parse/resolve time)
+        iterate_over: RepeatEachIterate,
+    },
+
     /// Placeholder for a recognized but unimplemented effect
     /// Produced instead of silently dropping the effect, so that spell resolution
     /// can warn/error instead of silently no-op'ing.
@@ -2577,6 +2607,30 @@ pub enum Effect {
         /// The API type name, for debug logging only.
         api_type: String,
     },
+}
+
+/// What a `RepeatEach` effect iterates over.
+///
+/// Resolved at parse time (for `AllPlayers`) or at spell-resolution time (for
+/// `Cards`). The distinction matters because chosen targets are known only when
+/// the spell resolves, whereas all-players is always available.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum RepeatEachIterate {
+    /// Iterate over the spell's chosen targets.
+    ///
+    /// `targets` is populated at `resolve_effect_target` time from `chosen_targets`.
+    /// `require_in_graveyard` is true when `ChangeZoneTable$ True` is set —
+    /// only cards currently in the graveyard (i.e., successfully destroyed) are
+    /// iterated; permanents that survived (indestructible, replaced, etc.) are skipped.
+    Cards {
+        /// The resolved chosen targets for this spell (filled in at resolution time)
+        targets: Vec<CardId>,
+        /// If true, only iterate over cards that are now in a graveyard zone
+        /// (`ChangeZoneTable$ True`).
+        require_in_graveyard: bool,
+    },
+    /// Iterate over all players in turn order (`RepeatPlayers$ Player`).
+    AllPlayers,
 }
 
 /// Condition for ImmediateTrigger effect
@@ -2797,7 +2851,11 @@ impl Effect {
             | Effect::RearrangeTopOfLibrary { .. }
             | Effect::SkipUntapStep { .. }
             | Effect::Unimplemented { .. }
-            | Effect::NoOp { .. } => EffectTargetCategory::NoTargetNeeded,
+            | Effect::NoOp { .. }
+            // RepeatEach targets are consumed from chosen_targets at resolve_effect_target
+            // time (Pattern A) or iterates over all players (Pattern B).  Either way
+            // the targeting system does not need to separately collect targets for it.
+            | Effect::RepeatEach { .. } => EffectTargetCategory::NoTargetNeeded,
 
             // Effects using filters (affect multiple permanents)
             Effect::PumpAllCreatures { .. }
