@@ -3951,6 +3951,199 @@ impl GameState {
         Ok(fired_count)
     }
 
+    /// Scan each player's opening hand for cards with `K:MayEffectFromOpeningHand` and
+    /// process any that declare an upkeep-scry effect (e.g. Sphinx of Foresight).
+    ///
+    /// Called from `GameLoop::setup_game` immediately after opening hands are dealt,
+    /// before Turn 1 begins. For each card with the keyword, the AI unconditionally
+    /// reveals it (it is always beneficial — free scry) and registers a one-shot
+    /// `Phase=Upkeep` delayed trigger for the owner so that `upkeep_step`'s
+    /// `check_delayed_triggers_on_phase(TriggerPhase::Upkeep, ...)` fires it on the
+    /// player's first upkeep.
+    ///
+    /// The SVar chain is parsed with `AbilityParams` (no substring hacks) to confirm
+    /// the pattern really is "scry N on first upkeep" before registering the trigger.
+    ///
+    /// # Errors
+    ///
+    /// Propagates any `scry_apply_decision` errors (zone manipulation).
+    pub fn process_opening_hand_reveals(&mut self, player_ids: &[crate::core::PlayerId]) -> Result<()> {
+        use crate::core::{DelayedEffect, DelayedTrigger, DelayedTriggerCondition, Keyword, TriggerPhase};
+        use crate::loader::ability_parser::AbilityParams;
+        use smallvec::smallvec;
+
+        // Collect (card_id, player_id, scry_count) triples to avoid borrow issues.
+        let mut reveals: Vec<(crate::core::CardId, crate::core::PlayerId, u8)> = Vec::new();
+
+        for &player_id in player_ids {
+            let hand_card_ids: Vec<crate::core::CardId> = self
+                .get_player_zones(player_id)
+                .map(|z| z.hand.cards.to_vec())
+                .unwrap_or_default();
+
+            for card_id in hand_card_ids {
+                let Some(card) = self.cards.try_get(card_id) else {
+                    continue;
+                };
+                if !card.keywords.contains(Keyword::MayEffectFromOpeningHand) {
+                    continue;
+                }
+
+                // Retrieve the effect-name from the complex keyword args.
+                let effect_svar_name = match card.keywords.get_args(Keyword::MayEffectFromOpeningHand) {
+                    Some(crate::core::KeywordArgs::MayEffectFromOpeningHand { effect }) => effect.clone(),
+                    _ => continue,
+                };
+
+                // Parse the top-level SVar (e.g. "RevealCard") to find the SubAbility.
+                let sub_ability_name = {
+                    let top_body = match card.definition.svars.get(&effect_svar_name) {
+                        Some(b) => b.clone(),
+                        None => {
+                            log::debug!(
+                                target: "opening_hand",
+                                "MayEffectFromOpeningHand: SVar '{}' not found on {}",
+                                effect_svar_name,
+                                card.name,
+                            );
+                            continue;
+                        }
+                    };
+                    // The top-level SVar: "DB$ Reveal | RevealDefined$ Self | SubAbility$ ScryOnUpkeep"
+                    // We must find SubAbility$.
+                    let params = match AbilityParams::parse_svar_body(&top_body) {
+                        Some(p) => p,
+                        None => continue,
+                    };
+                    match params.get("SubAbility") {
+                        Some(s) => s.to_string(),
+                        None => continue,
+                    }
+                };
+
+                // Parse the SubAbility SVar (e.g. "ScryOnUpkeep") to find the Triggers$ SVar name.
+                let trigger_svar_name = {
+                    let sub_body = match card.definition.svars.get(&sub_ability_name) {
+                        Some(b) => b.clone(),
+                        None => continue,
+                    };
+                    // "DB$ Effect | Triggers$ TrigOpenScry | Duration$ Permanent"
+                    let params = match AbilityParams::parse_svar_body(&sub_body) {
+                        Some(p) => p,
+                        None => continue,
+                    };
+                    match params.get("Triggers") {
+                        Some(s) => s.to_string(),
+                        None => continue,
+                    }
+                };
+
+                // Parse the Trigger SVar (e.g. "TrigOpenScry") to find the Execute$ SVar name.
+                // Note: this SVar is a trigger definition, NOT a DB$/AB$ ability, so it has no
+                // record-type prefix. We parse the key=value pairs manually with | and $ splits.
+                let execute_svar_name = {
+                    let trig_body = match card.definition.svars.get(&trigger_svar_name) {
+                        Some(b) => b.clone(),
+                        None => continue,
+                    };
+                    // "Mode$ Phase | Phase$ Upkeep | ValidPlayer$ You | OneOff$ True | Execute$ DBScry"
+                    // Parse by splitting on '|' then each fragment on '$'.
+                    let mut trig_params: std::collections::HashMap<&str, &str> = std::collections::HashMap::new();
+                    for fragment in trig_body.split('|') {
+                        let fragment = fragment.trim();
+                        if let Some((k, v)) = fragment.split_once('$') {
+                            trig_params.insert(k.trim(), v.trim());
+                        }
+                    }
+                    // Only handle Phase=Upkeep, ValidPlayer=You patterns.
+                    if trig_params.get("Mode").copied() != Some("Phase") {
+                        continue;
+                    }
+                    if trig_params.get("Phase").copied() != Some("Upkeep") {
+                        continue;
+                    }
+                    match trig_params.get("Execute").copied() {
+                        Some(s) => s.to_string(),
+                        None => continue,
+                    }
+                };
+
+                // Parse the Execute SVar (e.g. "DBScry") to find the scry count.
+                let scry_count: u8 = {
+                    let exec_body = match card.definition.svars.get(&execute_svar_name) {
+                        Some(b) => b.clone(),
+                        None => continue,
+                    };
+                    // "DB$ Scry | ScryNum$ 3"
+                    let params = match AbilityParams::parse_svar_body(&exec_body) {
+                        Some(p) => p,
+                        None => continue,
+                    };
+                    if params.api_type != crate::loader::ability_parser::ApiType::Scry {
+                        continue;
+                    }
+                    match params.get_u8("ScryNum") {
+                        Ok(n) => n,
+                        Err(_) => continue,
+                    }
+                };
+
+                reveals.push((card_id, player_id, scry_count));
+            }
+        }
+
+        // Register one delayed trigger per reveal.
+        for (card_id, player_id, scry_count) in reveals {
+            let card_name = self
+                .cards
+                .try_get(card_id)
+                .map(|c| c.name.to_string())
+                .unwrap_or_else(|| "Unknown".to_string());
+
+            self.logger.gamelog(&format!(
+                "{} reveals {} from opening hand (will scry {} on first upkeep)",
+                self.get_player(player_id).map(|p| p.name.as_str()).unwrap_or("Player"),
+                card_name,
+                scry_count,
+            ));
+
+            let trigger = DelayedTrigger::new(
+                crate::core::DelayedTriggerId::new(0), // id assigned by store.add()
+                card_id,
+                card_id,
+                player_id,
+                DelayedTriggerCondition::Phase {
+                    phases: smallvec![TriggerPhase::Upkeep],
+                    whose_turn: crate::core::delayed_trigger::TurnOwner::You,
+                },
+                DelayedEffect::ExecuteEffect {
+                    effect: Box::new(crate::core::Effect::Scry {
+                        player: player_id,
+                        count: scry_count,
+                    }),
+                },
+            );
+
+            let prior_log_size = self.logger.log_count();
+            let trigger_id = self.delayed_triggers.add(trigger);
+            self.undo_log.log(
+                crate::undo::GameAction::RegisterDelayedTrigger { id: trigger_id },
+                prior_log_size,
+            );
+
+            log::debug!(
+                target: "opening_hand",
+                "Registered opening-hand upkeep-scry delayed trigger #{} for {} (card: {}, scry {})",
+                trigger_id.as_u32(),
+                player_id,
+                card_name,
+                scry_count,
+            );
+        }
+
+        Ok(())
+    }
+
     /// Fire a delayed trigger, executing its effect.
     ///
     /// # Errors
@@ -4237,6 +4430,25 @@ impl GameState {
                             }
                         }
                     }
+                    crate::core::Effect::Scry { player, count } => {
+                        // Sphinx of Foresight: "scry 3 at the beginning of your first upkeep"
+                        // from opening-hand reveal. The delayed trigger was registered at game
+                        // start with a concrete player ID and count. Use the GameState-level
+                        // scry path (heuristic: keep all on top) since no controller reference
+                        // is available at delayed-trigger-fire time.
+                        let player_name = self.get_player(player).map(|p| p.name.to_string()).ok();
+                        self.logger.gamelog(&format!(
+                            "{} scrys {} (opening-hand reveal trigger)",
+                            player_name.as_deref().unwrap_or("Player"),
+                            count,
+                        ));
+                        // Inline the scry: snapshot top N, keep-all-on-top heuristic, apply.
+                        let revealed = self.scry_snapshot_top_n(player, count);
+                        if !revealed.is_empty() {
+                            let decision = crate::game::ScryDecision::keep_all_on_top(&revealed);
+                            self.scry_apply_decision(player, &revealed, &decision)?;
+                        }
+                    }
                     crate::core::Effect::DealDamage { .. }
                     | crate::core::Effect::DealDamageDivided { .. }
                     | crate::core::Effect::DealDamageDynamic { .. }
@@ -4257,7 +4469,6 @@ impl GameState {
                     | crate::core::Effect::AnimateAll { .. }
                     | crate::core::Effect::Mill { .. }
                     | crate::core::Effect::DrainMana { .. }
-                    | crate::core::Effect::Scry { .. }
                     | crate::core::Effect::Surveil { .. }
                     | crate::core::Effect::CounterSpell { .. }
                     | crate::core::Effect::PutCounter { .. }

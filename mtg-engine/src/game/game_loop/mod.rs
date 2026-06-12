@@ -1250,6 +1250,13 @@ impl<'a> GameLoop<'a> {
                 }
             }
 
+            // Process opening-hand reveals (e.g. Sphinx of Foresight's
+            // K:MayEffectFromOpeningHand:RevealCard → scry 3 on first upkeep).
+            // Runs after hands are fully set up, regardless of which setup path
+            // was taken above, before Turn 1 begins.
+            let player_ids: [PlayerId; 2] = [player1_id, player2_id];
+            self.game.process_opening_hand_reveals(&player_ids)?;
+
             // Log the start of Turn 1 (for fresh games only)
             self.emit_turn_one_header();
         }

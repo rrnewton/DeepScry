@@ -534,8 +534,19 @@ impl<'a> GameLoop<'a> {
         controller1: &mut dyn PlayerController,
         controller2: &mut dyn PlayerController,
     ) -> Result<Option<GameResult>> {
-        // Check for beginning of upkeep triggers
+        // Check for beginning of upkeep triggers (permanent triggers on battlefield)
         self.check_phase_triggers(TriggerEvent::BeginningOfUpkeep)?;
+
+        // Fire `Mode$ Phase | Phase$ Upkeep` delayed triggers registered for the upkeep
+        // (e.g. Sphinx of Foresight's "scry 3 on your first upkeep" from opening-hand reveal).
+        // Mirrors the end-step and main-phase delayed-trigger firing sites: the call REMOVES
+        // + undo-logs each fired trigger so it fires exactly once per forward pass and is
+        // restored on rewind for replay (same net-determinism contract as mtg-519/mtg-610).
+        {
+            let active_player = self.game.turn.active_player;
+            self.game
+                .check_delayed_triggers_on_phase(crate::core::TriggerPhase::Upkeep, active_player)?;
+        }
 
         // Pass priority
         if let Some(result) = self.priority_round(controller1, controller2)? {
