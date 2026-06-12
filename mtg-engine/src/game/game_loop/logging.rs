@@ -714,6 +714,12 @@ impl<'a> GameLoop<'a> {
                 keywords_granted,
                 ..
             } => {
+                // `Defined$ Remembered` sentinel: the actual card(s) are in
+                // remembered_cards and will be logged inside execute_set_base_power_toughness.
+                // Skip top-level logging here to avoid "Unknown (4294967291)" noise.
+                if target.is_remembered_card() {
+                    return;
+                }
                 let target_name = self
                     .game
                     .cards
@@ -1222,6 +1228,7 @@ impl<'a> GameLoop<'a> {
             | Effect::RevealCardsFromHand { .. }  // reveal logged inside execute_effect
             | Effect::ReturnGraveyardCardToHand { .. }
             | Effect::ReturnGraveyardCardToZone { .. }
+            | Effect::PutCreatureFromHandOnBattlefield { .. }
             | Effect::ReturnSelfAsEnchantment { .. } => {
                 // Individual card-return log lines are emitted inside execute_effect.
                 // Nothing to surface at the top level.

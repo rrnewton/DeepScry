@@ -3667,6 +3667,7 @@ async fn test_mishras_factory_animates_and_is_eligible_attacker() -> Result<()> 
         types_added: smallvec::smallvec![CardType::Artifact, CardType::Creature],
         subtypes_added: smallvec::smallvec![Subtype::new("Assembly-Worker")],
         remove_creature_subtypes: true,
+        at_eot: None,
     };
     game.execute_effect(&animate)?;
 
@@ -3815,6 +3816,7 @@ async fn test_mishras_factory_pump_ability_is_offered() -> Result<()> {
         types_added: smallvec::smallvec![CardType::Artifact, CardType::Creature],
         subtypes_added: smallvec::smallvec![Subtype::new("Assembly-Worker")],
         remove_creature_subtypes: true,
+        at_eot: None,
     };
     game.execute_effect(&animate)?;
 

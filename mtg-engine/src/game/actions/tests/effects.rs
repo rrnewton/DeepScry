@@ -9077,4 +9077,271 @@ mod tests {
              (before={lib_before_no_orb}, after={lib_after_no_orb})"
         );
     }
+
+    // ── 2005 Wave-2 fixes: graveyard reanimation ──────────────────────────────
+
+    /// Card compat: Goryo's Vengeance — Wave-2 fix.
+    ///
+    /// Script (SP$ ChangeZone):
+    ///   A:SP$ ChangeZone | Origin$ Graveyard | Destination$ Battlefield
+    ///   | ValidTgts$ Creature.Legendary+YouCtrl | GainControl$ True
+    ///   | RememberChanged$ True | SubAbility$ DBPump
+    ///   SVar:DBPump:DB$ Animate | Keywords$ Haste | Defined$ Remembered
+    ///   | Duration$ Permanent | AtEOT$ Exile | SubAbility$ DBCleanup
+    ///
+    /// Two assertions:
+    /// 1. The SP$ ChangeZone maps to `ReturnGraveyardCardToZone` with
+    ///    `remember_changed: true` (so the reanimated card enters remembered_cards).
+    /// 2. The DBPump Animate maps to `SetBasePowerToughness` with
+    ///    `target = CardId::remembered_card()` and `at_eot = Some(AtEotAction::Exile)`.
+    ///
+    /// MTG CR 400.7 / CR 603.7a: the exile is a delayed triggered ability that
+    /// fires at the beginning of the next end step.
+    #[test]
+    fn test_card_compat_goryos_vengeance_wave2() {
+        use crate::core::{
+            effects::{AtEotAction, Effect},
+            CardId,
+        };
+        use crate::zones::Zone;
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("../cardsfolder/g/goryos_vengeance.txt");
+        if !path.exists() {
+            eprintln!("Skipping: cardsfolder not present at {:?}", path);
+            return;
+        }
+        let def = crate::loader::CardLoader::load_from_file(&path).expect("Goryo's Vengeance should load");
+        assert_eq!(def.name.as_str(), "Goryo's Vengeance");
+
+        let card = def.instantiate(CardId::new(1), crate::core::PlayerId::new(0));
+
+        // 1. SP$ ChangeZone → ReturnGraveyardCardToZone with remember_changed: true.
+        let gy_effect = card
+            .effects
+            .iter()
+            .find(|e| {
+                matches!(
+                    e,
+                    Effect::ReturnGraveyardCardToZone {
+                        destination: Zone::Battlefield,
+                        ..
+                    }
+                )
+            })
+            .expect(
+                "Goryo's Vengeance must have a ReturnGraveyardCardToZone (Battlefield) effect. \
+                 If this fails the converter is not mapping Origin$ Graveyard | Destination$ \
+                 Battlefield | ValidTgts$ to ReturnGraveyardCardToZone.",
+            );
+        if let Effect::ReturnGraveyardCardToZone {
+            destination,
+            gain_control,
+            remember_changed,
+            ..
+        } = gy_effect
+        {
+            assert_eq!(*destination, Zone::Battlefield);
+            assert!(*gain_control, "Goryo's Vengeance: GainControl$ True required");
+            assert!(
+                *remember_changed,
+                "Goryo's Vengeance: RememberChanged$ True required so DBPump can find the \
+                 reanimated card via Defined$ Remembered"
+            );
+        } else {
+            panic!("Expected ReturnGraveyardCardToZone");
+        }
+
+        // 2. DBPump Animate → SetBasePowerToughness with remembered_card target + AtEOT Exile.
+        let animate_effect = card
+            .effects
+            .iter()
+            .find(|e| {
+                matches!(
+                    e,
+                    Effect::SetBasePowerToughness { target, at_eot: Some(AtEotAction::Exile), .. }
+                    if target.is_remembered_card()
+                )
+            })
+            .expect(
+                "Goryo's Vengeance DBPump must map to SetBasePowerToughness with \
+                 target=remembered_card() and at_eot=Some(Exile). If this fails: \
+                 (a) Animate Defined$ Remembered not using remembered_card() sentinel, or \
+                 (b) AtEOT$ Exile not parsed.",
+            );
+        if let Effect::SetBasePowerToughness { at_eot, .. } = animate_effect {
+            assert_eq!(
+                *at_eot,
+                Some(AtEotAction::Exile),
+                "DBPump must have AtEOT$ Exile (CR 603.7a delayed trigger)"
+            );
+        }
+    }
+
+    /// Card compat: Sneak Attack — Wave-2 fix.
+    ///
+    /// Script (AB$ ChangeZone from Enchantment on battlefield):
+    ///   A:AB$ ChangeZone | Origin$ Hand | Destination$ Battlefield
+    ///   | ChangeType$ Creature.YouCtrl | RememberChanged$ True
+    ///   | SubAbility$ DBPump
+    ///   SVar:DBPump:DB$ Animate | Keywords$ Haste | Defined$ Remembered
+    ///   | Duration$ Permanent | AtEOT$ Sacrifice | SubAbility$ DBCleanup
+    ///
+    /// Assertions:
+    /// 1. The AB$ ChangeZone maps to `PutCreatureFromHandOnBattlefield` with
+    ///    `remember_changed: true` (found in `card.activated_abilities[*].effects`,
+    ///    NOT `card.effects` — `A:AB$` lines go to activated abilities).
+    /// 2. The DBPump Animate maps to `SetBasePowerToughness` with
+    ///    `target = CardId::remembered_card()` and `at_eot = Some(AtEotAction::Sacrifice)`.
+    #[test]
+    fn test_card_compat_sneak_attack_wave2() {
+        use crate::core::{
+            effects::{AtEotAction, Effect},
+            CardId,
+        };
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("../cardsfolder/s/sneak_attack.txt");
+        if !path.exists() {
+            eprintln!("Skipping: cardsfolder not present at {:?}", path);
+            return;
+        }
+        let def = crate::loader::CardLoader::load_from_file(&path).expect("Sneak Attack should load");
+        assert_eq!(def.name.as_str(), "Sneak Attack");
+
+        let card = def.instantiate(CardId::new(1), crate::core::PlayerId::new(0));
+
+        // Sneak Attack is `A:AB$` — its effects live in `activated_abilities`, not `effects`.
+        // Collect all effects from all activated abilities for the search below.
+        let all_activated_effects: Vec<&Effect> = card
+            .activated_abilities
+            .iter()
+            .flat_map(|ab| ab.effects.iter())
+            .collect();
+
+        // 1. AB$ ChangeZone Origin$ Hand → PutCreatureFromHandOnBattlefield.
+        let put_effect = all_activated_effects
+            .iter()
+            .copied()
+            .find(|e| {
+                matches!(
+                    e,
+                    Effect::PutCreatureFromHandOnBattlefield {
+                        remember_changed: true,
+                        ..
+                    }
+                )
+            })
+            .expect(
+                "Sneak Attack must have PutCreatureFromHandOnBattlefield with remember_changed: true \
+                 in its activated ability effects. If this fails the converter does not handle \
+                 Origin$ Hand | Destination$ Battlefield | ChangeType$ Creature.YouCtrl | \
+                 RememberChanged$ True for A:AB$ lines.",
+            );
+        if let Effect::PutCreatureFromHandOnBattlefield {
+            remember_changed,
+            type_filter,
+            ..
+        } = put_effect
+        {
+            assert!(*remember_changed);
+            assert!(
+                type_filter.contains("Creature"),
+                "type_filter must include Creature (got {:?})",
+                type_filter
+            );
+        }
+
+        // 2. DBPump → SetBasePowerToughness with remembered_card target + AtEOT Sacrifice.
+        let animate_effect = all_activated_effects
+            .iter()
+            .copied()
+            .find(|e| {
+                matches!(
+                    e,
+                    Effect::SetBasePowerToughness { target, at_eot: Some(AtEotAction::Sacrifice), .. }
+                    if target.is_remembered_card()
+                )
+            })
+            .expect(
+                "Sneak Attack DBPump must map to SetBasePowerToughness with \
+                 target=remembered_card() and at_eot=Some(Sacrifice). \
+                 If this fails AtEOT$ Sacrifice is not parsed.",
+            );
+        if let Effect::SetBasePowerToughness { at_eot, .. } = animate_effect {
+            assert_eq!(
+                *at_eot,
+                Some(AtEotAction::Sacrifice),
+                "Sneak Attack DBPump must have AtEOT$ Sacrifice"
+            );
+        }
+    }
+
+    /// Card compat: Debtors' Knell — Wave-2 fix.
+    ///
+    /// Script (upkeep trigger):
+    ///   T:Mode$ Phase | Phase$ Upkeep | ValidPlayer$ You | TriggerZones$ Battlefield
+    ///   | Execute$ TrigChange
+    ///   SVar:TrigChange:DB$ ChangeZone | Origin$ Graveyard | Destination$ Battlefield
+    ///   | GainControl$ True | ChangeNum$ 1 | Mandatory$ True | ValidTgts$ Creature
+    ///
+    /// Before the fix, `ChangeNum$ 1` caused this to miss all converter arms
+    /// (the Graveyard→non-Hand arm had `!params.contains_key("ChangeNum")`), so the
+    /// upkeep trigger fired but reanimated nothing. The fix relaxes the guard to
+    /// allow `ChangeNum$ 1` (one card = identical semantics).
+    ///
+    /// Note: `T:Mode$ Phase` lines produce **triggers**, not spell effects.
+    /// The effects are in `card.triggers[*].effects`, NOT `card.effects`.
+    ///
+    /// Assertion: TrigChange SVar maps to `ReturnGraveyardCardToZone` with
+    /// `destination: Battlefield` and `gain_control: true`.
+    #[test]
+    fn test_card_compat_debtors_knell_wave2() {
+        use crate::core::effects::Effect;
+        use crate::zones::Zone;
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("../cardsfolder/d/debtors_knell.txt");
+        if !path.exists() {
+            eprintln!("Skipping: cardsfolder not present at {:?}", path);
+            return;
+        }
+        let def = crate::loader::CardLoader::load_from_file(&path).expect("Debtors' Knell should load");
+        assert_eq!(def.name.as_str(), "Debtors' Knell");
+
+        let card = def.instantiate(crate::core::CardId::new(1), crate::core::PlayerId::new(0));
+
+        // Debtors' Knell is `T:Mode$ Phase` — its effects live in `triggers`, not `effects`.
+        // Collect all effects from all triggers for the search below.
+        let all_trigger_effects: Vec<&Effect> = card.triggers.iter().flat_map(|t| t.effects.iter()).collect();
+
+        // TrigChange must produce ReturnGraveyardCardToZone → Battlefield.
+        let gy_effect = all_trigger_effects
+            .iter()
+            .copied()
+            .find(|e| {
+                matches!(
+                    e,
+                    Effect::ReturnGraveyardCardToZone {
+                        destination: Zone::Battlefield,
+                        gain_control: true,
+                        ..
+                    }
+                )
+            })
+            .expect(
+                "Debtors' Knell TrigChange must map to ReturnGraveyardCardToZone (Battlefield, \
+                 gain_control) in its trigger effects. If this fails the ChangeNum$ 1 guard in \
+                 the converter is still blocking this card (the pre-Wave-2 bug).",
+            );
+        if let Effect::ReturnGraveyardCardToZone {
+            destination,
+            gain_control,
+            ..
+        } = gy_effect
+        {
+            assert_eq!(*destination, Zone::Battlefield);
+            assert!(*gain_control);
+        }
+    }
 }

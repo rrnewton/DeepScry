@@ -634,13 +634,19 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
             // Targeted graveyard → non-Hand zone (Reclaim: gy→library;
             // Goryo's Vengeance / Debtors' Knell: gy→battlefield).
             // `Origin$ Graveyard | Destination$ <Library|Battlefield|…> |
-            //  ValidTgts$ <filter>` without ChangeNum$.
+            //  ValidTgts$ <filter>` without ChangeNum$ (or ChangeNum$ 1,
+            //  which is still "pick one card").
             // GainControl$ True means reanimation (card enters under the
             // caster's control). LibraryPosition$ 0 = top, 1 = bottom.
+            // RememberChanged$ True → push moved card onto remembered_cards so
+            // a chained Animate (Goryo's Vengeance DBPump) can target it.
             else if params.get("Origin") == Some("Graveyard")
                 && params.get("ValidTgts").is_some()
                 && params.get("Defined").is_none()
-                && !params.contains_key("ChangeNum")
+                && params.get("Destination") != Some("Hand")
+                // ChangeNum$ absent or explicitly 1 (= "pick one").
+                // Multi-card returns use ReturnCardsFromGraveyardToHand path.
+                && params.get("ChangeNum").is_none_or(|v| v == "1")
             {
                 let destination = params
                     .get("Destination")
@@ -655,12 +661,40 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
                     .join(",");
                 let gain_control = params.get("GainControl") == Some("True");
                 let library_position: u8 = params.get("LibraryPosition").and_then(|v| v.parse().ok()).unwrap_or(0);
+                let remember_changed = params.get("RememberChanged") == Some("True");
                 Some(Effect::ReturnGraveyardCardToZone {
                     player: PlayerId::placeholder(),
                     type_filter,
                     destination,
                     gain_control,
                     library_position,
+                    remember_changed,
+                })
+            }
+            // Sneak Attack / put-from-hand-onto-battlefield:
+            //   A:AB$ ChangeZone | Origin$ Hand | Destination$ Battlefield
+            //   | ChangeType$ Creature.YouCtrl | RememberChanged$ True
+            // The card to move is chosen from the controller's hand by
+            // type/filter; it is NOT the ability source (the enchantment).
+            // `RememberChanged$ True` pushes the moved card onto
+            // remembered_cards so chained Animate (DBPump) targets it.
+            else if params.get("Origin") == Some("Hand")
+                && params.get("Destination") == Some("Battlefield")
+                && params.contains_key("ChangeType")
+                && params.get("Defined").is_none()
+            {
+                let change_type = params.get("ChangeType").unwrap_or("Creature");
+                // Strip ".YouCtrl" / ownership qualifiers — keep base type.
+                let type_filter: String = change_type
+                    .split(',')
+                    .filter_map(|part| part.split('.').next())
+                    .collect::<Vec<_>>()
+                    .join(",");
+                let remember_changed = params.get("RememberChanged") == Some("True");
+                Some(Effect::PutCreatureFromHandOnBattlefield {
+                    player: PlayerId::placeholder(),
+                    type_filter,
+                    remember_changed,
                 })
             }
             // Put N cards from the CONTROLLER's own hand on top of their library
@@ -1021,8 +1055,28 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
                 return None;
             }
 
+            // `Defined$ Remembered` means the target is the card in
+            // `remembered_cards` (pushed there by the preceding
+            // RememberChanged$ True zone-change). Use the dedicated sentinel
+            // so `execute_set_base_power_toughness` can expand it.
+            let target = if params.get("Defined") == Some("Remembered") {
+                CardId::remembered_card()
+            } else {
+                CardId::new(0) // Placeholder - filled in at activation time
+            };
+
+            // `AtEOT$ Sacrifice` / `AtEOT$ Exile` — schedule a delayed trigger
+            // that fires at the beginning of the next end step (CR 603.7a).
+            // Used by Sneak Attack (AtEOT$ Sacrifice) and Goryo's Vengeance
+            // (AtEOT$ Exile).
+            let at_eot = match params.get("AtEOT") {
+                Some("Sacrifice") => Some(crate::core::effects::AtEotAction::Sacrifice),
+                Some("Exile") => Some(crate::core::effects::AtEotAction::Exile),
+                _ => None,
+            };
+
             Some(Effect::SetBasePowerToughness {
-                target: CardId::new(0), // Placeholder - filled in at activation time
+                target,
                 power,
                 toughness,
                 keywords_granted,
@@ -1030,6 +1084,7 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
                 types_added,
                 subtypes_added,
                 remove_creature_subtypes,
+                at_eot,
             })
         }
 

@@ -2172,6 +2172,7 @@ impl<'a> GameLoop<'a> {
                                                 types_added,
                                                 subtypes_added,
                                                 remove_creature_subtypes,
+                                                at_eot,
                                             } if target.is_placeholder() && chosen_targets_vec.is_empty() => {
                                                 crate::core::Effect::SetBasePowerToughness {
                                                     target: card_id, // Target self (the source of the ability)
@@ -2182,6 +2183,7 @@ impl<'a> GameLoop<'a> {
                                                     types_added: types_added.clone(),
                                                     subtypes_added: subtypes_added.clone(),
                                                     remove_creature_subtypes: *remove_creature_subtypes,
+                                                    at_eot: *at_eot,
                                                 }
                                             }
                                             // Targeted SetBasePowerToughness: "Target creature has base P/T X/Y"
@@ -2194,6 +2196,7 @@ impl<'a> GameLoop<'a> {
                                                 types_added,
                                                 subtypes_added,
                                                 remove_creature_subtypes,
+                                                at_eot,
                                             } if target.is_placeholder() && !chosen_targets_vec.is_empty() => {
                                                 crate::core::Effect::SetBasePowerToughness {
                                                     target: chosen_targets_vec[0],
@@ -2204,6 +2207,7 @@ impl<'a> GameLoop<'a> {
                                                     types_added: types_added.clone(),
                                                     subtypes_added: subtypes_added.clone(),
                                                     remove_creature_subtypes: *remove_creature_subtypes,
+                                                    at_eot: *at_eot,
                                                 }
                                             }
                                             crate::core::Effect::AttachEquipment {

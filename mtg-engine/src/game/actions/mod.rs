@@ -250,6 +250,7 @@ fn expand_all_players_effect(effect: &Effect, player_ids: &[PlayerId]) -> smallv
         | Effect::ReturnCardsFromGraveyardToHand { .. }
         | Effect::ReturnGraveyardCardToHand { .. }
         | Effect::ReturnGraveyardCardToZone { .. }
+        | Effect::PutCreatureFromHandOnBattlefield { .. }
         | Effect::ReturnSelfAsEnchantment { .. }
         | Effect::PreventAllCombatDamageThisTurn { .. }
         | Effect::ConditionalSelfCounter { .. }
@@ -391,6 +392,7 @@ fn expand_all_players_effect(effect: &Effect, player_ids: &[PlayerId]) -> smallv
             | Effect::ReturnCardsFromGraveyardToHand { .. }
             | Effect::ReturnGraveyardCardToHand { .. }
             | Effect::ReturnGraveyardCardToZone { .. }
+            | Effect::PutCreatureFromHandOnBattlefield { .. }
             | Effect::ReturnSelfAsEnchantment { .. }
             | Effect::PreventAllCombatDamageThisTurn { .. }
             | Effect::ConditionalSelfCounter { .. }
@@ -3894,12 +3896,25 @@ impl GameState {
                 destination,
                 gain_control,
                 library_position,
+                remember_changed,
             } if player.is_placeholder() => Effect::ReturnGraveyardCardToZone {
                 player: card_owner,
                 type_filter: type_filter.clone(),
                 destination: *destination,
                 gain_control: *gain_control,
                 library_position: *library_position,
+                remember_changed: *remember_changed,
+            },
+            // "Put a creature from your hand onto the battlefield" (Sneak Attack).
+            // Resolve player placeholder to the ability's controller.
+            Effect::PutCreatureFromHandOnBattlefield {
+                player,
+                type_filter,
+                remember_changed,
+            } if player.is_placeholder() => Effect::PutCreatureFromHandOnBattlefield {
+                player: card_owner,
+                type_filter: type_filter.clone(),
+                remember_changed: *remember_changed,
             },
             // Maze of Ith's "prevent all combat damage": the target creature is the
             // same creature targeted by the preceding UntapPermanent effect in the
@@ -4748,13 +4763,21 @@ impl GameState {
                 destination,
                 gain_control,
                 library_position,
+                remember_changed,
             } => self.execute_return_graveyard_card_to_zone(
                 *player,
                 type_filter,
                 *destination,
                 *gain_control,
                 *library_position,
+                *remember_changed,
             )?,
+
+            Effect::PutCreatureFromHandOnBattlefield {
+                player,
+                type_filter,
+                remember_changed,
+            } => self.execute_put_creature_from_hand_on_battlefield(*player, type_filter, *remember_changed)?,
 
             Effect::ReturnSelfAsEnchantment { source } => self.execute_return_self_as_enchantment(*source)?,
 
@@ -4772,6 +4795,7 @@ impl GameState {
                 types_added,
                 subtypes_added,
                 remove_creature_subtypes,
+                at_eot,
             } => self.execute_set_base_power_toughness(
                 *target,
                 *power,
@@ -4781,6 +4805,7 @@ impl GameState {
                 types_added,
                 subtypes_added,
                 *remove_creature_subtypes,
+                *at_eot,
             )?,
             Effect::SearchLibrary {
                 player,

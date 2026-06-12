@@ -1143,6 +1143,7 @@ impl GameState {
         destination: Zone,
         gain_control: bool,
         library_position: u8,
+        remember_changed: bool,
     ) -> Result<()> {
         // Collect all player IDs so we can search across graveyards when needed.
         let all_players: smallvec::SmallVec<[PlayerId; 4]> = self.players.iter().map(|p| p.id).collect();
@@ -1255,6 +1256,13 @@ impl GameState {
             }
         }
 
+        // `RememberChanged$ True` — push the moved card onto remembered_cards so
+        // chained `Defined$ Remembered` sub-abilities (e.g. Goryo's Vengeance
+        // DBPump that grants Haste then schedules EOT exile) can find it.
+        if remember_changed {
+            self.remembered_cards.push(chosen);
+        }
+
         let dest_label = match destination {
             Zone::Library => {
                 if library_position == 0 {
@@ -1272,6 +1280,116 @@ impl GameState {
         self.logger.gamelog(&format!(
             "{} returns {} from graveyard to {}",
             player_name, card_name, dest_label
+        ));
+        Ok(())
+    }
+
+    /// [`Effect::PutCreatureFromHandOnBattlefield`]: put a creature card from the
+    /// controller's hand directly onto the battlefield (without paying its mana
+    /// cost). Used by Sneak Attack:
+    ///   `A:AB$ ChangeZone | Origin$ Hand | Destination$ Battlefield
+    ///    | ChangeType$ Creature.YouCtrl | RememberChanged$ True`
+    ///
+    /// The AI picks the highest-power creature in hand (deterministic across
+    /// server/clients — hand is private but the decision is information-
+    /// independent: the heuristic scores by power/CMC, not by hidden opponent
+    /// information). When `remember_changed` the moved card is pushed onto
+    /// `remembered_cards` so a chained `Animate | Defined$ Remembered`
+    /// (e.g. Sneak Attack DBPump) can apply haste + schedule an EOT sacrifice.
+    ///
+    /// CR 400.7 / CR 701.3: the card changes zones from Hand → Battlefield
+    /// under the ability controller's ownership; the entry is not a cast.
+    pub(in crate::game::actions) fn execute_put_creature_from_hand_on_battlefield(
+        &mut self,
+        player: PlayerId,
+        type_filter: &str,
+        remember_changed: bool,
+    ) -> Result<()> {
+        let filter_types: Vec<&str> = if type_filter.is_empty() {
+            vec![]
+        } else {
+            type_filter.split(',').map(|s| s.trim()).collect()
+        };
+
+        let type_matches = |card: &crate::core::Card| -> bool {
+            if filter_types.is_empty() {
+                return true;
+            }
+            filter_types.iter().any(|&t| match t {
+                "Card" => true,
+                "Creature" => card.is_creature(),
+                "Instant" => card.is_instant(),
+                "Sorcery" => card.is_sorcery(),
+                "Land" => card.is_land(),
+                "Artifact" => card.is_artifact(),
+                "Enchantment" => card.is_enchantment(),
+                other => card.subtypes.iter().any(|st| st.as_str().eq_ignore_ascii_case(other)),
+            })
+        };
+
+        // Collect candidates from the controller's hand. Score: power+toughness
+        // for creatures, CMC otherwise. Deterministic tiebreak by CardId.
+        let hand_cards: smallvec::SmallVec<[CardId; 8]> = self
+            .get_player_zones(player)
+            .map(|z| z.hand.cards.iter().copied().collect())
+            .unwrap_or_default();
+
+        let mut candidates: smallvec::SmallVec<[(CardId, i32); 8]> = smallvec::SmallVec::new();
+        for card_id in hand_cards {
+            if let Some(card) = self.cards.try_get(card_id) {
+                if type_matches(card) {
+                    let score = if card.is_creature() {
+                        i32::from(card.current_power()) + i32::from(card.current_toughness())
+                    } else {
+                        i32::from(card.mana_cost.cmc())
+                    };
+                    candidates.push((card_id, score));
+                }
+            }
+        }
+
+        if candidates.is_empty() {
+            let player_name = self
+                .get_player(player)
+                .ok()
+                .map(|p| p.name.as_str())
+                .unwrap_or("?")
+                .to_string();
+            self.logger.gamelog(&format!(
+                "{} has no matching {} in hand to put onto the battlefield",
+                player_name,
+                if type_filter.is_empty() { "card" } else { type_filter }
+            ));
+            return Ok(());
+        }
+
+        // Pick: highest score, then lowest CardId for determinism.
+        candidates.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.as_u32().cmp(&b.0.as_u32())));
+        let (chosen, _) = candidates[0];
+
+        let card_name = self
+            .cards
+            .try_get(chosen)
+            .map(|c| c.name.as_str())
+            .unwrap_or("?")
+            .to_string();
+        let player_name = self
+            .get_player(player)
+            .ok()
+            .map(|p| p.name.as_str())
+            .unwrap_or("?")
+            .to_string();
+
+        // Move hand → battlefield under the controller's ownership (CR 701.3).
+        self.move_card(chosen, Zone::Hand, Zone::Battlefield, player)?;
+
+        if remember_changed {
+            self.remembered_cards.push(chosen);
+        }
+
+        self.logger.gamelog(&format!(
+            "{} puts {} onto the battlefield from hand",
+            player_name, card_name
         ));
         Ok(())
     }

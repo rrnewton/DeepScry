@@ -24,6 +24,22 @@ pub enum CasterRestriction {
     Opponent,
 }
 
+/// Action to schedule on the target at the beginning of the next end step.
+///
+/// Used by Animate effects (`AtEOT$ Sacrifice` / `AtEOT$ Exile`) to implement
+/// "that creature gains haste; sacrifice/exile it at the beginning of the next
+/// end step" — e.g. Sneak Attack and Goryo's Vengeance (CR 603.7a delayed
+/// triggered ability fires at the beginning of the next end step).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AtEotAction {
+    /// Sacrifice the target at the beginning of the next end step.
+    /// Used by Sneak Attack: `AtEOT$ Sacrifice`.
+    Sacrifice,
+    /// Exile the target at the beginning of the next end step.
+    /// Used by Goryo's Vengeance: `AtEOT$ Exile`.
+    Exile,
+}
+
 /// Target reference for effects
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TargetRef {
@@ -2094,6 +2110,33 @@ pub enum Effect {
         /// `0` = top (Reclaim puts the card on TOP of library, CR 401.4),
         /// `1` = bottom.  Ignored for non-Library destinations.
         library_position: u8,
+        /// Whether to push the moved card onto `remembered_cards` so chained
+        /// `Defined$ Remembered` sub-abilities (e.g. Goryo's Vengeance DBPump
+        /// haste grant) can find it. Corresponds to `RememberChanged$ True`.
+        #[serde(default)]
+        remember_changed: bool,
+    },
+
+    /// Put a creature card of matching type from the controller's hand onto the
+    /// battlefield directly (without paying mana cost).
+    ///
+    /// Used by Sneak Attack: `A:AB$ ChangeZone | Origin$ Hand | Destination$
+    /// Battlefield | ChangeType$ Creature.YouCtrl | RememberChanged$ True`.
+    /// The moved card is pushed onto `remembered_cards` when `remember_changed`
+    /// so the chained Animate sub-ability (`Defined$ Remembered`) can target it.
+    ///
+    /// CR 701.3: "put onto the battlefield" means the controller of the effect
+    /// controls the permanent; ownership stays with the card's owner.
+    PutCreatureFromHandOnBattlefield {
+        /// Controller of the ability (who puts the creature onto the battlefield).
+        /// `PlayerId::placeholder()` until resolved at activation time.
+        player: PlayerId,
+        /// Card type / filter string (e.g. `"Creature"` from `ChangeType$
+        /// Creature.YouCtrl`). Restricts which cards in hand are eligible.
+        type_filter: String,
+        /// Whether to push the moved card onto `remembered_cards`.
+        /// `RememberChanged$ True` → true; default false.
+        remember_changed: bool,
     },
 
     /// Return a card that just died from the graveyard to the battlefield,
@@ -2366,6 +2409,14 @@ pub enum Effect {
         /// the new ones (`RemoveCreatureTypes$ True`).
         #[serde(default)]
         remove_creature_subtypes: bool,
+        /// Optional end-of-turn action on the target (Sneak Attack: sacrifice;
+        /// Goryo's Vengeance: exile). When set, a phase-based delayed trigger
+        /// fires at the beginning of the next end step.
+        ///
+        /// Parsed from `AtEOT$ Sacrifice` / `AtEOT$ Exile` in Animate scripts.
+        /// The delayed trigger targets the same card as the Animate effect.
+        #[serde(default)]
+        at_eot: Option<AtEotAction>,
     },
 
     /// Airbend: Exile a permanent and grant its owner permission to cast it for {2}.
@@ -3114,6 +3165,7 @@ impl Effect {
             | Effect::ClassLevelUp { .. }
             | Effect::ReturnGraveyardCardToHand { .. }
             | Effect::ReturnGraveyardCardToZone { .. }
+            | Effect::PutCreatureFromHandOnBattlefield { .. }
             | Effect::SacrificeSelf { .. }
             | Effect::ReturnSelfAsEnchantment { .. }
             | Effect::CreateEmblem { .. }

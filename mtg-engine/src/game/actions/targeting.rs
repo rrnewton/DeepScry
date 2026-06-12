@@ -706,6 +706,7 @@ impl GameState {
                             | Effect::RevealCardsFromHand { .. }
                             | Effect::ReturnGraveyardCardToHand { .. }
                             | Effect::ReturnGraveyardCardToZone { .. }
+                            | Effect::PutCreatureFromHandOnBattlefield { .. }
                             | Effect::ReturnSelfAsEnchantment { .. }
                             | Effect::PreventAllCombatDamageThisTurn { .. }
                             | Effect::ExileIfWouldDieThisTurn { .. }
@@ -783,6 +784,7 @@ impl GameState {
                 | Effect::RevealCardsFromHand { .. }
                 | Effect::ReturnGraveyardCardToHand { .. }
                 | Effect::ReturnGraveyardCardToZone { .. }
+                | Effect::PutCreatureFromHandOnBattlefield { .. }
                 | Effect::ReturnSelfAsEnchantment { .. }
                 | Effect::PreventAllCombatDamageThisTurn { .. }
                 | Effect::ConditionalSelfCounter { .. }
@@ -813,6 +815,7 @@ impl GameState {
                     // RevealCardsFromHand: controller reveals their own hand cards, no cast-time targeting
                     // ReturnGraveyardCardToHand: AI picks matching card, no cast-time targeting
                     // ReturnGraveyardCardToZone: AI picks matching card, no cast-time targeting
+                    // PutCreatureFromHandOnBattlefield: AI picks creature, no cast-time targeting
                     // ReturnSelfAsEnchantment: death trigger self-return, no cast-time targeting
                     // PreventAllCombatDamageThisTurn: reuses last_resolved_target, no cast-time target
                     // PlayFromGraveyard: targeting via get_valid_targets_for_ability (activated ability path)
@@ -1444,6 +1447,7 @@ impl GameState {
                 | Effect::RevealCardsFromHand { .. }
                 | Effect::ReturnGraveyardCardToHand { .. }
                 | Effect::ReturnGraveyardCardToZone { .. }
+                | Effect::PutCreatureFromHandOnBattlefield { .. }
                 | Effect::ReturnSelfAsEnchantment { .. }
                 | Effect::PreventAllCombatDamageThisTurn { .. }
                 | Effect::ConditionalSelfCounter { .. }
@@ -1864,6 +1868,7 @@ impl GameState {
             | Effect::RevealCardsFromHand { .. }
             | Effect::ReturnGraveyardCardToHand { .. }
             | Effect::ReturnGraveyardCardToZone { .. }
+            | Effect::PutCreatureFromHandOnBattlefield { .. }
             | Effect::ReturnSelfAsEnchantment { .. }
             | Effect::PreventAllCombatDamageThisTurn { .. }
             | Effect::ConditionalSelfCounter { .. }

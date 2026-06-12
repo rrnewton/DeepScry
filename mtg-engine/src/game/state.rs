@@ -5006,6 +5006,7 @@ impl GameState {
                     | crate::core::Effect::RevealCardsFromHand { .. }
                     | crate::core::Effect::ReturnGraveyardCardToHand { .. }
                     | crate::core::Effect::ReturnGraveyardCardToZone { .. }
+                    | crate::core::Effect::PutCreatureFromHandOnBattlefield { .. }
                     | crate::core::Effect::ReturnSelfAsEnchantment { .. }
                     | crate::core::Effect::PreventAllCombatDamageThisTurn { .. }
                     | crate::core::Effect::ConditionalSelfCounter { .. }

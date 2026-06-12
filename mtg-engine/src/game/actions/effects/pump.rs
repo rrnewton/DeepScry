@@ -388,10 +388,40 @@ impl GameState {
         types_added: &[crate::core::CardType],
         subtypes_added: &[crate::core::Subtype],
         remove_creature_subtypes: bool,
+        at_eot: Option<crate::core::effects::AtEotAction>,
     ) -> Result<()> {
         // Skip if target is still placeholder (0) - no valid targets found
         if target.is_placeholder() {
             // Spell fizzles - no valid targets
+            return Ok(());
+        }
+
+        // `Defined$ Remembered` sentinel: run the Animate on every card in
+        // remembered_cards. Most callers have exactly one (Goryo's Vengeance,
+        // Sneak Attack), but the loop handles the general case.
+        if target.is_remembered_card() {
+            // Snapshot remembered_cards to avoid borrow conflict.
+            let remembered: smallvec::SmallVec<[CardId; 4]> = self.remembered_cards.iter().copied().collect();
+            if remembered.is_empty() {
+                log::debug!(
+                    target: "pump",
+                    "SetBasePowerToughness: Defined$ Remembered but remembered_cards is empty, skipping"
+                );
+                return Ok(());
+            }
+            for remembered_target in remembered {
+                self.execute_set_base_power_toughness(
+                    remembered_target,
+                    power,
+                    toughness,
+                    keywords_granted,
+                    keyword_args_granted,
+                    types_added,
+                    subtypes_added,
+                    remove_creature_subtypes,
+                    at_eot,
+                )?;
+            }
             return Ok(());
         }
         // Set temporary base P/T override (until end of turn)
@@ -581,6 +611,68 @@ impl GameState {
                     .gamelog(&format!("{} becomes {}", card_name, type_names.join(" + ")));
             }
         }
+
+        // `AtEOT$ Sacrifice` / `AtEOT$ Exile`: register a delayed trigger that
+        // fires at the beginning of the next end step (any player's, CR 603.7a)
+        // to sacrifice or exile the just-animated target.
+        //
+        // Examples:
+        //   - Sneak Attack: "Sacrifice [the creature] at the beginning of the
+        //     next end step." (AtEOT$ Sacrifice, DelayedEffect::Sacrifice)
+        //   - Goryo's Vengeance: "Exile it at the beginning of the next end
+        //     step." (AtEOT$ Exile, DelayedEffect::ExileCard)
+        //
+        // Rules note (CR 603.7a): the delayed trigger fires "at the beginning
+        // of the next end step" regardless of whose turn it is.
+        if let Some(action) = at_eot {
+            use crate::core::effects::AtEotAction;
+            use crate::core::{
+                DelayedEffect, DelayedTrigger, DelayedTriggerCondition, DelayedTriggerId, TriggerPhase, TurnOwner,
+            };
+
+            let controller = self
+                .current_damage_source
+                .and_then(|src| self.cards.try_get(src))
+                .map(|c| c.controller)
+                .unwrap_or(self.turn.active_player);
+
+            let delayed_effect = match action {
+                AtEotAction::Sacrifice => DelayedEffect::Sacrifice,
+                AtEotAction::Exile => DelayedEffect::ExileCard,
+            };
+
+            let action_label = match action {
+                AtEotAction::Sacrifice => "sacrifice",
+                AtEotAction::Exile => "exile",
+            };
+
+            let trigger = DelayedTrigger::new(
+                DelayedTriggerId::new(0), // assigned by store
+                target,
+                target,
+                controller,
+                DelayedTriggerCondition::Phase {
+                    phases: smallvec::smallvec![TriggerPhase::EndStep],
+                    whose_turn: TurnOwner::Any,
+                },
+                delayed_effect,
+            );
+
+            let prior_log_size = self.logger.log_count();
+            let trigger_id = self.delayed_triggers.add(trigger);
+            self.undo_log.log(
+                crate::undo::GameAction::RegisterDelayedTrigger { id: trigger_id },
+                prior_log_size,
+            );
+
+            self.logger.gamelog(&format!(
+                "{} will be {}d at the beginning of the next end step (delayed trigger {})",
+                card_name,
+                action_label,
+                trigger_id.as_u32()
+            ));
+        }
+
         Ok(())
     }
 }
