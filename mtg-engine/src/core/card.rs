@@ -2058,6 +2058,24 @@ impl Card {
         true
     }
 
+    /// Grant a complex (parameterized) keyword (e.g., `Landwalk:Forest`) until end of turn.
+    ///
+    /// Uses `insert_complex` so both the keyword bit AND its parameter (land type,
+    /// protection color, etc.) are stored. The tracking set records the plain
+    /// `Keyword` bit for cleanup (removing the bit via `KeywordSet::remove` also
+    /// removes the associated `KeywordArgs` entry).
+    ///
+    /// Returns `true` if the keyword was newly added, `false` if already present.
+    pub fn grant_keyword_args_until_eot(&mut self, args: &crate::core::KeywordArgs) -> bool {
+        let keyword = args.keyword();
+        if self.keywords.contains(keyword) {
+            return false;
+        }
+        self.keywords.insert_complex(args.clone());
+        self.temp_keywords_until_eot.insert(keyword);
+        true
+    }
+
     /// Remove all until-end-of-turn granted keywords from the live keyword set
     /// and clear the tracking set. Called from the forward end-of-turn cleanup
     /// (`GameState::cleanup_temporary_effects`) and the rewind per-turn-transient

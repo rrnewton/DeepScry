@@ -883,6 +883,7 @@ fn test_destroy_ability_classification() {
             power_bonus: 1,
             toughness_bonus: 0,
             keywords_granted: smallvec::SmallVec::new(),
+            keyword_args_granted: smallvec::SmallVec::new(),
         }],
         "{R}: +1/+0 until end of turn".to_string(),
         false,

@@ -4,7 +4,7 @@
 
 use super::ability_parser::{AbilityParams, ApiType};
 use super::svar_parser::{parse_svar, ParsedSVar, StaticAbilityMode};
-use crate::core::{CardId, Effect, Keyword, PlayerId, RepeatEachIterate, TargetRef, TargetRestriction, TargetType};
+use crate::core::{CardId, Effect, Keyword, KeywordArgs, PlayerId, RepeatEachIterate, TargetRef, TargetRestriction, TargetType};
 use smallvec::SmallVec;
 use std::collections::HashMap;
 
@@ -17,6 +17,35 @@ use std::collections::HashMap;
 /// `<Color>Source` qualifier, mapping the colour word to a [`Color`]. Returns
 /// `None` for any other `ChooseSource` shape (Martyr's Cause' `Card,Emblem`,
 /// colourless choosers, …) so only the CoP family is converted here.
+/// Parse a `KW$` / `Keywords$` parameter string into (simple_keywords, complex_keyword_args).
+///
+/// The parameter may contain multiple keywords separated by ` & ` (Forge-Java convention).
+/// Each token is either:
+/// - A simple keyword: `"Flying"`, `"Trample"`, etc. → `Keyword::from_string` hit
+/// - A parameterized keyword: `"Landwalk:Forest"`, `"Protection:Red"`, etc. → `KeywordArgs::from_string_parameterized` hit
+///
+/// Unrecognized tokens are silently skipped (consistent with prior behaviour for unknown simple keywords).
+fn parse_kw_param(kw_str: Option<&str>) -> (SmallVec<[Keyword; 2]>, SmallVec<[KeywordArgs; 2]>) {
+    let mut simple: SmallVec<[Keyword; 2]> = SmallVec::new();
+    let mut complex: SmallVec<[KeywordArgs; 2]> = SmallVec::new();
+    if let Some(s) = kw_str {
+        for token in s.split(" & ") {
+            let token = token.trim();
+            if token.is_empty() {
+                continue;
+            }
+            // Try parameterized form first (has a colon separator)
+            if let Some(args) = KeywordArgs::from_string_parameterized(token) {
+                complex.push(args);
+            } else if let Some(kw) = Keyword::from_string(token) {
+                simple.push(kw);
+            }
+            // else: unrecognized, skip
+        }
+    }
+    (simple, complex)
+}
+
 fn choose_source_color(params: &AbilityParams) -> Option<crate::core::Color> {
     use crate::core::Color;
     let choices = params.get("Choices")?;
@@ -247,27 +276,26 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
             }
 
             // Extract keywords to grant (KW$) - optional
-            // Format: "KW$ Double Strike" or "KW$ Flying & Haste" (multiple separated by &)
-            let keywords_granted: SmallVec<[Keyword; 2]> = params
-                .get("KW")
-                .map(|kw_str| {
-                    kw_str
-                        .split(" & ")
-                        .filter_map(|kw| Keyword::from_string(kw.trim()))
-                        .collect()
-                })
-                .unwrap_or_default();
+            // Format: "KW$ Double Strike" or "KW$ Flying & Haste" or "KW$ Landwalk:Forest"
+            // (multiple separated by " & "; parameterized forms use colon notation)
+            let (keywords_granted, keyword_args_granted) = parse_kw_param(params.get("KW"));
 
             // Create effect if at least one bonus is non-zero, keywords are granted,
             // or a SubAbility$ chain needs target resolution (e.g., Prey Upon uses
             // SP$ Pump with +0/+0 purely as a targeting vehicle for DB$ Fight)
             let has_sub_ability = params.contains_key("SubAbility");
-            if power_bonus != 0 || toughness_bonus != 0 || !keywords_granted.is_empty() || has_sub_ability {
+            if power_bonus != 0
+                || toughness_bonus != 0
+                || !keywords_granted.is_empty()
+                || !keyword_args_granted.is_empty()
+                || has_sub_ability
+            {
                 Some(Effect::PumpCreature {
                     target: CardId::new(0), // Placeholder - filled in at cast time
                     power_bonus,
                     toughness_bonus,
                     keywords_granted,
+                    keyword_args_granted,
                 })
             } else {
                 None
@@ -941,21 +969,8 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
             let toughness = params.get_i32("Toughness").ok();
 
             // Parse keywords (optional) - e.g., "Keywords$ Trample" or "Keywords$ Flying & First Strike"
-            let keywords_granted = if let Some(kw_str) = params.get("Keywords") {
-                // Parse keyword string (may be single or "&" separated)
-                use crate::core::Keyword;
-                let mut keywords = smallvec::SmallVec::new();
-                for kw_part in kw_str.split('&').map(|s| s.trim()) {
-                    if !kw_part.is_empty() {
-                        if let Some(kw) = Keyword::from_string(kw_part) {
-                            keywords.push(kw);
-                        }
-                    }
-                }
-                keywords
-            } else {
-                smallvec::smallvec![]
-            };
+            // Parse Keywords$ using parse_kw_param so parameterized forms (e.g. Landwalk:Forest) work
+            let (keywords_granted, keyword_args_granted) = parse_kw_param(params.get("Keywords"));
 
             // Parse Types$ parameter — e.g. "Artifact,Creature,Assembly-Worker"
             // for Mishra's Factory. Per Forge-Java conventions, this is a
@@ -996,6 +1011,7 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
             if power.is_none()
                 && toughness.is_none()
                 && keywords_granted.is_empty()
+                && keyword_args_granted.is_empty()
                 && types_added.is_empty()
                 && subtypes_added.is_empty()
             {
@@ -1007,6 +1023,7 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
                 power,
                 toughness,
                 keywords_granted,
+                keyword_args_granted,
                 types_added,
                 subtypes_added,
                 remove_creature_subtypes,
@@ -1025,23 +1042,12 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
 
             let filter = params.get("ValidCards").unwrap_or("Creature").to_string();
 
-            let keywords_granted = if let Some(kw_str) = params.get("Keywords") {
-                use crate::core::Keyword;
-                let mut keywords = smallvec::SmallVec::new();
-                for kw_part in kw_str.split('&').map(|s| s.trim()) {
-                    if !kw_part.is_empty() {
-                        if let Some(kw) = Keyword::from_string(kw_part) {
-                            keywords.push(kw);
-                        }
-                    }
-                }
-                keywords
-            } else {
-                smallvec::smallvec![]
-            };
+            // Parse Keywords$ using parse_kw_param so parameterized forms work
+            let (keywords_granted, keyword_args_granted) = parse_kw_param(params.get("Keywords"));
 
             // At least one of power, toughness, or keywords must be set
-            if power.is_none() && toughness.is_none() && keywords_granted.is_empty() {
+            if power.is_none() && toughness.is_none() && keywords_granted.is_empty() && keyword_args_granted.is_empty()
+            {
                 return None;
             }
 
@@ -1051,6 +1057,7 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
                 power,
                 toughness,
                 keywords_granted,
+                keyword_args_granted,
             })
         }
 

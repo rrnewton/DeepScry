@@ -3663,6 +3663,7 @@ async fn test_mishras_factory_animates_and_is_eligible_attacker() -> Result<()> 
         power: Some(2),
         toughness: Some(2),
         keywords_granted: smallvec::SmallVec::new(),
+        keyword_args_granted: smallvec::SmallVec::new(),
         types_added: smallvec::smallvec![CardType::Artifact, CardType::Creature],
         subtypes_added: smallvec::smallvec![Subtype::new("Assembly-Worker")],
         remove_creature_subtypes: true,
@@ -3810,6 +3811,7 @@ async fn test_mishras_factory_pump_ability_is_offered() -> Result<()> {
         power: Some(2),
         toughness: Some(2),
         keywords_granted: smallvec::SmallVec::new(),
+        keyword_args_granted: smallvec::SmallVec::new(),
         types_added: smallvec::smallvec![CardType::Artifact, CardType::Creature],
         subtypes_added: smallvec::smallvec![Subtype::new("Assembly-Worker")],
         remove_creature_subtypes: true,
@@ -3853,6 +3855,7 @@ async fn test_mishras_factory_pump_ability_is_offered() -> Result<()> {
         power_bonus: 1,
         toughness_bonus: 1,
         keywords_granted: smallvec::SmallVec::new(),
+        keyword_args_granted: smallvec::SmallVec::new(),
     };
     game.execute_effect(&pump)?;
     {
@@ -7116,5 +7119,67 @@ async fn test_offspring_thundertrap_trainer_creates_1_1_token() -> Result<()> {
     }
 
     println!("✓ Offspring (Thundertrap Trainer): 1/1 token copy created on ETB (mtg-881 wave6)");
+    Ok(())
+}
+
+/// Test that Forestwalk (K:Landwalk:Forest) makes a creature unblockable when the
+/// defending player controls a Forest.
+///
+/// CR 702.14a: A creature with forestwalk can't be blocked as long as the defending
+/// player controls a Forest.
+///
+/// Setup: P0 has Cat Warriors (2/2, Forestwalk) + Forest.
+///        P1 has Grizzly Bears (2/2) + Forest, starting at 2 life.
+///        P0 attacks with Cat Warriors — it CANNOT be blocked because P1 controls a
+///        Forest. The 2 damage must go to P1, dropping them to 0.
+///
+/// Before the fix, K:Landwalk:Forest was silently dropped by the keyword-parsing
+/// pipeline and Grizzly Bears would be offered as a legal blocker.
+#[tokio::test]
+async fn test_forestwalk_blocks_forest_owner() -> Result<()> {
+    let cardsfolder = require_cardsfolder();
+
+    let puzzle_path = PathBuf::from("../test_puzzles/forestwalk_blocks_forest_owner.pzl");
+    let puzzle_contents = std::fs::read_to_string(&puzzle_path)?;
+    let puzzle = PuzzleFile::parse(&puzzle_contents)?;
+
+    let card_db = CardDatabase::new(cardsfolder);
+    let mut game = load_puzzle_into_game(&puzzle, &card_db).await?;
+
+    game.seed_rng(42);
+
+    let players: Vec<_> = game.players.iter().map(|p| p.id).collect();
+    let p0_id = players[0]; // Has Cat Warriors + Forest
+    let p1_id = players[1]; // Has Grizzly Bears + Forest, at 2 life
+
+    let p1_life_before = game.get_player(p1_id)?.life;
+    assert_eq!(p1_life_before, 2, "P1 starts at 2 life");
+
+    let mut controller0 = HeuristicController::new(p0_id);
+    let mut controller1 = HeuristicController::new(p1_id);
+
+    // Run 2 turns: P0's attack turn then P1's — enough for the attack to resolve.
+    let mut game_loop = GameLoop::new(&mut game).with_verbosity(VerbosityLevel::Normal);
+    let _result = game_loop.run_turns(&mut controller0, &mut controller1, 2)?;
+
+    let p1_life_after = game_loop.game.get_player(p1_id)?.life;
+
+    println!("=== Forestwalk Unblockable Test ===");
+    println!("P1 life before: {p1_life_before}");
+    println!("P1 life after:  {p1_life_after}");
+    println!(
+        "Cat Warriors should be unblockable (P1 controls Forest) — damage dealt: {}",
+        p1_life_before - p1_life_after
+    );
+
+    // Cat Warriors is 2/2 with Forestwalk; P1 controls a Forest so it cannot be
+    // blocked, and 2 damage must reach P1, reducing their life from 2 to 0.
+    assert_eq!(
+        p1_life_after, 0,
+        "Cat Warriors (Forestwalk) must be unblockable while P1 controls a Forest — \
+         P1 should take 2 combat damage and reach 0 life (CR 702.14a)"
+    );
+
+    println!("✓ Forestwalk correctly prevents blocking when defending player controls a Forest (CR 702.14a)");
     Ok(())
 }

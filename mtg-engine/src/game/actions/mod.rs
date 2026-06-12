@@ -3318,6 +3318,7 @@ impl GameState {
                 power_bonus,
                 toughness_bonus,
                 keywords_granted,
+                keyword_args_granted,
             } if target.is_placeholder() => {
                 if *target_index < chosen_targets.len() {
                     let resolved_target = chosen_targets[*target_index];
@@ -3328,6 +3329,7 @@ impl GameState {
                         power_bonus: *power_bonus,
                         toughness_bonus: *toughness_bonus,
                         keywords_granted: keywords_granted.clone(),
+                        keyword_args_granted: keyword_args_granted.clone(),
                     }
                 } else {
                     effect.clone()
@@ -3342,6 +3344,7 @@ impl GameState {
                 power_count,
                 toughness_count,
                 keywords_granted,
+                keyword_args_granted,
             } if target.is_placeholder() => {
                 if *target_index < chosen_targets.len() {
                     let resolved_target = chosen_targets[*target_index];
@@ -3352,6 +3355,7 @@ impl GameState {
                         power_count: power_count.clone(),
                         toughness_count: toughness_count.clone(),
                         keywords_granted: keywords_granted.clone(),
+                        keyword_args_granted: keyword_args_granted.clone(),
                     }
                 } else {
                     effect.clone()
@@ -4415,13 +4419,15 @@ impl GameState {
                 power_bonus,
                 toughness_bonus,
                 keywords_granted,
-            } => self.execute_pump_creature(*target, *power_bonus, *toughness_bonus, keywords_granted)?,
+                keyword_args_granted,
+            } => self.execute_pump_creature(*target, *power_bonus, *toughness_bonus, keywords_granted, keyword_args_granted)?,
             Effect::PumpCreatureVariable {
                 target,
                 power_count,
                 toughness_count,
                 keywords_granted,
-            } => self.execute_pump_creature_variable(*target, power_count, toughness_count, keywords_granted)?,
+                keyword_args_granted,
+            } => self.execute_pump_creature_variable(*target, power_count, toughness_count, keywords_granted, keyword_args_granted)?,
             Effect::DebuffCreature {
                 target,
                 keywords_removed,
@@ -4438,7 +4444,8 @@ impl GameState {
                 power,
                 toughness,
                 keywords_granted,
-            } => self.execute_animate_all(*controller, filter, *power, *toughness, keywords_granted)?,
+                keyword_args_granted,
+            } => self.execute_animate_all(*controller, filter, *power, *toughness, keywords_granted, keyword_args_granted)?,
             Effect::Mill { player, count } => self.execute_mill(*player, *count)?,
             Effect::DrainMana { player } => self.execute_drain_mana(*player)?,
             Effect::Scry {
@@ -4577,6 +4584,7 @@ impl GameState {
                 power,
                 toughness,
                 keywords_granted,
+                keyword_args_granted,
                 types_added,
                 subtypes_added,
                 remove_creature_subtypes,
@@ -4585,6 +4593,7 @@ impl GameState {
                 *power,
                 *toughness,
                 keywords_granted,
+                keyword_args_granted,
                 types_added,
                 subtypes_added,
                 *remove_creature_subtypes,
@@ -4987,6 +4996,15 @@ impl GameState {
                     // Already handled by check_triggers above.
                     return Ok(());
                 }
+                // Grant complex (parameterized) keywords (e.g. Landwalk:Forest).
+                // Vec used (not SmallVec) to match the undo log field type, which uses
+                // Vec to keep GameAction::PumpCreature from inflating the enum's size.
+                let mut newly_args_granted: Vec<crate::core::KeywordArgs> = Vec::new();
+                for kw_args in keyword_args_granted.iter() {
+                    if card.grant_keyword_args_until_eot(kw_args) {
+                        newly_args_granted.push(kw_args.clone());
+                    }
+                }
 
                 // Ongoing trigger: parse using the card's own SVar context
                 // (so Execute$ references like TrigToken resolve correctly).
@@ -4995,6 +5013,7 @@ impl GameState {
                     .try_get(class_card_id)
                     .map(|c| c.name.to_string())
                     .unwrap_or_else(|| "Class".to_string());
+                        keyword_args_granted: newly_args_granted,
 
                 let maybe_trigger = self
                     .cards
@@ -5004,6 +5023,7 @@ impl GameState {
                 if let Some(new_trigger) = maybe_trigger {
                     let desc = new_trigger.description.clone();
                     if let Ok(card) = self.cards.get_mut(class_card_id) {
+                keyword_args_granted,
                         log::info!("{} gains ongoing trigger: {}", card.name.as_str(), &desc);
                         card.triggers.push(new_trigger);
                     }
@@ -5202,6 +5222,12 @@ impl GameState {
                 if card.controller != player_id {
                     return None;
                 }
+                let mut newly_args_granted: Vec<crate::core::KeywordArgs> = Vec::new();
+                for kw_args in keyword_args_granted.iter() {
+                    if card.grant_keyword_args_until_eot(kw_args) {
+                        newly_args_granted.push(kw_args.clone());
+                    }
+                }
 
                 // Check each pattern option (OR logic)
                 for p in &patterns {
@@ -5210,6 +5236,7 @@ impl GameState {
                     // Check card type
                     if p.contains("Artifact") && card.is_artifact() {
                         matches = true;
+                        keyword_args_granted: newly_args_granted,
                     }
                     if p.contains("Creature") && card.is_creature() {
                         matches = true;
@@ -5292,6 +5319,7 @@ impl GameState {
         // Count valid sacrifice targets
         let valid_targets: usize = self
             .battlefield
+                            keyword_args_granted: Vec::new(),
             .cards
             .iter()
             .filter(|&&card_id| {
@@ -5303,6 +5331,7 @@ impl GameState {
 
                     // Check each pattern option (OR logic)
                     for p in &patterns {
+                keyword_args_granted,
                         // Strip ".Other" modifier for base type matching
                         let base_pattern = p.trim_end_matches(".Other");
 
@@ -5314,6 +5343,9 @@ impl GameState {
                         // Check "Other" modifier - can't sacrifice self
                         if p.contains(".Other") && card_id == source_card_id {
                             matches = false;
+                        }
+                        for kw_args in keyword_args_granted.iter() {
+                            card.grant_keyword_args_until_eot(kw_args);
                         }
 
                         if matches {
@@ -6029,6 +6061,7 @@ impl GameState {
                             .iter()
                             .filter(|&card_id| {
                                 if let Some(card) = self.cards.try_get(*card_id) {
+                keyword_args_granted,
                                     card.is_creature()
                                         && card.controller != controller
                                         && targeting::is_legal_target(card, controller, &trigger_source_colors)
@@ -6123,6 +6156,7 @@ impl GameState {
                         power_bonus,
                         toughness_bonus,
                         keywords_granted,
+                        keyword_args_granted,
                     } if target.is_placeholder() => {
                         // If a previous effect in this trigger chain (e.g. Attach) chose a
                         // target, reuse it — this models Defined$ Targeted in SubAbility
@@ -6133,6 +6167,7 @@ impl GameState {
                                 power_bonus: *power_bonus,
                                 toughness_bonus: *toughness_bonus,
                                 keywords_granted: keywords_granted.clone(),
+                                keyword_args_granted: keyword_args_granted.clone(),
                             };
                         } else {
                             // Find a valid target (any creature on battlefield),
@@ -6158,6 +6193,7 @@ impl GameState {
                                     power_bonus: *power_bonus,
                                     toughness_bonus: *toughness_bonus,
                                     keywords_granted: keywords_granted.clone(),
+                                    keyword_args_granted: keyword_args_granted.clone(),
                                 };
                             }
                         }
@@ -6305,6 +6341,16 @@ impl GameState {
                     }
                     _ => {}
                 }
+                // Also grant complex (parameterized) keywords (e.g. Landwalk:Forest).
+                // Vec used (not SmallVec) to match the undo log field type, which uses
+                // Vec to keep GameAction::AnimateTypeline from inflating the enum's size.
+                let mut granted_keyword_args_vec: Vec<crate::core::KeywordArgs> = Vec::new();
+                for kw_args in keyword_args_granted.iter() {
+                    if !card.keywords.contains(kw_args.keyword()) {
+                        card.keywords.insert_complex(kw_args.clone());
+                        granted_keyword_args_vec.push(kw_args.clone());
+                    }
+                }
 
                 // A discard FORCED by this triggered ability (Hypnotic Specter's
                 // "that player discards a card at random", The Rack-family, etc.)
@@ -6397,6 +6443,7 @@ impl GameState {
                         trigger: trigger.clone(),
                     });
                 }
+                            granted_keyword_args: granted_keyword_args_vec,
             }
         }
 
@@ -7243,6 +7290,7 @@ impl GameState {
                     power_bonus,
                     toughness_bonus,
                     keywords_granted,
+                    keyword_args_granted,
                 } = &resolved_effect
                 {
                     if target.is_placeholder() {
@@ -7251,6 +7299,7 @@ impl GameState {
                             power_bonus: *power_bonus,
                             toughness_bonus: *toughness_bonus,
                             keywords_granted: keywords_granted.clone(),
+                            keyword_args_granted: keyword_args_granted.clone(),
                         };
                     }
                 }
@@ -7741,6 +7790,7 @@ impl GameState {
                     power_bonus,
                     toughness_bonus,
                     keywords_granted,
+                    keyword_args_granted,
                 } = &resolved_effect
                 {
                     if target.is_placeholder() {
@@ -7749,6 +7799,7 @@ impl GameState {
                             power_bonus: *power_bonus,
                             toughness_bonus: *toughness_bonus,
                             keywords_granted: keywords_granted.clone(),
+                            keyword_args_granted: keyword_args_granted.clone(),
                         };
                     }
                 }
@@ -9439,5 +9490,6 @@ fn matches_taps_for_mana_filter(
 mod combat;
 mod targeting;
 
+                        keyword_args_granted,
 #[cfg(test)]
 mod tests;

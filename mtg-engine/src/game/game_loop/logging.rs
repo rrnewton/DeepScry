@@ -373,6 +373,7 @@ impl<'a> GameLoop<'a> {
                 power_bonus,
                 toughness_bonus,
                 keywords_granted,
+                keyword_args_granted,
             } => {
                 let target_name = self
                     .game
@@ -380,19 +381,20 @@ impl<'a> GameLoop<'a> {
                     .get(*target)
                     .map(|c| c.name.as_str())
                     .unwrap_or("Unknown");
-                let message = if keywords_granted.is_empty() {
+                let has_keywords = !keywords_granted.is_empty() || !keyword_args_granted.is_empty();
+                let message = if !has_keywords {
                     format!(
                         "{source_name} ({source_id}) gives {target_name} ({target}) {power_bonus:+}/{toughness_bonus:+} until end of turn"
                     )
                 } else if *power_bonus == 0 && *toughness_bonus == 0 {
                     format!(
-                        "{source_name} ({source_id}) gives {target_name} ({target}) {:?} until end of turn",
-                        keywords_granted
+                        "{source_name} ({source_id}) gives {target_name} ({target}) {:?}{:?} until end of turn",
+                        keywords_granted, keyword_args_granted
                     )
                 } else {
                     format!(
-                        "{source_name} ({source_id}) gives {target_name} ({target}) {power_bonus:+}/{toughness_bonus:+} and {:?} until end of turn",
-                        keywords_granted
+                        "{source_name} ({source_id}) gives {target_name} ({target}) {power_bonus:+}/{toughness_bonus:+} and {:?}{:?} until end of turn",
+                        keywords_granted, keyword_args_granted
                     )
                 };
                 self.game.logger.gamelog(&message);
@@ -402,6 +404,7 @@ impl<'a> GameLoop<'a> {
                 power_count,
                 toughness_count,
                 keywords_granted,
+                keyword_args_granted,
             } => {
                 let target_name = self
                     .game
@@ -411,8 +414,8 @@ impl<'a> GameLoop<'a> {
                     .unwrap_or("Unknown");
                 // Note: We log the expression type since actual values depend on game state
                 let message = format!(
-                    "{source_name} ({source_id}) gives {target_name} ({target}) +X/+X (power: {:?}, toughness: {:?}) and {:?} until end of turn",
-                    power_count, toughness_count, keywords_granted
+                    "{source_name} ({source_id}) gives {target_name} ({target}) +X/+X (power: {:?}, toughness: {:?}) and {:?}{:?} until end of turn",
+                    power_count, toughness_count, keywords_granted, keyword_args_granted
                 );
                 self.game.logger.gamelog(&message);
             }
@@ -932,6 +935,7 @@ impl<'a> GameLoop<'a> {
                 power,
                 toughness,
                 keywords_granted,
+                ..
             } => {
                 let controller_name = self.get_player_name(*controller);
                 let target_desc = if filter.contains("YouCtrl") {

@@ -668,12 +668,14 @@ pub fn resolve_effect_placeholder(effect: &Effect, ctx: &TriggerContext) -> Effe
             power,
             toughness,
             keywords_granted,
+            keyword_args_granted,
         } if controller.is_placeholder() => Effect::AnimateAll {
             controller: ctx.controller,
             filter: filter.clone(),
             power: *power,
             toughness: *toughness,
             keywords_granted: keywords_granted.clone(),
+            keyword_args_granted: keyword_args_granted.clone(),
         },
 
         // =========================================================================

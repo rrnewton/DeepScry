@@ -1,6 +1,6 @@
 //! Card effects and ability system
 
-use crate::core::{CardId, Color, Keyword, PlayerId};
+use crate::core::{CardId, Color, Keyword, KeywordArgs, PlayerId};
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 
@@ -1666,8 +1666,16 @@ pub enum Effect {
         target: CardId,
         power_bonus: i32,
         toughness_bonus: i32,
-        /// Keywords to grant (e.g., Double Strike from KW$ parameter)
+        /// Simple keywords to grant (e.g., Double Strike from `KW$ Double Strike`).
         keywords_granted: smallvec::SmallVec<[Keyword; 2]>,
+        /// Complex (parameterized) keywords to grant, e.g., `Landwalk:Forest`
+        /// from `KW$ Landwalk:Forest`. Stored separately because they need both
+        /// the keyword bit and the land-type (or other) parameter to correctly
+        /// enforce blocking restrictions and to be removed on cleanup.
+        /// Serde-defaulted so existing serialized data without this field
+        /// deserializes correctly (empty = no complex keywords).
+        #[serde(default)]
+        keyword_args_granted: smallvec::SmallVec<[KeywordArgs; 2]>,
     },
 
     /// Debuff: Remove keywords from a creature (inverse of Pump keyword granting)
@@ -1700,8 +1708,11 @@ pub enum Effect {
         power: Option<i32>,
         /// Base toughness to set (None = don't change)
         toughness: Option<i32>,
-        /// Keywords to grant (e.g., Flying, Trample)
+        /// Simple keywords to grant (e.g., Flying, Trample)
         keywords_granted: smallvec::SmallVec<[Keyword; 2]>,
+        /// Complex (parameterized) keywords to grant (e.g., Landwalk:Island)
+        #[serde(default)]
+        keyword_args_granted: smallvec::SmallVec<[KeywordArgs; 2]>,
     },
 
     /// Pump with variable bonus based on counting game state
@@ -1714,8 +1725,11 @@ pub enum Effect {
         power_count: CountExpression,
         /// Count expression for toughness bonus
         toughness_count: CountExpression,
-        /// Keywords to grant (optional)
+        /// Simple keywords to grant (optional)
         keywords_granted: smallvec::SmallVec<[Keyword; 2]>,
+        /// Complex (parameterized) keywords to grant (e.g., Landwalk:Forest)
+        #[serde(default)]
+        keyword_args_granted: smallvec::SmallVec<[KeywordArgs; 2]>,
     },
 
     /// Mill cards from library to graveyard
@@ -2335,8 +2349,11 @@ pub enum Effect {
         target: CardId,
         power: Option<i32>,
         toughness: Option<i32>,
-        /// Keywords to grant (e.g., Trample from Keywords$ parameter)
+        /// Simple keywords to grant (e.g., Trample from Keywords$ parameter)
         keywords_granted: smallvec::SmallVec<[Keyword; 2]>,
+        /// Complex (parameterized) keywords to grant (e.g., Landwalk:Forest)
+        #[serde(default)]
+        keyword_args_granted: smallvec::SmallVec<[KeywordArgs; 2]>,
         /// Card types to add until end of turn (e.g. `Types$ Artifact,Creature`).
         /// Empty = don't change types.
         #[serde(default)]

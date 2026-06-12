@@ -730,6 +730,7 @@ impl GameState {
                     prev_temp_animate_subtypes,
                     prev_temp_removed_subtypes,
                     granted_keywords,
+                    granted_keyword_args: Vec::new(),
                 },
                 prior_log_size,
             );

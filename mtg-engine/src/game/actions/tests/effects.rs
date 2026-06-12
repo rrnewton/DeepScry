@@ -91,6 +91,7 @@ mod tests {
             power_bonus: 3,
             toughness_bonus: 3,
             keywords_granted: smallvec::SmallVec::new(),
+            keyword_args_granted: smallvec::SmallVec::new(),
         });
         game.cards.insert(pump_spell_id, pump_spell);
 
@@ -996,6 +997,7 @@ mod tests {
                 power_bonus: 2,
                 toughness_bonus: 2,
                 keywords_granted: smallvec::SmallVec::new(),
+                keyword_args_granted: smallvec::SmallVec::new(),
             }],
             "When this enters, target creature gets +2/+2.".to_string(),
         ));

@@ -21,7 +21,7 @@
 //! removed, eliminating the "No Hacky String Operations On Structured Data"
 //! violation and the divergence between the two mass-effects).
 
-use crate::core::{CardId, CountExpression, Keyword, PlayerId};
+use crate::core::{CardId, CountExpression, Keyword, KeywordArgs, PlayerId};
 use crate::game::GameState;
 use crate::Result;
 
@@ -36,13 +36,14 @@ impl GameState {
         power_bonus: i32,
         toughness_bonus: i32,
         keywords_granted: &[Keyword],
+        keyword_args_granted: &[KeywordArgs],
     ) -> Result<()> {
         // Skip if target is still placeholder (0) or unresolved sentinel
         if target.is_placeholder() || target.is_reuse_previous() {
             log::warn!(target: "pump", "PumpCreature fizzled: unresolved target {}", target.as_u32());
             return Ok(());
         }
-        log::debug!(target: "pump", "PumpCreature executing: target={}, power_bonus={}, toughness_bonus={}, keywords={:?}", target.as_u32(), power_bonus, toughness_bonus, keywords_granted);
+        log::debug!(target: "pump", "PumpCreature executing: target={}, power_bonus={}, toughness_bonus={}, keywords={:?}, keyword_args={:?}", target.as_u32(), power_bonus, toughness_bonus, keywords_granted, keyword_args_granted);
         // Capture log size before pump
         let prior_log_size = self.logger.log_count();
 
@@ -59,6 +60,15 @@ impl GameState {
         for keyword in keywords_granted.iter() {
             if card.grant_keyword_until_eot(*keyword) {
                 newly_granted.push(*keyword);
+            }
+        }
+        // Grant complex (parameterized) keywords (e.g. Landwalk:Forest).
+        // Vec used (not SmallVec) to match the undo log field type, which uses
+        // Vec to keep GameAction::PumpCreature from inflating the enum's size.
+        let mut newly_args_granted: Vec<KeywordArgs> = Vec::new();
+        for kw_args in keyword_args_granted.iter() {
+            if card.grant_keyword_args_until_eot(kw_args) {
+                newly_args_granted.push(kw_args.clone());
             }
         }
 
@@ -82,6 +92,7 @@ impl GameState {
                 power_delta: power_bonus,
                 toughness_delta: toughness_bonus,
                 keywords_granted: newly_granted,
+                keyword_args_granted: newly_args_granted,
             },
             prior_log_size,
         );
@@ -99,6 +110,7 @@ impl GameState {
         power_count: &CountExpression,
         toughness_count: &CountExpression,
         keywords_granted: &[Keyword],
+        keyword_args_granted: &[KeywordArgs],
     ) -> Result<()> {
         // Variable pump: bonus depends on counting game state
         // Example: Elephant-Mandrill gets +X/+X where X is artifacts opponents control
@@ -151,6 +163,12 @@ impl GameState {
                 newly_granted.push(*keyword);
             }
         }
+        let mut newly_args_granted: Vec<KeywordArgs> = Vec::new();
+        for kw_args in keyword_args_granted.iter() {
+            if card.grant_keyword_args_until_eot(kw_args) {
+                newly_args_granted.push(kw_args.clone());
+            }
+        }
 
         // Log for undo
         self.undo_log.log(
@@ -159,6 +177,7 @@ impl GameState {
                 power_delta: power_bonus,
                 toughness_delta: toughness_bonus,
                 keywords_granted: newly_granted,
+                keyword_args_granted: newly_args_granted,
             },
             prior_log_size,
         );
@@ -249,6 +268,7 @@ impl GameState {
                     power_delta: power_bonus,
                     toughness_delta: toughness_bonus,
                     keywords_granted: smallvec::SmallVec::new(),
+                    keyword_args_granted: Vec::new(),
                 },
                 prior_log_size,
             );
@@ -270,6 +290,7 @@ impl GameState {
         power: Option<i32>,
         toughness: Option<i32>,
         keywords_granted: &[Keyword],
+        keyword_args_granted: &[KeywordArgs],
     ) -> Result<()> {
         // AnimateAll: set base P/T and/or grant keywords to all matching permanents
         // Similar to PumpAllCreatures but sets base P/T instead of bonuses.
@@ -316,6 +337,9 @@ impl GameState {
                 for kw in keywords_granted {
                     card.grant_keyword_until_eot(*kw);
                 }
+                for kw_args in keyword_args_granted.iter() {
+                    card.grant_keyword_args_until_eot(kw_args);
+                }
 
                 if self.logger.verbosity() >= crate::game::VerbosityLevel::Normal {
                     let kws: Vec<_> = keywords_granted.iter().map(|k| format!("{:?}", k)).collect();
@@ -360,6 +384,7 @@ impl GameState {
         power: Option<i32>,
         toughness: Option<i32>,
         keywords_granted: &[Keyword],
+        keyword_args_granted: &[KeywordArgs],
         types_added: &[crate::core::CardType],
         subtypes_added: &[crate::core::Subtype],
         remove_creature_subtypes: bool,
@@ -395,6 +420,16 @@ impl GameState {
             if !card.keywords.contains(*kw) {
                 card.keywords.insert(*kw);
                 granted_keywords.push(*kw);
+            }
+        }
+        // Also grant complex (parameterized) keywords (e.g. Landwalk:Forest).
+        // Vec used (not SmallVec) to match the undo log field type, which uses
+        // Vec to keep GameAction::AnimateTypeline from inflating the enum's size.
+        let mut granted_keyword_args_vec: Vec<KeywordArgs> = Vec::new();
+        for kw_args in keyword_args_granted.iter() {
+            if !card.keywords.contains(kw_args.keyword()) {
+                card.keywords.insert_complex(kw_args.clone());
+                granted_keyword_args_vec.push(kw_args.clone());
             }
         }
 
@@ -478,7 +513,7 @@ impl GameState {
         // the typeline OR newly granted a keyword (Soulstone Sanctuary
         // changes both, but a hypothetical keyword-only animate must still
         // be reversible).
-        if types_changed || !granted_keywords.is_empty() {
+        if types_changed || !granted_keywords.is_empty() || !granted_keyword_args_vec.is_empty() {
             let prior_log_size = self.logger.log_count();
             self.undo_log.log(
                 crate::undo::GameAction::AnimateTypeline {
@@ -489,6 +524,7 @@ impl GameState {
                     prev_temp_animate_subtypes,
                     prev_temp_removed_subtypes,
                     granted_keywords,
+                    granted_keyword_args: granted_keyword_args_vec,
                 },
                 prior_log_size,
             );

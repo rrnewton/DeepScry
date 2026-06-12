@@ -1129,6 +1129,7 @@ impl CardDefinition {
                     power_bonus: 1,
                     toughness_bonus: 1,
                     keywords_granted: smallvec::SmallVec::new(),
+                    keyword_args_granted: smallvec::SmallVec::new(),
                 }],
                 "[noncreature] Prowess (+1/+1 until end of turn)".to_string(),
             );
@@ -2544,15 +2545,23 @@ impl CardDefinition {
                         // DB$ Pump with KW$ (keyword grant)
                         if sub_params.api_type == ApiType::Pump {
                             if let Some(kw_str) = sub_params.get("KW") {
-                                let keywords_granted: smallvec::SmallVec<[Keyword; 2]> = kw_str
-                                    .split(" & ")
-                                    .filter_map(|kw| Keyword::from_string(kw.trim()))
-                                    .collect();
+                                use crate::core::KeywordArgs;
+                                let mut keywords_granted: smallvec::SmallVec<[Keyword; 2]> = smallvec::SmallVec::new();
+                                let mut keyword_args_granted: smallvec::SmallVec<[KeywordArgs; 2]> =
+                                    smallvec::SmallVec::new();
+                                for token in kw_str.split(" & ").map(|s| s.trim()) {
+                                    if let Some(args) = KeywordArgs::from_string_parameterized(token) {
+                                        keyword_args_granted.push(args);
+                                    } else if let Some(kw) = Keyword::from_string(token) {
+                                        keywords_granted.push(kw);
+                                    }
+                                }
                                 effects.push(Effect::PumpCreature {
                                     target: CardId::new(0),
                                     power_bonus: 0,
                                     toughness_bonus: 0,
                                     keywords_granted,
+                                    keyword_args_granted,
                                 });
                             }
                         }
@@ -2679,6 +2688,7 @@ impl CardDefinition {
                             power_bonus,
                             toughness_bonus,
                             keywords_granted: smallvec::SmallVec::new(),
+                            keyword_args_granted: smallvec::SmallVec::new(),
                         });
                     }
                 }
@@ -3173,6 +3183,7 @@ impl CardDefinition {
                                         power_count,
                                         toughness_count,
                                         keywords_granted: smallvec::SmallVec::new(),
+                                        keyword_args_granted: smallvec::SmallVec::new(),
                                     });
                                 } else {
                                     // Fixed pump values
@@ -3186,6 +3197,7 @@ impl CardDefinition {
                                             power_bonus,
                                             toughness_bonus,
                                             keywords_granted: smallvec::SmallVec::new(),
+                                            keyword_args_granted: smallvec::SmallVec::new(),
                                         });
                                     }
                                 }

@@ -225,6 +225,7 @@ impl<'a> GameLoop<'a> {
                         power_bonus,
                         toughness_bonus,
                         keywords_granted,
+                        keyword_args_granted,
                     } if target.is_placeholder() && target_index < targets.len() => {
                         let resolved_target = targets[target_index];
                         last_resolved_target = Some(resolved_target);
@@ -233,6 +234,7 @@ impl<'a> GameLoop<'a> {
                             power_bonus: *power_bonus,
                             toughness_bonus: *toughness_bonus,
                             keywords_granted: keywords_granted.clone(),
+                            keyword_args_granted: keyword_args_granted.clone(),
                         };
                         target_index += 1;
                         replaced
@@ -2092,12 +2094,14 @@ impl<'a> GameLoop<'a> {
                                                 power_bonus,
                                                 toughness_bonus,
                                                 keywords_granted,
+                                                keyword_args_granted,
                                             } if target.is_placeholder() && !chosen_targets_vec.is_empty() => {
                                                 crate::core::Effect::PumpCreature {
                                                     target: chosen_targets_vec[0],
                                                     power_bonus: *power_bonus,
                                                     toughness_bonus: *toughness_bonus,
                                                     keywords_granted: keywords_granted.clone(),
+                                                    keyword_args_granted: keyword_args_granted.clone(),
                                                 }
                                             }
                                             // Self-targeting pump: "This creature gets +X/+Y"
@@ -2107,12 +2111,14 @@ impl<'a> GameLoop<'a> {
                                                 power_bonus,
                                                 toughness_bonus,
                                                 keywords_granted,
+                                                keyword_args_granted,
                                             } if target.is_placeholder() && chosen_targets_vec.is_empty() => {
                                                 crate::core::Effect::PumpCreature {
                                                     target: card_id, // Target self (the source of the ability)
                                                     power_bonus: *power_bonus,
                                                     toughness_bonus: *toughness_bonus,
                                                     keywords_granted: keywords_granted.clone(),
+                                                    keyword_args_granted: keyword_args_granted.clone(),
                                                 }
                                             }
                                             // Self-targeting PutCounter: "Put counter on this creature"
@@ -2158,6 +2164,7 @@ impl<'a> GameLoop<'a> {
                                                 power,
                                                 toughness,
                                                 keywords_granted,
+                                                keyword_args_granted,
                                                 types_added,
                                                 subtypes_added,
                                                 remove_creature_subtypes,
@@ -2167,6 +2174,7 @@ impl<'a> GameLoop<'a> {
                                                     power: *power,
                                                     toughness: *toughness,
                                                     keywords_granted: keywords_granted.clone(),
+                                                    keyword_args_granted: keyword_args_granted.clone(),
                                                     types_added: types_added.clone(),
                                                     subtypes_added: subtypes_added.clone(),
                                                     remove_creature_subtypes: *remove_creature_subtypes,
@@ -2178,6 +2186,7 @@ impl<'a> GameLoop<'a> {
                                                 power,
                                                 toughness,
                                                 keywords_granted,
+                                                keyword_args_granted,
                                                 types_added,
                                                 subtypes_added,
                                                 remove_creature_subtypes,
@@ -2187,6 +2196,7 @@ impl<'a> GameLoop<'a> {
                                                     power: *power,
                                                     toughness: *toughness,
                                                     keywords_granted: keywords_granted.clone(),
+                                                    keyword_args_granted: keyword_args_granted.clone(),
                                                     types_added: types_added.clone(),
                                                     subtypes_added: subtypes_added.clone(),
                                                     remove_creature_subtypes: *remove_creature_subtypes,

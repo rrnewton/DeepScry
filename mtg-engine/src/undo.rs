@@ -3,7 +3,7 @@
 //! This module provides a transaction log of game actions that can be
 //! rewound to efficiently explore the game tree without expensive deep copies.
 
-use crate::core::{CardId, CardStateSnapshot, CounterType, Keyword, PlayerId};
+use crate::core::{CardId, CardStateSnapshot, CounterType, Keyword, KeywordArgs, PlayerId};
 use crate::zones::Zone;
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
@@ -134,8 +134,13 @@ pub enum GameAction {
         card_id: CardId,
         power_delta: i32,
         toughness_delta: i32,
-        /// Keywords granted by this pump effect (for undo)
+        /// Simple keywords granted by this pump effect (for undo)
         keywords_granted: smallvec::SmallVec<[Keyword; 2]>,
+        /// Complex (parameterized) keywords granted by this pump effect (for undo).
+        /// Stored as Vec (heap-allocated, 24-byte inline) to avoid inflating the
+        /// enum variant size (KeywordArgs contains ManaCost which is large).
+        #[serde(default)]
+        keyword_args_granted: Vec<KeywordArgs>,
     },
 
     /// Debuff creature (keyword removal)
@@ -441,6 +446,11 @@ pub enum GameAction {
         /// site dedups against the existing set), so undo never strips a keyword
         /// the card printed or gained from another source.
         granted_keywords: SmallVec<[crate::core::Keyword; 2]>,
+        /// Complex (parameterized) keywords the animate newly inserted (e.g. Landwalk:Forest).
+        /// Stored as Vec (heap-allocated, 24-byte inline) to avoid inflating the
+        /// enum variant size (KeywordArgs contains ManaCost which is large).
+        #[serde(default)]
+        granted_keyword_args: Vec<crate::core::KeywordArgs>,
     },
     /// Records that `source` was appended to `target`'s `damaged_by_this_turn`
     /// list when combat (or other) damage was dealt. `undo()` pops that exact
@@ -739,17 +749,19 @@ impl fmt::Display for GameAction {
                 power_delta,
                 toughness_delta,
                 keywords_granted,
+                keyword_args_granted,
             } => {
-                if keywords_granted.is_empty() {
+                if keywords_granted.is_empty() && keyword_args_granted.is_empty() {
                     write!(f, "Pump({} {:+}/{:+})", card_id.as_u32(), power_delta, toughness_delta)
                 } else {
                     write!(
                         f,
-                        "Pump({} {:+}/{:+} +{:?})",
+                        "Pump({} {:+}/{:+} +{:?} +{:?})",
                         card_id.as_u32(),
                         power_delta,
                         toughness_delta,
-                        keywords_granted
+                        keywords_granted,
+                        keyword_args_granted
                     )
                 }
             }
@@ -1277,6 +1289,7 @@ impl GameAction {
                 power_delta,
                 toughness_delta,
                 keywords_granted,
+                keyword_args_granted,
             } => {
                 // Reverse the pump by applying negative deltas
                 if let Ok(card) = game.cards.get_mut(*card_id) {
@@ -1289,6 +1302,12 @@ impl GameAction {
                     for keyword in keywords_granted {
                         card.keywords.remove(*keyword);
                         card.temp_keywords_until_eot.remove(*keyword);
+                    }
+                    // Also remove any complex (parameterized) keywords granted
+                    for kw_args in keyword_args_granted {
+                        let kw = kw_args.keyword();
+                        card.keywords.remove(kw);
+                        card.temp_keywords_until_eot.remove(kw);
                     }
                 } else {
                     return Err(format!("Card {} not found for PumpCreature undo", card_id.as_u32()));
@@ -1629,6 +1648,7 @@ impl GameAction {
                 prev_temp_animate_subtypes,
                 prev_temp_removed_subtypes,
                 granted_keywords,
+                granted_keyword_args,
             } => {
                 // Restore the exact pre-animate typeline + tracking vectors and
                 // refresh the definition cache. get_mut tolerates a missing card
@@ -1646,6 +1666,9 @@ impl GameAction {
                     // printed or otherwise-granted keyword (mtg-610).
                     for kw in granted_keywords {
                         card.keywords.remove(*kw);
+                    }
+                    for kw_args in granted_keyword_args.iter() {
+                        card.keywords.remove(kw_args.keyword());
                     }
                     let types = card.types.clone();
                     let subtypes = card.subtypes.clone();

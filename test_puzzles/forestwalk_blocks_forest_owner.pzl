@@ -1,0 +1,24 @@
+[metadata]
+Name:Forestwalk — Cat Warriors unblockable while opponent has Forest
+Goal:Win
+Turns:2
+Difficulty:Easy
+Description:Cat Warriors (2/2 Forestwalk, K:Landwalk:Forest) attacks. The defending player controls a Forest and a Grizzly Bears (2/2). Because the defending player controls a Forest, Cat Warriors has Forestwalk and CANNOT be blocked (CR 702.14a). The 2 damage must hit the player, dropping them from 2 to 0. Before the fix, K:Landwalk:Forest was not correctly applied to the blocking check and the Grizzly Bears would be offered as a legal blocker.
+
+[state]
+turn=3
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=
+p0library=Forest; Forest; Forest
+p0graveyard=
+p0battlefield=Cat Warriors; Forest
+p0exile=
+
+p1life=2
+p1hand=
+p1library=Plains; Plains; Plains
+p1graveyard=
+p1battlefield=Grizzly Bears; Forest
+p1exile=
