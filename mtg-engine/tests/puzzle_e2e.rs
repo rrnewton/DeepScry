@@ -854,6 +854,86 @@ async fn test_ironclaw_orcs_cant_block_power2() -> Result<()> {
     Ok(())
 }
 
+/// e2e (mtg-917 B3): Orgg's conditional CantAttack static is enforced.
+///
+/// Orgg carries:
+///   `S:Mode$ CantAttack | ValidCard$ Card.Self
+///    | UnlessDefender$ !controlsCreature.untapped+powerGE3`
+/// which lowers to
+///   `StaticAbility::CantAttackIfDefenderHasUntappedPowerGE { min_power: 3 }`
+/// and is checked at declare-attackers time (CR 508.1c).
+///
+/// Two sub-cases are verified in a single test:
+/// 1. Orgg CANNOT attack when defender controls an untapped 3/3 (power >= 3).
+/// 2. Orgg CAN attack when defender's only creature is a tapped 3/3.
+#[tokio::test]
+async fn test_orgg_cant_attack_conditional() -> Result<()> {
+    use mtg_engine::core::{CardId, PlayerId};
+    use mtg_engine::game::state::GameState;
+
+    let cardsfolder = require_cardsfolder();
+
+    // Helper: build a minimal 2-player game with an Orgg on P0's side and a
+    // Hill Giant (3/3) on P1's side, tapped as requested.
+    let make_game = |p1_giant_tapped: bool| -> mtg_engine::Result<(GameState, PlayerId, CardId, PlayerId, CardId)> {
+        let mut game = GameState::new_two_player("P0".to_string(), "P1".to_string(), 20);
+        let mut players_iter = game.players.iter().map(|p| p.id);
+        let p0_id = players_iter.next().unwrap();
+        let p1_id = players_iter.next().unwrap();
+        drop(players_iter);
+
+        // Load Orgg definition and instantiate on P0's side.
+        let orgg_def = mtg_engine::loader::CardLoader::load_from_file(&cardsfolder.join("o/orgg.txt"))?;
+        let orgg_id = game.next_card_id();
+        let mut orgg = orgg_def.instantiate(orgg_id, p0_id);
+        orgg.turn_entered_battlefield = Some(0); // not summoning sick
+        game.cards.insert(orgg_id, orgg);
+        game.battlefield.add(orgg_id);
+
+        // Load Hill Giant definition and instantiate on P1's side.
+        let giant_def = mtg_engine::loader::CardLoader::load_from_file(&cardsfolder.join("h/hill_giant.txt"))?;
+        let giant_id = game.next_card_id();
+        let mut giant = giant_def.instantiate(giant_id, p1_id);
+        giant.turn_entered_battlefield = Some(0);
+        if p1_giant_tapped {
+            giant.tapped = true;
+        }
+        game.cards.insert(giant_id, giant);
+        game.battlefield.add(giant_id);
+
+        game.turn.turn_number = 3; // not turn 1 so the restriction isn't skipped for other reasons
+        game.turn.active_player = p0_id;
+
+        Ok((game, p0_id, orgg_id, p1_id, giant_id))
+    };
+
+    // --- Case 1: defender has an UNTAPPED 3/3 → Orgg CANNOT attack ---
+    {
+        let (mut game, p0_id, orgg_id, _p1_id, _giant_id) = make_game(false)?;
+        let result = game.declare_attacker(p0_id, orgg_id);
+        assert!(
+            result.is_err(),
+            "Orgg must NOT be allowed to attack when defending player controls an untapped Hill Giant \
+             (power 3). Got: {:?}",
+            result
+        );
+    }
+
+    // --- Case 2: defender's 3/3 is TAPPED → Orgg CAN attack ---
+    {
+        let (mut game, p0_id, orgg_id, _p1_id, _giant_id) = make_game(true)?;
+        let result = game.declare_attacker(p0_id, orgg_id);
+        assert!(
+            result.is_ok(),
+            "Orgg must be allowed to attack when defending player controls only a TAPPED Hill Giant. \
+             Got: {:?}",
+            result
+        );
+    }
+
+    Ok(())
+}
+
 /// Test pump spell combat tricks
 ///
 /// This test verifies that the AI can cast pump spells like Giant Growth

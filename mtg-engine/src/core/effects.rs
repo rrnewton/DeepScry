@@ -3613,6 +3613,25 @@ pub enum StaticAbility {
         /// Description for logging.
         description: String,
     },
+
+    /// Attack prohibition conditional on the defending player's board state.
+    ///
+    /// Corresponds to Orgg's static:
+    ///   `S:Mode$ CantAttack | ValidCard$ Card.Self
+    ///    | UnlessDefender$ !controlsCreature.untapped+powerGE<N>`
+    ///
+    /// The source creature can't attack if the defending player controls at
+    /// least one untapped creature whose power is >= `min_power`. This models
+    /// the "can't attack unless defender has NO untapped creature with power ≥ N"
+    /// restriction from CR 508.1 (attack legality).
+    ///
+    /// Evaluated at declare-attackers time (CR 508.1c — "the creature can't attack").
+    CantAttackIfDefenderHasUntappedPowerGE {
+        /// Minimum power a defending creature must have to lock out the attacker.
+        min_power: i32,
+        /// Description for logging.
+        description: String,
+    },
 }
 
 /// Target selector for cost reduction abilities

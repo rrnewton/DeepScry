@@ -5014,6 +5014,43 @@ impl CardDefinition {
                         }
                     }
                 }
+                "CantAttack" => {
+                    // Conditional attack prohibition (Orgg):
+                    //   S:Mode$ CantAttack | ValidCard$ Card.Self
+                    //     | UnlessDefender$ !controlsCreature.untapped+powerGE<N>
+                    //
+                    // We model only the `ValidCard$ Card.Self` (the source creature
+                    // itself is the restricted attacker) + `UnlessDefender$` shape.
+                    // The general form (affecting other creatures) is left unparsed.
+                    let is_self = params
+                        .get("ValidCard")
+                        .map(|v| v.trim() == "Card.Self")
+                        .unwrap_or(false);
+                    if is_self {
+                        // Parse `UnlessDefender$ !controlsCreature.untapped+powerGE<N>`:
+                        // This means "can't attack UNLESS defender does NOT control
+                        // an untapped creature with power >= N", i.e., "can't attack
+                        // if defender DOES control such a creature."
+                        if let Some(unless) = params.get("UnlessDefender") {
+                            // Pattern: starts with `!controlsCreature.untapped+powerGE`
+                            let prefix = "!controlsCreature.untapped+powerGE";
+                            if let Some(suffix) = unless.trim().strip_prefix(prefix) {
+                                if let Ok(n) = suffix.parse::<i32>() {
+                                    let description = params.get("Description").cloned().unwrap_or_else(|| {
+                                        format!(
+                                            "CARDNAME can't attack if defending player \
+                                                 controls an untapped creature with power {n} or greater."
+                                        )
+                                    });
+                                    abilities.push(StaticAbility::CantAttackIfDefenderHasUntappedPowerGE {
+                                        min_power: n,
+                                        description,
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
                 "Always" => {
                     // State-trigger sweep. We model only the SacrificeAll/
                     // DestroyAll form keyed off an IsPresent$ filter (City in a

@@ -4,7 +4,7 @@
 //! These functions support controller decision-making without modifying game state.
 
 use super::GameLoop;
-use crate::core::{CardId, Keyword, PlayerId};
+use crate::core::{CardId, Keyword, PlayerId, StaticAbility};
 use crate::game::phase::Step;
 use smallvec::SmallVec;
 
@@ -82,6 +82,9 @@ impl<'a> GameLoop<'a> {
     pub(super) fn get_available_attacker_creatures(&self, player_id: PlayerId) -> SmallVec<[CardId; 8]> {
         let mut creatures: SmallVec<[CardId; 8]> = SmallVec::new();
 
+        // Pre-compute the defending player id once (2-player: the other player).
+        let defending_player_id = self.game.players.iter().find(|p| p.id != player_id).map(|p| p.id);
+
         for &card_id in &self.game.battlefield.cards {
             // Using try_get() to avoid Result drop overhead in hot path
             if let Some(card) = self.game.cards.try_get(card_id) {
@@ -102,7 +105,15 @@ impl<'a> GameLoop<'a> {
                     // Check for defender keyword
                     let has_defender = card.has_defender();
 
-                    if !has_summoning_sickness && !has_defender {
+                    // Check conditional CantAttack statics (e.g. Orgg:
+                    // "can't attack if defending player controls an untapped
+                    // creature with power >= N"). CR 508.1c.
+                    let blocked_by_cant_attack_static = card
+                        .static_abilities
+                        .iter()
+                        .any(|sa| self.cant_attack_static_fires(sa, defending_player_id));
+
+                    if !has_summoning_sickness && !has_defender && !blocked_by_cant_attack_static {
                         creatures.push(card_id);
                     }
                 }
@@ -112,6 +123,44 @@ impl<'a> GameLoop<'a> {
         // Sort for deterministic ordering
         creatures.sort();
         creatures
+    }
+
+    /// Returns `true` if a `CantAttack`-family static ability blocks the
+    /// creature from appearing in the attack-declaration choice menu.
+    ///
+    /// Called once per potential attacker, per ability, so this must be cheap.
+    fn cant_attack_static_fires(&self, ability: &StaticAbility, defender_id: Option<PlayerId>) -> bool {
+        match ability {
+            StaticAbility::CantAttackIfDefenderHasUntappedPowerGE { min_power, .. } => {
+                // Orgg (CR 508.1): "can't attack if defending player controls
+                // an untapped creature with power >= min_power."
+                let Some(def_id) = defender_id else {
+                    return false;
+                };
+                self.game.battlefield.cards.iter().any(|&bid| {
+                    self.game.cards.try_get(bid).is_some_and(|c| {
+                        c.controller == def_id
+                            && c.is_creature()
+                            && !c.tapped
+                            && i32::from(c.current_power()) >= *min_power
+                    })
+                })
+            }
+            // None of the other static abilities restrict attacking.
+            StaticAbility::ModifyPT { .. }
+            | StaticAbility::GrantKeyword { .. }
+            | StaticAbility::ReduceCost { .. }
+            | StaticAbility::RaiseCost { .. }
+            | StaticAbility::GrantAbility { .. }
+            | StaticAbility::GainControl { .. }
+            | StaticAbility::SacrificeMatchingPresent { .. }
+            | StaticAbility::CantBeCast { .. }
+            | StaticAbility::CantPlayLand { .. }
+            | StaticAbility::CantBlockMatching { .. }
+            | StaticAbility::CastWithFlash { .. }
+            | StaticAbility::DamageIncrease { .. }
+            | StaticAbility::PreventDamageToEnchantedByChosenColor { .. } => false,
+        }
     }
 
     /// Get creatures that can block for a player (v2 interface)

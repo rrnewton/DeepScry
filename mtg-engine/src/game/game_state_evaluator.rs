@@ -522,6 +522,10 @@ impl GameStateEvaluator {
                     // enchanted creature. Moderate defensive value.
                     value += 20;
                 }
+                StaticAbility::CantAttackIfDefenderHasUntappedPowerGE { .. } => {
+                    // Conditional attack prohibition (Orgg): not an aura ability;
+                    // no enchanted-creature value contribution.
+                }
             }
         }
 

@@ -1573,6 +1573,11 @@ impl GameState {
                         // Prismatic Ward color-prevention: doesn't affect P/T;
                         // applied at damage-dealing time in deal_damage_to_creature.
                     }
+                    StaticAbility::CantAttackIfDefenderHasUntappedPowerGE { .. } => {
+                        // Conditional attack prohibition (Orgg): doesn't affect P/T;
+                        // enforced at declare-attackers time in game_loop/actions.rs
+                        // and actions/combat.rs.
+                    }
                 }
             }
         }

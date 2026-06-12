@@ -14,7 +14,7 @@
 //! 2. Otherwise, iteratively ask "assign lethal damage to which blocker first?"
 //! 3. After all killable blockers are handled, ask where to put remaining non-lethal damage
 
-use crate::core::{CardId, Keyword, PlayerId, TriggerEvent};
+use crate::core::{CardId, Keyword, PlayerId, StaticAbility, TriggerEvent};
 use crate::game::state::GameState;
 use crate::zones::Zone;
 use crate::{MtgError, Result};
@@ -98,6 +98,32 @@ impl GameState {
             .find(|p| p.id != player_id)
             .map(|p| p.id)
             .ok_or_else(|| MtgError::InvalidAction("No opponent found".to_string()))?;
+
+        // Check conditional CantAttack statics (CR 508.1c).
+        // e.g. Orgg: "can't attack if defending player controls an untapped
+        // creature with power >= N."
+        {
+            let statics: Vec<StaticAbility> = self.cards.get(card_id)?.static_abilities.to_vec();
+            for sa in &statics {
+                if let StaticAbility::CantAttackIfDefenderHasUntappedPowerGE { min_power, .. } = sa {
+                    let defender_blocks = self.battlefield.cards.iter().any(|&bid| {
+                        self.cards.try_get(bid).is_some_and(|c| {
+                            c.controller == defending_player
+                                && c.is_creature()
+                                && !c.tapped
+                                && i32::from(c.current_power()) >= *min_power
+                        })
+                    });
+                    if defender_blocks {
+                        return Err(MtgError::InvalidAction(
+                            "Creature can't attack: defending player controls an untapped creature \
+                             with sufficient power"
+                                .to_string(),
+                        ));
+                    }
+                }
+            }
+        }
 
         // Declare attacker in combat state (logged so it is reversible by the
         // undo log — mtg-614 hole (b)). The WASM ai_harness now blocks via

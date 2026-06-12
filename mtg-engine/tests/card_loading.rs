@@ -2391,3 +2391,55 @@ fn test_dig_filter_matches() {
     assert!(DigFilter::Artifact.matches(&artifact_creature));
     assert!(!DigFilter::Artifact.matches(&creature));
 }
+
+/// Test that Orgg's conditional CantAttack static is parsed correctly.
+///
+/// Orgg has two statics:
+/// 1. `S:Mode$ CantAttack | ValidCard$ Card.Self | UnlessDefender$ !controlsCreature.untapped+powerGE3`
+///    → parsed as StaticAbility::CantAttackIfDefenderHasUntappedPowerGE { min_power: 3 }
+/// 2. `S:Mode$ CantBlockBy | ValidAttacker$ Creature.powerGE3 | ValidBlocker$ Creature.Self`
+///    → parsed as StaticAbility::CantBlockMatching { attacker_filter: Creature.powerGE3 }
+///
+/// Both should appear in the instantiated card's static_abilities. (mtg-917 B3)
+#[test]
+fn test_load_orgg_cant_attack_static() -> Result<()> {
+    use mtg_engine::core::{CardId, PlayerId, StaticAbility};
+
+    let path = PathBuf::from("cardsfolder/o/orgg.txt");
+    if !path.exists() {
+        return Ok(()); // skip if cardsfolder absent
+    }
+
+    let def = CardLoader::load_from_file(&path)?;
+    assert_eq!(def.name.as_str(), "Orgg");
+
+    let card_id = CardId::new(1);
+    let player_id = PlayerId::new(1);
+    let card = def.instantiate(card_id, player_id);
+
+    // CantAttackIfDefenderHasUntappedPowerGE must be present with min_power=3.
+    let has_cant_attack = card.static_abilities.iter().any(|sa| {
+        matches!(
+            sa,
+            StaticAbility::CantAttackIfDefenderHasUntappedPowerGE { min_power: 3, .. }
+        )
+    });
+    assert!(
+        has_cant_attack,
+        "Orgg must have CantAttackIfDefenderHasUntappedPowerGE(3) static ability. Got: {:?}",
+        card.static_abilities
+    );
+
+    // CantBlockMatching (power >= 3 attackers) must also be present.
+    let has_cant_block = card
+        .static_abilities
+        .iter()
+        .any(|sa| matches!(sa, StaticAbility::CantBlockMatching { .. }));
+    assert!(
+        has_cant_block,
+        "Orgg must have CantBlockMatching static ability. Got: {:?}",
+        card.static_abilities
+    );
+
+    Ok(())
+}
