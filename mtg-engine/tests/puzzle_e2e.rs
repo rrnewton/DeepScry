@@ -6981,3 +6981,140 @@ async fn test_palace_siege_etb_mode_and_drain_trigger() -> mtg_engine::Result<()
 
     Ok(())
 }
+
+/// Thundertrap Trainer has Offspring {4} (CR 702.198): paying {4} additional
+/// when casting creates a 1/1 token copy when the creature enters the battlefield.
+///
+/// Setup: P0 has 6 mana and casts Thundertrap Trainer ({1}{U}). With 4 mana
+/// left after the base cost, the AI pays Offspring — so the battlefield should
+/// have BOTH the original 1/2 Thundertrap Trainer AND a 1/1 token copy.
+///
+/// If Offspring is not implemented, only 1 creature enters and P0 cannot win
+/// within the 5-turn limit against P1's 6 life.
+///
+/// MTG rules: CR 702.198 (Offspring), CR 601.2b (optional additional costs).
+#[tokio::test]
+async fn test_offspring_thundertrap_trainer_creates_1_1_token() -> Result<()> {
+    let cardsfolder = require_cardsfolder();
+
+    let puzzle_path = PathBuf::from("../test_puzzles/offspring_thundertrap_trainer.pzl");
+    let puzzle_contents = std::fs::read_to_string(&puzzle_path)?;
+    let puzzle = PuzzleFile::parse(&puzzle_contents)?;
+
+    let card_db = CardDatabase::new(cardsfolder);
+    let mut game = load_puzzle_into_game(&puzzle, &card_db).await?;
+
+    game.logger.enable_capture();
+    game.seed_rng(42);
+
+    let p1_id = game.players[0].id; // Thundertrap Trainer caster
+
+    // Setup: P0 starts with only lands (Thundertrap Trainer is in hand).
+    let p1_creatures_before = game
+        .battlefield
+        .cards
+        .iter()
+        .filter(|&&cid| {
+            game.cards
+                .try_get(cid)
+                .is_some_and(|c| c.controller == p1_id && c.is_creature())
+        })
+        .count();
+    assert_eq!(
+        p1_creatures_before, 0,
+        "P0 should start with no creatures on battlefield"
+    );
+
+    let mut controller1 = HeuristicController::new(p1_id);
+    let mut controller2 = HeuristicController::new(game.players[1].id);
+
+    let mut game_loop = GameLoop::new(&mut game).with_verbosity(VerbosityLevel::Normal);
+    // Run 1 turn: P0 should cast Thundertrap Trainer and pay Offspring {4}.
+    game_loop.run_turns(&mut controller1, &mut controller2, 1)?;
+
+    // After resolution, P0 should have BOTH the original Thundertrap Trainer (1/2)
+    // AND a 1/1 token copy — total 2 creatures.
+    let p1_creatures_after = game_loop
+        .game
+        .battlefield
+        .cards
+        .iter()
+        .filter(|&&cid| {
+            game_loop
+                .game
+                .cards
+                .try_get(cid)
+                .is_some_and(|c| c.controller == p1_id && c.is_creature())
+        })
+        .count();
+
+    // Check game log for "Offspring paid" confirmation.
+    let logs = game_loop.game.logger.logs();
+    let offspring_paid_logged = logs.iter().any(|l| l.message.contains("Offspring paid"));
+    let trainer_entered = logs.iter().any(|l| l.message.contains("Thundertrap Trainer"));
+
+    println!("Thundertrap Trainer entered: {trainer_entered}");
+    println!("Offspring paid logged: {offspring_paid_logged}");
+    println!("P0 creatures after turn 1: {p1_creatures_after}");
+
+    assert!(
+        trainer_entered,
+        "Thundertrap Trainer must have been cast and entered the battlefield"
+    );
+
+    assert!(
+        offspring_paid_logged,
+        "Offspring cost must have been paid (gamelog should contain 'Offspring paid')"
+    );
+
+    assert_eq!(
+        p1_creatures_after, 2,
+        "After casting Thundertrap Trainer with Offspring paid, P0 must control 2 creatures \
+         (original 1/2 + 1/1 token copy); got {}",
+        p1_creatures_after
+    );
+
+    // Verify the token is actually a 1/1 (not a copy with full P/T).
+    let token = game_loop
+        .game
+        .battlefield
+        .cards
+        .iter()
+        .filter(|&&cid| {
+            game_loop.game.cards.try_get(cid).is_some_and(|c| {
+                c.controller == p1_id
+                    && c.is_creature()
+                    && c.is_token
+                    && c.name.as_str().contains("Thundertrap Trainer")
+            })
+        })
+        .copied()
+        .next();
+
+    if let Some(token_id) = token {
+        let token_card = game_loop.game.cards.get(token_id)?;
+        assert_eq!(
+            token_card.base_power(),
+            Some(1),
+            "Offspring token must have base power 1; got {:?}",
+            token_card.base_power()
+        );
+        assert_eq!(
+            token_card.base_toughness(),
+            Some(1),
+            "Offspring token must have base toughness 1; got {:?}",
+            token_card.base_toughness()
+        );
+        println!(
+            "✓ Offspring token is {}/{}: {}",
+            token_card.base_power().unwrap_or(0),
+            token_card.base_toughness().unwrap_or(0),
+            token_card.name
+        );
+    } else {
+        panic!("Could not find a token copy of Thundertrap Trainer on P0's battlefield");
+    }
+
+    println!("✓ Offspring (Thundertrap Trainer): 1/1 token copy created on ETB (mtg-881 wave6)");
+    Ok(())
+}

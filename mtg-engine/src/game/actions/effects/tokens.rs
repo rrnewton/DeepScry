@@ -276,6 +276,8 @@ impl GameState {
             token.counters.clear();
             token.damage = 0;
             token.attached_to = None;
+            // CR 111.9: a copy created as a token IS a token permanent.
+            token.is_token = true;
 
             // Apply modifications
 

@@ -1281,6 +1281,67 @@ impl<'a> GameLoop<'a> {
                                     }
                                 }
 
+                                // Step 2c.6: Offspring payment (CR 702.198)
+                                // If the creature spell has the Offspring keyword, the
+                                // caster may pay the Offspring cost once as an optional
+                                // additional cost. When the creature enters, a 1/1 token
+                                // copy of it is created. Heuristic: always pay Offspring
+                                // when mana allows (greedy — the extra token is always
+                                // advantageous).
+                                {
+                                    let offspring_cost = self
+                                        .game
+                                        .cards
+                                        .try_get(card_id)
+                                        .and_then(|c| c.keywords.get_args(crate::core::Keyword::Offspring))
+                                        .and_then(|args| {
+                                            if let crate::core::KeywordArgs::Offspring { cost } = args {
+                                                Some(crate::core::ManaCost {
+                                                    generic: cost.generic,
+                                                    white: cost.white,
+                                                    blue: cost.blue,
+                                                    black: cost.black,
+                                                    red: cost.red,
+                                                    green: cost.green,
+                                                    colorless: cost.colorless,
+                                                    x_count: cost.x_count,
+                                                })
+                                            } else {
+                                                None
+                                            }
+                                        });
+                                    if let Some(off_cost) = offspring_cost {
+                                        let off_cmc = off_cost.cmc();
+                                        if off_cmc > 0 {
+                                            self.mana_engine.update_mut(self.game, current_priority);
+                                            let untapped_sources =
+                                                self.mana_engine
+                                                    .all_sources()
+                                                    .iter()
+                                                    .filter(|s| !s.is_tapped && !s.has_summoning_sickness)
+                                                    .count() as u8;
+                                            let pool_mana = self
+                                                .game
+                                                .get_player(current_priority)
+                                                .map(|p| p.total_available_mana().total())
+                                                .unwrap_or(0);
+                                            let total_mana = untapped_sources.saturating_add(pool_mana);
+                                            // Reserve mana for the base spell cost (already paid by
+                                            // the time we reach here; conservative check).
+                                            let base_cost =
+                                                self.game.cards.get(card_id).map(|c| c.mana_cost.cmc()).unwrap_or(0);
+                                            let available_for_offspring = total_mana.saturating_sub(base_cost);
+                                            if available_for_offspring >= off_cmc {
+                                                self.game.set_offspring_paid_logged(card_id, true);
+                                                if self.verbosity >= VerbosityLevel::Normal && !self.replaying {
+                                                    let msg = "  → Offspring paid".to_string();
+                                                    self.game.logger.gamelog(&msg);
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
                                 // Step 2d: Bargain payment (CR 702.162)
                                 // If the spell has the Bargain keyword, the caster
                                 // may sacrifice an artifact, enchantment, or token as

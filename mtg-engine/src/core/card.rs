@@ -998,6 +998,14 @@ pub struct Card {
     #[serde(default)]
     pub kicker_paid: bool,
 
+    /// Set to `true` when the caster pays the Offspring additional cost (CR 702.198)
+    /// for this creature spell. Cleared in the cleanup step. When `true` and the
+    /// creature enters the battlefield, the engine creates a 1/1 token copy of it
+    /// (CR 702.198a). Serialized so network-shadow + rewind reconstruct the same
+    /// decision. Mirrors `kicker_paid`.
+    #[serde(default)]
+    pub offspring_paid: bool,
+
     /// If set, a zone-change replacement applies: should this creature die this
     /// turn, it is exiled instead of going to the graveyard (CR 614). Set by
     /// `Effect::ExileIfWouldDieThisTurn` (Disintegrate's
@@ -1148,6 +1156,8 @@ pub struct CardStateSnapshot {
     pub bargain_paid: bool,
     #[serde(default)]
     pub kicker_paid: bool,
+    #[serde(default)]
+    pub offspring_paid: bool,
     pub exile_if_would_die_this_turn: bool,
     pub exile_if_would_go_to_graveyard_this_turn: bool,
     pub prevent_all_combat_damage_this_turn: bool,
@@ -1227,6 +1237,7 @@ impl Card {
             times_kicked: 0,
             bargain_paid: false,
             kicker_paid: false,
+            offspring_paid: false,
             exile_if_would_die_this_turn: false,
             exile_if_would_go_to_graveyard_this_turn: false,
             prevent_all_combat_damage_this_turn: false,
@@ -1283,6 +1294,7 @@ impl Card {
             times_kicked: self.times_kicked,
             bargain_paid: self.bargain_paid,
             kicker_paid: self.kicker_paid,
+            offspring_paid: self.offspring_paid,
             exile_if_would_die_this_turn: self.exile_if_would_die_this_turn,
             exile_if_would_go_to_graveyard_this_turn: self.exile_if_would_go_to_graveyard_this_turn,
             prevent_all_combat_damage_this_turn: self.prevent_all_combat_damage_this_turn,
@@ -1338,6 +1350,7 @@ impl Card {
         self.times_kicked = snapshot.times_kicked;
         self.bargain_paid = snapshot.bargain_paid;
         self.kicker_paid = snapshot.kicker_paid;
+        self.offspring_paid = snapshot.offspring_paid;
         self.exile_if_would_die_this_turn = snapshot.exile_if_would_die_this_turn;
         self.exile_if_would_go_to_graveyard_this_turn = snapshot.exile_if_would_go_to_graveyard_this_turn;
         self.prevent_all_combat_damage_this_turn = snapshot.prevent_all_combat_damage_this_turn;
@@ -1536,6 +1549,7 @@ impl Card {
         self.times_kicked = 0;
         self.bargain_paid = false;
         self.kicker_paid = false;
+        self.offspring_paid = false;
         self.exile_if_would_die_this_turn = false;
         self.exile_if_would_go_to_graveyard_this_turn = false;
         self.prevent_all_combat_damage_this_turn = false;

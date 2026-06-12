@@ -1168,6 +1168,10 @@ impl GameState {
 
             // Check for ETB triggers on all permanents (including the one that just entered)
             self.check_triggers(TriggerEvent::EntersBattlefield, card_id)?;
+
+            // CR 702.198: Offspring — if the caster paid the Offspring additional cost,
+            // create a 1/1 token copy of this creature on the battlefield.
+            self.create_offspring_token_if_paid(card_id)?;
         }
 
         Ok(())
@@ -8085,6 +8089,40 @@ impl GameState {
         if let Ok(card) = self.cards.get_mut(card_id) {
             card.kicker_paid = paid;
         }
+    }
+
+    /// Set a card's `offspring_paid` flag (CR 702.198 — Offspring optional additional cost),
+    /// snapshotting the prior value for undo first. Mirrors `set_kicker_paid_logged`.
+    /// No-op if the card is missing.
+    pub(crate) fn set_offspring_paid_logged(&mut self, card_id: CardId, paid: bool) {
+        let Some(prev) = self.cards.try_get(card_id).map(|c| c.offspring_paid) else {
+            return;
+        };
+        let prior_log_size = self.logger.log_count();
+        self.undo_log.log(
+            crate::undo::GameAction::SetOffspringPaid { card_id, prev },
+            prior_log_size,
+        );
+        if let Ok(card) = self.cards.get_mut(card_id) {
+            card.offspring_paid = paid;
+        }
+    }
+
+    /// If this creature spell was cast with Offspring paid (CR 702.198), create a
+    /// 1/1 token copy of it on the battlefield under the same controller.
+    /// Called immediately after ETB triggers fire for `card_id`.
+    /// No-op if the card is not a creature, not on the battlefield, or `offspring_paid` is false.
+    pub(crate) fn create_offspring_token_if_paid(&mut self, card_id: CardId) -> crate::error::Result<()> {
+        let (paid, controller, is_creature) = match self.cards.try_get(card_id) {
+            Some(c) => (c.offspring_paid, c.controller, c.is_creature()),
+            None => return Ok(()),
+        };
+        if !paid || !is_creature || !self.battlefield.contains(card_id) {
+            return Ok(());
+        }
+        // Create a 1/1 token copy of the creature (CR 702.198a).
+        self.execute_copy_permanent(card_id, controller, Some(1), Some(1), &[], 1)?;
+        Ok(())
     }
 
     /// Set a card's `bargain_paid` flag (CR 702.162 — Bargain optional sacrifice cost),

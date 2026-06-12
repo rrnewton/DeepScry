@@ -641,6 +641,10 @@ pub enum GameAction {
     /// set in the priority loop. Mirrors `SetBargainPaid` — same rewind semantics.
     SetKickerPaid { card_id: CardId, prev: bool },
 
+    /// Snapshot of a card's `offspring_paid` flag (CR 702.198) captured BEFORE it
+    /// is set in the priority loop. Mirrors `SetKickerPaid` — same rewind semantics.
+    SetOffspringPaid { card_id: CardId, prev: bool },
+
     /// Restore the full state snapshot of a card (e.g. when leaving battlefield
     /// the transient state is reset, and undoing it restores the snapshotted state).
     RestoreCardState {
@@ -979,6 +983,9 @@ impl fmt::Display for GameAction {
             }
             GameAction::SetKickerPaid { card_id, prev } => {
                 write!(f, "SetKickerPaid(card={}, prev={})", card_id, prev)
+            }
+            GameAction::SetOffspringPaid { card_id, prev } => {
+                write!(f, "SetOffspringPaid(card={}, prev={})", card_id, prev)
             }
             GameAction::SetManaPool { player_id, prev } => {
                 write!(f, "SetManaPool(P{}, prev={})", player_id.as_u32(), prev.total())
@@ -1808,6 +1815,12 @@ impl GameAction {
                 // missing card, matching the other card-field undos.
                 if let Ok(card) = game.cards.get_mut(*card_id) {
                     card.kicker_paid = *prev;
+                }
+            }
+            GameAction::SetOffspringPaid { card_id, prev } => {
+                // Restore the captured offspring-paid flag. Mirrors SetKickerPaid.
+                if let Ok(card) = game.cards.get_mut(*card_id) {
+                    card.offspring_paid = *prev;
                 }
             }
             GameAction::SetCombatManaPool { player_id, prev } => {
