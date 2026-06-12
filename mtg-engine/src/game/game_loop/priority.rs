@@ -2638,6 +2638,30 @@ impl<'a> GameLoop<'a> {
                                                     amount: *amount,
                                                 }
                                             }
+                                            // CreateTokenWithStoredPt (Phyrexian Processor): resolve
+                                            // the source_card placeholder to the activating card so
+                                            // execute_create_token_with_stored_pt can read stored_int.
+                                            crate::core::Effect::CreateTokenWithStoredPt {
+                                                source_card,
+                                                controller,
+                                                token_script,
+                                            } => {
+                                                let resolved_source = if source_card.is_placeholder() {
+                                                    card_id
+                                                } else {
+                                                    *source_card
+                                                };
+                                                let resolved_controller = if controller.is_placeholder() {
+                                                    current_priority
+                                                } else {
+                                                    *controller
+                                                };
+                                                crate::core::Effect::CreateTokenWithStoredPt {
+                                                    source_card: resolved_source,
+                                                    controller: resolved_controller,
+                                                    token_script: token_script.clone(),
+                                                }
+                                            }
                                             _ => effect.clone(),
                                         };
 

@@ -1283,11 +1283,31 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
             // - TokenOwner$: Who controls the token (You, Opponent, etc.)
             // - TokenAmount$: Number of tokens to create (default 1)
             //
+            // Special case: Phyrexian Processor
+            //   A:AB$ Token | TokenPower$ LifePaidOnETB | TokenToughness$ LifePaidOnETB
+            //   The token's P/T comes from the source card's `stored_int` (life paid on ETB).
+            //   Detected structurally: TokenPower$ LifePaidOnETB (no substring matching).
+            //
             // Examples:
             // - Cunning Maneuver: creates Clue token (c_a_clue_draw)
             // - Canyon Crawler: creates Food token (c_a_food_sac)
+            // - Phyrexian Processor: creates X/X Phyrexian Minion where X = life paid
             let token_script = params.get("TokenScript")?.to_string();
             let amount = params.get_u8("TokenAmount").unwrap_or(1);
+
+            // Detect the Phyrexian Processor shape: TokenPower$ LifePaidOnETB.
+            // In this shape the token amount is always 1 and P/T are read from
+            // the source card's stored_int at execution time.
+            if params.get("TokenPower") == Some("LifePaidOnETB")
+                || params.get("TokenToughness") == Some("LifePaidOnETB")
+            {
+                let controller = PlayerId::new(0); // placeholder — resolved at activation
+                return Some(Effect::CreateTokenWithStoredPt {
+                    source_card: crate::core::CardId::placeholder(),
+                    controller,
+                    token_script,
+                });
+            }
 
             // TokenOwner$ parsing — default to controller (You)
             // "Player"              → each player creates tokens

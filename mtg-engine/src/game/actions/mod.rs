@@ -223,6 +223,7 @@ fn expand_all_players_effect(effect: &Effect, player_ids: &[PlayerId]) -> smallv
         | Effect::SearchLibrary { .. }
         | Effect::AttachEquipment { .. }
         | Effect::CreateToken { .. }
+        | Effect::CreateTokenWithStoredPt { .. }
         | Effect::CopyPermanent { .. }
         | Effect::Balance { .. }
         | Effect::SetBasePowerToughness { .. }
@@ -363,6 +364,7 @@ fn expand_all_players_effect(effect: &Effect, player_ids: &[PlayerId]) -> smallv
             | Effect::SearchLibrary { .. }
             | Effect::AttachEquipment { .. }
             | Effect::CreateToken { .. }
+            | Effect::CreateTokenWithStoredPt { .. }
             | Effect::CopyPermanent { .. }
             | Effect::Balance { .. }
             | Effect::SetBasePowerToughness { .. }
@@ -4038,6 +4040,33 @@ impl GameState {
                 }
             }
 
+            // Resolve CreateTokenWithStoredPt placeholders.  The loader emits
+            // `source_card: CardId::placeholder()` and `controller:
+            // PlayerId::new(0)` since the activating card is not known at parse
+            // time.  At resolution we substitute the actual source card (the
+            // Phyrexian Processor) and its controller.
+            Effect::CreateTokenWithStoredPt {
+                source_card,
+                controller,
+                token_script,
+            } => {
+                let resolved_source = if source_card.is_placeholder() {
+                    source_card_id.unwrap_or(*source_card)
+                } else {
+                    *source_card
+                };
+                let resolved_controller = if controller.is_placeholder() {
+                    card_owner
+                } else {
+                    *controller
+                };
+                Effect::CreateTokenWithStoredPt {
+                    source_card: resolved_source,
+                    controller: resolved_controller,
+                    token_script: token_script.clone(),
+                }
+            }
+
             // Resolve CreateEmblem controller placeholder to the actual caster.
             // The loader sets controller to PlayerId::new(0) as placeholder;
             // at runtime we resolve it to the spell's owner (the planeswalker's
@@ -4498,6 +4527,12 @@ impl GameState {
                 amount,
                 for_each_player,
             } => self.execute_create_token(*controller, token_script, *amount, *for_each_player)?,
+
+            Effect::CreateTokenWithStoredPt {
+                source_card,
+                controller,
+                token_script,
+            } => self.execute_create_token_with_stored_pt(*source_card, *controller, token_script)?,
 
             Effect::Airbend { target } => self.execute_airbend(*target)?,
 

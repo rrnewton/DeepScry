@@ -708,6 +708,7 @@ impl HeuristicController {
                 e,
                 crate::core::Effect::SearchLibrary { .. }
                     | crate::core::Effect::CreateToken { .. }
+                    | crate::core::Effect::CreateTokenWithStoredPt { .. }
                     | crate::core::Effect::Scry { .. }
                     | crate::core::Effect::Surveil { .. }
                     | crate::core::Effect::Loot { .. }

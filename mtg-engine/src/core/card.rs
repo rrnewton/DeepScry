@@ -232,6 +232,13 @@ pub struct CardCache {
     /// `set_card_zone` can validate the AI choice without re-parsing the script.
     #[serde(default)]
     pub etb_mode_choices: Vec<String>,
+
+    /// Precomputed: Does this card have an ETB "pay any amount of life" replacement?
+    /// Derived from `R:Event$ Moved | Destination$ Battlefield | ReplaceWith$ PayLife`
+    /// (Phyrexian Processor). When set, `set_card_zone` prompts for a life payment
+    /// via AI heuristic, deducts it, and stores the amount in `Card::stored_int`.
+    #[serde(default)]
+    pub etb_pay_life: bool,
 }
 
 impl Default for CardCache {
@@ -310,6 +317,7 @@ impl CardCache {
             etb_choose_mode: false,
             etb_mode_ai_logic: None,
             etb_mode_choices: Vec::new(),
+            etb_pay_life: false,
         }
     }
 
@@ -903,6 +911,14 @@ pub struct Card {
     #[serde(default)]
     pub chosen_mode: Option<String>,
 
+    /// Per-card integer stored by an ETB replacement (Phyrexian Processor: life paid
+    /// as it entered the battlefield). Read back by a later activated ability that
+    /// creates a token whose P/T equals this value (`TokenPower$ LifePaidOnETB`).
+    /// Serialized so snapshot/resume + undo + rewind reconstruct the amount identically.
+    /// `None` means no amount has been stored yet.
+    #[serde(default)]
+    pub stored_int: Option<u32>,
+
     /// Script variables (SVars) for SubAbility chaining
     /// Key: SVar name (e.g., "BalanceHands")
     /// Value: SVar body (e.g., "DB$ Balance | Zone$ Hand | SubAbility$ BalanceCreatures")
@@ -1118,6 +1134,9 @@ pub struct CardStateSnapshot {
     /// serialized state so rewind/replay reconstruct the same trigger gating.
     #[serde(default)]
     pub chosen_mode: Option<String>,
+    /// Per-card integer stored by an ETB replacement (Phyrexian Processor: life paid).
+    #[serde(default)]
+    pub stored_int: Option<u32>,
     pub svars: std::collections::HashMap<String, String>,
     pub is_legendary: bool,
     pub loyalty_activated_this_turn: bool,
@@ -1195,6 +1214,7 @@ impl Card {
             chosen_color: None,
             chosen_player: None,
             chosen_mode: None,
+            stored_int: None,
             svars: std::collections::HashMap::new(),
             revealed_to_mask: 0,
             is_legendary: false,
@@ -1253,6 +1273,7 @@ impl Card {
             chosen_color: self.chosen_color,
             chosen_player: self.chosen_player,
             chosen_mode: self.chosen_mode.clone(),
+            stored_int: self.stored_int,
             svars: self.svars.clone(),
             is_legendary: self.is_legendary,
             loyalty_activated_this_turn: self.loyalty_activated_this_turn,
@@ -1307,6 +1328,7 @@ impl Card {
         self.chosen_color = snapshot.chosen_color;
         self.chosen_player = snapshot.chosen_player;
         self.chosen_mode = snapshot.chosen_mode;
+        self.stored_int = snapshot.stored_int;
         self.svars = snapshot.svars;
         self.is_legendary = snapshot.is_legendary;
         self.loyalty_activated_this_turn = snapshot.loyalty_activated_this_turn;
@@ -1355,6 +1377,7 @@ impl Card {
             self.definition.cache.etb_choose_mode = def.etb_choose_mode;
             self.definition.cache.etb_mode_ai_logic = def.etb_mode_ai_logic.clone();
             self.definition.cache.etb_mode_choices = def.etb_mode_choices.clone();
+            self.definition.cache.etb_pay_life = def.etb_pay_life;
             self.definition.cache.spell_relative_target_cost = def.has_relative_self_target_cost();
         } else {
             self.name = self.printed_name.clone();
@@ -1373,6 +1396,10 @@ impl Card {
         self.tapped = false;
         self.turn_entered_battlefield = None;
         self.counters = SmallVec::new();
+        // Clear the per-card stored integer (e.g. Phyrexian Processor's life-paid).
+        // The value is tied to a specific battlefield tenure; it resets when the card
+        // leaves so a future re-ETB starts fresh.
+        self.stored_int = None;
 
         if let Some(def) = original_def {
             self.keywords = def.parse_keywords();

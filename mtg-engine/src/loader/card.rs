@@ -136,6 +136,7 @@ impl CardLoader {
         // to `etb_choose_mode` AFTER all SVars are parsed so we do a structured
         // api_type check rather than a substring match on the K-line.
         let mut etb_choose_mode_svar: Option<String> = None;
+        let mut etb_pay_life = false;
         let mut is_legendary = false;
         let mut loyalty: Option<u8> = None;
         // Set when the front face carries `AlternateMode:Adventure` — the
@@ -256,6 +257,12 @@ impl CardLoader {
                                 EtbTappedReplacement::SelfHost => enters_tapped = true,
                                 EtbTappedReplacement::Global(pred) => etb_tapped_global = Some(pred),
                                 EtbTappedReplacement::NotApplicable => {}
+                            }
+                            // Detect ETB "pay any amount of life" replacement:
+                            // R:Event$ Moved | Destination$ Battlefield | ReplaceWith$ PayLife
+                            // (Phyrexian Processor). Structural parse — no substring matching.
+                            if is_etb_pay_life_replacement(value) {
+                                etb_pay_life = true;
                             }
                         }
                         raw_abilities.push(format!("{key}:{value}"));
@@ -410,6 +417,7 @@ impl CardLoader {
             etb_choose_mode,
             etb_mode_ai_logic,
             etb_mode_choices,
+            etb_pay_life,
             script_name: None, // Set by token loader
             is_legendary,
             loyalty,
@@ -523,6 +531,22 @@ fn classify_etb_tapped_replacement(value: &str) -> EtbTappedReplacement {
         return EtbTappedReplacement::NotApplicable;
     }
     EtbTappedReplacement::Global(crate::core::effects::TargetRestriction::parse(valid_card))
+}
+
+/// Detect the ETB "pay any amount of life" replacement:
+///   `R:Event$ Moved | Destination$ Battlefield | ReplaceWith$ PayLife`
+/// (Phyrexian Processor). Structural tokenized parse — no substring matching.
+/// Returns `true` iff the body is this exact replacement shape.
+fn is_etb_pay_life_replacement(value: &str) -> bool {
+    let mut params: std::collections::HashMap<&str, &str> = std::collections::HashMap::new();
+    for token in value.split('|') {
+        if let Some((k, v)) = token.split_once('$') {
+            params.insert(k.trim(), v.trim());
+        }
+    }
+    params.get("Event") == Some(&"Moved")
+        && params.get("Destination") == Some(&"Battlefield")
+        && params.get("ReplaceWith") == Some(&"PayLife")
 }
 
 /// True iff every `.`-qualifier in a comma-separated `ValidCard$` predicate is a
@@ -668,6 +692,12 @@ pub struct CardDefinition {
     /// Ordered list of mode names for `etb_choose_mode` (from `Choices$`).
     #[serde(default)]
     pub etb_mode_choices: Vec<String>,
+    /// Does this card have an ETB "pay any amount of life" replacement?
+    /// Derived from `R:Event$ Moved | Destination$ Battlefield | ReplaceWith$ PayLife`.
+    /// When set, `set_card_zone` deducts AI-chosen life and stores the amount in
+    /// `Card::stored_int`.
+    #[serde(default)]
+    pub etb_pay_life: bool,
     /// Script name (for tokens only). Used to look up token definitions.
     /// For tokens loaded from tokenscripts/, this is the filename without extension
     /// (e.g., "c_a_food_sac" for tokenscripts/c_a_food_sac.txt).
@@ -751,6 +781,7 @@ impl Default for CardDefinition {
             etb_choose_mode: false,
             etb_mode_ai_logic: None,
             etb_mode_choices: Vec::new(),
+            etb_pay_life: false,
             script_name: None,
             is_legendary: false,
             loyalty: None,
@@ -863,6 +894,7 @@ impl CardDefinition {
         card.definition.cache.etb_choose_mode = self.etb_choose_mode;
         card.definition.cache.etb_mode_ai_logic = self.etb_mode_ai_logic.clone();
         card.definition.cache.etb_mode_choices = self.etb_mode_choices.clone();
+        card.definition.cache.etb_pay_life = self.etb_pay_life;
         // Fireball's `{1}`-per-extra-target relative cost (CR 601.2f).
         card.definition.cache.spell_relative_target_cost = self.has_relative_self_target_cost();
         // Island Sanctuary: skip-draw-for-protection replacement (CR 614).
@@ -9529,5 +9561,59 @@ S:Mode$ AlternativeCost | ValidSA$ Spell.Self | EffectZone$ All | Cost$ 0 | Chec
             "Summoning Trap should have an AlternativeCost static; all statics: {:?}",
             statics
         );
+    }
+
+    /// Phyrexian Processor (B3 fix, mtg-913): the activated ability
+    /// `{4},{T}: Create an X/X black Phyrexian Minion creature token, where X
+    /// is the life paid as ~ entered` must parse to
+    /// `Effect::CreateTokenWithStoredPt` (not `Effect::CreateToken`), and the
+    /// ETB replacement detector must set `etb_pay_life = true`.
+    #[test]
+    fn test_phyrexian_processor_etb_pay_life_and_create_token_with_stored_pt() {
+        let content = r#"
+Name:Phyrexian Processor
+ManaCost:4
+Types:Artifact
+R:Event$ Moved | Destination$ Battlefield | ReplaceWith$ PayLife | ValidCard$ Card.Self
+SVar:PayLife:AB$ StoreSVar | Cost$ Mandatory PayLife<X> | SVar$ LifePaidOnETB | SpellDescription$ Choose a life total to pay.
+A:AB$ Token | Cost$ 4 T | TokenAmount$ 1 | TokenScript$ b_x_x_phyrexian_minion | TokenPower$ LifePaidOnETB | TokenToughness$ LifePaidOnETB | SpellDescription$ Create an X/X black Phyrexian Minion creature token, where X is the life paid as CARDNAME entered.
+Oracle:As Phyrexian Processor enters, pay any amount of life.\n{4}, {T}: Create an X/X black Phyrexian Minion artifact creature token, where X is the life paid as Phyrexian Processor entered.
+"#;
+        let def = CardLoader::parse(content).unwrap();
+
+        // 1. ETB replacement flag
+        assert!(
+            def.etb_pay_life,
+            "Phyrexian Processor should have etb_pay_life=true; svars={:?}",
+            def.svars
+        );
+
+        // 2. The activated ability produces a CreateTokenWithStoredPt effect.
+        let abilities = def.parse_activated_abilities();
+        assert_eq!(
+            abilities.len(),
+            1,
+            "Phyrexian Processor should have 1 activated ability; raw_abilities={:?}",
+            def.raw_abilities
+        );
+        let ability = &abilities[0];
+        let token_effect = ability
+            .effects
+            .iter()
+            .find(|e| matches!(e, crate::core::Effect::CreateTokenWithStoredPt { .. }));
+        assert!(
+            token_effect.is_some(),
+            "Phyrexian Processor activated ability should produce CreateTokenWithStoredPt; \
+             effects={:?}",
+            ability.effects
+        );
+
+        // 3. token_script points at the correct token definition.
+        if let Some(crate::core::Effect::CreateTokenWithStoredPt { token_script, .. }) = token_effect {
+            assert_eq!(
+                token_script, "b_x_x_phyrexian_minion",
+                "token_script should be b_x_x_phyrexian_minion; got {token_script}"
+            );
+        }
     }
 }

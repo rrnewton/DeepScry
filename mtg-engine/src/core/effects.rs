@@ -2120,6 +2120,27 @@ pub enum Effect {
         for_each_player: bool,
     },
 
+    /// Create a token whose power and toughness equal the `stored_int` of a source card
+    /// (Phyrexian Processor: `{4},{T}: Create an X/X black Phyrexian Minion token where
+    /// X is the life paid as Phyrexian Processor entered`).
+    ///
+    /// At resolution the engine reads `source_card.stored_int` (the life paid on ETB),
+    /// uses it as both power and toughness, then creates the token from `token_script`.
+    /// If `stored_int` is `None` (Processor somehow entered without the ETB firing),
+    /// the token defaults to 0/0 — matching the pre-fix behavior so no new crash paths.
+    ///
+    /// Corresponds to:
+    ///   `A:AB$ Token | Cost$ 4 T | TokenScript$ b_x_x_phyrexian_minion |
+    ///    TokenPower$ LifePaidOnETB | TokenToughness$ LifePaidOnETB`
+    CreateTokenWithStoredPt {
+        /// The card whose `stored_int` supplies P/T (the Processor itself).
+        source_card: crate::core::CardId,
+        /// Controller of the new token (resolved from the placeholder at activation time).
+        controller: crate::core::PlayerId,
+        /// Token script name (e.g. `"b_x_x_phyrexian_minion"`).
+        token_script: String,
+    },
+
     /// Create a planeswalker emblem and place it in the controller's command zone
     /// (CR 113.2 — emblems are objects with abilities, placed in the command zone,
     /// that persist for the rest of the game and can never be removed).
@@ -2992,6 +3013,7 @@ impl Effect {
             | Effect::Balance { .. }
             | Effect::CreateToken { .. }
             | Effect::CreateTokenDynamic { .. }
+            | Effect::CreateTokenWithStoredPt { .. }
             | Effect::Dig { .. }
             | Effect::SearchLibrary { .. }
             | Effect::Firebend { .. }

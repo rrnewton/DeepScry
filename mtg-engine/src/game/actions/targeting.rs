@@ -646,6 +646,7 @@ impl GameState {
                             | Effect::AddMana { .. }
                             | Effect::Balance { .. }
                             | Effect::CreateToken { .. }
+                            | Effect::CreateTokenWithStoredPt { .. }
                             | Effect::Dig { .. }
                             | Effect::SearchLibrary { .. }
                             | Effect::Firebend { .. }
@@ -753,6 +754,7 @@ impl GameState {
                 | Effect::AddMana { .. }
                 | Effect::Balance { .. }
                 | Effect::CreateToken { .. }
+                | Effect::CreateTokenWithStoredPt { .. }
                 | Effect::Dig { .. }
                 | Effect::SearchLibrary { .. }
                 | Effect::Firebend { .. }
@@ -1408,6 +1410,7 @@ impl GameState {
                 | Effect::AddMana { .. }
                 | Effect::Balance { .. }
                 | Effect::CreateToken { .. }
+                | Effect::CreateTokenWithStoredPt { .. }
                 | Effect::Dig { .. }
                 | Effect::SearchLibrary { .. }
                 | Effect::Firebend { .. }
@@ -1818,6 +1821,7 @@ impl GameState {
             | Effect::AddMana { .. }
             | Effect::Balance { .. }
             | Effect::CreateToken { .. }
+            | Effect::CreateTokenWithStoredPt { .. }
             | Effect::Dig { .. }
             | Effect::SearchLibrary { .. }
             | Effect::Firebend { .. }

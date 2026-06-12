@@ -152,6 +152,83 @@ impl GameState {
         Ok(())
     }
 
+    /// [`Effect::CreateTokenWithStoredPt`]: create one token whose power/toughness
+    /// equals `source_card.stored_int` (Phyrexian Processor: life paid on ETB).
+    ///
+    /// The token script (`b_x_x_phyrexian_minion`) has `PT:*/*`; we override its
+    /// base power and toughness from the stored amount. If `stored_int` is `None`
+    /// (shouldn't happen in normal play), the token is created as a 0/0 — matching
+    /// the pre-fix behaviour so the engine doesn't crash.
+    pub(in crate::game::actions) fn execute_create_token_with_stored_pt(
+        &mut self,
+        source_card: crate::core::CardId,
+        controller: crate::core::PlayerId,
+        token_script: &str,
+    ) -> Result<()> {
+        // Read the stored amount from the source card (Phyrexian Processor).
+        let stored = self.cards.try_get(source_card).and_then(|c| c.stored_int);
+        let pt = stored.unwrap_or(0) as i8;
+        if stored.is_none() {
+            log::warn!(
+                target: "token",
+                "CreateTokenWithStoredPt: source card {:?} has no stored_int; creating 0/0 token",
+                source_card
+            );
+        }
+
+        let token_def = self.token_definitions.get(token_script).cloned();
+        if let Some(token_def) = token_def {
+            let token_id = self.next_card_id();
+
+            if self.is_shadow_game && self.cards.contains(token_id) {
+                if !self.battlefield.contains(token_id) {
+                    self.battlefield.add(token_id);
+                }
+                return Ok(());
+            }
+
+            let mut token = token_def.instantiate(token_id, controller);
+            token.is_token = true;
+            token.controller = controller;
+            // Override the printed `*/*` with the life-paid amount (CR 208.2a
+            // defines base P/T; layer 7b CDAs don't apply to tokens, so the
+            // stored value goes in as the printed base stat).
+            token.set_base_power(Some(pt));
+            token.set_base_toughness(Some(pt));
+
+            let token_name = token.name.to_string();
+            self.cards.insert(token_id, token);
+
+            let mint_log_size = self.logger.log_count();
+            self.undo_log.log(
+                crate::undo::GameAction::CreateEntity { card_id: token_id },
+                mint_log_size,
+            );
+
+            let prior_log_size = self.logger.log_count();
+            self.maybe_reveal_to_all(token_id, prior_log_size);
+            self.battlefield.add(token_id);
+
+            log::debug!(target: "token",
+                "Created {}/{} {} token (id={}) under player {}'s control from stored_int={}",
+                pt, pt, token_name, token_id.as_u32(), controller.as_u32(), stored.unwrap_or(0)
+            );
+            self.logger.gamelog(&format!(
+                "Created {}/{} {} under {}'s control",
+                pt,
+                pt,
+                token_name,
+                self.get_player(controller)?.name
+            ));
+        } else {
+            log::warn!(
+                "Token definition not found: '{}' - skipping CreateTokenWithStoredPt",
+                token_script
+            );
+        }
+        Ok(())
+    }
+
     /// [`Effect::CopyPermanent`]: create `num_copies` token copies of `target`
     /// under `controller`, applying optional set-power/set-toughness/add-types
     /// modifications (CR 707.2). Fizzles if the target left the battlefield.

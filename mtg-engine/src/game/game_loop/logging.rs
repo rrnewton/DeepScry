@@ -680,6 +680,17 @@ impl<'a> GameLoop<'a> {
                     self.game.logger.gamelog(&message);
                 }
             }
+            Effect::CreateTokenWithStoredPt {
+                source_card,
+                controller,
+                token_script,
+            } => {
+                let controller_name = self.get_player_name(*controller);
+                let message = format!(
+                    "{source_name} ({source_id}) creates a {token_script} token (P/T from stored value on {source_card:?}) under {controller_name}'s control"
+                );
+                self.game.logger.gamelog(&message);
+            }
             Effect::Balance {
                 card_type,
                 zone,

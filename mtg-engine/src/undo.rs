@@ -73,6 +73,10 @@ pub enum GameAction {
     /// restores `Card::chosen_mode`. Same rationale as `SetChosenColor`.
     SetChosenMode { card_id: CardId, prev: Option<String> },
 
+    /// Set a card's `stored_int` (e.g. Phyrexian Processor's ETB life payment),
+    /// storing the PREVIOUS value so a mid-turn rewind restores `Card::stored_int`.
+    SetStoredInt { card_id: CardId, prev: Option<u32> },
+
     /// Modify life total (delta is the change, not absolute value)
     ModifyLife { player_id: PlayerId, delta: i32 },
 
@@ -684,6 +688,9 @@ impl fmt::Display for GameAction {
             GameAction::SetChosenMode { card_id, prev } => {
                 write!(f, "SetChosenMode({}, prev={:?})", card_id.as_u32(), prev)
             }
+            GameAction::SetStoredInt { card_id, prev } => {
+                write!(f, "SetStoredInt({}, prev={:?})", card_id.as_u32(), prev)
+            }
             GameAction::ModifyLife { player_id, delta } => {
                 write!(f, "Life(P{} {:+})", player_id.as_u32(), delta)
             }
@@ -1101,6 +1108,15 @@ impl GameAction {
                     card.chosen_mode = prev.clone();
                 } else {
                     return Err(format!("Card {} not found for SetChosenMode undo", card_id.as_u32()));
+                }
+            }
+
+            GameAction::SetStoredInt { card_id, prev } => {
+                // Restore the previous stored integer (Phyrexian Processor life paid on ETB).
+                if let Ok(card) = game.cards.get_mut(*card_id) {
+                    card.stored_int = *prev;
+                } else {
+                    return Err(format!("Card {} not found for SetStoredInt undo", card_id.as_u32()));
                 }
             }
 

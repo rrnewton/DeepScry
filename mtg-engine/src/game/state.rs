@@ -1843,6 +1843,65 @@ impl GameState {
                     );
                 }
             }
+
+            // Handle ETB "pay any amount of life" replacement (Phyrexian Processor,
+            // CR 614 replacement effect applied as the object enters).
+            // The AI heuristic: pay min(current_life - 1, 7) to aim for a 7/7 token
+            // while keeping at least 1 life.  The paid amount is stored in
+            // `Card::stored_int` and read later by the `{4},{T}: create X/X token`
+            // activated ability.
+            if let Some(card) = self.cards.try_get(card_id) {
+                if card.definition.cache.etb_pay_life {
+                    let controller = card.controller;
+                    let card_name = card.name.clone();
+                    let prev_stored_int = card.stored_int;
+                    let controller_life = self.get_player(controller).map(|p| p.life).unwrap_or(1);
+                    // Pay at most 7, but never reduce life below 1.
+                    let max_payable = (controller_life - 1).max(0);
+                    let pay_amount = max_payable.min(7) as u32;
+
+                    // Deduct life from the controller (drop the mutable borrow
+                    // before logging, to satisfy the borrow checker).
+                    let prior_log_size = self.logger.log_count();
+                    let log_msg = if let Ok(player) = self.get_player_mut(controller) {
+                        player.lose_life(pay_amount as i32);
+                        let new_life = player.life;
+                        Some(format!(
+                            "{} pays {} life as {} enters the battlefield (life: {})",
+                            player.name, pay_amount, card_name, new_life
+                        ))
+                    } else {
+                        None
+                    };
+                    if let Some(msg) = log_msg {
+                        self.logger.gamelog(&msg);
+                    }
+                    self.undo_log.log(
+                        crate::undo::GameAction::ModifyLife {
+                            player_id: controller,
+                            delta: pay_amount as i32,
+                        },
+                        prior_log_size,
+                    );
+
+                    // Store the paid amount on the card for later use by the token ability.
+                    let prior_log_size = self.logger.log_count();
+                    if let Ok(card_mut) = self.cards.get_mut(card_id) {
+                        card_mut.stored_int = Some(pay_amount);
+                        self.logger.verbose(&format!(
+                            "{} ({}) — stored {} life paid on ETB",
+                            card_name, card_id, pay_amount
+                        ));
+                    }
+                    self.undo_log.log(
+                        crate::undo::GameAction::SetStoredInt {
+                            card_id,
+                            prev: prev_stored_int,
+                        },
+                        prior_log_size,
+                    );
+                }
+            }
         }
 
         // Log the action with prior log size for undo synchronization
@@ -4604,6 +4663,7 @@ impl GameState {
                     | crate::core::Effect::SearchLibrary { .. }
                     | crate::core::Effect::AttachEquipment { .. }
                     | crate::core::Effect::CreateToken { .. }
+                    | crate::core::Effect::CreateTokenWithStoredPt { .. }
                     | crate::core::Effect::CopyPermanent { .. }
                     | crate::core::Effect::Balance { .. }
                     | crate::core::Effect::SetBasePowerToughness { .. }
