@@ -432,9 +432,9 @@ impl HeuristicController {
         // Check for modal (Charm) abilities — Umezawa's Jitte and similar.
         // Classify based on the most "aggressive" mode in the choice set:
         // PumpCreature mode → Pump (use same timing heuristic as firebreathing),
-        // GainLife-only → treat as Other (not enough board impact to force use).
-        // This lets the heuristic activate Jitte at sorcery speed so the chosen
-        // mode's effect is exercised. MTG CR 701.4a (mtg-911 B3 fix).
+        // no pump modes → Charm so the `should_activate` Charm arm fires at
+        //   sorcery speed (main phase, stack empty).
+        // MTG CR 701.4a (mtg-911 B3 fix).
         for effect in &ability.effects {
             if let crate::core::Effect::ModalChoice { modes, .. } = effect {
                 // Look for the best pump-type mode.
@@ -462,6 +462,10 @@ impl HeuristicController {
                         toughness: best_toughness,
                     };
                 }
+                // No positive pump mode — fall back to Charm so the modal
+                // ability is still activated at sorcery speed rather than
+                // never. (e.g. a life-gain-only Charm ability.)
+                return ActivatedAbilityType::Charm;
             }
         }
 
