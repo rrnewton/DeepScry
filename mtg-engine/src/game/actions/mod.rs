@@ -426,6 +426,11 @@ pub(crate) fn spell_matches_cost_filter(
     use crate::core::CostReductionTarget;
     match valid_card {
         CostReductionTarget::AllSpells => true,
+        // SelfCard: only the card that CARRIES this ability (when cast from hand).
+        // The battlefield-scan loop should never match SelfCard because that path
+        // is for OTHER permanents granting reductions.  SelfCard is handled by the
+        // dedicated "self-ReduceCost" pass in calculate_effective_cost instead.
+        CostReductionTarget::SelfCard => false,
         CostReductionTarget::NonCreature => !card.is_creature(),
         CostReductionTarget::Creature => card.is_creature(),
         CostReductionTarget::Subtype(subtype) => card.subtypes.contains(subtype),
@@ -2268,6 +2273,54 @@ impl GameState {
             }
         }
 
+        // Self-ReduceCost: apply ReduceCost static abilities carried on the card
+        // being cast itself (ValidCard$ Card.Self | EffectZone$ All).
+        // These reduce the card's own casting cost based on game state, and fire
+        // even though the card is still in the hand (not yet on the battlefield).
+        // Example: Eddymurk Crab — "costs {1} less for each instant/sorcery in
+        // your graveyard" (SVar:X:Count$ValidGraveyard Instant.YouOwn,Sorcery.YouOwn).
+        // CR 601.2e: cost reductions from the spell itself are applied first.
+        for self_ability in &card.static_abilities {
+            if let StaticAbility::ReduceCost {
+                valid_card: crate::core::CostReductionTarget::SelfCard,
+                amount,
+                condition,
+                description,
+            } = self_ability
+            {
+                // Condition check (if any)
+                let condition_met = if let Some(cond) = condition {
+                    self.count_cards_matching_filter(player_id, &cond.is_present, cond.present_zone)
+                        >= cond.min_count as usize
+                } else {
+                    true
+                };
+
+                if condition_met {
+                    let reduce_by = match amount {
+                        crate::core::CostReductionAmount::Fixed(n) => *n,
+                        crate::core::CostReductionAmount::Dynamic(expr) => {
+                            self.evaluate_count_expression(expr, player_id).unwrap_or(0).max(0) as u8
+                        }
+                    };
+
+                    let old_generic = effective_cost.generic;
+                    effective_cost.generic = effective_cost.generic.saturating_sub(reduce_by);
+
+                    if old_generic != effective_cost.generic {
+                        log::debug!(
+                            "Self-ReduceCost on {}: {} (reducing generic by {}, was {}, now {})",
+                            card.name,
+                            description,
+                            reduce_by,
+                            old_generic,
+                            effective_cost.generic
+                        );
+                    }
+                }
+            }
+        }
+
         // Check for ReduceCost / RaiseCost static abilities from permanents.
         //
         // Polarity rules (CR 601.2f):
@@ -2311,15 +2364,26 @@ impl GameState {
                     };
 
                     if condition_met {
+                        // Resolve the reduction amount: fixed constant or dynamic
+                        // CountExpression evaluated against the caster's game state.
+                        // Dynamic example: Eddymurk Crab (`Amount$X` with
+                        // `SVar:X:Count$ValidGraveyard Instant.YouOwn,Sorcery.YouOwn`).
+                        let reduce_by = match amount {
+                            crate::core::CostReductionAmount::Fixed(n) => *n,
+                            crate::core::CostReductionAmount::Dynamic(expr) => {
+                                self.evaluate_count_expression(expr, player_id).unwrap_or(0).max(0) as u8
+                            }
+                        };
+
                         let old_generic = effective_cost.generic;
-                        effective_cost.generic = effective_cost.generic.saturating_sub(*amount);
+                        effective_cost.generic = effective_cost.generic.saturating_sub(reduce_by);
 
                         if old_generic != effective_cost.generic {
                             log::debug!(
                                 "ReduceCost from {}: {} (reducing generic by {}, was {}, now {})",
                                 source_card.name,
                                 description,
-                                amount,
+                                reduce_by,
                                 old_generic,
                                 effective_cost.generic
                             );
@@ -2426,6 +2490,105 @@ impl GameState {
     ) -> usize {
         use crate::zones::Zone;
 
+        // Comma-separated filter (e.g. "Instant.YouOwn,Sorcery.YouOwn"): a card
+        // matches if it matches ANY of the comma-separated parts. Sum across
+        // distinct parts (a card can only match once — we count distinct cards).
+        // Implementation: collect into a set of matching card ids, then count.
+        // Simple/fast: iterate zone cards once per part, use a HashSet to dedup.
+        if filter.contains(',') {
+            let mut matched: std::collections::HashSet<crate::core::CardId> = std::collections::HashSet::new();
+            for part in filter.split(',') {
+                let part = part.trim();
+                if part.is_empty() {
+                    continue;
+                }
+                // Re-use single-filter logic by calling ourselves recursively.
+                // To count unique matching cards across all parts we can't just
+                // sum, so instead we collect matching card ids per part.
+                // As an approximation (good enough for dedup), rebuild per-zone
+                // ids here and re-check the single-part filter via a local closure.
+                let zone_cards: &[crate::core::CardId] = match zone {
+                    Zone::Graveyard => {
+                        if let Some(zones) = self.get_player_zones(player_id) {
+                            zones.graveyard.cards.as_slice()
+                        } else {
+                            continue;
+                        }
+                    }
+                    Zone::Hand => {
+                        if let Some(zones) = self.get_player_zones(player_id) {
+                            zones.hand.cards.as_slice()
+                        } else {
+                            continue;
+                        }
+                    }
+                    Zone::Battlefield => self.battlefield.cards.as_slice(),
+                    Zone::Exile => {
+                        if let Some(zones) = self.get_player_zones(player_id) {
+                            zones.exile.cards.as_slice()
+                        } else {
+                            continue;
+                        }
+                    }
+                    Zone::Library => {
+                        if let Some(zones) = self.get_player_zones(player_id) {
+                            zones.library.cards.as_slice()
+                        } else {
+                            continue;
+                        }
+                    }
+                    Zone::Stack | Zone::Command => continue,
+                };
+                // Build a temporary single-filter count and collect matching ids.
+                // We recurse with the single part to reuse all the type-matching
+                // logic; then track which cards match via a secondary scan.
+                let single_count = self.count_cards_matching_filter(player_id, part, zone);
+                if single_count == 0 {
+                    continue;
+                }
+                // To get the actual card ids, re-scan with the same single-filter.
+                // parse the single-part filter inline (mirrors the logic below).
+                let mut sections = part.splitn(2, '.');
+                let type_filter = sections.next().unwrap_or("");
+                let quals: Vec<&str> = sections.next().map(|q| q.split('+').collect()).unwrap_or_default();
+                let ownership = quals
+                    .iter()
+                    .copied()
+                    .find(|q| matches!(*q, "YouOwn" | "OppOwn" | "YouCtrl" | "OppCtrl"))
+                    .unwrap_or("YouOwn");
+                for &cid in zone_cards {
+                    let Some(c) = self.cards.try_get(cid) else {
+                        continue;
+                    };
+                    let ownership_ok = match ownership {
+                        "YouOwn" => c.owner == player_id,
+                        "OppOwn" => c.owner != player_id,
+                        "YouCtrl" => c.controller == player_id,
+                        "OppCtrl" => c.controller != player_id,
+                        _ => true,
+                    };
+                    if !ownership_ok {
+                        continue;
+                    }
+                    let type_ok = match type_filter {
+                        "" | "Card" | "Permanent" => true,
+                        "Land" => c.is_land(),
+                        "Artifact" => c.is_artifact(),
+                        "Creature" => c.is_creature(),
+                        "Enchantment" => c.is_enchantment(),
+                        "Instant" => c.types.contains(&crate::core::CardType::Instant),
+                        "Sorcery" => c.types.contains(&crate::core::CardType::Sorcery),
+                        "Planeswalker" => c.types.contains(&crate::core::CardType::Planeswalker),
+                        other => c.subtypes.contains(&crate::core::Subtype::new(other)),
+                    };
+                    if type_ok {
+                        matched.insert(cid);
+                    }
+                }
+            }
+            return matched.len();
+        }
+
         // Parse filter: "Lesson.YouOwn" -> type="Lesson", quals=["YouOwn"].
         // Qualifiers after the first '.' are '+'-joined, e.g.
         // "Permanent.White+YouCtrl" -> type="Permanent", quals=["White","YouCtrl"].
@@ -2520,14 +2683,16 @@ impl GameState {
                 }
 
                 // Check the base type filter. "Card"/"Permanent" are wildcards;
-                // card types (Land/Artifact/Creature/Enchantment/...) match
-                // c.types; otherwise treat as a creature subtype.
+                // card types (Land/Artifact/Creature/Enchantment/Instant/Sorcery/…)
+                // match c.types; otherwise treat as a creature subtype.
                 let type_ok = match type_filter {
                     "" | "Card" | "Permanent" => true,
                     "Land" => c.is_land(),
                     "Artifact" => c.is_artifact(),
                     "Creature" => c.is_creature(),
                     "Enchantment" => c.is_enchantment(),
+                    "Instant" => c.types.contains(&crate::core::CardType::Instant),
+                    "Sorcery" => c.types.contains(&crate::core::CardType::Sorcery),
                     "Planeswalker" => c.types.contains(&crate::core::CardType::Planeswalker),
                     other => c.subtypes.contains(&crate::core::Subtype::new(other)),
                 };

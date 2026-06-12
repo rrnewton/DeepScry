@@ -5545,7 +5545,7 @@ impl CardDefinition {
 
             // ReduceCost-specific parameters
             let mut valid_card: Option<crate::core::CostReductionTarget> = None;
-            let mut reduce_amount: u8 = 0;
+            let mut reduce_amount: crate::core::CostReductionAmount = crate::core::CostReductionAmount::Fixed(0);
             let mut is_present: Option<String> = None;
             let mut present_zone: Option<crate::zones::Zone> = None;
             let mut present_compare_min: u8 = 1; // Default: at least 1
@@ -5722,7 +5722,11 @@ impl CardDefinition {
                                 use crate::core::CostReductionTarget;
                                 valid_card = Some(match value {
                                     "Card.nonCreature" => CostReductionTarget::NonCreature,
-                                    "Card" | "Card.Self" => CostReductionTarget::AllSpells,
+                                    "Card" => CostReductionTarget::AllSpells,
+                                    // Card.Self: the reduction applies to THIS card's own casting
+                                    // cost (EffectZone$ All — active even from hand/graveyard).
+                                    // Eddymurk Crab: costs {1} less for each instant/sorcery in graveyard.
+                                    "Card.Self" => CostReductionTarget::SelfCard,
                                     "Creature" => CostReductionTarget::Creature,
                                     "Card.White" => CostReductionTarget::Color(crate::core::Color::White),
                                     "Card.Blue" => CostReductionTarget::Color(crate::core::Color::Blue),
@@ -5737,11 +5741,28 @@ impl CardDefinition {
                             }
                         }
                         "Amount" => {
-                            // Parse Amount$ for cost reduction/increase (e.g., "1", "2")
-                            reduce_amount = value.parse().unwrap_or(0);
-                            // For RaiseCost with Amount$, create a mana-based raised cost
-                            if is_raise_cost && reduce_amount > 0 {
-                                raised_cost = Some(crate::core::RaisedCost::Mana(reduce_amount));
+                            // Parse Amount$ for cost reduction/increase.
+                            // Numeric literal (e.g. "1", "2"): fixed.
+                            // Variable reference (e.g. "X") with a Count$… SVar:
+                            //   evaluate dynamically at cast time so cards like
+                            //   Eddymurk Crab ("costs {1} less for each instant/sorcery
+                            //   in your graveyard") work correctly.
+                            if let Ok(n) = value.parse::<u8>() {
+                                reduce_amount = crate::core::CostReductionAmount::Fixed(n);
+                                // For RaiseCost with Amount$, create a mana-based raised cost
+                                if is_raise_cost && n > 0 {
+                                    raised_cost = Some(crate::core::RaisedCost::Mana(n));
+                                }
+                            } else {
+                                // Variable reference — try to resolve through SVars.
+                                // Use DynamicAmount::parse which handles Count$ValidGraveyard, etc.
+                                if let Some(crate::core::DynamicAmount::Count(expr)) =
+                                    crate::core::DynamicAmount::parse(value, &self.svars)
+                                {
+                                    reduce_amount = crate::core::CostReductionAmount::Dynamic(expr);
+                                }
+                                // Note: RaiseCost with a variable Amount$ is not currently
+                                // used in the 2025 card set; leave raised_cost unchanged.
                             }
                         }
                         "Cost" => {

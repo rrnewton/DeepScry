@@ -301,6 +301,51 @@ impl<'a> GameLoop<'a> {
             }
         }
 
+        // Self-ReduceCost: apply ReduceCost static abilities carried on the card
+        // being cast itself (ValidCard$ Card.Self | EffectZone$ All).
+        // Example: Eddymurk Crab — "costs {1} less for each instant/sorcery in
+        // your graveyard". Mirrors the same pass in actions/mod.rs.
+        // CR 601.2e: cost reductions from the spell itself are applied first.
+        for self_ability in &card.static_abilities {
+            if let StaticAbility::ReduceCost {
+                valid_card: crate::core::CostReductionTarget::SelfCard,
+                amount,
+                condition,
+                description,
+            } = self_ability
+            {
+                let condition_met = if let Some(cond) = condition {
+                    self.count_cards_matching_filter(player_id, &cond.is_present, cond.present_zone)
+                        >= cond.min_count as usize
+                } else {
+                    true
+                };
+
+                if condition_met {
+                    let reduce_by = match amount {
+                        crate::core::CostReductionAmount::Fixed(n) => *n,
+                        crate::core::CostReductionAmount::Dynamic(expr) => {
+                            self.game.evaluate_count_expression(expr, player_id).unwrap_or(0).max(0) as u8
+                        }
+                    };
+
+                    let old_generic = effective_cost.generic;
+                    effective_cost.generic = effective_cost.generic.saturating_sub(reduce_by);
+
+                    if old_generic != effective_cost.generic {
+                        log::debug!(
+                            "Self-ReduceCost on {}: {} (reducing generic by {}, was {}, now {})",
+                            card.name,
+                            description,
+                            reduce_by,
+                            old_generic,
+                            effective_cost.generic
+                        );
+                    }
+                }
+            }
+        }
+
         // Check for ReduceCost / RaiseCost static abilities from permanents.
         // Polarity rules (CR 601.2f): ReduceCost only helps its own controller;
         // RaiseCost ("hose" effects like Gloom, Karma) applies regardless of
@@ -339,15 +384,26 @@ impl<'a> GameLoop<'a> {
                     };
 
                     if condition_met {
+                        // Resolve the reduction amount: fixed constant or dynamic
+                        // CountExpression evaluated against the caster's game state.
+                        // Dynamic example: Eddymurk Crab (`Amount$X` with
+                        // `SVar:X:Count$ValidGraveyard Instant.YouOwn,Sorcery.YouOwn`).
+                        let reduce_by = match amount {
+                            crate::core::CostReductionAmount::Fixed(n) => *n,
+                            crate::core::CostReductionAmount::Dynamic(expr) => {
+                                self.game.evaluate_count_expression(expr, player_id).unwrap_or(0).max(0) as u8
+                            }
+                        };
+
                         let old_generic = effective_cost.generic;
-                        effective_cost.generic = effective_cost.generic.saturating_sub(*amount);
+                        effective_cost.generic = effective_cost.generic.saturating_sub(reduce_by);
 
                         if old_generic != effective_cost.generic {
                             log::debug!(
                                 "ReduceCost from {}: {} (reducing generic by {}, was {}, now {})",
                                 source_card.name,
                                 description,
-                                amount,
+                                reduce_by,
                                 old_generic,
                                 effective_cost.generic
                             );

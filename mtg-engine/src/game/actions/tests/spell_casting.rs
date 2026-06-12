@@ -1238,7 +1238,7 @@ mod tests {
         gran_gran.controller = p1_id;
         gran_gran.static_abilities.push(StaticAbility::ReduceCost {
             valid_card: CostReductionTarget::NonCreature,
-            amount: 1,
+            amount: crate::core::CostReductionAmount::Fixed(1),
             condition: Some(CostReductionCondition {
                 is_present: "Lesson.YouOwn".to_string(),
                 present_zone: crate::zones::Zone::Graveyard,
@@ -1337,7 +1337,7 @@ mod tests {
         reducer.controller = p1_id;
         reducer.static_abilities.push(StaticAbility::ReduceCost {
             valid_card: CostReductionTarget::AllSpells,
-            amount: 1,
+            amount: crate::core::CostReductionAmount::Fixed(1),
             condition: None, // No condition - always active
             description: "All spells cost {1} less".to_string(),
         });

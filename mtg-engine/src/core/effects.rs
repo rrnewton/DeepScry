@@ -3842,8 +3842,10 @@ pub enum StaticAbility {
         /// Examples: "Card.nonCreature" = non-creature cards, "Card.Self" = only this card
         valid_card: CostReductionTarget,
 
-        /// Amount of generic mana to reduce
-        amount: u8,
+        /// How much generic mana to reduce: either a compile-time constant or a
+        /// `CountExpression` evaluated against the caster's game state at cast
+        /// time (e.g. Eddymurk Crab: number of instants/sorceries in graveyard).
+        amount: CostReductionAmount,
 
         /// Condition for when the reduction applies (presence checks)
         condition: Option<CostReductionCondition>,
@@ -4293,6 +4295,13 @@ pub enum CostReductionTarget {
     /// Corresponds to: `ValidCard$ Card` or no ValidCard parameter
     AllSpells,
 
+    /// Only this card itself, regardless of zone (EffectZone$ All).
+    /// Corresponds to: `ValidCard$ Card.Self | EffectZone$ All`.
+    /// The reduction is applied directly from the card being cast, not
+    /// from a battlefield permanent. Used by cards that reduce their own
+    /// casting cost based on game state (e.g. Eddymurk Crab).
+    SelfCard,
+
     /// Creature spells only
     /// Corresponds to: `ValidCard$ Creature`
     Creature,
@@ -4323,6 +4332,30 @@ pub struct CostReductionCondition {
 
     /// Minimum count required (from PresentCompare$ GE3 -> 3)
     pub min_count: u8,
+}
+
+/// Amount for a cost reduction — either a compile-time fixed generic count or
+/// a `CountExpression` evaluated against the caster at cast time.
+///
+/// Fixed: `Amount$ 2` → reduce by exactly 2.
+/// Dynamic: `Amount$ X` with `SVar:X:Count$ValidGraveyard Instant.YouOwn,Sorcery.YouOwn`
+/// → reduce by the number of instants/sorceries in your graveyard (e.g. Eddymurk Crab).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CostReductionAmount {
+    /// Reduce by a fixed number of generic mana.
+    Fixed(u8),
+    /// Reduce by a count evaluated at cast time (e.g. graveyard count).
+    Dynamic(CountExpression),
+}
+
+impl CostReductionAmount {
+    /// Return the fixed amount if known at load time, or `None` if dynamic.
+    pub fn fixed(&self) -> Option<u8> {
+        match self {
+            CostReductionAmount::Fixed(n) => Some(*n),
+            CostReductionAmount::Dynamic(_) => None,
+        }
+    }
 }
 
 /// Represents what additional cost is raised by a RaiseCost ability
