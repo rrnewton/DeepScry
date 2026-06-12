@@ -297,6 +297,23 @@ pub fn resolve_effect_placeholder(effect: &Effect, ctx: &TriggerContext) -> Effe
             amount: *amount,
         },
 
+        // LoseLife with a placeholder player (from `DB$ LoseLife | Defined$
+        // Player.Opponent`): resolve to the trigger source's opponent. Follows the
+        // same convention as the spell-resolution path in mod.rs — "LoseLife
+        // defaults to opponent (most common: 'each opponent loses N life')". If no
+        // opponent is known (single-player edge case), falls back to the controller
+        // so the ability does not silently fizzle.
+        //
+        // Example: Palace Siege Dragons mode — "each opponent loses 2 life and you
+        // gain 2 life" — the SyphonLife SVar emits `LoseLife { player: placeholder,
+        // amount: 2 }` via params_to_effect and `GainLife { player: placeholder,
+        // amount: 2 }` via its SubAbility. Both must resolve correctly from the
+        // trigger context built in `check_triggers_for_controller`.
+        Effect::LoseLife { player, amount } if player.is_placeholder() => Effect::LoseLife {
+            player: ctx.opponent.unwrap_or(ctx.controller),
+            amount: *amount,
+        },
+
         // Damage-driven life gain fired from a trigger (Spirit Link: "you gain
         // that much life"). The trigger context carries the damage amount the
         // event source just dealt (TriggerCount$DamageAmount). Resolve to a

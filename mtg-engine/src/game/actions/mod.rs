@@ -6576,6 +6576,13 @@ impl GameState {
                             return false;
                         }
                     }
+                    // Mode gate (Palace Siege): only fire if the source card's
+                    // chosen_mode matches the gate string.
+                    if let Some(gate) = &trigger.mode_gate {
+                        if card.chosen_mode.as_deref() != Some(gate.as_str()) {
+                            return false;
+                        }
+                    }
                     true
                 })
                 .flat_map(|trigger| trigger.effects.clone())
@@ -6584,7 +6591,12 @@ impl GameState {
 
         // Build trigger context for placeholder resolution
         let controller = self.cards.get(card_id)?.controller;
+        let opponent = self.get_other_player_id(controller);
         let mut ctx = TriggerContext::new(card_id, controller);
+        // Populate the opponent so that `Defined$ Player.Opponent` effects
+        // (e.g. Palace Siege Dragons drain: `DB$ LoseLife | Defined$ Player.Opponent`)
+        // resolve to the correct player rather than defaulting to the controller.
+        ctx.opponent = opponent;
         // For a beginning-of-draw-step phase trigger (Howling Mine:
         // `Phase$ Draw | ValidPlayer$ Player`), the "triggered player" is the
         // player whose draw step fired the trigger — the active player — NOT the

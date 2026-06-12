@@ -68,6 +68,11 @@ pub enum GameAction {
     /// target decks, so this is the most current-relevant ETB choice-field hole.
     SetChosenPlayer { card_id: CardId, prev: Option<PlayerId> },
 
+    /// Set a card's ETB-chosen mode (e.g. Palace Siege's `DB$ GenericChoice |
+    /// Choices$ Khans,Dragons`), storing the PREVIOUS value so a mid-turn rewind
+    /// restores `Card::chosen_mode`. Same rationale as `SetChosenColor`.
+    SetChosenMode { card_id: CardId, prev: Option<String> },
+
     /// Modify life total (delta is the change, not absolute value)
     ModifyLife { player_id: PlayerId, delta: i32 },
 
@@ -672,6 +677,9 @@ impl fmt::Display for GameAction {
                     prev.map(|p| p.as_u32())
                 )
             }
+            GameAction::SetChosenMode { card_id, prev } => {
+                write!(f, "SetChosenMode({}, prev={:?})", card_id.as_u32(), prev)
+            }
             GameAction::ModifyLife { player_id, delta } => {
                 write!(f, "Life(P{} {:+})", player_id.as_u32(), delta)
             }
@@ -1077,6 +1085,15 @@ impl GameAction {
                     card.chosen_player = *prev;
                 } else {
                     return Err(format!("Card {} not found for SetChosenPlayer undo", card_id.as_u32()));
+                }
+            }
+
+            GameAction::SetChosenMode { card_id, prev } => {
+                // Restore the previous ETB-chosen mode (Palace Siege Khans/Dragons).
+                if let Ok(card) = game.cards.get_mut(*card_id) {
+                    card.chosen_mode = prev.clone();
+                } else {
+                    return Err(format!("Card {} not found for SetChosenMode undo", card_id.as_u32()));
                 }
             }
 

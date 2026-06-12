@@ -376,6 +376,16 @@ impl<'a> GameLoop<'a> {
                 if t.present_self_dealt_damage_to_opponent && !card.dealt_damage_to_opponent_this_turn {
                     return false;
                 }
+                // Mode gate (Palace Siege): trigger only fires if the source
+                // card's chosen_mode matches the gate string (e.g. "Khans" or
+                // "Dragons"). When `mode_gate` is None the trigger always fires
+                // (no gate). When the card hasn't chosen a mode yet, it cannot
+                // fire (shouldn't happen for a Battlefield trigger, but guarded).
+                if let Some(gate) = &t.mode_gate {
+                    if card.chosen_mode.as_deref() != Some(gate.as_str()) {
+                        return false;
+                    }
+                }
                 true
             })
         };
@@ -441,7 +451,22 @@ impl<'a> GameLoop<'a> {
                     .map(|card| {
                         card.triggers
                             .iter()
-                            .filter(|t| t.event == trigger_event)
+                            .filter(|t| {
+                                if t.event != trigger_event {
+                                    return false;
+                                }
+                                // Suppress log lines for mode-gated triggers whose gate
+                                // doesn't match (e.g. Palace Siege Khans trigger when
+                                // Dragons mode is active). Mirrors the gate in
+                                // `check_triggers_for_controller` so the log only shows
+                                // triggers that will actually fire.
+                                if let Some(gate) = &t.mode_gate {
+                                    if card.chosen_mode.as_deref() != Some(gate.as_str()) {
+                                        return false;
+                                    }
+                                }
+                                true
+                            })
                             .map(|t| {
                                 let desc = t
                                     .description

@@ -6870,5 +6870,114 @@ async fn test_torch_the_tower_bargained_deals_3_and_scrys() -> Result<()> {
     );
 
     println!("✓ Torch the Tower bargained: deals 3 damage (Centaur Courser dies), scry 1 fires (mtg-863/mtg-881)");
+
+    Ok(())
+}
+
+/// Palace Siege ETB mode selection + mode-gated upkeep trigger (mtg-921 B4)
+///
+/// Palace Siege has `K:ETBReplacement:Other:SiegeChoice` with
+/// `DB$ GenericChoice | Choices$ Khans,Dragons | AILogic$ Dragons`. When it
+/// enters the battlefield the engine should deterministically pick "Dragons"
+/// (the AILogic value). On subsequent upkeeps, the Dragons conditional trigger
+/// (`S:Mode$Continuous|Affected$Card.Self+ChosenModeDragons`) should fire and
+/// drain each opponent for 2 life (LoseLife 2 + GainLife 2).
+///
+/// Assertions:
+/// 1. Palace Siege's `chosen_mode` is `Some("Dragons")` immediately after it
+///    enters the battlefield.
+/// 2. After P1's upkeep on turn 2, P2's life total has dropped by 2.
+#[tokio::test]
+async fn test_palace_siege_etb_mode_and_drain_trigger() -> mtg_engine::Result<()> {
+    let cardsfolder = mtg_engine::loader::require_cardsfolder();
+
+    let puzzle_path = PathBuf::from("../test_puzzles/palace_siege_etb_mode.pzl");
+    let puzzle_contents = std::fs::read_to_string(&puzzle_path)?;
+    let puzzle = PuzzleFile::parse(&puzzle_contents)?;
+
+    let card_db = CardDatabase::new(cardsfolder);
+    let mut game = load_puzzle_into_game(&puzzle, &card_db).await?;
+    game.seed_rng(42);
+
+    let players: Vec<_> = game.players.iter().map(|p| p.id).collect();
+    let p1_id = players[0]; // Has Palace Siege in hand + 5 Swamps
+    let p2_id = players[1]; // Control group
+
+    let p2_life_before = game.get_player(p2_id)?.life;
+
+    // FixedScriptController: first action on P1's main phase is "cast Palace Siege"
+    // (action index 1 = first non-pass option). After script exhausts → passes.
+    let mut ctrl1 = FixedScriptController::new(p1_id, vec![1]);
+    let mut ctrl2 = ZeroController::new(p2_id);
+
+    // Run 3 turns (T1: P1 casts Palace Siege; T2: P2 pass; T3: P1 upkeep fires Dragons)
+    let mut game_loop = GameLoop::new(&mut game).with_verbosity(VerbosityLevel::Verbose);
+    let _result = game_loop.run_turns(&mut ctrl1, &mut ctrl2, 4)?;
+
+    let logs = game_loop.game.logger.logs();
+
+    // Print relevant log lines for debugging
+    println!("\n=== Palace Siege ETB mode + drain test ===");
+    for log in logs.iter() {
+        if log.message.contains("Palace Siege")
+            || log.message.contains("mode")
+            || log.message.contains("loses")
+            || log.message.contains("gains")
+            || log.message.contains("DragonsTrigger")
+            || log.message.contains("Dragons")
+        {
+            println!("  {}", log.message);
+        }
+    }
+
+    // --- Assertion 1: chosen_mode set to "Dragons" on ETB ---
+    let palace_siege_id = game_loop
+        .game
+        .battlefield
+        .cards
+        .iter()
+        .find(|&&cid| {
+            game_loop
+                .game
+                .cards
+                .try_get(cid)
+                .is_some_and(|c| c.name.as_str() == "Palace Siege")
+        })
+        .copied();
+
+    assert!(
+        palace_siege_id.is_some(),
+        "Palace Siege must be on the battlefield after being cast"
+    );
+
+    let palace_card = game_loop.game.cards.get(palace_siege_id.unwrap())?;
+    assert_eq!(
+        palace_card.chosen_mode.as_deref(),
+        Some("Dragons"),
+        "Palace Siege must have chosen_mode = Some(\"Dragons\") immediately after ETB \
+         (AILogic$ Dragons in SiegeChoice SVar); got {:?}",
+        palace_card.chosen_mode
+    );
+    println!("✓ Palace Siege chosen_mode = {:?}", palace_card.chosen_mode);
+
+    // --- Assertion 2: P2 drained by 2 during P1's upkeep(s) ---
+    let p2_life_after = game_loop.game.get_player(p2_id)?.life;
+    println!(
+        "P2 life: {} -> {} (delta {})",
+        p2_life_before,
+        p2_life_after,
+        p2_life_before - p2_life_after
+    );
+
+    // Palace Siege fires the Dragons drain on every upkeep of the controller.
+    // After 4 turns (2 of P1's upkeeps), P2 should have lost at least 2 life.
+    assert!(
+        p2_life_after < p2_life_before,
+        "Palace Siege (Dragons mode) must drain P2 for 2 life each upkeep; \
+         P2 still at {} after {} turns",
+        p2_life_after,
+        4
+    );
+
     Ok(())
 }

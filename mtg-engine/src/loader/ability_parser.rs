@@ -214,6 +214,7 @@ pub enum ApiType {
     // === Targeting ===
     ChooseCard,
     ChoosePlayer,
+    GenericChoice,
     ChooseType,
     ChooseColor,
     ChooseDirection,
@@ -429,6 +430,7 @@ impl ApiType {
             // Targeting
             "ChooseCard" => Self::ChooseCard,
             "ChoosePlayer" => Self::ChoosePlayer,
+            "GenericChoice" => Self::GenericChoice,
             "ChooseType" => Self::ChooseType,
             "ChooseColor" => Self::ChooseColor,
             "ChooseDirection" => Self::ChooseDirection,
@@ -546,6 +548,7 @@ impl ApiType {
             Self::RevealHand => "RevealHand",
             Self::ChooseCard => "ChooseCard",
             Self::ChoosePlayer => "ChoosePlayer",
+            Self::GenericChoice => "GenericChoice",
             Self::ChooseType => "ChooseType",
             Self::ChooseColor => "ChooseColor",
             Self::ChooseDirection => "ChooseDirection",

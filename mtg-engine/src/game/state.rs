@@ -1791,6 +1791,44 @@ impl GameState {
                     );
                 }
             }
+
+            // Handle ETB "as ~ enters, choose a mode" replacement (Palace Siege:
+            // `K:ETBReplacement:Other:SiegeChoice` → `DB$ GenericChoice |
+            // Choices$ Khans,Dragons | AILogic$ Dragons`). The AI picks the
+            // mode specified by `AILogic$` (falling back to the first choice);
+            // the chosen mode is stored in `Card::chosen_mode` and gates which
+            // upkeep trigger fires (Khans = return creature from graveyard,
+            // Dragons = drain each opponent 2 life). CR 614 (ETB replacement).
+            if let Some(card) = self.cards.try_get(card_id) {
+                if card.definition.cache.etb_choose_mode {
+                    let ai_logic = card.definition.cache.etb_mode_ai_logic.clone();
+                    let choices = card.definition.cache.etb_mode_choices.clone();
+                    let card_name = card.name.clone();
+                    let prev_chosen_mode = card.chosen_mode.clone();
+
+                    // Pick the AI-designated choice, or fall back to the first.
+                    let chosen = ai_logic
+                        .as_deref()
+                        .filter(|m| choices.iter().any(|c| c.eq_ignore_ascii_case(m)))
+                        .map(|m| m.to_string())
+                        .or_else(|| choices.first().cloned())
+                        .unwrap_or_else(|| "unknown".to_string());
+
+                    let prior_log_size = self.logger.log_count();
+                    if let Ok(card_mut) = self.cards.get_mut(card_id) {
+                        card_mut.chosen_mode = Some(chosen.clone());
+                        self.logger
+                            .normal(&format!("{} ({}) — chose mode: {}", card_name, card_id, chosen));
+                    }
+                    self.undo_log.log(
+                        crate::undo::GameAction::SetChosenMode {
+                            card_id,
+                            prev: prev_chosen_mode,
+                        },
+                        prior_log_size,
+                    );
+                }
+            }
         }
 
         // Log the action with prior log size for undo synchronization

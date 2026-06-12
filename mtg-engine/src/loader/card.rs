@@ -131,6 +131,11 @@ impl CardLoader {
         // the referenced SVar's api_type structurally rather than string-matching
         // the K-line text).
         let mut etb_choose_player_svar: Option<String> = None;
+        // SVar name referenced by a `K:ETBReplacement:Other:<SVar>` line whose
+        // body is a `DB$ GenericChoice` (Palace Siege's `SiegeChoice`). Resolved
+        // to `etb_choose_mode` AFTER all SVars are parsed so we do a structured
+        // api_type check rather than a substring match on the K-line.
+        let mut etb_choose_mode_svar: Option<String> = None;
         let mut is_legendary = false;
         let mut loyalty: Option<u8> = None;
         // Set when the front face carries `AlternateMode:Adventure` — the
@@ -222,7 +227,11 @@ impl CardLoader {
                             if let Some(svar_name) = rest.rsplit(':').next() {
                                 let svar_name = svar_name.trim();
                                 if !svar_name.is_empty() && svar_name != "ChooseColor" {
+                                    // Store in BOTH candidates; the resolution
+                                    // step below checks which api_type the SVar
+                                    // actually has (ChoosePlayer vs GenericChoice).
                                     etb_choose_player_svar = Some(svar_name.to_string());
+                                    etb_choose_mode_svar = Some(svar_name.to_string());
                                 }
                             }
                         }
@@ -335,6 +344,24 @@ impl CardLoader {
             .and_then(|svar_name| parsed_svars.get(svar_name))
             .is_some_and(|p| p.api_type == super::ability_parser::ApiType::ChoosePlayer);
 
+        // Resolve the ETB GenericChoice replacement: same K-line detection as
+        // etb_choose_player, but check for api_type == GenericChoice (Palace
+        // Siege's `SiegeChoice` SVar). Extract `Choices$` and `AILogic$` so
+        // set_card_zone can pick the mode deterministically without re-parsing.
+        let (etb_choose_mode, etb_mode_ai_logic, etb_mode_choices) = etb_choose_mode_svar
+            .as_deref()
+            .and_then(|svar_name| parsed_svars.get(svar_name).map(|p| (svar_name, p)))
+            .filter(|(_, p)| p.api_type == super::ability_parser::ApiType::GenericChoice)
+            .map(|(_, p)| {
+                let choices: Vec<String> = p
+                    .get("Choices")
+                    .map(|c| c.split(',').map(|s| s.trim().to_string()).collect())
+                    .unwrap_or_default();
+                let ai_logic = p.get("AILogic").map(|s| s.to_string());
+                (true, ai_logic, choices)
+            })
+            .unwrap_or((false, None, Vec::new()));
+
         // Parse the Adventure (instant/sorcery) face from the ALTERNATE block,
         // when the front face declared `AlternateMode:Adventure` (CR 715). The
         // block after the `ALTERNATE` separator is itself a complete card script,
@@ -380,6 +407,9 @@ impl CardLoader {
             etb_choose_color,
             etb_exclude_colors,
             etb_choose_player,
+            etb_choose_mode,
+            etb_mode_ai_logic,
+            etb_mode_choices,
             script_name: None, // Set by token loader
             is_legendary,
             loyalty,
@@ -627,6 +657,17 @@ pub struct CardDefinition {
     /// carries it and the choice fires identically on both engines.
     #[serde(default)]
     pub etb_choose_player: bool,
+    /// Does this card require choosing a named mode on ETB?
+    /// Derived from `K:ETBReplacement:Other:<SVar>` where the SVar body is
+    /// `DB$ GenericChoice | Choices$ <M1>,<M2>,...` (Palace Siege).
+    #[serde(default)]
+    pub etb_choose_mode: bool,
+    /// AI default mode for `etb_choose_mode` (from `AILogic$` in the GenericChoice SVar).
+    #[serde(default)]
+    pub etb_mode_ai_logic: Option<String>,
+    /// Ordered list of mode names for `etb_choose_mode` (from `Choices$`).
+    #[serde(default)]
+    pub etb_mode_choices: Vec<String>,
     /// Script name (for tokens only). Used to look up token definitions.
     /// For tokens loaded from tokenscripts/, this is the filename without extension
     /// (e.g., "c_a_food_sac" for tokenscripts/c_a_food_sac.txt).
@@ -707,6 +748,9 @@ impl Default for CardDefinition {
             etb_choose_color: false,
             etb_exclude_colors: Vec::new(),
             etb_choose_player: false,
+            etb_choose_mode: false,
+            etb_mode_ai_logic: None,
+            etb_mode_choices: Vec::new(),
             script_name: None,
             is_legendary: false,
             loyalty: None,
@@ -816,6 +860,9 @@ impl CardDefinition {
         card.definition.cache.etb_choose_color = self.etb_choose_color;
         card.definition.cache.etb_exclude_colors = SmallVec::from_slice(&self.etb_exclude_colors);
         card.definition.cache.etb_choose_player = self.etb_choose_player;
+        card.definition.cache.etb_choose_mode = self.etb_choose_mode;
+        card.definition.cache.etb_mode_ai_logic = self.etb_mode_ai_logic.clone();
+        card.definition.cache.etb_mode_choices = self.etb_mode_choices.clone();
         // Fireball's `{1}`-per-extra-target relative cost (CR 601.2f).
         card.definition.cache.spell_relative_target_cost = self.has_relative_self_target_cost();
         // Island Sanctuary: skip-draw-for-protection replacement (CR 614).
@@ -3940,6 +3987,80 @@ impl CardDefinition {
                 let trigger = Trigger::new(TriggerEvent::ClassLevelGained { level }, effects, description);
                 triggers.push(trigger);
             }
+        }
+
+        // Scan `S:Mode$ Continuous | Affected$ Card.Self+ChosenMode<X> |
+        // AddTrigger$ <SVar>` lines (Palace Siege pattern). These conditional
+        // triggers are gated on the card's ETB-chosen mode (`Card::chosen_mode`)
+        // and reference a SVar that is itself a Phase trigger body.
+        //
+        // Design: rather than modelling mode-conditional triggers as a
+        // separate `StaticAbility::AddTrigger` (which would need a new
+        // continuous-effects pass), we build them as normal `Trigger` objects
+        // with a `mode_gate: Some("<Mode>")` field. The phase-trigger firing
+        // sites (`check_triggers_for_controller` / `fire_phase_triggers`) gate
+        // on the source card's `chosen_mode` matching the gate string.
+        for ability in &self.raw_abilities {
+            let Some(body) = ability.strip_prefix("S:") else {
+                continue;
+            };
+            // Tokenized parse (no substring matching — CLAUDE.md rule).
+            let params = tokenize_pipe_dollar(body);
+            if params.get("Mode").map(|s| s.as_str()) != Some("Continuous") {
+                continue;
+            }
+            // Affected$ must be `Card.Self+ChosenMode<X>` for us to handle it.
+            let Some(affected) = params.get("Affected") else {
+                continue;
+            };
+            let Some(mode_str) = affected.strip_prefix("Card.Self+ChosenMode") else {
+                continue;
+            };
+            let Some(svar_name) = params.get("AddTrigger") else {
+                continue;
+            };
+            let Some(svar_body) = self.svars.get(svar_name.as_str()) else {
+                continue;
+            };
+            // The SVar body is itself a Phase trigger specification.
+            let svar_params = tokenize_pipe_dollar(svar_body);
+            if svar_params.get("Mode").map(|s| s.as_str()) != Some("Phase") {
+                continue;
+            }
+            // Determine the trigger event from the Phase$ value.
+            let phase_token = svar_params.get("Phase").map(|s| s.replace(' ', ""));
+            let trigger_event = match phase_token.as_deref() {
+                Some("Upkeep") => TriggerEvent::BeginningOfUpkeep,
+                Some(p) if p.eq_ignore_ascii_case("EndOfTurn") || p.eq_ignore_ascii_case("End") => {
+                    TriggerEvent::BeginningOfEndStep
+                }
+                Some("BeginCombat") => TriggerEvent::BeginningOfCombat,
+                _ => continue, // Unsupported phase; skip
+            };
+            // Extract effects from Execute$ SVar using the shared helper which
+            // handles ChangeZone (Khans), LoseLife+SubAbility GainLife (Dragons),
+            // and every other effect type the rest of parse_triggers supports.
+            let mut effects = Vec::new();
+            if let Some(exec_ref) = svar_params.get("Execute") {
+                if let Some(exec_svar_params) = self.parsed_svars.get(exec_ref.as_str()) {
+                    effects.extend(self.extract_effects_from_svar(exec_svar_params));
+                }
+            }
+            let description = svar_params
+                .get("TriggerDescription")
+                .cloned()
+                .unwrap_or_else(|| format!("Conditional {} upkeep trigger", mode_str));
+
+            let mut trigger = Trigger::new_any(trigger_event, effects, description);
+            // Always fires from the Battlefield (these are enchantment triggers).
+            trigger.trigger_zones = smallvec::smallvec![crate::zones::Zone::Battlefield];
+            // Gate on the card's chosen mode.
+            trigger.mode_gate = Some(mode_str.to_string());
+            // ValidPlayer$ You → only the controller's own upkeep.
+            if svar_params.get("ValidPlayer").map(|s| s.as_str()) == Some("You") {
+                trigger.controller_turn_only = true;
+            }
+            triggers.push(trigger);
         }
 
         triggers
@@ -9032,6 +9153,88 @@ Oracle:[-6]: You get an emblem with "At the beginning of each opponent's upkeep,
                 .any(|s| matches!(s, StaticAbility::DamageToExileLibrary { .. })),
             "Crumbling Sanctuary must produce a DamageToExileLibrary static ability \
              (parsed from R:Event$ DamageDone | ValidTarget$ Player | ReplaceWith$ ExileTop)"
+        );
+    }
+
+    /// Palace Siege: `K:ETBReplacement:Other:SiegeChoice` + `DB$ GenericChoice |
+    /// Choices$ Khans,Dragons | AILogic$ Dragons` should be parsed as
+    /// `etb_choose_mode = true`, AI default = "Dragons", and two mode-gated
+    /// upkeep triggers must be built from the two `S:` AddTrigger$ lines.
+    ///
+    /// Evidence: the fix allows Palace Siege to function as printed — entering
+    /// the battlefield asks you to choose Khans or Dragons, then only the
+    /// relevant upkeep trigger fires each turn.  B4 status in mtg-921.
+    #[test]
+    fn test_palace_siege_parses_etb_choose_mode_and_conditional_triggers() {
+        use crate::core::TriggerEvent;
+
+        let palace_siege = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../cardsfolder/p/palace_siege.txt"
+        ))
+        .expect("palace_siege.txt must exist in cardsfolder/p/");
+
+        let def = CardLoader::parse(&palace_siege).expect("Palace Siege must parse without error");
+
+        // ---- ETB mode choice ----
+        assert!(def.etb_choose_mode, "Palace Siege must have etb_choose_mode = true");
+        assert_eq!(
+            def.etb_mode_ai_logic.as_deref(),
+            Some("Dragons"),
+            "Palace Siege AILogic$ must be 'Dragons'"
+        );
+        assert_eq!(
+            def.etb_mode_choices,
+            vec!["Khans".to_string(), "Dragons".to_string()],
+            "Palace Siege Choices$ must be [Khans, Dragons]"
+        );
+
+        // ---- Mode-gated upkeep triggers ----
+        let triggers = def.parse_triggers();
+        let khans_trig = triggers.iter().find(|t| t.mode_gate.as_deref() == Some("Khans"));
+        let dragons_trig = triggers.iter().find(|t| t.mode_gate.as_deref() == Some("Dragons"));
+
+        assert!(
+            khans_trig.is_some(),
+            "Palace Siege must produce a mode-gated Khans upkeep trigger; all triggers: {:?}",
+            triggers.iter().map(|t| (&t.mode_gate, &t.event)).collect::<Vec<_>>()
+        );
+        assert!(
+            dragons_trig.is_some(),
+            "Palace Siege must produce a mode-gated Dragons upkeep trigger"
+        );
+
+        let khans = khans_trig.unwrap();
+        assert_eq!(
+            khans.event,
+            TriggerEvent::BeginningOfUpkeep,
+            "Khans trigger fires at beginning of upkeep"
+        );
+        assert!(
+            khans.controller_turn_only,
+            "Khans trigger fires only on controller's upkeep"
+        );
+
+        let dragons = dragons_trig.unwrap();
+        assert_eq!(
+            dragons.event,
+            TriggerEvent::BeginningOfUpkeep,
+            "Dragons trigger fires at beginning of upkeep"
+        );
+        assert!(
+            dragons.controller_turn_only,
+            "Dragons trigger fires only on controller's upkeep"
+        );
+
+        // Dragons mode should drain life (LoseLife effect for opponent) and gain life.
+        let has_drain = dragons
+            .effects
+            .iter()
+            .any(|e| matches!(e, crate::core::Effect::LoseLife { amount: 2, .. }));
+        assert!(
+            has_drain,
+            "Dragons trigger must have a LoseLife(2) effect; effects={:?}",
+            dragons.effects
         );
     }
 }

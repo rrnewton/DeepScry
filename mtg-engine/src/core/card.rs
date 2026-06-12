@@ -212,6 +212,26 @@ pub struct CardCache {
     /// shape `R:Event$ Draw | ActivePhases$ Draw | PlayerTurn$ True | Optional$
     /// True | ...` (Island Sanctuary, 2nd Edition Alpha).
     pub is_island_sanctuary: bool,
+
+    /// Precomputed: Does this card require choosing a named mode on ETB?
+    /// Derived from `K:ETBReplacement:Other:<SVar>` where the SVar body is
+    /// `DB$ GenericChoice | Choices$ <M1>,<M2>,...` (Palace Siege). When set,
+    /// the engine picks the first mode choice per `etb_mode_ai_logic` at ETB and
+    /// stores it in `Card::chosen_mode`.
+    #[serde(default)]
+    pub etb_choose_mode: bool,
+
+    /// AI default mode for `etb_choose_mode` cards (from `AILogic$` in the SVar).
+    /// `None` means pick the first choice listed. Palace Siege's SVar has
+    /// `AILogic$ Dragons`, so the AI always chooses "Dragons".
+    #[serde(default)]
+    pub etb_mode_ai_logic: Option<String>,
+
+    /// Ordered mode names for `etb_choose_mode` cards (from `Choices$` in the SVar).
+    /// Populated from the comma-separated list in the `DB$ GenericChoice` SVar so
+    /// `set_card_zone` can validate the AI choice without re-parsing the script.
+    #[serde(default)]
+    pub etb_mode_choices: Vec<String>,
 }
 
 impl Default for CardCache {
@@ -287,6 +307,9 @@ impl CardCache {
             etb_choose_player: false,
             limits_land_untap: None,
             is_island_sanctuary: false,
+            etb_choose_mode: false,
+            etb_mode_ai_logic: None,
+            etb_mode_choices: Vec::new(),
         }
     }
 
@@ -873,6 +896,13 @@ pub struct Card {
     #[serde(default)]
     pub chosen_player: Option<PlayerId>,
 
+    /// Mode chosen by `K:ETBReplacement:Other:<SVar>` + `DB$ GenericChoice` at ETB
+    /// time. Palace Siege chooses "Khans" or "Dragons"; the value is the raw
+    /// mode string from `Choices$` (e.g. `"Khans"` or `"Dragons"`). Stored as
+    /// serialized state so rewind/replay reconstruct the same trigger gating.
+    #[serde(default)]
+    pub chosen_mode: Option<String>,
+
     /// Script variables (SVars) for SubAbility chaining
     /// Key: SVar name (e.g., "BalanceHands")
     /// Value: SVar body (e.g., "DB$ Balance | Zone$ Hand | SubAbility$ BalanceCreatures")
@@ -1073,6 +1103,12 @@ pub struct CardStateSnapshot {
     pub control_grant: Option<(CardId, PlayerId)>,
     pub chosen_color: Option<Color>,
     pub chosen_player: Option<PlayerId>,
+    /// Mode chosen by `K:ETBReplacement:Other:<SVar>` + `DB$ GenericChoice` at ETB
+    /// time. Palace Siege chooses "Khans" or "Dragons"; the value is the raw
+    /// mode string from `Choices$` (e.g. `"Khans"` or `"Dragons"`). Stored as
+    /// serialized state so rewind/replay reconstruct the same trigger gating.
+    #[serde(default)]
+    pub chosen_mode: Option<String>,
     pub svars: std::collections::HashMap<String, String>,
     pub is_legendary: bool,
     pub loyalty_activated_this_turn: bool,
@@ -1147,6 +1183,7 @@ impl Card {
             control_grant: None,
             chosen_color: None,
             chosen_player: None,
+            chosen_mode: None,
             svars: std::collections::HashMap::new(),
             revealed_to_mask: 0,
             is_legendary: false,
@@ -1203,6 +1240,7 @@ impl Card {
             control_grant: self.control_grant,
             chosen_color: self.chosen_color,
             chosen_player: self.chosen_player,
+            chosen_mode: self.chosen_mode.clone(),
             svars: self.svars.clone(),
             is_legendary: self.is_legendary,
             loyalty_activated_this_turn: self.loyalty_activated_this_turn,
@@ -1255,6 +1293,7 @@ impl Card {
         self.control_grant = snapshot.control_grant;
         self.chosen_color = snapshot.chosen_color;
         self.chosen_player = snapshot.chosen_player;
+        self.chosen_mode = snapshot.chosen_mode;
         self.svars = snapshot.svars;
         self.is_legendary = snapshot.is_legendary;
         self.loyalty_activated_this_turn = snapshot.loyalty_activated_this_turn;
@@ -1299,6 +1338,9 @@ impl Card {
             self.definition.cache.etb_choose_color = def.etb_choose_color;
             self.definition.cache.etb_exclude_colors = SmallVec::from_slice(&def.etb_exclude_colors);
             self.definition.cache.etb_choose_player = def.etb_choose_player;
+            self.definition.cache.etb_choose_mode = def.etb_choose_mode;
+            self.definition.cache.etb_mode_ai_logic = def.etb_mode_ai_logic.clone();
+            self.definition.cache.etb_mode_choices = def.etb_mode_choices.clone();
             self.definition.cache.spell_relative_target_cost = def.has_relative_self_target_cost();
         } else {
             self.name = self.printed_name.clone();
@@ -1445,6 +1487,7 @@ impl Card {
         self.control_grant = None;
         self.chosen_color = None;
         self.chosen_player = None;
+        self.chosen_mode = None;
         self.loyalty_activated_this_turn = false;
         self.regeneration_shields = 0;
         self.damage_prevention = 0;

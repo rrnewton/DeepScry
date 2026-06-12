@@ -3381,6 +3381,14 @@ pub struct Trigger {
     /// opponent's turns, or all turns.
     #[serde(default)]
     pub opponent_turn_only: bool,
+
+    /// Mode gate for `DB$ GenericChoice`-style conditional triggers (Palace
+    /// Siege). When `Some("Khans")`, the trigger only fires if the source card's
+    /// `chosen_mode == Some("Khans")`; `None` means no gate (always fires).
+    /// Derived from `S:Mode$ Continuous | Affected$ Card.Self+ChosenMode<X> |
+    /// AddTrigger$ <SVar>` at load time.
+    #[serde(default)]
+    pub mode_gate: Option<String>,
 }
 
 impl Trigger {
@@ -3414,6 +3422,7 @@ impl Trigger {
             taps_for_mana_valid_card: None,
             taps_for_mana_activator: None,
             opponent_turn_only: false,
+            mode_gate: None,
         }
     }
 
@@ -3446,6 +3455,7 @@ impl Trigger {
             taps_for_mana_valid_card: None,
             taps_for_mana_activator: None,
             opponent_turn_only: false,
+            mode_gate: None,
         }
     }
 
@@ -3484,6 +3494,7 @@ impl Trigger {
             taps_for_mana_valid_card: None,
             taps_for_mana_activator: None,
             opponent_turn_only: false,
+            mode_gate: None,
         }
     }
 
@@ -3517,6 +3528,7 @@ impl Trigger {
             taps_for_mana_valid_card: None,
             taps_for_mana_activator: None,
             opponent_turn_only: false,
+            mode_gate: None,
         }
     }
 }
