@@ -3825,6 +3825,10 @@ pub enum StaticAbility {
     ExtraLandPlay {
         /// Number of additional lands per turn (typically 1, 2 for Azusa).
         amount: u8,
+        /// Description for logging.
+        description: String,
+    },
+}
 
 /// Target selector for cost reduction abilities
 ///
