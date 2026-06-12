@@ -5310,16 +5310,21 @@ impl CardDefinition {
             };
             match mode {
                 "CantBeCast" => {
-                    // Skip `Secondary$ True` lines: they encode conditional
-                    // counts/limits (e.g. Fires of Invention's
-                    // `NumLimitEachTurn$ 2`) that we cannot evaluate without
-                    // per-turn cast tracking. Silently omitting them is safe
-                    // because they are LESS restrictive than the primary line
-                    // and leaving them out does not create rule-bending illegal
-                    // plays — it just means the N-cast-per-turn cap is not
-                    // enforced (an acceptable limitation for now).
-                    if params.get("Secondary").map(|v| v.trim()) == Some("True") {
-                        // skip
+                    // Skip `Secondary$ True` lines that only encode a
+                    // `NumLimitEachTurn$` limit WITHOUT an `Origin$`
+                    // restriction: those per-turn caps are enforced
+                    // separately (Fires of Invention's 2-spell cap is
+                    // checked directly against `spells_cast_this_turn`
+                    // in `push_castable_with_fires`).
+                    // However, `Secondary$ True` lines that DO have an
+                    // `Origin$` field (e.g. Experimental Frenzy's
+                    // `CantBeCast | ValidCard$ Card | Caster$ You | Origin$ Hand`)
+                    // must still be parsed to enforce the origin restriction.
+                    let is_secondary = params.get("Secondary").map(|v| v.trim()) == Some("True");
+                    let has_origin = params.contains_key("Origin");
+                    if is_secondary && !has_origin {
+                        // Fires-style NumLimitEachTurn cap — skip the static;
+                        // the cap is enforced inline in push_castable_with_fires.
                     } else {
                         let valid_card = params
                             .get("ValidCard")
@@ -5331,10 +5336,14 @@ impl CardDefinition {
                             Some("Opponent") => crate::core::CasterRestriction::Opponent,
                             _ => crate::core::CasterRestriction::Any,
                         };
+                        let origin_restriction = params
+                            .get("Origin")
+                            .and_then(|v| crate::zones::Zone::from_str_lenient(v.trim()));
                         let description = params.get("Description").cloned().unwrap_or_default();
                         abilities.push(StaticAbility::CantBeCast {
                             valid_card,
                             caster_restriction,
+                            origin_restriction,
                             description,
                         });
                     }
@@ -5344,9 +5353,20 @@ impl CardDefinition {
                         .get("ValidCard")
                         .map(|v| crate::core::TargetRestriction::parse(v))
                         .unwrap_or_else(crate::core::TargetRestriction::any);
+                    let player_restriction = match params.get("Player").map(|s| s.trim()) {
+                        Some("You") => crate::core::CasterRestriction::You,
+                        Some("You.NonActive") => crate::core::CasterRestriction::YouNonActive,
+                        Some("Opponent") => crate::core::CasterRestriction::Opponent,
+                        _ => crate::core::CasterRestriction::Any,
+                    };
+                    let origin_restriction = params
+                        .get("Origin")
+                        .and_then(|v| crate::zones::Zone::from_str_lenient(v.trim()));
                     let description = params.get("Description").cloned().unwrap_or_default();
                     abilities.push(StaticAbility::CantPlayLand {
                         valid_card,
+                        player_restriction,
+                        origin_restriction,
                         description,
                     });
                 }

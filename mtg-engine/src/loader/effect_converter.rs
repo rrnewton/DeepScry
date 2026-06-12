@@ -556,8 +556,8 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
             // and from the battlefield→exile ExilePermanent special-case above.
             else if params.get("Defined") == Some("Self")
                 && params.get("Origin") != Some("Stack")
-                && params.get("Origin").is_some()
-                && params.get("Destination").is_some()
+                && params.contains_key("Origin")
+                && params.contains_key("Destination")
             {
                 let origin = params.get("Origin").and_then(crate::zones::Zone::from_str_lenient);
                 let destination = params.get("Destination").and_then(crate::zones::Zone::from_str_lenient);

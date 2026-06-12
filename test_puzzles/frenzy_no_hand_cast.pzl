@@ -1,0 +1,21 @@
+[metadata]
+Name=Experimental Frenzy Hand Cast Restriction
+Goal=Verify
+Turns=2
+Difficulty=Medium
+Description=P1 has Experimental Frenzy in play. P1 has a Lightning Bolt in hand and a Lightning Bolt on top of library. The S:Mode$ CantBeCast | ValidCard$ Card | Caster$ You | Origin$ Hand static prevents casting spells from hand. Verify: (1) hand Lightning Bolt is NOT offered as a castable action, (2) top-of-library Lightning Bolt IS offered as castable, (3) land-play from hand is also blocked by CantPlayLand | Player$ You | Origin$ Hand. The Frenzy's {3}{R} self-destruct activation should still be available.
+
+[state]
+turn=2
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Lightning Bolt
+p0battlefield=Mountain;Mountain;Mountain;Mountain;Mountain;Experimental Frenzy
+p0library=Mountain;Mountain;Mountain;Lightning Bolt
+p0graveyard=
+p1life=20
+p1hand=
+p1battlefield=Plains;Plains
+p1library=Plains;Plains;Plains
+p1graveyard=

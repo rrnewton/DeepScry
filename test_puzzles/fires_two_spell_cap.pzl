@@ -1,0 +1,21 @@
+[metadata]
+Name=Fires of Invention 2-Spell-Per-Turn Cap
+Goal=Verify
+Turns=2
+Difficulty=Medium
+Description=P1 has Fires of Invention and 5 lands. P1 has 3 low-CMC spells in hand. Fires grants free casts for spells with CMC <= land count, but only 2 per turn (NumLimitEachTurn$ 2). After casting 2 spells via Fires, the 3rd spell should NOT be offered as a free cast. This verifies the S:Mode$ CantBeCast | NumLimitEachTurn$ 2 | Caster$ You | Secondary$ True static on Fires of Invention.
+
+[state]
+turn=2
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Lightning Bolt;Ancestral Recall;Ponder
+p0battlefield=Mountain;Mountain;Mountain;Island;Forest;Fires of Invention
+p0library=Island;Plains;Island;Plains;Island;Plains
+p0graveyard=
+p1life=20
+p1hand=
+p1battlefield=Plains;Plains
+p1library=Plains;Plains;Plains
+p1graveyard=

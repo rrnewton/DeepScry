@@ -3955,6 +3955,11 @@ pub enum StaticAbility {
         valid_card: TargetRestriction,
         /// Who is prohibited from casting matching cards.
         caster_restriction: CasterRestriction,
+        /// If `Some(zone)`, the prohibition only applies when the card is being
+        /// cast from that specific zone (e.g. `Origin$ Hand` in Experimental
+        /// Frenzy: "you can't cast spells from your hand").
+        /// `None` means the restriction applies regardless of origin zone.
+        origin_restriction: Option<crate::zones::Zone>,
         /// Description for logging.
         description: String,
     },
@@ -3966,6 +3971,15 @@ pub enum StaticAbility {
     CantPlayLand {
         /// Which cards may not be played as lands (e.g. `Card.setARN`).
         valid_card: TargetRestriction,
+        /// Who is restricted from playing lands. Most uses restrict everyone
+        /// (`CasterRestriction::Any`), but Experimental Frenzy uses
+        /// `Player$ You` to restrict only the source's controller.
+        player_restriction: CasterRestriction,
+        /// If `Some(zone)`, the prohibition only applies when the land is
+        /// being played from that specific zone (e.g. `Origin$ Hand` in
+        /// Experimental Frenzy: "you can't play lands from your hand").
+        /// `None` means the restriction applies regardless of origin zone.
+        origin_restriction: Option<crate::zones::Zone>,
         /// Description for logging.
         description: String,
     },

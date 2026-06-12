@@ -3109,9 +3109,17 @@ impl GameState {
                     if let StaticAbility::CantBeCast {
                         valid_card,
                         caster_restriction,
+                        origin_restriction,
                         ..
                     } = sa
                     {
+                        // Origin-scoped prohibitions (e.g. Experimental Frenzy's
+                        // `CantBeCast | Origin$ Hand`) are handled by the
+                        // zone-specific callers (`has_hand_cast_prohibition`).
+                        // Skip them here so library-cast offers are not blocked.
+                        if origin_restriction.is_some() {
+                            return false;
+                        }
                         // First check if the card matches the filter
                         if !valid_card.matches(card) {
                             return false;
@@ -3122,6 +3130,77 @@ impl GameState {
                             CasterRestriction::You => caster_id == src.controller,
                             CasterRestriction::YouNonActive => caster_id == src.controller && caster_id != active,
                             CasterRestriction::Opponent => caster_id != src.controller,
+                        }
+                    } else {
+                        false
+                    }
+                })
+            })
+        })
+    }
+
+    /// True if some permanent on the battlefield has a `CantBeCast` static with
+    /// `origin_restriction == Some(Zone::Hand)` that prohibits `caster_id` from
+    /// casting `card` from their hand.
+    ///
+    /// Used by `push_castable_spells` and `push_castable_with_fires` (which both
+    /// enumerate hand cards) to enforce Experimental Frenzy's
+    /// `CantBeCast | ValidCard$ Card | Caster$ You | Origin$ Hand` line.
+    pub fn has_hand_cast_prohibition(&self, caster_id: crate::core::PlayerId, card: &crate::core::Card) -> bool {
+        use crate::core::{CasterRestriction, StaticAbility};
+        use crate::zones::Zone;
+        let active = self.turn.active_player;
+        self.battlefield.cards.iter().any(|&id| {
+            self.cards.try_get(id).is_some_and(|src| {
+                src.static_abilities.iter().any(|sa| {
+                    if let StaticAbility::CantBeCast {
+                        valid_card,
+                        caster_restriction,
+                        origin_restriction: Some(Zone::Hand),
+                        ..
+                    } = sa
+                    {
+                        if !valid_card.matches(card) {
+                            return false;
+                        }
+                        match caster_restriction {
+                            CasterRestriction::Any => true,
+                            CasterRestriction::You => caster_id == src.controller,
+                            CasterRestriction::YouNonActive => caster_id == src.controller && caster_id != active,
+                            CasterRestriction::Opponent => caster_id != src.controller,
+                        }
+                    } else {
+                        false
+                    }
+                })
+            })
+        })
+    }
+
+    /// True if some permanent on the battlefield has a `CantPlayLand` static with
+    /// `origin_restriction == Some(Zone::Hand)` that prohibits `player_id` from
+    /// playing a land from their hand.
+    ///
+    /// Used by the land-play enumeration loop in `populate_actions` to enforce
+    /// Experimental Frenzy's `CantPlayLand | Player$ You | Origin$ Hand` line.
+    pub fn has_hand_land_prohibition(&self, player_id: crate::core::PlayerId) -> bool {
+        use crate::core::{CasterRestriction, StaticAbility};
+        use crate::zones::Zone;
+        let active = self.turn.active_player;
+        self.battlefield.cards.iter().any(|&id| {
+            self.cards.try_get(id).is_some_and(|src| {
+                src.static_abilities.iter().any(|sa| {
+                    if let StaticAbility::CantPlayLand {
+                        player_restriction,
+                        origin_restriction: Some(Zone::Hand),
+                        ..
+                    } = sa
+                    {
+                        match player_restriction {
+                            CasterRestriction::Any => true,
+                            CasterRestriction::You => player_id == src.controller,
+                            CasterRestriction::YouNonActive => player_id == src.controller && player_id != active,
+                            CasterRestriction::Opponent => player_id != src.controller,
                         }
                     } else {
                         false
@@ -3166,12 +3245,28 @@ impl GameState {
     /// whose filter matches `card`. Gates land plays (and, per Forge's
     /// CantPlayLand semantics, spell casts) for prohibited cards. City in a
     /// Bottle: "Players can't cast spells or play lands ... printed in ARN."
+    ///
+    /// Note: `CantPlayLand` statics with an `origin_restriction` (e.g.
+    /// Experimental Frenzy's `Origin$ Hand`) are SKIPPED here and handled by
+    /// zone-specific callers (`has_hand_land_prohibition`).
     pub fn is_land_play_prohibited(&self, card: &crate::core::Card) -> bool {
         use crate::core::StaticAbility;
         self.battlefield.cards.iter().any(|&id| {
             self.cards.try_get(id).is_some_and(|src| {
                 src.static_abilities.iter().any(|sa| {
-                    if let StaticAbility::CantPlayLand { valid_card, .. } = sa {
+                    if let StaticAbility::CantPlayLand {
+                        valid_card,
+                        origin_restriction,
+                        ..
+                    } = sa
+                    {
+                        // Origin-scoped prohibitions are handled by the
+                        // zone-specific callers. Skip them here so non-hand
+                        // land plays (e.g. from library via Experimental
+                        // Frenzy's MayPlay grant) are not blocked.
+                        if origin_restriction.is_some() {
+                            return false;
+                        }
                         valid_card.matches(card)
                     } else {
                         false

@@ -610,6 +610,14 @@ impl<'a> GameLoop<'a> {
                     if self.game.is_play_prohibited(player_id, card) {
                         continue;
                     }
+                    // Origin-scoped prohibition: Experimental Frenzy's
+                    // `CantBeCast | ValidCard$ Card | Caster$ You | Origin$ Hand`
+                    // prevents casting ANY spell from hand while Frenzy is on the
+                    // battlefield. is_play_prohibited skips origin-restricted
+                    // statics; we check them here since we know the card is in hand.
+                    if self.game.has_hand_cast_prohibition(player_id, card) {
+                        continue;
+                    }
                     // Adventure (CR 715): if this card has an Adventure face, the
                     // owner may cast the instant/sorcery half from hand. Offered
                     // independently of the creature half, using the Adventure
@@ -1106,9 +1114,12 @@ impl<'a> GameLoop<'a> {
     /// evaluated SVar (land count) and offer them as
     /// `SpellAbility::CastFromHandWithAltCost { alternative_cost: ManaCost::zero() }`.
     ///
-    /// Note: Fires of Invention ALSO has `CantBeCast | NumLimitEachTurn$ 2` and
-    /// `CantBeCast | Caster$ You.NonActive` statics that are handled separately by
-    /// `is_play_prohibited`.  Here we only handle the free-cast grant.
+    /// Enforcements applied here:
+    /// - Fires of Invention `CantBeCast | Caster$ You.NonActive` — via `is_play_prohibited`.
+    /// - Fires of Invention `CantBeCast | NumLimitEachTurn$ 2` — checked directly
+    ///   against `spells_cast_this_turn`: if the player has already cast ≥ 2 spells
+    ///   this turn, no more free casts are offered.
+    /// - Experimental Frenzy `CantBeCast | Origin$ Hand` — via `has_hand_cast_prohibition`.
     fn push_castable_with_fires(&mut self, player_id: PlayerId) {
         use crate::core::{ManaCost, SpellAbility, StaticAbility};
 
@@ -1137,6 +1148,20 @@ impl<'a> GameLoop<'a> {
             .collect();
 
         if sources.is_empty() {
+            return;
+        }
+
+        // Fires of Invention: NumLimitEachTurn$ 2 cap.
+        // If the player has already cast 2 or more spells this turn, no
+        // further free casts via Fires are offered. (CR 605: a continuous
+        // effect that says "you can't cast more than N spells per turn" stops
+        // the player from casting additional spells once N is reached.)
+        let spells_cast = self
+            .game
+            .try_get_player(player_id)
+            .map(|p| p.spells_cast_this_turn)
+            .unwrap_or(0);
+        if spells_cast >= 2 {
             return;
         }
 
@@ -1182,10 +1207,15 @@ impl<'a> GameLoop<'a> {
                 continue;
             }
 
-            // Respect is_play_prohibited (CantBeCast statics, including the
-            // Fires of Invention CantBeCast | Caster$ You.NonActive restriction
-            // and the NumLimitEachTurn$ 2 limit).
+            // Respect is_play_prohibited (CantBeCast statics including the
+            // Fires of Invention `CantBeCast | Caster$ You.NonActive` restriction).
             if self.game.is_play_prohibited(player_id, card) {
+                continue;
+            }
+
+            // Origin-scoped prohibition: Experimental Frenzy's
+            // `CantBeCast | Origin$ Hand` blocks hand casts even via Fires.
+            if self.game.has_hand_cast_prohibition(player_id, card) {
                 continue;
             }
 
@@ -1784,7 +1814,13 @@ impl<'a> GameLoop<'a> {
 
         // Add playable lands (only in main phases when player can play lands AND stack is empty)
         // MTG Rules 307.4: Can only play land when stack is empty and you have priority during your main phase
-        if stack_is_empty
+        //
+        // Experimental Frenzy: `CantPlayLand | Player$ You | Origin$ Hand` blocks
+        // playing lands from hand. Check once per populate call (player-level, not
+        // per-land) before iterating the hand.
+        let hand_land_prohibited = self.game.has_hand_land_prohibition(player_id);
+        if !hand_land_prohibited
+            && stack_is_empty
             && matches!(self.game.turn.current_step, Step::Main1 | Step::Main2)
             && self.game.turn.active_player == player_id
             && self.game.can_play_land_effective(player_id)
