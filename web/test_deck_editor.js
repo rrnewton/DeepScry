@@ -928,6 +928,14 @@ function check(cond, msg) {
                 () => document.getElementById('p1-collection') &&
                       document.getElementById('p1-collection').options.length > 0,
                 { timeout: 15000 }).catch(() => {});
+            // Also wait for loadDeckNames() (async fetch) to populate the deck
+            // picker — p1-deck gets options only after the fetch resolves.
+            // Without this wait the 1994 championship test (first in sort order)
+            // spuriously returns [] because allDeckNames is still empty.
+            await lpage.waitForFunction(
+                () => document.getElementById('p1-deck') &&
+                      document.getElementById('p1-deck').options.length > 0,
+                { timeout: 15000 }).catch(() => {});
 
             for (const [year, stems] of Object.entries(CHAMP)) {
                 const key = 'championship_' + year;
