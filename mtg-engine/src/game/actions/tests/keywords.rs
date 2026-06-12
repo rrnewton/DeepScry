@@ -2768,4 +2768,128 @@ Oracle:Hangarback Walker enters with X +1/+1 counters on it.
             "Life from the Loam should remain in graveyard (draw_card_silent never triggers dredge)"
         );
     }
+
+    // ==================== Annihilator Tests ====================
+
+    /// CR 702.86: Annihilator N — whenever this creature attacks, the defending
+    /// player sacrifices N permanents. Fires as part of declare_attacker.
+    #[test]
+    fn test_annihilator_trigger_sacrifices_permanents() {
+        use crate::core::KeywordArgs;
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        let p2_id = game.players[1].id;
+
+        // P1: Emrakul-like creature with Annihilator 3
+        let emrakul_id = game.next_card_id();
+        let mut eldrazi = Card::new(emrakul_id, "Test Eldrazi".to_string(), p1_id);
+        eldrazi.add_type(CardType::Creature);
+        eldrazi.set_base_power(Some(15));
+        eldrazi.set_base_toughness(Some(15));
+        eldrazi.controller = p1_id;
+        eldrazi.keywords.insert_complex(KeywordArgs::Annihilator { amount: 3 });
+        // Not tapped, not summoning sick
+        eldrazi.turn_entered_battlefield = Some(game.turn.turn_number - 1);
+        game.cards.insert(emrakul_id, eldrazi);
+        game.battlefield.add(emrakul_id);
+
+        // P2: 4 permanents (3 creatures + 1 land)
+        for name in ["Grizzly Bears", "Llanowar Elves", "Hill Giant", "Forest"] {
+            let id = game.next_card_id();
+            let mut card = Card::new(id, name.to_string(), p2_id);
+            if name == "Forest" {
+                card.add_type(CardType::Land);
+            } else {
+                card.add_type(CardType::Creature);
+                let (p, t) = match name {
+                    "Grizzly Bears" => (2, 2),
+                    "Llanowar Elves" => (1, 1),
+                    _ => (3, 3),
+                };
+                card.set_base_power(Some(p));
+                card.set_base_toughness(Some(t));
+            }
+            card.controller = p2_id;
+            game.cards.insert(id, card);
+            game.battlefield.add(id);
+        }
+
+        let p2_before = game
+            .battlefield
+            .cards
+            .iter()
+            .filter(|&&id| game.cards.try_get(id).is_some_and(|c| c.controller == p2_id))
+            .count();
+        assert_eq!(p2_before, 4, "P2 should have 4 permanents before attack");
+
+        // Declare attacker: this should fire the Annihilator 3 trigger
+        game.declare_attacker(p1_id, emrakul_id)
+            .expect("declare_attacker should succeed");
+
+        // P2 should now have 4 - 3 = 1 permanent
+        let p2_after = game
+            .battlefield
+            .cards
+            .iter()
+            .filter(|&&id| game.cards.try_get(id).is_some_and(|c| c.controller == p2_id))
+            .count();
+        assert_eq!(
+            p2_after, 1,
+            "P2 should have sacrificed 3 permanents (Annihilator 3); had {p2_before}, now has {p2_after}"
+        );
+    }
+
+    /// Annihilator N with fewer permanents than N: player sacrifices all they have (CR 702.86).
+    #[test]
+    fn test_annihilator_trigger_sacrifices_all_when_fewer_than_n() {
+        use crate::core::KeywordArgs;
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        let p2_id = game.players[1].id;
+
+        // P1: creature with Annihilator 6
+        let emrakul_id = game.next_card_id();
+        let mut eldrazi = Card::new(emrakul_id, "Test Emrakul".to_string(), p1_id);
+        eldrazi.add_type(CardType::Creature);
+        eldrazi.set_base_power(Some(15));
+        eldrazi.set_base_toughness(Some(15));
+        eldrazi.controller = p1_id;
+        eldrazi.keywords.insert_complex(KeywordArgs::Annihilator { amount: 6 });
+        eldrazi.turn_entered_battlefield = Some(game.turn.turn_number - 1);
+        game.cards.insert(emrakul_id, eldrazi);
+        game.battlefield.add(emrakul_id);
+
+        // P2: only 2 permanents (less than annihilator amount)
+        for name in ["Grizzly Bears", "Forest"] {
+            let id = game.next_card_id();
+            let mut card = Card::new(id, name.to_string(), p2_id);
+            if name == "Forest" {
+                card.add_type(CardType::Land);
+            } else {
+                card.add_type(CardType::Creature);
+                card.set_base_power(Some(2));
+                card.set_base_toughness(Some(2));
+            }
+            card.controller = p2_id;
+            game.cards.insert(id, card);
+            game.battlefield.add(id);
+        }
+
+        game.declare_attacker(p1_id, emrakul_id)
+            .expect("declare_attacker should succeed");
+
+        // P2 had 2 permanents, annihilator 6 means sacrifice all 2
+        let p2_after = game
+            .battlefield
+            .cards
+            .iter()
+            .filter(|&&id| game.cards.try_get(id).is_some_and(|c| c.controller == p2_id))
+            .count();
+        assert_eq!(
+            p2_after, 0,
+            "P2 should have lost all permanents to Annihilator 6 (only had 2)"
+        );
+    }
 }

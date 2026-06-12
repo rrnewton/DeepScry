@@ -2215,6 +2215,19 @@ impl<'a> GameLoop<'a> {
                                                     target_creature: chosen_targets_vec[0],
                                                 }
                                             }
+                                            // Self-targeting GrantCantBeBlocked: "CARDNAME can't be blocked this turn"
+                                            // Used by manland animate + unblockable sub-ability chains
+                                            // (Creeping Tar Pit: AB$ Animate | SubAbility$ DBUnblockable
+                                            //   where DBUnblockable: DB$ Effect | RememberObjects$ Self | ...)
+                                            // When Defined$ Self is used, no external targets are chosen —
+                                            // the source card (the activated land/creature) is the target.
+                                            crate::core::Effect::GrantCantBeBlocked { target }
+                                                if target.is_placeholder() && chosen_targets_vec.is_empty() =>
+                                            {
+                                                crate::core::Effect::GrantCantBeBlocked {
+                                                    target: card_id, // Target self (the source of the ability)
+                                                }
+                                            }
                                             // GrantCantBeBlocked: "Target creature can't be blocked this turn"
                                             // Used by Deserter's Disciple
                                             crate::core::Effect::GrantCantBeBlocked { target }

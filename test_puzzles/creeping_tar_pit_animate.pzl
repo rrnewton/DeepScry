@@ -1,0 +1,22 @@
+[metadata]
+Name=Creeping Tar Pit Animate Test
+Goal=Win
+Turns=4
+Difficulty=Medium
+Description=Tests Creeping Tar Pit's animate ability: {1}{U}{B} makes it a 3/2 blue-black Elemental that can't be blocked until end of turn. P0 has Creeping Tar Pit and enough mana. P0 animates it and attacks; P1 has creatures but they can't block.
+
+[state]
+turn=3
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=
+p0battlefield=Creeping Tar Pit|NoETBTrigs;Island;Island;Swamp
+p0library=Island;Island;Island
+p0graveyard=
+
+p1life=3
+p1hand=
+p1battlefield=Forest;Forest;Grizzly Bears
+p1library=Forest;Forest;Forest
+p1graveyard=

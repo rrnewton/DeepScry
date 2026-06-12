@@ -14,7 +14,7 @@
 //! 2. Otherwise, iteratively ask "assign lethal damage to which blocker first?"
 //! 3. After all killable blockers are handled, ask where to put remaining non-lethal damage
 
-use crate::core::{CardId, Keyword, PlayerId, StaticAbility, TriggerEvent};
+use crate::core::{CardId, Keyword, KeywordArgs, PlayerId, StaticAbility, TriggerEvent};
 use crate::game::state::GameState;
 use crate::zones::Zone;
 use crate::{MtgError, Result};
@@ -178,6 +178,31 @@ impl GameState {
         // Check for attack triggers (MTG Rules 508.1m)
         // "Whenever this creature attacks" triggers fire after attackers are declared
         self.check_triggers(TriggerEvent::Attacks, card_id)?;
+
+        // Annihilator (CR 702.86): whenever a creature with annihilator N attacks,
+        // the defending player sacrifices N permanents. This fires immediately when
+        // the creature is declared as an attacker (not a scripted Trigger object —
+        // the amount is stored in KeywordArgs::Annihilator on the card).
+        let annihilator_amount: Option<u8> = self
+            .cards
+            .get(card_id)
+            .ok()
+            .and_then(|c| c.keywords.get_args(Keyword::Annihilator))
+            .and_then(|args| {
+                if let KeywordArgs::Annihilator { amount } = args {
+                    Some(*amount)
+                } else {
+                    None
+                }
+            });
+        if let Some(n) = annihilator_amount {
+            let card_name = self.cards.get(card_id).map(|c| c.name.to_string()).unwrap_or_default();
+            self.logger.gamelog(&format!(
+                "Trigger: {} — Annihilator {n} (defending player sacrifices {n} permanents)",
+                card_name
+            ));
+            self.execute_force_sacrifice(defending_player, "Permanent", n)?;
+        }
 
         Ok(())
     }
