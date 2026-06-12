@@ -124,6 +124,13 @@ fn can_block_impl(game: &GameState, attacker_id: CardId, blocker_id: CardId, vie
         }
     }
 
+    // Global block prohibition: some battlefield permanent (e.g. Light of Day)
+    // carries a CantAttackOrBlockMatching static that forbids certain creature
+    // types from blocking entirely (CR 509.1b).
+    if game.is_block_prohibited(blocker) {
+        return false;
+    }
+
     // 702.14 Landwalk: needs view to check defending player's lands.
     if attacker.has_keyword(Keyword::Landwalk) {
         if let Some(view) = view {

@@ -1578,6 +1578,15 @@ impl GameState {
                         // enforced at declare-attackers time in game_loop/actions.rs
                         // and actions/combat.rs.
                     }
+                    StaticAbility::CantAttackOrBlockMatching { .. } => {
+                        // Global attack/block prohibition (Light of Day): doesn't
+                        // affect P/T; enforced at declare-attackers/blockers time
+                        // via GameState::is_attack_prohibited / is_block_prohibited.
+                    }
+                    StaticAbility::CantBeActivated { .. } => {
+                        // Activated-ability lock (Cursed Totem): doesn't affect P/T;
+                        // enforced at action-generation time in game_loop/actions.rs.
+                    }
                     StaticAbility::ExtraLandPlay { .. } => {
                         // Extra land-play grant doesn't affect P/T; queried via
                         // GameState::effective_max_lands() at land-play time.

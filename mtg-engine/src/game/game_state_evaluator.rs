@@ -526,6 +526,14 @@ impl GameStateEvaluator {
                     // Conditional attack prohibition (Orgg): not an aura ability;
                     // no enchanted-creature value contribution.
                 }
+                StaticAbility::CantAttackOrBlockMatching { .. } => {
+                    // Global attack/block hoser (Light of Day, etc.): not an aura;
+                    // no enchanted-creature value contribution.
+                }
+                StaticAbility::CantBeActivated { .. } => {
+                    // Activated-ability lock (Cursed Totem): not an aura;
+                    // no enchanted-creature value contribution.
+                }
                 StaticAbility::ExtraLandPlay { .. } => {
                     // Extra land-play statics live on the source permanent, not
                     // an aura; no enchanted-creature value here.

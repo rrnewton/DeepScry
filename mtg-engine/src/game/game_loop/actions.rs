@@ -115,9 +115,9 @@ impl<'a> GameLoop<'a> {
                     // Check for defender keyword
                     let has_defender = card.has_defender();
 
-                    // Check conditional CantAttack statics (e.g. Orgg:
-                    // "can't attack if defending player controls an untapped
-                    // creature with power >= N"). CR 508.1c.
+                    // Check conditional CantAttack statics on the creature itself
+                    // (e.g. Orgg: "can't attack if defending player controls an
+                    // untapped creature with power >= N"). CR 508.1c.
                     let blocked_by_cant_attack_static = card
                         .static_abilities
                         .iter()
@@ -129,10 +129,16 @@ impl<'a> GameLoop<'a> {
                         && !self.game.has_keyword_with_effects(card_id, Keyword::Flying)
                         && !self.game.has_islandwalk(card_id);
 
+                    // Check global CantAttackOrBlockMatching statics on other
+                    // battlefield permanents (e.g. Light of Day: "black creatures
+                    // can't attack or block"). CR 508.1c.
+                    let globally_cant_attack = self.game.is_attack_prohibited(card);
+
                     if !has_summoning_sickness
                         && !has_defender
                         && !blocked_by_cant_attack_static
                         && !blocked_by_sanctuary
+                        && !globally_cant_attack
                     {
                         creatures.push(card_id);
                     }
@@ -166,7 +172,9 @@ impl<'a> GameLoop<'a> {
                     })
                 })
             }
-            // None of the other static abilities restrict attacking.
+            // None of the other self-carried static abilities restrict attacking
+            // on their own (global CantAttackOrBlockMatching is handled via
+            // is_attack_prohibited() which scans the whole battlefield).
             StaticAbility::ModifyPT { .. }
             | StaticAbility::GrantKeyword { .. }
             | StaticAbility::ReduceCost { .. }
@@ -177,6 +185,8 @@ impl<'a> GameLoop<'a> {
             | StaticAbility::CantBeCast { .. }
             | StaticAbility::CantPlayLand { .. }
             | StaticAbility::CantBlockMatching { .. }
+            | StaticAbility::CantAttackOrBlockMatching { .. }
+            | StaticAbility::CantBeActivated { .. }
             | StaticAbility::CastWithFlash { .. }
             | StaticAbility::DamageIncrease { .. }
             | StaticAbility::PreventDamageToEnchantedByChosenColor { .. }
@@ -198,6 +208,9 @@ impl<'a> GameLoop<'a> {
                     && card.is_creature()
                     && !card.tapped
                     && !self.game.combat.is_blocking(card_id)
+                    // Global CantAttackOrBlockMatching statics (e.g. Light of Day:
+                    // "black creatures can't attack or block"). CR 509.1b.
+                    && !self.game.is_block_prohibited(card)
                 {
                     creatures.push(card_id);
                 }
@@ -1073,6 +1086,13 @@ impl<'a> GameLoop<'a> {
             if let Some(card) = self.game.cards.try_get(card_id) {
                 // Only check permanents controlled by this player
                 if card.controller != player_id {
+                    continue;
+                }
+
+                // CantBeActivated statics (Cursed Totem): if any battlefield
+                // permanent has a CantBeActivated static that matches this card,
+                // none of its activated abilities may be activated. CR 602.1.
+                if card.is_creature() && self.game.is_activated_ability_prohibited(card) {
                     continue;
                 }
 

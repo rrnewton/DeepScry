@@ -146,6 +146,17 @@ impl GameState {
             }
         }
 
+        // Check global CantAttackOrBlockMatching statics (e.g. Light of Day:
+        // "black creatures can't attack or block"). CR 508.1c.
+        {
+            let card = self.cards.get(card_id)?;
+            if self.is_attack_prohibited(card) {
+                return Err(MtgError::InvalidAction(
+                    "Creature can't attack: a global restriction prevents it".to_string(),
+                ));
+            }
+        }
+
         // Declare attacker in combat state (logged so it is reversible by the
         // undo log — mtg-614 hole (b)). The WASM ai_harness now blocks via
         // rewind+replay (mtg-610), so a logged DeclareAttacker is reverted on

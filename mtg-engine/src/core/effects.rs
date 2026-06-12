@@ -3773,6 +3773,44 @@ pub enum StaticAbility {
         description: String,
     },
 
+    /// Global attack/block prohibition for a set of creatures (CR 508.1c / 509.1b).
+    ///
+    /// Corresponds to `S:Mode$ CantAttack | ValidCard$ <filter>`,
+    /// `S:Mode$ CantBlock | ValidCard$ <filter>`, or the combined
+    /// `S:Mode$ CantAttack,CantBlock | ValidCard$ <filter>` (Light of Day).
+    ///
+    /// While the source permanent is on the battlefield, ALL battlefield
+    /// creatures matching `filter` (regardless of controller) are prohibited
+    /// from attacking (if `cant_attack`) and/or blocking (if `cant_block`).
+    /// This is distinct from `CantAttackIfDefenderHasUntappedPowerGE` (Orgg),
+    /// which restricts one specific creature conditionally.
+    CantAttackOrBlockMatching {
+        /// Attack prohibition: if true, matching creatures can't attack.
+        cant_attack: bool,
+        /// Block prohibition: if true, matching creatures can't block.
+        cant_block: bool,
+        /// Which creatures are restricted.
+        filter: TargetRestriction,
+        /// Description for logging.
+        description: String,
+    },
+
+    /// Activated-ability lock: while the source is on the battlefield, no
+    /// creature (matching `creature_filter`) may activate an activated ability.
+    ///
+    /// Corresponds to Cursed Totem:
+    ///   `S:Mode$ CantBeActivated | ValidCard$ Creature | ValidSA$ Activated`
+    ///
+    /// Evaluated at action-generation time: when collecting activated abilities
+    /// for a player, any activated ability on a card matching `creature_filter`
+    /// is suppressed.
+    CantBeActivated {
+        /// Creatures whose activated abilities are suppressed.
+        creature_filter: TargetRestriction,
+        /// Description for logging.
+        description: String,
+    },
+
     /// Allows the controller to play additional lands per turn.
     ///
     /// Corresponds to: `S:Mode$ Continuous | Affected$ You | AdjustLandPlays$ N`
@@ -3787,10 +3825,6 @@ pub enum StaticAbility {
     ExtraLandPlay {
         /// Number of additional lands per turn (typically 1, 2 for Azusa).
         amount: u8,
-        /// Description for logging.
-        description: String,
-    },
-}
 
 /// Target selector for cost reduction abilities
 ///

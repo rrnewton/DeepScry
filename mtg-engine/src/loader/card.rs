@@ -5017,17 +5017,16 @@ impl CardDefinition {
                     }
                 }
                 "CantAttack" => {
-                    // Conditional attack prohibition (Orgg):
+                    // Two shapes:
+                    // (a) Self-conditional (Orgg):
                     //   S:Mode$ CantAttack | ValidCard$ Card.Self
                     //     | UnlessDefender$ !controlsCreature.untapped+powerGE<N>
                     //
-                    // We model only the `ValidCard$ Card.Self` (the source creature
-                    // itself is the restricted attacker) + `UnlessDefender$` shape.
-                    // The general form (affecting other creatures) is left unparsed.
-                    let is_self = params
-                        .get("ValidCard")
-                        .map(|v| v.trim() == "Card.Self")
-                        .unwrap_or(false);
+                    // (b) Global creature filter (general hoser):
+                    //   S:Mode$ CantAttack | ValidCard$ Creature.<filter>
+                    //   e.g. `ValidCard$ Creature.Black` — "black creatures can't attack"
+                    let valid_card = params.get("ValidCard").map(|v| v.trim()).unwrap_or("");
+                    let is_self = valid_card == "Card.Self";
                     if is_self {
                         // Parse `UnlessDefender$ !controlsCreature.untapped+powerGE<N>`:
                         // This means "can't attack UNLESS defender does NOT control
@@ -5051,6 +5050,65 @@ impl CardDefinition {
                                 }
                             }
                         }
+                    } else if !valid_card.is_empty() {
+                        // General "creatures matching <filter> can't attack" hoser.
+                        let filter = crate::core::TargetRestriction::parse(valid_card);
+                        let description = params.get("Description").cloned().unwrap_or_default();
+                        abilities.push(StaticAbility::CantAttackOrBlockMatching {
+                            cant_attack: true,
+                            cant_block: false,
+                            filter,
+                            description,
+                        });
+                    }
+                }
+                "CantBlock" => {
+                    // Global creature filter:
+                    //   S:Mode$ CantBlock | ValidCard$ Creature.<filter>
+                    //   e.g. `ValidCard$ Creature.Black` — "black creatures can't block"
+                    if let Some(valid_card) = params.get("ValidCard") {
+                        let filter = crate::core::TargetRestriction::parse(valid_card.trim());
+                        let description = params.get("Description").cloned().unwrap_or_default();
+                        abilities.push(StaticAbility::CantAttackOrBlockMatching {
+                            cant_attack: false,
+                            cant_block: true,
+                            filter,
+                            description,
+                        });
+                    }
+                }
+                // Combined CantAttack,CantBlock (Light of Day):
+                //   S:Mode$ CantAttack,CantBlock | ValidCard$ Creature.Black
+                mode_str
+                    if {
+                        let parts: Vec<&str> = mode_str.split(',').collect();
+                        parts.iter().all(|p| *p == "CantAttack" || *p == "CantBlock")
+                            && parts.contains(&"CantAttack")
+                            && parts.contains(&"CantBlock")
+                    } =>
+                {
+                    if let Some(valid_card) = params.get("ValidCard") {
+                        let filter = crate::core::TargetRestriction::parse(valid_card.trim());
+                        let description = params.get("Description").cloned().unwrap_or_default();
+                        abilities.push(StaticAbility::CantAttackOrBlockMatching {
+                            cant_attack: true,
+                            cant_block: true,
+                            filter,
+                            description,
+                        });
+                    }
+                }
+                "CantBeActivated" => {
+                    // Activated-ability lock (Cursed Totem):
+                    //   S:Mode$ CantBeActivated | ValidCard$ Creature | ValidSA$ Activated
+                    // Suppress all activated abilities on creatures matching `ValidCard$`.
+                    if let Some(valid_card) = params.get("ValidCard") {
+                        let creature_filter = crate::core::TargetRestriction::parse(valid_card.trim());
+                        let description = params.get("Description").cloned().unwrap_or_default();
+                        abilities.push(StaticAbility::CantBeActivated {
+                            creature_filter,
+                            description,
+                        });
                     }
                 }
                 "Always" => {
@@ -8654,5 +8712,89 @@ Oracle:[-6]: You get an emblem with "At the beginning of each opponent's upkeep,
             "Sorin trigger should force opponent to sacrifice a creature; effects={:?}",
             trigger.effects
         );
+    }
+
+    /// Parser unit test: Light of Day's `S:Mode$ CantAttack,CantBlock | ValidCard$ Creature.Black`
+    /// must parse to a `StaticAbility::CantAttackOrBlockMatching` with both flags set and a
+    /// black-creature filter (mtg-912 B7).
+    #[cfg(feature = "native")]
+    #[test]
+    fn test_parse_light_of_day_cant_attack_cant_block() {
+        use crate::core::StaticAbility;
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("../cardsfolder/l/light_of_day.txt");
+        if !path.exists() {
+            eprintln!("Skipping: cardsfolder not present");
+            return;
+        }
+        let def = CardLoader::load_from_file(&path).expect("Light of Day should load");
+        let card = def.instantiate(crate::core::CardId::new(1), crate::core::PlayerId::new(0));
+
+        let sa = card
+            .static_abilities
+            .iter()
+            .find(|s| matches!(s, StaticAbility::CantAttackOrBlockMatching { .. }))
+            .expect("Light of Day must produce CantAttackOrBlockMatching");
+
+        if let StaticAbility::CantAttackOrBlockMatching {
+            cant_attack,
+            cant_block,
+            filter,
+            ..
+        } = sa
+        {
+            assert!(*cant_attack, "Light of Day must prohibit attacking");
+            assert!(*cant_block, "Light of Day must prohibit blocking");
+            // Black creature: should match
+            let filter_str = "Creature.Black";
+            let black_filter = crate::core::TargetRestriction::parse(filter_str);
+            // The filter derived from the card must match exactly what Creature.Black parses to
+            assert_eq!(
+                filter.required_color, black_filter.required_color,
+                "Light of Day filter must require black"
+            );
+            assert!(
+                filter.required_color == Some(crate::core::Color::Black),
+                "Light of Day filter required_color must be Black, got {:?}",
+                filter.required_color
+            );
+        } else {
+            panic!("Expected CantAttackOrBlockMatching");
+        }
+    }
+
+    /// Parser unit test: Cursed Totem's `S:Mode$ CantBeActivated | ValidCard$ Creature | ValidSA$ Activated`
+    /// must parse to a `StaticAbility::CantBeActivated` with a creature filter (mtg-912 B6).
+    #[cfg(feature = "native")]
+    #[test]
+    fn test_parse_cursed_totem_cant_be_activated() {
+        use crate::core::StaticAbility;
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("../cardsfolder/c/cursed_totem.txt");
+        if !path.exists() {
+            eprintln!("Skipping: cardsfolder not present");
+            return;
+        }
+        let def = CardLoader::load_from_file(&path).expect("Cursed Totem should load");
+        let card = def.instantiate(crate::core::CardId::new(1), crate::core::PlayerId::new(0));
+
+        let sa = card
+            .static_abilities
+            .iter()
+            .find(|s| matches!(s, StaticAbility::CantBeActivated { .. }))
+            .expect("Cursed Totem must produce CantBeActivated");
+
+        if let StaticAbility::CantBeActivated { creature_filter, .. } = sa {
+            // TargetRestriction::parse("Creature") requires the Creature type.
+            // An artifact-only card should NOT match.
+            assert!(
+                !creature_filter.types.is_empty() || creature_filter.required_color.is_some(),
+                "Cursed Totem creature_filter should have Creature type restriction"
+            );
+        } else {
+            panic!("Expected CantBeActivated");
+        }
     }
 }

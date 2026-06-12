@@ -3039,6 +3039,64 @@ impl GameState {
         self.is_cast_prohibited(card) || self.is_land_play_prohibited(card)
     }
 
+    /// True if some permanent on the battlefield has a `CantAttackOrBlockMatching`
+    /// static with `cant_attack = true` whose filter matches `card` (CR 508.1c).
+    /// Used to exclude matching creatures from the legal-attackers list.
+    pub fn is_attack_prohibited(&self, card: &crate::core::Card) -> bool {
+        use crate::core::StaticAbility;
+        self.battlefield.cards.iter().any(|&id| {
+            self.cards.try_get(id).is_some_and(|src| {
+                src.static_abilities.iter().any(|sa| {
+                    if let StaticAbility::CantAttackOrBlockMatching {
+                        cant_attack, filter, ..
+                    } = sa
+                    {
+                        *cant_attack && filter.matches(card)
+                    } else {
+                        false
+                    }
+                })
+            })
+        })
+    }
+
+    /// True if some permanent on the battlefield has a `CantAttackOrBlockMatching`
+    /// static with `cant_block = true` whose filter matches `card` (CR 509.1b).
+    /// Used to exclude matching creatures from the legal-blockers list.
+    pub fn is_block_prohibited(&self, card: &crate::core::Card) -> bool {
+        use crate::core::StaticAbility;
+        self.battlefield.cards.iter().any(|&id| {
+            self.cards.try_get(id).is_some_and(|src| {
+                src.static_abilities.iter().any(|sa| {
+                    if let StaticAbility::CantAttackOrBlockMatching { cant_block, filter, .. } = sa {
+                        *cant_block && filter.matches(card)
+                    } else {
+                        false
+                    }
+                })
+            })
+        })
+    }
+
+    /// True if some permanent on the battlefield has a `CantBeActivated` static
+    /// whose `creature_filter` matches `card`. Used to suppress activated
+    /// abilities on matching creatures (Cursed Totem: "activated abilities of
+    /// creatures can't be activated", CR 602.1).
+    pub fn is_activated_ability_prohibited(&self, card: &crate::core::Card) -> bool {
+        use crate::core::StaticAbility;
+        self.battlefield.cards.iter().any(|&id| {
+            self.cards.try_get(id).is_some_and(|src| {
+                src.static_abilities.iter().any(|sa| {
+                    if let StaticAbility::CantBeActivated { creature_filter, .. } = sa {
+                        creature_filter.matches(card)
+                    } else {
+                        false
+                    }
+                })
+            })
+        })
+    }
+
     /// Check state-based actions for aura attachment (MTG CR 704.5d)
     ///
     /// If an Aura is attached to an illegal permanent or not attached to anything,

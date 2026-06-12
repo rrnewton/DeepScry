@@ -3064,6 +3064,8 @@ mod tests {
                 | StaticAbility::DamageIncrease { .. }
                 | StaticAbility::PreventDamageToEnchantedByChosenColor { .. }
                 | StaticAbility::CantAttackIfDefenderHasUntappedPowerGE { .. }
+                | StaticAbility::CantAttackOrBlockMatching { .. }
+                | StaticAbility::CantBeActivated { .. }
                 | StaticAbility::ExtraLandPlay { .. } => None,
             })
             .expect("Ironclaw Orcs must produce a CantBlockMatching static ability");
@@ -8272,6 +8274,111 @@ mod tests {
              to the params_to_effect fixed-amount path. \
              Trigger effects: {:?}",
             card.triggers.iter().flat_map(|t| t.effects.iter()).collect::<Vec<_>>()
+        );
+    }
+
+    /// Card compat: Light of Day (cardsfolder/l/light_of_day.txt) — mtg-912 B7.
+    ///
+    /// Script:
+    ///   `S:Mode$ CantAttack,CantBlock | ValidCard$ Creature.Black`
+    ///
+    /// Verifies that with Light of Day on the battlefield, a black creature
+    /// (Drudge Skeletons) does NOT appear in the legal-attackers list and is
+    /// excluded from legal blockers (GameState::is_attack_prohibited /
+    /// is_block_prohibited). Without this fix the creature would appear in both
+    /// lists because the CantAttack,CantBlock combined-mode shape was previously
+    /// silently dropped (no match arm in the loader's mode dispatch).
+    #[test]
+    fn test_card_compat_light_of_day_prohibits_black_creatures() {
+        use std::path::PathBuf;
+
+        if !PathBuf::from("../cardsfolder/l/light_of_day.txt").exists() {
+            eprintln!("Skipping: cardsfolder not present");
+            return;
+        }
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        let p2_id = game.players[1].id;
+
+        // P2 controls Light of Day.
+        let lod_id = load_test_card(&mut game, "Light of Day", p2_id).expect("Light of Day should load");
+        game.battlefield.add(lod_id);
+
+        // P1 controls a black creature (Drudge Skeletons).
+        let skeletons_id = load_test_card(&mut game, "Drudge Skeletons", p1_id).expect("Drudge Skeletons should load");
+        game.battlefield.add(skeletons_id);
+        // Mark it as entered previous turn (no summoning sickness).
+        game.cards.get_mut(skeletons_id).unwrap().turn_entered_battlefield = Some(0);
+
+        let skeletons = game.cards.get(skeletons_id).unwrap();
+        assert!(
+            game.is_attack_prohibited(skeletons),
+            "is_attack_prohibited must return true for a black creature with Light of Day on the battlefield"
+        );
+        assert!(
+            game.is_block_prohibited(skeletons),
+            "is_block_prohibited must return true for a black creature with Light of Day on the battlefield"
+        );
+
+        // A non-black creature should NOT be prohibited.
+        let green_id = game.next_card_id();
+        let green_creature = {
+            let mut c = Card::new(green_id, "Grizzly Bears".to_string(), p1_id);
+            c.add_type(CardType::Creature);
+            c.colors.push(crate::core::Color::Green);
+            c
+        };
+        assert!(
+            !game.is_attack_prohibited(&green_creature),
+            "is_attack_prohibited must return false for a non-black creature"
+        );
+        assert!(
+            !game.is_block_prohibited(&green_creature),
+            "is_block_prohibited must return false for a non-black creature"
+        );
+    }
+
+    /// Card compat: Cursed Totem (cardsfolder/c/cursed_totem.txt) — mtg-912 B6.
+    ///
+    /// Script:
+    ///   `S:Mode$ CantBeActivated | ValidCard$ Creature | ValidSA$ Activated`
+    ///
+    /// Verifies that with Cursed Totem on the battlefield,
+    /// GameState::is_activated_ability_prohibited returns true for a creature
+    /// and false for a non-creature.
+    #[test]
+    fn test_card_compat_cursed_totem_suppresses_creature_abilities() {
+        use std::path::PathBuf;
+
+        if !PathBuf::from("../cardsfolder/c/cursed_totem.txt").exists() {
+            eprintln!("Skipping: cardsfolder not present");
+            return;
+        }
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        let p2_id = game.players[1].id;
+
+        // P2 controls Cursed Totem.
+        let totem_id = load_test_card(&mut game, "Cursed Totem", p2_id).expect("Cursed Totem should load");
+        game.battlefield.add(totem_id);
+
+        // P1 has a creature (Llanowar Elves — non-black so no Light of Day confusion).
+        let elves_id = load_test_card(&mut game, "Llanowar Elves", p1_id).expect("Llanowar Elves should load");
+        game.battlefield.add(elves_id);
+
+        let elves = game.cards.get(elves_id).unwrap();
+        assert!(
+            game.is_activated_ability_prohibited(elves),
+            "is_activated_ability_prohibited must be true for a creature with Cursed Totem on battlefield"
+        );
+
+        // Totem itself (an artifact, not a creature) should NOT be affected.
+        let totem = game.cards.get(totem_id).unwrap();
+        assert!(
+            !game.is_activated_ability_prohibited(totem),
+            "is_activated_ability_prohibited must be false for a non-creature artifact"
         );
     }
 }
