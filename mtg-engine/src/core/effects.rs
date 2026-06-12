@@ -3056,6 +3056,14 @@ pub enum TriggerEvent {
     /// Corresponds to: T:Mode$ Attacks | ValidCard$ Card.Self
     Attacks,
 
+    /// When a creature attacks and is not blocked (fires at the end of the
+    /// declare-blockers step, after all blockers are assigned).
+    /// Corresponds to: T:Mode$ AttackerUnblocked | ValidCard$ Card.Self
+    /// Example: Eternal of Harsh Truths — "Whenever ~ attacks and isn't blocked, draw a card."
+    /// Floral Spuzzem — "Whenever ~ attacks and isn't blocked, you may destroy target
+    ///                  artifact defending player controls."
+    AttackerUnblocked,
+
     /// When a creature blocks
     /// Corresponds to: T:Mode$ Blocks | ValidCard$ Card.Self
     Blocks,

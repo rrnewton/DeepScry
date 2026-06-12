@@ -3329,6 +3329,63 @@ impl CardDefinition {
                 triggers.push(trigger);
             }
 
+            // Parse AttackerUnblocked triggers (Mode$ AttackerUnblocked)
+            // Example: T:Mode$ AttackerUnblocked | ValidCard$ Card.Self | Execute$ TrigDraw | TriggerDescription$ ...
+            // Fires at end of declare-blockers step for each unblocked attacker with this trigger.
+            if mode == Some("AttackerUnblocked") && params.get("ValidCard").map(|s| s.as_str()) == Some("Card.Self") {
+                use crate::core::{Effect, PlayerId};
+
+                let mut effects = Vec::new();
+
+                // Extract effects from Execute$ SVar
+                if let Some(exec_ref) = params.get("Execute") {
+                    if let Some(svar_params) = self.parsed_svars.get(exec_ref) {
+                        // DB$ Draw — draw cards for controller (e.g. Eternal of Harsh Truths)
+                        if svar_params.api_type == ApiType::Draw {
+                            let draw_count = svar_params
+                                .get("NumCards")
+                                .and_then(|s| s.parse::<u8>().ok())
+                                .unwrap_or(1);
+                            effects.push(Effect::DrawCards {
+                                player: PlayerId::new(0), // placeholder → controller
+                                count: draw_count,
+                            });
+                        }
+
+                        // DB$ Discard — defending player discards (e.g. Abyssal Nightstalker)
+                        if svar_params.api_type == ApiType::Discard {
+                            let discard_count = svar_params
+                                .get("NumCards")
+                                .and_then(|s| s.parse::<u8>().ok())
+                                .unwrap_or(1);
+                            effects.push(Effect::DiscardCards {
+                                player: PlayerId::target_opponent(),
+                                count: discard_count,
+                                remember_discarded: false,
+                                optional: false,
+                                remember_discarding_players: false,
+                            });
+                        }
+                    }
+                }
+
+                let description = params
+                    .get("TriggerDescription")
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| "Whenever this creature attacks and isn't blocked".to_string());
+
+                let is_optional =
+                    description.to_lowercase().contains("you may") || params.contains_key("OptionalDecider");
+
+                let trigger = if is_optional {
+                    Trigger::new_optional(TriggerEvent::AttackerUnblocked, effects, description)
+                } else {
+                    Trigger::new(TriggerEvent::AttackerUnblocked, effects, description)
+                };
+
+                triggers.push(trigger);
+            }
+
             // Parse SpellCast triggers (Mode$ SpellCast)
             // Example: T:Mode$ SpellCast | ValidCard$ Card.nonCreature | ValidActivatingPlayer$ You | Execute$ TrigCounter
             // This triggers when the controller casts a spell matching ValidCard$ criteria

@@ -567,6 +567,12 @@ impl HeuristicController {
                     // Attack triggers (value scales with the effect)
                     value += 10;
                 }
+                crate::core::TriggerEvent::AttackerUnblocked => {
+                    // "Attacks and isn't blocked" triggers (Eternal of Harsh Truths,
+                    // Abyssal Nightstalker, Floral Spuzzem, etc.) reward evasion
+                    // attacks and are highly desirable on unblockable/evasion creatures.
+                    value += 12;
+                }
                 crate::core::TriggerEvent::Blocks => {
                     // Block triggers
                     value += 5;
