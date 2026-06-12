@@ -2187,16 +2187,30 @@ pub fn params_to_effect_with_svars(params: &AbilityParams, svars: &HashMap<Strin
                         StaticAbilityMode::Continuous => {
                             // Mode$ Continuous creates persistent continuous effects
                             // Common params:
+                            // - AdjustLandPlays$ N: extra land plays this turn (Explore, etc.)
                             // - MayPlay$ True: Permission to play from non-standard zone
                             // - AddPower$/AddToughness$: P/T modifications
                             // - AddKeyword$: Grant keywords
                             //
-                            // When Duration$ Permanent is present on the *outer* AB$ Effect,
-                            // this is a planeswalker ultimate creating an emblem (CR 113.2).
-                            // We parse the SVar body into a StaticAbility and return
-                            // Effect::CreateEmblem (command-zone objects the existing
-                            // continuous_effects machinery scans automatically).
-                            if params.get("Duration") == Some("Permanent") {
+                            // Temporary extra land-play grant (e.g. Explore, Enter the Unknown).
+                            // The player placeholder (0) is resolved to the spell's controller
+                            // in GameState::resolve_effect_target.
+                            if let Some(amount_str) = def.params.get("AdjustLandPlays") {
+                                let amount: u8 = if amount_str.eq_ignore_ascii_case("Unlimited") {
+                                    7
+                                } else {
+                                    amount_str.parse().unwrap_or(1)
+                                };
+                                return Some(Effect::ExtraLandPlay {
+                                    player: PlayerId::new(0), // placeholder → resolved at runtime
+                                    amount,
+                                });
+                            } else if params.get("Duration") == Some("Permanent") {
+                                // When Duration$ Permanent is present on the *outer* AB$ Effect,
+                                // this is a planeswalker ultimate creating an emblem (CR 113.2).
+                                // We parse the SVar body into a StaticAbility and return
+                                // Effect::CreateEmblem (command-zone objects the existing
+                                // continuous_effects machinery scans automatically).
                                 let static_abilities =
                                     super::card::CardDefinition::parse_static_abilities_from_svar_body(svar_body);
                                 if !static_abilities.is_empty() {

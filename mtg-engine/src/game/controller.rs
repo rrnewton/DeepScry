@@ -946,13 +946,10 @@ impl<'a> GameStateView<'a> {
         )
     }
 
-    /// Check if player can play lands this turn
+    /// Check if player can play lands this turn, respecting extra land-play
+    /// grants from permanents like Oracle of Mul Daya and spells like Explore.
     pub fn can_play_land(&self) -> bool {
-        self.game
-            .get_player(self.player_id)
-            .ok()
-            .map(|p| p.can_play_land())
-            .unwrap_or(false)
+        self.game.can_play_land_effective(self.player_id)
     }
 
     /// Get cards on the stack

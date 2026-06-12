@@ -1207,6 +1207,15 @@ impl<'a> GameLoop<'a> {
             // RepeatEach: individual sub-effect logs are emitted by each sub-ability's
             // own log_effect call; no top-level summary log needed here.
             Effect::RepeatEach { .. } => {}
+            Effect::ExtraLandPlay { player, amount } => {
+                // execute_extra_land_play emits its own gamelog; this hook is
+                // a pre-execution log so we keep it brief.
+                let player_name = self.get_player_name(*player);
+                let plural = if *amount == 1 { "" } else { "s" };
+                self.game.logger.gamelog(&format!(
+                    "{source_name} grants {player_name} {amount} extra land play{plural} this turn"
+                ));
+            }
         }
     }
 }

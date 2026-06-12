@@ -246,4 +246,42 @@ impl GameState {
         log::debug!(target: "actions", "NoOp effect '{}' (intentional)", api_type);
         Ok(())
     }
+
+    /// [`Effect::ExtraLandPlay`]: grant `player` permission to play `amount`
+    /// additional lands this turn.
+    ///
+    /// Creates a `PersistentEffectKind::ExtraLandPlay` with
+    /// `CleanupCondition::EndOfTurn`.  The permanent form (Oracle of Mul Daya,
+    /// Exploration enchantment, …) is handled via `StaticAbility::ExtraLandPlay`
+    /// on the battlefield card and does NOT create a persistent effect.
+    pub(in crate::game::actions) fn execute_extra_land_play(&mut self, player: PlayerId, amount: u8) -> Result<()> {
+        use crate::core::{CleanupCondition, PersistentEffectKind};
+
+        if amount == 0 {
+            return Ok(());
+        }
+
+        let player_name = self
+            .get_player(player)
+            .map(|p| p.name.as_str().to_string())
+            .unwrap_or_else(|_| format!("Player {}", player.as_u32()));
+
+        // Use a sentinel source (card 0 = no specific source card)
+        let source = crate::core::CardId::new(0);
+
+        self.persistent_effects.add(
+            PersistentEffectKind::ExtraLandPlay { player, amount },
+            source,
+            player,
+            CleanupCondition::EndOfTurn,
+        );
+
+        let plural = if amount == 1 { "" } else { "s" };
+        self.logger.gamelog(&format!(
+            "{} may play {} additional land{} this turn.",
+            player_name, amount, plural
+        ));
+
+        Ok(())
+    }
 }

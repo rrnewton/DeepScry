@@ -203,6 +203,24 @@ pub enum PersistentEffectKind {
         /// If true, exile instead of graveyard on resolution (ReplaceGraveyard$ Exile)
         exile_on_resolution: bool,
     },
+
+    /// Temporary extra land-play permission, valid until end of turn.
+    ///
+    /// Created by spells such as Explore (`A:SP$ Effect | StaticAbilities$ Exploration`)
+    /// where `SVar:Exploration:Mode$ Continuous | Affected$ You | AdjustLandPlays$ 1`.
+    ///
+    /// Permanent versions (Oracle of Mul Daya, Exploration enchantment) use
+    /// `StaticAbility::ExtraLandPlay` on the battlefield card instead; those are
+    /// computed dynamically in `GameState::effective_max_lands()` without a
+    /// `PersistentEffect` entry.
+    ///
+    /// Cleanup: `CleanupCondition::EndOfTurn`.
+    ExtraLandPlay {
+        /// Player who gains the extra land play.
+        player: PlayerId,
+        /// Number of extra plays granted (usually 1).
+        amount: u8,
+    },
 }
 
 /// Condition that triggers automatic cleanup of a persistent effect.
@@ -465,6 +483,28 @@ impl PersistentEffectStore {
     /// Check if there are no active effects.
     pub fn is_empty(&self) -> bool {
         self.effects.is_empty()
+    }
+
+    /// Sum the number of extra land plays granted to `player` by temporary
+    /// `ExtraLandPlay` persistent effects (i.e., from spells like Explore).
+    ///
+    /// Does NOT include permanent-static grants such as Oracle of Mul Daya;
+    /// those are summed separately in `GameState::effective_max_lands()`.
+    pub fn extra_land_plays_for_player(&self, player: PlayerId) -> u8 {
+        self.effects
+            .iter()
+            .filter_map(|e| {
+                if let PersistentEffectKind::ExtraLandPlay { player: p, amount } = &e.kind {
+                    if *p == player {
+                        Some(*amount)
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            })
+            .fold(0u8, |acc, n| acc.saturating_add(n))
     }
 }
 

@@ -179,7 +179,8 @@ impl<'a> GameLoop<'a> {
             | StaticAbility::CantBlockMatching { .. }
             | StaticAbility::CastWithFlash { .. }
             | StaticAbility::DamageIncrease { .. }
-            | StaticAbility::PreventDamageToEnchantedByChosenColor { .. } => false,
+            | StaticAbility::PreventDamageToEnchantedByChosenColor { .. }
+            | StaticAbility::ExtraLandPlay { .. } => false,
         }
     }
 
@@ -981,7 +982,9 @@ impl<'a> GameLoop<'a> {
                 // Other persistent effect kinds don't grant casting permission
                 PersistentEffectKind::Imprint { .. }
                 | PersistentEffectKind::Suspend { .. }
-                | PersistentEffectKind::CantBeBlocked { .. } => {}
+                | PersistentEffectKind::CantBeBlocked { .. }
+                // ExtraLandPlay is queried via can_play_land_effective(), not here
+                | PersistentEffectKind::ExtraLandPlay { .. } => {}
             }
         }
     }
@@ -1517,27 +1520,23 @@ impl<'a> GameLoop<'a> {
         if stack_is_empty
             && matches!(self.game.turn.current_step, Step::Main1 | Step::Main2)
             && self.game.turn.active_player == player_id
+            && self.game.can_play_land_effective(player_id)
         {
-            if let Ok(player) = self.game.get_player(player_id) {
-                if player.can_play_land() {
-                    // Collect first (the closure below borrows self.game while
-                    // we also push into self.abilities_buffer).
-                    let playable: smallvec::SmallVec<[crate::core::CardId; 8]> =
-                        Self::lands_in_hand_iter(self.game, player_id)
-                            .filter(|&land_id| {
-                                // Skip lands a CantPlayLand / CantBeCast static
-                                // prohibits (City in a Bottle: ARN-origin lands).
-                                !self
-                                    .game
-                                    .cards
-                                    .try_get(land_id)
-                                    .is_some_and(|c| self.game.is_play_prohibited(c))
-                            })
-                            .collect();
-                    for land_id in playable {
-                        self.abilities_buffer.push(SpellAbility::PlayLand { card_id: land_id });
-                    }
-                }
+            // Collect first (the closure below borrows self.game while
+            // we also push into self.abilities_buffer).
+            let playable: smallvec::SmallVec<[crate::core::CardId; 8]> = Self::lands_in_hand_iter(self.game, player_id)
+                .filter(|&land_id| {
+                    // Skip lands a CantPlayLand / CantBeCast static
+                    // prohibits (City in a Bottle: ARN-origin lands).
+                    !self
+                        .game
+                        .cards
+                        .try_get(land_id)
+                        .is_some_and(|c| self.game.is_play_prohibited(c))
+                })
+                .collect();
+            for land_id in playable {
+                self.abilities_buffer.push(SpellAbility::PlayLand { card_id: land_id });
             }
         }
 

@@ -699,7 +699,8 @@ impl GameState {
                             | Effect::CreateTokenDynamic { .. }
                             | Effect::CreateEmblem { .. }
                             | Effect::PlayFromGraveyard { .. }
-                            | Effect::RepeatEach { .. } => {
+                            | Effect::RepeatEach { .. }
+                            | Effect::ExtraLandPlay { .. } => {
                                 // Non-Destroy/Copy modes in modal spells
                                 // TODO(mtg-30): Add handlers for targeting modes that need them
                             }
@@ -774,7 +775,9 @@ impl GameState {
                 | Effect::PlayFromGraveyard { .. }
                 // RepeatEach targets are consumed from chosen_targets at resolve_effect_target
                 // time (Pattern A) or iterate over players (Pattern B) — no cast-time targeting.
-                | Effect::RepeatEach { .. } => {
+                | Effect::RepeatEach { .. }
+                // ExtraLandPlay grants permission to the spell controller; no cast-time target.
+                | Effect::ExtraLandPlay { .. } => {
                     // These effects target players or have no targeting requirements
                     // AttachEquipment targeting is handled via Equip keyword abilities
                     // ChooseColor is a player choice effect (no permanent targets)
@@ -792,6 +795,7 @@ impl GameState {
                     // RearrangeTopOfLibrary: controller looks at own library top, no cast-time targeting
                     // SkipUntapStep: opponent auto-targeted (resolved from ValidTgts$ during init), no
                     //   separate cast-time targeting step needed
+                    // ExtraLandPlay: target is the spell controller, no permanent target needed
                 }
                 // Effects with already-specified targets (non-zero target field)
                 // The handlers above only match when target.is_placeholder()
@@ -1401,7 +1405,8 @@ impl GameState {
                 | Effect::CreateEmblem { .. }
                 // RepeatEach targets are consumed from chosen_targets at resolve_effect_target
                 // time (Pattern A) or iterate over players (Pattern B) — no cast-time targeting.
-                | Effect::RepeatEach { .. } => {
+                | Effect::RepeatEach { .. }
+                | Effect::ExtraLandPlay { .. } => {
                     // These effects target players or have no targeting requirements
                     // CreateDelayedTrigger targets creatures - handled via ValidTgts$ Creature
                     // CopySpellAbility doesn't need explicit targets - copies triggering spell
@@ -1415,6 +1420,7 @@ impl GameState {
                     // RevealCardsFromHand: controller reveals their own hand cards, no cast-time targeting
                     // ReturnGraveyardCardToHand: AI picks matching card, no cast-time targeting
                     // ReturnSelfAsEnchantment: death trigger self-return, no cast-time targeting
+                    // ExtraLandPlay: target is the spell controller, no permanent target needed
                     // PreventAllCombatDamageThisTurn: reuses UntapPermanent's last_resolved_target
                     // RearrangeTopOfLibrary: controller looks at own library top, no targeting
                     // SkipUntapStep: opponent auto-targeted (ValidTgts$ resolved at init)
@@ -1801,7 +1807,9 @@ impl GameState {
             | Effect::ExileIfWouldDieThisTurn { .. }
             | Effect::Fight { .. }
             // RepeatEach has no cast-time targets; they are resolved at execute time.
-            | Effect::RepeatEach { .. } => true, // Filter-based / no-target effects
+            | Effect::RepeatEach { .. }
+            // ExtraLandPlay targets the spell controller — no permanent target needed.
+            | Effect::ExtraLandPlay { .. } => true, // Filter-based / no-target effects
 
             // ===== EXHAUSTIVE EFFECT HANDLING =====
             // Effects with pre-specified targets (guard failed: target.as_u32() != 0)

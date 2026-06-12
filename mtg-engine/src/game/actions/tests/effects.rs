@@ -3063,7 +3063,8 @@ mod tests {
                 | StaticAbility::CastWithFlash { .. }
                 | StaticAbility::DamageIncrease { .. }
                 | StaticAbility::PreventDamageToEnchantedByChosenColor { .. }
-                | StaticAbility::CantAttackIfDefenderHasUntappedPowerGE { .. } => None,
+                | StaticAbility::CantAttackIfDefenderHasUntappedPowerGE { .. }
+                | StaticAbility::ExtraLandPlay { .. } => None,
             })
             .expect("Ironclaw Orcs must produce a CantBlockMatching static ability");
 

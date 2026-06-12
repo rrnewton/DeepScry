@@ -120,7 +120,8 @@ fn expand_all_players_effect(effect: &Effect, player_ids: &[PlayerId]) -> smallv
         | Effect::PutCardsFromHandOnTopOfLibrary { .. }
         | Effect::RevealCardsFromHand { .. }
         | Effect::PlayFromGraveyard { .. }
-        | Effect::RepeatEach { .. } => false,
+        | Effect::RepeatEach { .. }
+        | Effect::ExtraLandPlay { .. } => false,
     };
 
     if !is_all_players {
@@ -255,7 +256,8 @@ fn expand_all_players_effect(effect: &Effect, player_ids: &[PlayerId]) -> smallv
             | Effect::PutCardsFromHandOnTopOfLibrary { .. }
             | Effect::RevealCardsFromHand { .. }
             | Effect::PlayFromGraveyard { .. }
-            | Effect::RepeatEach { .. } => unreachable!(),
+            | Effect::RepeatEach { .. }
+            | Effect::ExtraLandPlay { .. } => unreachable!(),
         })
         .collect()
 }
@@ -280,6 +282,49 @@ pub(crate) fn spell_matches_cost_filter(
 }
 
 impl GameState {
+    /// Compute the maximum number of lands the player may play this turn.
+    ///
+    /// Starts at 1 (the default rule per CR 305.2), then adds:
+    /// - `StaticAbility::ExtraLandPlay` on each battlefield permanent controlled by `player_id`
+    ///   (Oracle of Mul Daya, Exploration enchantment, Azusa, etc.)
+    /// - `PersistentEffectKind::ExtraLandPlay` for each temporary grant in effect
+    ///   (e.g., the Explore spell "you may play an additional land this turn")
+    pub fn effective_max_lands(&self, player_id: crate::core::PlayerId) -> u8 {
+        let mut extra: u8 = 0;
+
+        // Sum permanent statics on the battlefield
+        for &card_id in &self.battlefield.cards {
+            let Some(card) = self.cards.try_get(card_id) else {
+                continue;
+            };
+            if card.controller != player_id {
+                continue;
+            }
+            for sa in &card.static_abilities {
+                if let crate::core::StaticAbility::ExtraLandPlay { amount, .. } = sa {
+                    extra = extra.saturating_add(*amount);
+                }
+            }
+        }
+
+        // Sum temporary persistent effects (e.g., Explore)
+        extra = extra.saturating_add(self.persistent_effects.extra_land_plays_for_player(player_id));
+
+        1u8.saturating_add(extra)
+    }
+
+    /// Check whether `player_id` is still permitted to play a land this turn,
+    /// taking into account extra land-play grants (Oracle of Mul Daya, Explore, …).
+    ///
+    /// Replaces direct `player.can_play_land()` calls where extra-land-play
+    /// statics/effects must be respected.
+    pub fn can_play_land_effective(&self, player_id: crate::core::PlayerId) -> bool {
+        match self.get_player(player_id) {
+            Ok(player) => player.lands_played_this_turn < self.effective_max_lands(player_id),
+            Err(_) => false,
+        }
+    }
+
     /// Play a land from hand to battlefield
     ///
     /// Per NETWORK_ARCHITECTURE.md, cards are revealed to ALL players before moving
@@ -290,9 +335,8 @@ impl GameState {
     /// Returns an error if the player cannot play more lands, the card is not a land,
     /// or the card is not in hand.
     pub fn play_land(&mut self, player_id: PlayerId, card_id: CardId) -> Result<()> {
-        // Check if player can play a land
-        let player = self.get_player(player_id)?;
-        if !player.can_play_land() {
+        // Check if player can play a land (respecting extra land-play grants)
+        if !self.can_play_land_effective(player_id) {
             return Err(MtgError::InvalidAction("Cannot play more lands this turn".to_string()));
         }
 
@@ -3616,6 +3660,13 @@ impl GameState {
                 }
             }
 
+            // ExtraLandPlay: resolve placeholder player to the spell's controller.
+            // Explore / similar spells encode `Defined$ You` (player 0) here.
+            Effect::ExtraLandPlay { player, amount } if player.is_placeholder() => Effect::ExtraLandPlay {
+                player: card_owner,
+                amount: *amount,
+            },
+
             // No resolution needed - return clone of original
             _ => effect.clone(),
         }
@@ -3999,6 +4050,8 @@ impl GameState {
             Effect::Firebend { controller, amount } => self.execute_firebend(*controller, *amount)?,
 
             Effect::GrantCantBeBlocked { target } => self.execute_grant_cant_be_blocked(*target)?,
+
+            Effect::ExtraLandPlay { player, amount } => self.execute_extra_land_play(*player, *amount)?,
 
             Effect::Regenerate { target } => self.execute_regenerate(*target)?,
 

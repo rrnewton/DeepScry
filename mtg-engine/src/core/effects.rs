@@ -2607,6 +2607,25 @@ pub enum Effect {
         /// The API type name, for debug logging only.
         api_type: String,
     },
+
+    /// Grant the player permission to play an additional land this turn.
+    ///
+    /// Corresponds to: `A:SP$ Effect | StaticAbilities$ Exploration` where
+    /// `SVar:Exploration:Mode$ Continuous | Affected$ You | AdjustLandPlays$ 1`
+    ///
+    /// The temporary grant (spell/trigger path) creates a `PersistentEffectKind::ExtraLandPlay`
+    /// cleaned up at end of turn. The permanent form (Oracle of Mul Daya, etc.) uses
+    /// `StaticAbility::ExtraLandPlay` on the on-battlefield card instead.
+    ///
+    /// `player` may be `PlayerId::new(0)` as a placeholder when created from a
+    /// `StaticAbilities$` SVar — resolved to the spell's controller at execution time
+    /// in `execute_effect`.
+    ExtraLandPlay {
+        /// The player who gains the additional land play.
+        player: PlayerId,
+        /// Number of extra land plays (usually 1).
+        amount: u8,
+    },
 }
 
 /// What a `RepeatEach` effect iterates over.
@@ -2855,7 +2874,10 @@ impl Effect {
             // RepeatEach targets are consumed from chosen_targets at resolve_effect_target
             // time (Pattern A) or iterates over all players (Pattern B).  Either way
             // the targeting system does not need to separately collect targets for it.
-            | Effect::RepeatEach { .. } => EffectTargetCategory::NoTargetNeeded,
+            | Effect::RepeatEach { .. }
+            // ExtraLandPlay grants a land-play permission to a specific player;
+            // no cast-time target is selected (player is the spell's controller).
+            | Effect::ExtraLandPlay { .. } => EffectTargetCategory::NoTargetNeeded,
 
             // Effects using filters (affect multiple permanents)
             Effect::PumpAllCreatures { .. }
@@ -3715,6 +3737,24 @@ pub enum StaticAbility {
     CantAttackIfDefenderHasUntappedPowerGE {
         /// Minimum power a defending creature must have to lock out the attacker.
         min_power: i32,
+        /// Description for logging.
+        description: String,
+    },
+
+    /// Allows the controller to play additional lands per turn.
+    ///
+    /// Corresponds to: `S:Mode$ Continuous | Affected$ You | AdjustLandPlays$ N`
+    ///
+    /// Permanent form (on-battlefield static): Oracle of Mul Daya, Exploration enchantment,
+    /// Azusa Lost but Seeking, etc. The extra plays accumulate from all such statics
+    /// currently on the battlefield and controlled by the relevant player.
+    ///
+    /// Applied in `GameState::effective_max_lands()` which sums all `ExtraLandPlay`
+    /// statics on battlefield permanents plus `PersistentEffectKind::ExtraLandPlay`
+    /// for temporary grants (e.g. the Explore spell).
+    ExtraLandPlay {
+        /// Number of additional lands per turn (typically 1, 2 for Azusa).
+        amount: u8,
         /// Description for logging.
         description: String,
     },

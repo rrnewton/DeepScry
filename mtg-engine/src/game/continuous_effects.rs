@@ -1578,6 +1578,10 @@ impl GameState {
                         // enforced at declare-attackers time in game_loop/actions.rs
                         // and actions/combat.rs.
                     }
+                    StaticAbility::ExtraLandPlay { .. } => {
+                        // Extra land-play grant doesn't affect P/T; queried via
+                        // GameState::effective_max_lands() at land-play time.
+                    }
                 }
             }
         }

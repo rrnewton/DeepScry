@@ -5115,6 +5115,10 @@ impl CardDefinition {
             // Aura (Control Magic, Mind Control, ...). Models CR 613.2 layer-2 control.
             let mut gain_control = false;
 
+            // AdjustLandPlays-specific parameter: extra lands the controller may play
+            // per turn. Used by Exploration, Oracle of Mul Daya, Azusa, etc.
+            let mut adjust_land_plays: u8 = 0;
+
             // Split by | and parse each parameter
             for param in ability.split('|') {
                 let param = param.trim();
@@ -5337,6 +5341,16 @@ impl CardDefinition {
                                 gain_control = true;
                             }
                         }
+                        "AdjustLandPlays" => {
+                            // `AdjustLandPlays$ N` — controller may play N extra lands per turn.
+                            // "Unlimited" (Fastbond) is capped at 7 as a practical maximum
+                            // (seven cards in hand = seven potential land plays).
+                            adjust_land_plays = if value.eq_ignore_ascii_case("Unlimited") {
+                                7
+                            } else {
+                                value.parse().unwrap_or(0)
+                            };
+                        }
                         _ => {} // Ignore other parameters (e.g., AddType$, Type$, Activator$)
                     }
                 }
@@ -5452,6 +5466,17 @@ impl CardDefinition {
                         description: description.clone(),
                     });
                 }
+            }
+
+            // AdjustLandPlays: extra land plays per turn (Oracle of Mul Daya, Exploration, Azusa, …).
+            // Only valid on permanent (Mode$ Continuous) statics — spells that
+            // temporarily grant extra plays go through Effect::ExtraLandPlay via
+            // the SVar path in effect_converter.rs instead.
+            if adjust_land_plays > 0 && is_continuous {
+                abilities.push(StaticAbility::ExtraLandPlay {
+                    amount: adjust_land_plays,
+                    description: description.clone(),
+                });
             }
         }
 

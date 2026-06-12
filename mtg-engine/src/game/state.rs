@@ -4535,7 +4535,8 @@ impl GameState {
                     | crate::core::Effect::CreateTokenDynamic { .. }
                     | crate::core::Effect::CreateEmblem { .. }
                     | crate::core::Effect::PlayFromGraveyard { .. }
-                    | crate::core::Effect::RepeatEach { .. } => {
+                    | crate::core::Effect::RepeatEach { .. }
+                    | crate::core::Effect::ExtraLandPlay { .. } => {
                         // Other effect types not yet implemented for delayed triggers
                         // Note: CopySpellAbility inside ExecuteEffect is unusual;
                         // typically CopySpellAbility should be used with DelayedEffect::CopySpellAbility
