@@ -25,6 +25,148 @@ struct TargetSnapshot {
     drain_cap: i32,
 }
 
+/// Collect all `Effect`s from an SVar body by following `SubAbility$` chains.
+///
+/// Used by [`GameState::fire_saga_chapter`] to convert a chapter SVar body (e.g.
+/// `"DB$ Mill | Defined$ Player | NumCards$ 3 | SubAbility$ DBExile"`) into a
+/// flat list of `Effect`s that can be executed by `execute_effect`.
+///
+/// This mirrors `CardDefinition::follow_sub_ability_chain` in the loader but
+/// operates at game-time rather than parse-time, so we can handle Saga chapter
+/// abilities that were stored as `K:Chapter` keywords rather than `A:SP$` effects.
+fn collect_svar_chain_effects(svar_body: &str, svars: &std::collections::HashMap<String, String>) -> Vec<Effect> {
+    use crate::loader::ability_parser::{AbilityParams, ApiType};
+    use crate::loader::effect_converter::params_to_effect_with_svars;
+
+    let mut effects = Vec::new();
+    let mut current_body = svar_body.to_string();
+
+    // Guard against infinite loops (e.g., malformed SubAbility cycles).
+    for _ in 0..20 {
+        let prefixed = format!("A:{}", current_body);
+        let params = match AbilityParams::parse(&prefixed) {
+            Ok(p) => p,
+            Err(e) => {
+                log::debug!("collect_svar_chain_effects: parse error '{}': {}", current_body, e);
+                break;
+            }
+        };
+
+        // Convert to an Effect using the SVar-aware converter.
+        #[allow(clippy::wildcard_enum_match_arm)]
+        let effect = match params.api_type {
+            ApiType::Charm => crate::loader::effect_converter::params_to_charm_effect_with_svars(&params, svars),
+            ApiType::DelayedTrigger => {
+                crate::loader::effect_converter::params_to_delayed_trigger_with_svars(&params, svars)
+            }
+            ApiType::ImmediateTrigger => {
+                crate::loader::effect_converter::params_to_immediate_trigger_with_svars(&params, svars)
+            }
+            _ => params_to_effect_with_svars(&params, svars),
+        };
+
+        if let Some(e) = effect {
+            effects.push(e);
+        }
+
+        // Follow SubAbility$ chain.
+        let sub_name = match params.get("SubAbility") {
+            Some(n) => n,
+            None => break,
+        };
+        let sub_body = match svars.get(sub_name) {
+            Some(b) => b.clone(),
+            None => {
+                log::debug!("collect_svar_chain_effects: SubAbility$ '{}' not in SVars", sub_name);
+                break;
+            }
+        };
+        current_body = sub_body;
+    }
+
+    effects
+}
+
+/// Resolve placeholder controller/owner fields in a chapter effect so that
+/// `execute_effect` sees the real `PlayerId` of the Saga's controller.
+///
+/// This mirrors the partial placeholder-resolution done by
+/// `resolve_effect_target` for spell effects but restricted to the simple
+/// You/Opponent cases needed by most Saga chapter abilities.
+#[allow(clippy::wildcard_enum_match_arm)]
+fn resolve_saga_effect_controller(effect: Effect, controller: PlayerId, opponent: Option<PlayerId>) -> Effect {
+    let opp = opponent.unwrap_or(controller);
+    // Patch PlayerId::placeholder() (== PlayerId(0) sentinel) to `controller`.
+    // For effects that address "each player" we leave them as-is; the
+    // `expand_all_players_effect` path handles those.
+    let resolve = |p: PlayerId| {
+        if p.is_placeholder() {
+            controller
+        } else {
+            p
+        }
+    };
+    match effect {
+        Effect::DrawCards { player, count } => Effect::DrawCards {
+            player: resolve(player),
+            count,
+        },
+        Effect::DrawCardsXPaid { player } => Effect::DrawCardsXPaid {
+            player: resolve(player),
+        },
+        Effect::GainLife { player, amount } => Effect::GainLife {
+            player: resolve(player),
+            amount,
+        },
+        Effect::LoseLife { player, amount } => Effect::LoseLife {
+            player: resolve(player),
+            amount,
+        },
+        Effect::DiscardCards {
+            player,
+            count,
+            remember_discarded,
+            optional,
+            remember_discarding_players,
+        } => Effect::DiscardCards {
+            player: resolve(player),
+            count,
+            remember_discarded,
+            optional,
+            remember_discarding_players,
+        },
+        Effect::Mill { player, count } => Effect::Mill {
+            player: resolve(player),
+            count,
+        },
+        Effect::ForceSacrifice {
+            player,
+            sac_type,
+            count,
+        } => Effect::ForceSacrifice {
+            player: resolve(player),
+            sac_type,
+            count,
+        },
+        Effect::SetLife { player, amount } => Effect::SetLife {
+            player: resolve(player),
+            amount,
+        },
+        // DealDamage targets a CardId (sentinel for player) — resolve the player-target sentinel.
+        Effect::DealDamage { target, amount } => {
+            let resolved_target = match target {
+                crate::core::TargetRef::Player(p) if p.is_placeholder() => crate::core::TargetRef::Player(opp),
+                other => other,
+            };
+            Effect::DealDamage {
+                target: resolved_target,
+                amount,
+            }
+        }
+        other => other,
+    }
+}
+
 /// Expand effects with `ALL_PLAYERS_ID` player target into one effect per player.
 /// For effects that don't use the all-players sentinel, returns the original effect unchanged.
 fn expand_all_players_effect(effect: &Effect, player_ids: &[PlayerId]) -> smallvec::SmallVec<[Effect; 4]> {
@@ -1001,6 +1143,10 @@ impl GameState {
             // Apply etbCounter keyword (CR 614.1c self-replacement) before triggers fire
             self.apply_etb_counters(card_id)?;
 
+            // CR 714.2: Sagas get a lore counter on ETB, immediately firing chapter I.
+            // `advance_saga_lore_counter` is a no-op for non-Saga cards.
+            self.advance_saga_lore_counter(card_id)?;
+
             // Check for ETB triggers on all permanents (including the one that just entered)
             self.check_triggers(TriggerEvent::EntersBattlefield, card_id)?;
         }
@@ -1472,6 +1618,7 @@ impl GameState {
                             | crate::core::CountExpression::CardsInHand { .. }
                             | crate::core::CountExpression::XPaid
                             | crate::core::CountExpression::TargetedCardPower
+                            | crate::core::CountExpression::TriggeredCardPower
                             | crate::core::CountExpression::SpellsCastThisTurn
                             | crate::core::CountExpression::ValidGraveyard { .. }
                             | crate::core::CountExpression::Compare { .. }
@@ -1512,6 +1659,169 @@ impl GameState {
             if amount == 1 { "" } else { "s" }
         ));
         self.add_counters(card_id, counter_type, amount)?;
+        Ok(())
+    }
+
+    /// Add one lore counter to a Saga and fire the corresponding chapter ability.
+    ///
+    /// Called (a) when a Saga enters the battlefield (fires chapter I) and (b) after
+    /// the active player's mandatory draw each turn (fires the next chapter).
+    ///
+    /// After firing the final chapter (`lore_count >= max_chapter_number`), the Saga
+    /// is sacrificed (CR 714.4).
+    ///
+    /// # Rules (CR 714)
+    /// - 714.1: A Saga has chapter abilities triggered by lore counters.
+    /// - 714.2: As a Saga enters the battlefield, its controller adds a lore counter.
+    /// - 714.3: After the active player's mandatory draw, if they control a Saga,
+    ///   they add a lore counter to it.
+    /// - 714.4: After a Saga's final chapter ability has left the stack, the Saga's
+    ///   controller sacrifices it.
+    ///
+    /// AI/network simplification: the chapter ability is executed immediately
+    /// (no stack push) so we avoid implementing a full chapter-ability stack entry.
+    /// This is consistent with how other triggered effects without target selection
+    /// are handled in the engine. Targeted chapter abilities may therefore miss
+    /// their targeting prompts and fizzle; this is a known limitation for the wave-4
+    /// compatibility pass (mtg-901).
+    pub(crate) fn advance_saga_lore_counter(&mut self, saga_id: CardId) -> Result<()> {
+        use crate::core::{CounterType, KeywordArgs};
+
+        // Guard: card must still be on battlefield.
+        if !self.battlefield.cards.contains(&saga_id) {
+            return Ok(());
+        }
+
+        // Collect chapter metadata before mutating the card.
+        let (max_chapter, card_name) = {
+            let card = match self.cards.try_get(saga_id) {
+                Some(c) => c,
+                None => return Ok(()),
+            };
+            // Sagas have exactly one Chapter keyword whose chapter_number is the
+            // total number of chapters (all abilities listed in that one keyword).
+            let mut max_chap = 0u8;
+            for kw_args in card.keywords.iter_args() {
+                if let KeywordArgs::Chapter { chapter_number, .. } = kw_args {
+                    max_chap = max_chap.max(*chapter_number);
+                }
+            }
+            if max_chap == 0 {
+                // Not a real Saga (no Chapter keyword); skip silently.
+                return Ok(());
+            }
+            (max_chap, card.name.to_string())
+        };
+
+        // Add 1 lore counter (CR 714.2 / 714.3).
+        self.add_counters(saga_id, CounterType::Lore, 1)?;
+
+        let lore_count = self
+            .cards
+            .try_get(saga_id)
+            .map(|c| c.get_counter(CounterType::Lore))
+            .unwrap_or(0);
+
+        self.logger.gamelog(&format!(
+            "{} gets a lore counter ({}/{})",
+            card_name, lore_count, max_chapter
+        ));
+
+        // Fire the chapter ability for the current lore count.
+        self.fire_saga_chapter(saga_id, lore_count)?;
+
+        // CR 714.4: After the final chapter ability has left the stack (here:
+        // immediately after firing since we execute inline), sacrifice the Saga.
+        if lore_count >= max_chapter && self.battlefield.cards.contains(&saga_id) {
+            let owner = self
+                .cards
+                .try_get(saga_id)
+                .map(|c| c.owner)
+                .unwrap_or_else(|| self.players.first().map(|p| p.id).unwrap_or_else(|| PlayerId::new(0)));
+            let dest = self.death_destination_for_card(saga_id);
+            self.logger
+                .gamelog(&format!("{} is sacrificed (final chapter)", card_name));
+            self.move_card(saga_id, Zone::Battlefield, dest, owner)?;
+        }
+
+        Ok(())
+    }
+
+    /// Execute the chapter ability for a Saga at the given `lore_count`.
+    ///
+    /// Looks up the SVar name from the `K:Chapter` keyword abilities list (comma-
+    /// separated, 1-indexed by chapter number), then collects all `Effect`s from
+    /// that SVar body following any `SubAbility$` chain, and executes them in order.
+    fn fire_saga_chapter(&mut self, saga_id: CardId, lore_count: u8) -> Result<()> {
+        use crate::core::KeywordArgs;
+
+        // Collect the chapter abilities list and SVars before mutating.
+        let (chapter_svar_names, card_name, svars): (Vec<String>, String, std::collections::HashMap<String, String>) = {
+            let card = match self.cards.try_get(saga_id) {
+                Some(c) => c,
+                None => return Ok(()),
+            };
+            let mut abilities_str = None;
+            for kw_args in card.keywords.iter_args() {
+                if let KeywordArgs::Chapter { abilities, .. } = kw_args {
+                    abilities_str = Some(abilities.clone());
+                    break;
+                }
+            }
+            let Some(abilities) = abilities_str else {
+                return Ok(());
+            };
+            let svar_names: Vec<String> = abilities.split(',').map(|s| s.trim().to_string()).collect();
+            (svar_names, card.name.to_string(), card.definition.svars.clone())
+        };
+
+        // Chapter numbering is 1-indexed; SVars are stored in order.
+        let chapter_idx = lore_count.saturating_sub(1) as usize;
+        let Some(svar_name) = chapter_svar_names.get(chapter_idx) else {
+            log::debug!(
+                "fire_saga_chapter: no SVar for chapter {} on {} (only {} chapters)",
+                lore_count,
+                card_name,
+                chapter_svar_names.len()
+            );
+            return Ok(());
+        };
+        let Some(svar_body) = svars.get(svar_name.as_str()).cloned() else {
+            log::debug!("fire_saga_chapter: SVar '{}' not found on {}", svar_name, card_name);
+            return Ok(());
+        };
+
+        log::info!(
+            "fire_saga_chapter: {} chapter {} ({}): {}",
+            card_name,
+            lore_count,
+            svar_name,
+            svar_body
+        );
+
+        // Collect all effects from the SVar body following SubAbility$ chains.
+        let effects = collect_svar_chain_effects(&svar_body, &svars);
+
+        if effects.is_empty() {
+            log::debug!(
+                "fire_saga_chapter: SVar '{}' on {} produced no executable effects (not yet supported)",
+                svar_name,
+                card_name
+            );
+        }
+
+        for effect in &effects {
+            // Resolve any self/controller placeholders using the Saga's controller.
+            let resolved = if let Some(card) = self.cards.try_get(saga_id) {
+                let ctrl = card.controller;
+                let opp = self.players.iter().map(|p| p.id).find(|&id| id != ctrl);
+                resolve_saga_effect_controller(effect.clone(), ctrl, opp)
+            } else {
+                effect.clone()
+            };
+            self.execute_effect(&resolved)?;
+        }
+
         Ok(())
     }
 
@@ -6714,7 +7024,7 @@ impl GameState {
         // snapshot while it's still on battlefield (CR 608.2g — LKI).
         // The `is_creature` flag gates the broad "whenever a creature dies"
         // scan below — mtg-913 B12.
-        let (effects_to_execute, controller, dying_is_creature, counter_snapshot) = {
+        let (effects_to_execute, controller, dying_is_creature, counter_snapshot, dying_card_power) = {
             let card = self.cards.get(dying_card_id)?;
 
             // Collect LeavesBattlefield triggers (which we use for "dies" events)
@@ -6729,7 +7039,14 @@ impl GameState {
             // DynamicAmount::TriggeredCardCounters, e.g. Hangarback Walker).
             let counters = card.counters.clone();
 
-            (effects, card.controller, card.is_creature(), counters)
+            // Capture the dying card's current power for LKI (CR 608.2g).
+            // Used by CountExpression::TriggeredCardPower expressions — e.g.
+            // Anax, Hardened in the Forge: "create 2 Satyr tokens if the dying
+            // creature had power >= 4, else 1". Power is public (CR 613), so
+            // this is information-independent for network determinism.
+            let power = i32::from(card.current_power());
+
+            (effects, card.controller, card.is_creature(), counters, power)
         };
 
         if !effects_to_execute.is_empty() {
@@ -6744,8 +7061,11 @@ impl GameState {
             }
 
             // Build trigger context with LKI counter snapshot for
-            // DynamicAmount::TriggeredCardCounters resolution.
-            let ctx = TriggerContext::new(dying_card_id, controller).with_triggered_card_counters(counter_snapshot);
+            // DynamicAmount::TriggeredCardCounters resolution, and LKI power
+            // for CountExpression::TriggeredCardPower (Anax).
+            let ctx = TriggerContext::new(dying_card_id, controller)
+                .with_triggered_card_counters(counter_snapshot)
+                .with_triggered_card_power(dying_card_power);
 
             // Execute each effect with placeholder resolution
             for effect in effects_to_execute {
@@ -8301,6 +8621,18 @@ impl GameState {
                 // arm is reached, the expression escaped that path — evaluate to
                 // 0 rather than silently mis-counting.
                 log::debug!("evaluate_count_expression: TargetedCardPower has no target context here; evaluated as 0");
+                Ok(0)
+            }
+            CountExpression::TriggeredCardPower => {
+                // TriggeredCardPower (SVar:Z:TriggeredCard$CardPower — Anax,
+                // Hardened in the Forge) must be resolved before this function
+                // is called, by patching the Compare expression to Fixed in
+                // `resolve_effect_placeholder` using the captured last-known
+                // power from `TriggerContext::triggered_card_power`. If this
+                // arm is reached the patching did not happen; evaluate to 0 to
+                // avoid a panic. The token count will silently default to the
+                // false-value branch of the enclosing Compare (1 token).
+                log::debug!("evaluate_count_expression: TriggeredCardPower reached without context; evaluated as 0");
                 Ok(0)
             }
         }

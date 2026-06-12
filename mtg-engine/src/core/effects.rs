@@ -360,6 +360,17 @@ pub enum CountExpression {
     /// instant, captured into the always-logged PumpCreature undo delta).
     TargetedCardPower,
 
+    /// The power of the card that caused the trigger (last-known information).
+    ///
+    /// Anax, Hardened in the Forge: `SVar:Z:TriggeredCard$CardPower` used inside
+    /// a `Count$Compare Z GE4.2.1` expression — "create 2 Satyr tokens if the
+    /// dying creature had power >= 4, else create 1". Resolved in
+    /// `resolve_effect_placeholder` from `TriggerContext::triggered_card_power`
+    /// (captured via last-known information before the card moves zones,
+    /// CR 608.2g / 603.6c). Information-independent: power is a public
+    /// characteristic (CR 613), so server and all clients compute the same value.
+    TriggeredCardPower,
+
     /// Count spells cast this turn (Count$YouCastThisTurn)
     SpellsCastThisTurn,
 
@@ -579,6 +590,14 @@ impl CountExpression {
             // own target at execution time, so it has no `Count$` prefix.
             if svar_value == "Targeted$CardPower" {
                 return CountExpression::TargetedCardPower;
+            }
+            // `TriggeredCard$CardPower` — the power of the card that fired the
+            // trigger (last-known information). Used in Anax, Hardened in the
+            // Forge: `SVar:Z:TriggeredCard$CardPower` inside a
+            // `Count$Compare Z GE4.2.1` expression. Resolved in
+            // `resolve_effect_placeholder` from `TriggerContext::triggered_card_power`.
+            if svar_value == "TriggeredCard$CardPower" {
+                return CountExpression::TriggeredCardPower;
             }
             // Parse Count$ expressions
             if let Some(rest) = svar_value.strip_prefix("Count$") {
@@ -5238,6 +5257,7 @@ mod tests {
             | CountExpression::Kicked { .. }
             | CountExpression::Bargain { .. }
             | CountExpression::TargetedCardPower
+            | CountExpression::TriggeredCardPower
             | CountExpression::Compare { .. } => panic!("Expected CardsInHand, got {:?}", expr),
         }
 
@@ -5285,6 +5305,7 @@ mod tests {
             | CountExpression::SpellsCastThisTurn
             | CountExpression::Compare { .. }
             | CountExpression::TargetedCardPower
+            | CountExpression::TriggeredCardPower
             | CountExpression::Kicked { .. }
             | CountExpression::Bargain { .. } => {
                 panic!("Expected ValidGraveyard, got {:?}", &svars["CT"])
@@ -5333,6 +5354,7 @@ mod tests {
                     | CountExpression::Kicked { .. }
                     | CountExpression::Bargain { .. }
                     | CountExpression::TargetedCardPower
+                    | CountExpression::TriggeredCardPower
                     | CountExpression::Compare { .. } => {
                         panic!("Expected ValidPermanents, got {:?}", source)
                     }
@@ -5353,7 +5375,8 @@ mod tests {
             | CountExpression::ValidGraveyard { .. }
             | CountExpression::Kicked { .. }
             | CountExpression::Bargain { .. }
-            | CountExpression::TargetedCardPower => panic!("Expected Compare, got {:?}", expr),
+            | CountExpression::TargetedCardPower
+            | CountExpression::TriggeredCardPower => panic!("Expected Compare, got {:?}", expr),
         }
     }
 

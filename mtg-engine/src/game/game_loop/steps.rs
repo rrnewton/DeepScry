@@ -674,6 +674,28 @@ impl<'a> GameLoop<'a> {
             // log.
         }
 
+        // CR 714.3: After the active player's mandatory draw, add a lore counter to
+        // each Saga they control. This fires the matching chapter ability and
+        // sacrifices the Saga if it has reached its final chapter.
+        // Collect Saga ids first to avoid borrow issues while calling advance.
+        {
+            let saga_ids: Vec<crate::core::CardId> = self
+                .game
+                .battlefield
+                .cards
+                .iter()
+                .copied()
+                .filter(|&id| {
+                    self.game.cards.try_get(id).is_some_and(|c| {
+                        c.controller == active_player && c.keywords.contains(crate::core::Keyword::Chapter)
+                    })
+                })
+                .collect();
+            for saga_id in saga_ids {
+                self.game.advance_saga_lore_counter(saga_id)?;
+            }
+        }
+
         // CR 504.1: the turn-based mandatory draw happens first; THEN any
         // "at the beginning of your draw step" triggered abilities are put on
         // the stack (CR 603.3). Fire them after the draw above so an extra-draw

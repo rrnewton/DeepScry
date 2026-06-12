@@ -130,6 +130,14 @@ pub struct TriggerContext {
     /// graveyard. Empty if the trigger source carries no counters or if this
     /// context was built for a non-death trigger.
     pub triggered_card_counter_amounts: SmallVec<[(crate::core::CounterType, u8); 2]>,
+
+    /// Last-known power of the card that caused the trigger (captured before zone
+    /// change, CR 608.2g). Used to resolve `CountExpression::TriggeredCardPower`
+    /// in `resolve_effect_placeholder` — e.g. Anax, Hardened in the Forge creates
+    /// 2 Satyr tokens when a creature with power >= 4 dies, 1 otherwise.
+    /// `None` when the trigger was not fired by a card-zone-change event or when
+    /// the triggered card's power is not relevant.
+    pub triggered_card_power: Option<i32>,
 }
 
 impl TriggerContext {
@@ -146,6 +154,7 @@ impl TriggerContext {
             drawing_player: None,
             damage_amount: None,
             triggered_card_counter_amounts: SmallVec::new(),
+            triggered_card_power: None,
         }
     }
 
@@ -160,6 +169,14 @@ impl TriggerContext {
     /// `DynamicAmount::TriggeredCardCounters` in `resolve_effect_placeholder`.
     pub fn with_triggered_card_counters(mut self, counters: SmallVec<[(crate::core::CounterType, u8); 2]>) -> Self {
         self.triggered_card_counter_amounts = counters;
+        self
+    }
+
+    /// Builder method to record the last-known power of the triggering card
+    /// (captured before zone change, CR 608.2g). Used to resolve
+    /// `CountExpression::TriggeredCardPower` in `resolve_effect_placeholder`.
+    pub fn with_triggered_card_power(mut self, power: i32) -> Self {
+        self.triggered_card_power = Some(power);
         self
     }
 
@@ -546,6 +563,46 @@ pub fn resolve_effect_placeholder(effect: &Effect, ctx: &TriggerContext) -> Effe
         // against the live game state in execute_effect, so we only need to
         // resolve the controller placeholder here and leave the DynamicAmount
         // intact for execute_effect to finish.
+        //
+        // Special case: `Count$Compare TriggeredCardPower GE4.2.1` (Anax,
+        // Hardened in the Forge — "create 2 tokens if the dying creature had
+        // power >= 4, else create 1"). The TriggeredCardPower source cannot be
+        // resolved in execute_effect because it requires last-known information
+        // captured here from `ctx.triggered_card_power`. Patch it to a Fixed
+        // amount now so execute_effect sees a concrete CreateToken.
+        Effect::CreateTokenDynamic {
+            controller,
+            token_script,
+            amount:
+                crate::core::DynamicAmount::Count(crate::core::CountExpression::Compare {
+                    source,
+                    condition,
+                    true_value,
+                    false_value,
+                }),
+            for_each_player,
+        } if matches!(source.as_ref(), crate::core::CountExpression::TriggeredCardPower) => {
+            let resolved_controller = if controller.is_placeholder() {
+                ctx.controller
+            } else {
+                *controller
+            };
+            // Resolve TriggeredCardPower from last-known information.
+            let power = ctx.triggered_card_power.unwrap_or(0);
+            let amount = if condition.evaluate(power) {
+                *true_value
+            } else {
+                *false_value
+            };
+            let amount = u8::try_from(amount.max(0)).unwrap_or(0);
+            Effect::CreateToken {
+                controller: resolved_controller,
+                token_script: token_script.clone(),
+                amount,
+                for_each_player: *for_each_player,
+            }
+        }
+
         Effect::CreateTokenDynamic {
             controller,
             token_script,
