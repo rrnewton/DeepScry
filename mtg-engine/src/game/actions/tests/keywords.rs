@@ -2580,4 +2580,190 @@ Oracle:Hangarback Walker enters with X +1/+1 counters on it.
             death_trigger.effects
         );
     }
+
+    /// CR 702.52: Dredge replaces a draw.
+    ///
+    /// Setup: P1 has Life from the Loam (Dredge 3) in their graveyard, three
+    /// land cards in their library, and an empty hand. When P1 calls draw_card,
+    /// the dredge replacement should fire: the three library cards move to the
+    /// graveyard and Life from the Loam returns to hand.
+    #[test]
+    fn test_dredge_replaces_draw() {
+        use crate::core::KeywordArgs;
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+
+        // Create "Life from the Loam" with Dredge 3 in P1's graveyard.
+        let loam_id = game.next_card_id();
+        let mut loam = Card::new(loam_id, "Life from the Loam".to_string(), p1_id);
+        loam.add_type(CardType::Sorcery);
+        loam.keywords.insert_complex(KeywordArgs::Dredge { amount: 3 });
+        game.cards.insert(loam_id, loam);
+        if let Some(zones) = game.get_player_zones_mut(p1_id) {
+            zones.graveyard.add(loam_id);
+        }
+
+        // Put exactly 3 land cards in P1's library.
+        let mut library_ids = Vec::new();
+        for i in 0..3_u8 {
+            let land_id = game.next_card_id();
+            let mut land = Card::new(land_id, format!("Mountain {i}"), p1_id);
+            land.add_type(CardType::Land);
+            game.cards.insert(land_id, land);
+            if let Some(zones) = game.get_player_zones_mut(p1_id) {
+                zones.library.add(land_id);
+            }
+            library_ids.push(land_id);
+        }
+
+        // P1's hand is initially empty.
+        assert!(
+            game.get_player_zones(p1_id)
+                .map(|z| z.hand.cards.is_empty())
+                .unwrap_or(false),
+            "P1 hand should start empty"
+        );
+
+        // Trigger the draw — dredge should intercept it.
+        let (drawn_card, draw_count) = game.draw_card(p1_id).expect("draw_card should succeed");
+
+        // No card was "drawn" in the MTG sense (dredge replaced the draw).
+        assert_eq!(
+            drawn_card, None,
+            "Dredge should replace the draw: drawn_card should be None"
+        );
+        assert_eq!(draw_count, 0, "Dredge should not increment draw_count");
+
+        // Life from the Loam must now be in P1's hand.
+        let zones = game.get_player_zones(p1_id).expect("zones must exist");
+        assert!(
+            zones.hand.cards.contains(&loam_id),
+            "Life from the Loam should be in hand after dredge"
+        );
+
+        // The three library cards must now be in the graveyard.
+        for &land_id in &library_ids {
+            assert!(
+                zones.graveyard.cards.contains(&land_id),
+                "Milled land {land_id} should be in graveyard after dredge"
+            );
+        }
+
+        // Library must now be empty (all 3 cards were milled).
+        assert!(
+            zones.library.cards.is_empty(),
+            "Library should be empty after dredge milled all 3 cards"
+        );
+
+        // Life from the Loam must NOT be in the graveyard anymore.
+        assert!(
+            !zones.graveyard.cards.contains(&loam_id),
+            "Life from the Loam should no longer be in graveyard after dredge"
+        );
+    }
+
+    /// CR 702.52: Dredge does NOT fire if the library is too small.
+    ///
+    /// If the player has a Dredge 3 card but only 2 cards in library, the
+    /// dredge cannot fire and normal draw proceeds.
+    #[test]
+    fn test_dredge_skipped_when_library_too_small() {
+        use crate::core::KeywordArgs;
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+
+        // Life from the Loam (Dredge 3) in P1's graveyard.
+        let loam_id = game.next_card_id();
+        let mut loam = Card::new(loam_id, "Life from the Loam".to_string(), p1_id);
+        loam.add_type(CardType::Sorcery);
+        loam.keywords.insert_complex(KeywordArgs::Dredge { amount: 3 });
+        game.cards.insert(loam_id, loam);
+        if let Some(zones) = game.get_player_zones_mut(p1_id) {
+            zones.graveyard.add(loam_id);
+        }
+
+        // Only 2 cards in library — not enough for Dredge 3.
+        let mut library_ids = Vec::new();
+        for i in 0..2_u8 {
+            let card_id = game.next_card_id();
+            let mut card = Card::new(card_id, format!("Island {i}"), p1_id);
+            card.add_type(CardType::Land);
+            game.cards.insert(card_id, card);
+            if let Some(zones) = game.get_player_zones_mut(p1_id) {
+                zones.library.add(card_id);
+            }
+            library_ids.push(card_id);
+        }
+
+        // Draw should proceed normally (top card drawn, no dredge).
+        let (drawn_card, _draw_count) = game.draw_card(p1_id).expect("draw_card should succeed");
+
+        // The top library card (last pushed) should have been drawn.
+        let expected_drawn = library_ids.last().copied();
+        assert_eq!(
+            drawn_card, expected_drawn,
+            "Normal draw should happen when library is too small for dredge"
+        );
+
+        // Life from the Loam must still be in the graveyard.
+        let zones = game.get_player_zones(p1_id).expect("zones must exist");
+        assert!(
+            zones.graveyard.cards.contains(&loam_id),
+            "Life from the Loam should remain in graveyard (dredge did not fire)"
+        );
+    }
+
+    /// CR 702.52: draw_card_silent (opening hand) never triggers dredge.
+    ///
+    /// Even if a player somehow has a Dredge card in their graveyard at game
+    /// start (edge case), opening-hand setup must not activate dredge.
+    #[test]
+    fn test_dredge_not_triggered_by_draw_card_silent() {
+        use crate::core::KeywordArgs;
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+
+        // Life from the Loam (Dredge 3) in graveyard (edge case).
+        let loam_id = game.next_card_id();
+        let mut loam = Card::new(loam_id, "Life from the Loam".to_string(), p1_id);
+        loam.add_type(CardType::Sorcery);
+        loam.keywords.insert_complex(KeywordArgs::Dredge { amount: 3 });
+        game.cards.insert(loam_id, loam);
+        if let Some(zones) = game.get_player_zones_mut(p1_id) {
+            zones.graveyard.add(loam_id);
+        }
+
+        // 5 cards in library.
+        let mut library_ids = Vec::new();
+        for i in 0..5_u8 {
+            let card_id = game.next_card_id();
+            let mut card = Card::new(card_id, format!("Forest {i}"), p1_id);
+            card.add_type(CardType::Land);
+            game.cards.insert(card_id, card);
+            if let Some(zones) = game.get_player_zones_mut(p1_id) {
+                zones.library.add(card_id);
+            }
+            library_ids.push(card_id);
+        }
+
+        // draw_card_silent should NOT trigger dredge — top card drawn normally.
+        let (drawn_card, _draw_count) = game.draw_card_silent(p1_id).expect("draw_card_silent should succeed");
+
+        // The top library card should have been drawn.
+        let expected_drawn = library_ids.last().copied();
+        assert_eq!(
+            drawn_card, expected_drawn,
+            "draw_card_silent must not trigger dredge; top card should be drawn"
+        );
+
+        // Life from the Loam must still be in the graveyard.
+        let zones = game.get_player_zones(p1_id).expect("zones must exist");
+        assert!(
+            zones.graveyard.cards.contains(&loam_id),
+            "Life from the Loam should remain in graveyard (draw_card_silent never triggers dredge)"
+        );
+    }
 }

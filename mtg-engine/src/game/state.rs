@@ -2062,7 +2062,17 @@ impl GameState {
     /// Emits a `"P draws CARD (id)"` gamelog entry on success. Use
     /// [`Self::draw_card_silent`] for setup paths (opening hands) where the
     /// per-card log noise is not desired.
+    ///
+    /// CR 702.52: Before drawing, checks whether the player has an eligible
+    /// Dredge card in their graveyard. If so, the draw is replaced by the
+    /// dredge action (mill N, return dredge card to hand). Dredge is never
+    /// applied in [`Self::draw_card_silent`] (opening-hand setup).
     pub fn draw_card(&mut self, player_id: PlayerId) -> Result<(Option<CardId>, u8)> {
+        // CR 702.52: Dredge replaces a draw. Check for eligible dredge cards
+        // before the normal draw. draw_card_silent (opening hands) is exempt.
+        if let Some(dredge_result) = self.try_dredge_instead_of_draw(player_id)? {
+            return Ok(dredge_result);
+        }
         self.draw_card_inner(player_id, /* log_gamelog = */ true)
     }
 
@@ -2176,6 +2186,100 @@ impl GameState {
             }
         }
         Ok((None, 0))
+    }
+
+    /// CR 702.52: Dredge draw-replacement effect.
+    ///
+    /// If the drawing player has at least one card with Dredge N in their
+    /// graveyard AND their library contains at least N cards, the draw is
+    /// replaced: the top N cards are milled and the dredge card returns to
+    /// the player's hand. Returns `Some((None, 0))` when dredge fires (no
+    /// card is "drawn" in the MTG sense, so `draw_count` stays 0 and no
+    /// card-drawn triggers fire). Returns `None` when no eligible dredge
+    /// card exists (caller falls through to the normal draw).
+    ///
+    /// **Heuristic selection** (AI / no human controller): among all eligible
+    /// cards, prefer the one with the lowest Dredge N (mills the fewest
+    /// cards, preserving more of the library). If multiple candidates have
+    /// the same N, pick the one that appears earliest in the graveyard
+    /// (oldest in the yard). This heuristic is information-independent — it
+    /// uses only zone contents visible to any controller — satisfying the
+    /// network-determinism invariant in `NETWORK_ARCHITECTURE.md`.
+    fn try_dredge_instead_of_draw(&mut self, player_id: PlayerId) -> Result<Option<(Option<CardId>, u8)>> {
+        use crate::core::{Keyword, KeywordArgs};
+
+        // Snapshot graveyard card IDs and library length (immutable borrow).
+        let (graveyard_ids, lib_len) = {
+            let Some(zones) = self.get_player_zones(player_id) else {
+                return Ok(None);
+            };
+            let ids: SmallVec<[CardId; 8]> = zones.graveyard.cards.iter().copied().collect();
+            (ids, zones.library.cards.len())
+        };
+
+        // Find the best eligible dredge candidate:
+        // eligible = has Dredge N keyword AND library.len() >= N.
+        // Prefer lowest N (fewest mills), then earliest in graveyard.
+        let mut best: Option<(CardId, u8)> = None; // (card_id, dredge_amount)
+        for &cid in &graveyard_ids {
+            let Some(card) = self.cards.try_get(cid) else {
+                continue;
+            };
+            if let Some(KeywordArgs::Dredge { amount }) = card.keywords.get_args(Keyword::Dredge) {
+                let amount = *amount;
+                if lib_len >= amount as usize {
+                    let is_better = match best {
+                        None => true,
+                        Some((_, best_n)) => amount < best_n,
+                    };
+                    if is_better {
+                        best = Some((cid, amount));
+                    }
+                }
+            }
+        }
+
+        let Some((dredge_card_id, dredge_n)) = best else {
+            return Ok(None); // No eligible dredge card → normal draw proceeds.
+        };
+
+        // Dredge fires. Perform the replacement:
+        //   1. Mill dredge_n cards from the top of the library.
+        //   2. Move dredge_card_id from graveyard → hand.
+        //   3. Log the action.
+
+        // Step 1: mill dredge_n cards (reuses existing mill infrastructure).
+        self.mill_cards(player_id, dredge_n)?;
+
+        // Step 2: move the dredge card from graveyard to hand.
+        self.move_card(dredge_card_id, Zone::Graveyard, Zone::Hand, player_id)?;
+
+        // Step 3: emit a gamelog line visible to all (dredge is a public action).
+        let player_name = self
+            .get_player(player_id)
+            .map(|p| p.name.to_string())
+            .unwrap_or_else(|_| format!("Player {}", player_id.as_u32() + 1));
+        let card_name = self
+            .cards
+            .try_get(dredge_card_id)
+            .map(|c| c.name.to_string())
+            .unwrap_or_else(|| "a card".to_string());
+        self.logger.gamelog(&format!(
+            "{} dredges {} (mills {}, returns {} from graveyard to hand)",
+            player_name, card_name, dredge_n, card_name
+        ));
+
+        log::debug!(
+            "Dredge: player {} returned {} ({}) from graveyard to hand, milled {}",
+            player_id.as_u32(),
+            card_name,
+            dredge_card_id,
+            dredge_n,
+        );
+
+        // No card is "drawn" — return draw_count = 0 so card-drawn triggers
+        // do not fire (CR 702.52: dredge replaces the draw entirely).
+        Ok(Some((None, 0)))
     }
 
     /// Mill cards from library to graveyard (used by mill effects)
