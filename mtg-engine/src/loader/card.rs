@@ -5387,9 +5387,7 @@ impl CardDefinition {
 
             // Parse S:Mode$ Continuous, S:Mode$ ReduceCost, S:Mode$ RaiseCost,
             // S:Mode$ CastWithFlash, or S:Mode$ AlternativeCost lines
-            if !is_continuous && !is_reduce_cost && !is_raise_cost && !is_cast_with_flash
-                && !is_alternative_cost
-            {
+            if !is_continuous && !is_reduce_cost && !is_raise_cost && !is_cast_with_flash && !is_alternative_cost {
                 continue;
             }
 
@@ -5439,7 +5437,6 @@ impl CardDefinition {
             // `alt_cost_mana`: the alternative mana cost (parsed from `Cost$`).
             // `alt_cost_check_svar`: SVar variable name to check (e.g. `SetTrap`).
             let mut alt_cost_mana: Option<crate::core::ManaCost> = None;
-            let mut _alt_cost_check_svar: Option<String> = None;
 
             // Split by | and parse each parameter
             for param in ability.split('|') {
@@ -5709,10 +5706,9 @@ impl CardDefinition {
                         "CheckSVar" => {
                             // `CheckSVar$ <svar>` — for AlternativeCost, the SVar whose
                             // value is checked at cast time. E.g. `CheckSVar$ SetTrap`
-                            // on Summoning Trap.
-                            if is_alternative_cost {
-                                _alt_cost_check_svar = Some(value.to_string());
-                            }
+                            // on Summoning Trap. Currently unused — the condition is
+                            // encoded directly in `AltCostCondition`.
+                            let _ = value;
                         }
                         _ => {} // Ignore other parameters (e.g., AddType$, Type$, Activator$)
                     }
@@ -9435,17 +9431,16 @@ S:Mode$ AlternativeCost | ValidSA$ Spell.Self | EffectZone$ All | Cost$ 0 | Chec
             statics
         );
 
-        if let StaticAbility::AlternativeCost { condition, alt_cost, .. } = &alt_cost_statics[0] {
+        if let StaticAbility::AlternativeCost {
+            condition, alt_cost, ..
+        } = &alt_cost_statics[0]
+        {
             assert_eq!(
                 condition,
                 &AltCostCondition::HadCreatureCounteredThisTurn,
                 "Summoning Trap condition should be HadCreatureCounteredThisTurn"
             );
-            assert_eq!(
-                alt_cost.cmc(),
-                0,
-                "Summoning Trap alt cost should be {{0}}"
-            );
+            assert_eq!(alt_cost.cmc(), 0, "Summoning Trap alt cost should be {{0}}");
         }
     }
 
@@ -9462,13 +9457,12 @@ S:Mode$ AlternativeCost | ValidSA$ Spell.Self | EffectZone$ All | Cost$ 0 | Chec
             return; // Skip if cardsfolder not present
         }
 
-        let def = CardLoader::load_from_file(&path)
-            .expect("summoning_trap.txt should load");
+        let def = CardLoader::load_from_file(&path).expect("summoning_trap.txt should load");
         let statics = def.parse_static_abilities();
 
-        let has_alt_cost = statics.iter().any(|s| {
-            matches!(s, StaticAbility::AlternativeCost { .. })
-        });
+        let has_alt_cost = statics
+            .iter()
+            .any(|s| matches!(s, StaticAbility::AlternativeCost { .. }));
         assert!(
             has_alt_cost,
             "Summoning Trap should have an AlternativeCost static; all statics: {:?}",

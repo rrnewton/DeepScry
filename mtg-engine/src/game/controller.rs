@@ -114,7 +114,10 @@ pub fn format_choice_menu(view: &GameStateView, available: &[SpellAbility], want
                 let name = view.adventure_name(*card_id).unwrap_or_default();
                 output.push_str(&format!("  [{}] cast {} (Adventure)\n", display_idx, name));
             }
-            SpellAbility::CastFromHandWithAltCost { card_id, alternative_cost } => {
+            SpellAbility::CastFromHandWithAltCost {
+                card_id,
+                alternative_cost,
+            } => {
                 let name = view.card_name(*card_id).unwrap_or_default();
                 output.push_str(&format!("  [{}] cast {} for {}\n", display_idx, name, alternative_cost));
             }
@@ -457,7 +460,10 @@ pub fn format_spell_ability_choice(view: &GameStateView, ability: &SpellAbility)
             let name = view.adventure_name(*card_id).unwrap_or_default();
             format!("cast {} (Adventure)", name)
         }
-        SpellAbility::CastFromHandWithAltCost { card_id, alternative_cost } => {
+        SpellAbility::CastFromHandWithAltCost {
+            card_id,
+            alternative_cost,
+        } => {
             let name = view.card_name(*card_id).unwrap_or_default();
             format!("cast {} for {}", name, alternative_cost)
         }

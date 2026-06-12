@@ -2153,15 +2153,30 @@ mod tests {
     fn test_ability_cache_targets_opponent_vs_player() {
         // Sorin Markov -3: targets only opponents
         let cache_sorin = crate::core::AbilityCache::new("Target opponent's life total becomes 10.");
-        assert!(cache_sorin.targets_opponent, "Sorin -3 should have targets_opponent=true");
-        assert!(!cache_sorin.targets_player, "Sorin -3 should NOT have targets_player=true (exclusive)");
+        assert!(
+            cache_sorin.targets_opponent,
+            "Sorin -3 should have targets_opponent=true"
+        );
+        assert!(
+            !cache_sorin.targets_player,
+            "Sorin -3 should NOT have targets_player=true (exclusive)"
+        );
         assert!(cache_sorin.requires_target, "Sorin -3 should require a target");
 
         // Ancestral Recall-like ability targeting any player
         let cache_player = crate::core::AbilityCache::new("Target player draws three cards.");
-        assert!(!cache_player.targets_opponent, "Target-player ability should NOT have targets_opponent=true");
-        assert!(cache_player.targets_player, "Target-player ability should have targets_player=true");
-        assert!(cache_player.requires_target, "Target-player ability should require a target");
+        assert!(
+            !cache_player.targets_opponent,
+            "Target-player ability should NOT have targets_opponent=true"
+        );
+        assert!(
+            cache_player.targets_player,
+            "Target-player ability should have targets_player=true"
+        );
+        assert!(
+            cache_player.requires_target,
+            "Target-player ability should require a target"
+        );
     }
 
     /// Test that Sorin Markov's -3 ability enumerates opponents as valid targets (mtg-914 fix)

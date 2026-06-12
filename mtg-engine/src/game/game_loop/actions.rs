@@ -664,9 +664,7 @@ impl<'a> GameLoop<'a> {
                                 .is_some_and(|p| p.had_creature_countered_this_turn);
                             for static_ability in &card.static_abilities {
                                 if let crate::core::StaticAbility::AlternativeCost {
-                                    condition,
-                                    alt_cost,
-                                    ..
+                                    condition, alt_cost, ..
                                 } = static_ability
                                 {
                                     let condition_met = match condition {
@@ -674,14 +672,11 @@ impl<'a> GameLoop<'a> {
                                             player_had_creature_countered
                                         }
                                     };
-                                    if condition_met
-                                        && self.mana_engine.can_pay_with_pool(alt_cost, &mana_pool)
-                                    {
-                                        self.abilities_buffer
-                                            .push(SpellAbility::CastFromHandWithAltCost {
-                                                card_id,
-                                                alternative_cost: alt_cost.clone(),
-                                            });
+                                    if condition_met && self.mana_engine.can_pay_with_pool(alt_cost, &mana_pool) {
+                                        self.abilities_buffer.push(SpellAbility::CastFromHandWithAltCost {
+                                            card_id,
+                                            alternative_cost: *alt_cost,
+                                        });
                                     }
                                 }
                             }

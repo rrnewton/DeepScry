@@ -508,7 +508,10 @@ impl NetworkController {
                 let name = view.adventure_name(*card_id).unwrap_or_default();
                 format!("Cast Adventure: {}", name)
             }
-            SpellAbility::CastFromHandWithAltCost { card_id, alternative_cost } => {
+            SpellAbility::CastFromHandWithAltCost {
+                card_id,
+                alternative_cost,
+            } => {
                 let name = view.card_name(*card_id).unwrap_or_default();
                 format!("Cast {} for {}", name, alternative_cost)
             }

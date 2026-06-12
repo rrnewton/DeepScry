@@ -2630,10 +2630,9 @@ impl<'a> GameLoop<'a> {
                                             crate::core::Effect::SetLife { player, amount }
                                                 if player.is_placeholder() && !chosen_targets_vec.is_empty() =>
                                             {
-                                                let resolved = crate::core::player_target_from_sentinel(
-                                                    chosen_targets_vec[0],
-                                                )
-                                                .unwrap_or(current_priority);
+                                                let resolved =
+                                                    crate::core::player_target_from_sentinel(chosen_targets_vec[0])
+                                                        .unwrap_or(current_priority);
                                                 crate::core::Effect::SetLife {
                                                     player: resolved,
                                                     amount: *amount,
