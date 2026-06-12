@@ -798,11 +798,21 @@ impl<'a> GameLoop<'a> {
                 self.game.debug_log_state_hash(&draw_msg);
             }
 
-            // Draw a card
-            let (_, draw_count) = self.game.draw_card(active_player)?;
+            // Check for Dredge replacement (CR 702.52): if the active player has a
+            // Dredge card in their graveyard they may mill N instead of drawing.
+            // AI heuristic: always use dredge when available and library allows it.
+            let dredged = self.game.try_apply_dredge(active_player)?;
 
-            // Check for "second card drawn" triggers (e.g., Knowledge Seeker, Otter-Penguin)
-            self.game.check_card_drawn_triggers(active_player, draw_count)?;
+            if dredged {
+                // Dredge replaced the draw; no draw_count trigger fires (no card
+                // was drawn). The dredge log line is emitted inside try_apply_dredge.
+            } else {
+                // Draw a card
+                let (_, draw_count) = self.game.draw_card(active_player)?;
+
+                // Check for "second card drawn" triggers (e.g., Knowledge Seeker, Otter-Penguin)
+                self.game.check_card_drawn_triggers(active_player, draw_count)?;
+            }
 
             // Push reveals immediately for network mode (server-side)
             // This ensures clients receive the draw reveal before their GameLoop needs it

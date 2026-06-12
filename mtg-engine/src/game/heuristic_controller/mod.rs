@@ -94,6 +94,10 @@ pub(crate) enum ActivatedAbilityType {
     /// Example: Clue Token "{2}, Sacrifice this token: Draw a card."
     /// (DrawCards effect). Card advantage is almost always good.
     DrawCard,
+    /// Modal (Charm) ability — choose one of N sub-effects (ModalChoice).
+    /// Example: Umezawa's Jitte "Remove a charge counter: choose pump / curse / life".
+    /// Activated at sorcery speed; AI picks the best available mode. (mtg-911 B3)
+    Charm,
     /// Other abilities not yet categorized
     Other,
 }

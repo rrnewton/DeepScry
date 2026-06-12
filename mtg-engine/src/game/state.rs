@@ -2435,6 +2435,101 @@ impl GameState {
         Ok(milled_cards)
     }
 
+    /// AI-heuristic draw replacement for the Dredge keyword (CR 702.52).
+    ///
+    /// "If you would draw a card, you may mill N cards instead. If you do,
+    /// return this card from your graveyard to your hand."
+    ///
+    /// This method implements the **automatic AI version**: the first Dredge card
+    /// found in `player_id`'s graveyard is used whenever the library has at least
+    /// N cards (so milling is possible). Returns `true` if the draw was replaced by
+    /// a dredge, `false` if the normal draw should proceed.
+    ///
+    /// Called from `draw_step` (and `execute_draw_cards`) before the actual
+    /// `draw_card` call. Because it resolves without controller interaction it is
+    /// safe to call from `GameState` context.
+    ///
+    /// MTG CR 702.52a: "Dredge N means 'As long as you have at least N cards in
+    /// your library, if you would draw a card, you may instead put N cards from
+    /// the top of your library into your graveyard and return this card from your
+    /// graveyard to your hand.'"
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the mill or zone-move operation fails (e.g. invalid
+    /// card ID or zone state).
+    pub fn try_apply_dredge(&mut self, player_id: PlayerId) -> Result<bool> {
+        use crate::core::{Keyword, KeywordArgs};
+
+        // Collect (dredge_card_id, dredge_amount) pairs from the player's graveyard.
+        let dredge_candidates: smallvec::SmallVec<[(crate::core::CardId, u8); 4]> = {
+            let Some(zones) = self.get_player_zones(player_id) else {
+                return Ok(false);
+            };
+            zones
+                .graveyard
+                .cards
+                .iter()
+                .filter_map(|&cid| {
+                    self.cards.try_get(cid).and_then(|c| {
+                        c.keywords.get_args(Keyword::Dredge).and_then(|args| {
+                            if let KeywordArgs::Dredge { amount } = args {
+                                Some((cid, *amount))
+                            } else {
+                                None
+                            }
+                        })
+                    })
+                })
+                .collect()
+        };
+
+        if dredge_candidates.is_empty() {
+            return Ok(false);
+        }
+
+        // Check library size and pick the first usable dredge card.
+        let library_size = self
+            .get_player_zones(player_id)
+            .map(|z| z.library.cards.len())
+            .unwrap_or(0);
+
+        let Some((dredge_card_id, amount)) = dredge_candidates
+            .into_iter()
+            .find(|(_, amount)| library_size >= *amount as usize)
+        else {
+            return Ok(false);
+        };
+
+        // Apply dredge replacement: mill `amount` cards, return dredge card to hand.
+        let dredge_name = self
+            .cards
+            .try_get(dredge_card_id)
+            .map(|c| c.name.to_string())
+            .unwrap_or_else(|| "Dredge card".to_string());
+        let player_name = self
+            .get_player(player_id)
+            .map(|p| p.name.to_string())
+            .unwrap_or_else(|_| format!("Player {}", player_id.as_u32() + 1));
+
+        self.logger.gamelog(&format!(
+            "{player_name} dredges {dredge_name} (mills {amount}, returns to hand)"
+        ));
+
+        // Mill N from library.
+        self.mill_cards(player_id, amount)?;
+
+        // Return the dredge card from graveyard to hand.
+        self.move_card(
+            dredge_card_id,
+            crate::zones::Zone::Graveyard,
+            crate::zones::Zone::Hand,
+            player_id,
+        )?;
+
+        Ok(true)
+    }
+
     /// Snapshot the top N cards of `player_id`'s library WITHOUT mutating
     /// anything. Returns the cards top-down (`result[0]` is the current top
     /// of the library). Returns an empty vec if the player has no zones or

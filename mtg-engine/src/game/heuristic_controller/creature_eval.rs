@@ -542,6 +542,10 @@ impl HeuristicController {
                     // they do not add to a creature's combat/eval value here.
                     // (Their activation is handled in should_activate_ability.)
                 }
+                ActivatedAbilityType::Charm => {
+                    // Modal abilities on Equipment (e.g. Jitte) add flexibility value.
+                    value += 10;
+                }
                 ActivatedAbilityType::Other => {}
             }
         }

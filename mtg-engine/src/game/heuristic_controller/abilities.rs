@@ -291,6 +291,22 @@ impl HeuristicController {
                         return true;
                     }
                 }
+                ActivatedAbilityType::Charm => {
+                    // Modal (Charm) abilities like Umezawa's Jitte: activate at
+                    // sorcery speed during main phase when stack is empty.
+                    // Charge-counter Jitte removal is always profitable when
+                    // counters are available (the mode-choice AI picks the best
+                    // option). Activate in Main2 to keep Main1 mana for combat.
+                    // (mtg-911 B3)
+                    let current_step = view.current_step();
+                    if current_step == crate::game::Step::Main2 && self.is_stack_empty(view) {
+                        return true;
+                    }
+                    // Also activate in Main1 (e.g. Jitte pump before combat)
+                    if current_step == crate::game::Step::Main1 && self.is_stack_empty(view) {
+                        return true;
+                    }
+                }
                 ActivatedAbilityType::Other => {
                     // For now, don't activate other types
                     // Will expand as we implement more ability types
