@@ -1,0 +1,21 @@
+[metadata]
+Name=Banishing Light O-Ring Exile Test
+Goal=Win
+Turns=5
+Difficulty=Medium
+Description=P1 casts Banishing Light to exile P2's creature. Verify ETB exile trigger fires, creature is removed until Banishing Light leaves. P1 then attacks for win.
+
+[state]
+turn=5
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Banishing Light
+p0battlefield=Plains;Plains;Plains
+p0library=Plains;Plains;Plains;Plains
+p0graveyard=
+p1life=5
+p1hand=
+p1battlefield=Plains;Plains;Plains;Bonecrusher Giant
+p1library=Plains;Plains;Plains
+p1graveyard=

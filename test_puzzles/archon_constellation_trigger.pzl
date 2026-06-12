@@ -1,0 +1,21 @@
+[metadata]
+Name=Archon of Suns Grace Constellation Test
+Goal=Win
+Turns=4
+Difficulty=Medium
+Description=P1 has Archon of Sun's Grace in play. Cast enchantments to trigger Constellation (2/2 Pegasus creation). Verify lifelink on archon and pegasus. P1 wins by attacking.
+
+[state]
+turn=2
+activeplayer=p0
+activephase=MAIN1
+p0life=15
+p0hand=Banishing Light;Banishing Light
+p0battlefield=Plains;Plains;Plains;Archon of Sun's Grace
+p0library=Plains;Plains;Plains;Plains;Plains
+p0graveyard=
+p1life=8
+p1hand=
+p1battlefield=Plains;Plains;Plains;Plains;Bonecrusher Giant;Bonecrusher Giant
+p1library=Plains;Plains;Plains
+p1graveyard=

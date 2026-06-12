@@ -5031,7 +5031,14 @@ impl AbilityCache {
             targets_untapped: desc_lower.contains("untapped"),
             targets_creature: desc_lower.contains("creature"),
             targets_land: desc_lower.contains("land"),
-            requires_target: desc_lower.contains("target") || desc_lower.starts_with("equip"),
+            // requires_target: true if this ability itself needs a target selected at activation.
+            // We check for "target" as a word in the description, but exclude cases where "target"
+            // appears only inside a token's sub-ability text (e.g. Tibalt's Devil token:
+            // "Create a 1/1 red Devil ... with 'deals 1 damage to any target.'").
+            // Heuristic: if the description starts with "Create" (token creation), the activation
+            // itself never needs a target — any "target" in the text belongs to the token's ability.
+            requires_target: (desc_lower.contains("target") && !desc_lower.starts_with("create"))
+                || desc_lower.starts_with("equip"),
         }
     }
 }

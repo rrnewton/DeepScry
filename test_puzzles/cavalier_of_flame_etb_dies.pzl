@@ -1,0 +1,21 @@
+[metadata]
+Name=Cavalier of Flame ETB and Dies Test
+Goal=Win
+Turns=5
+Difficulty=Medium
+Description=P1 casts Cavalier of Flame to test ETB discard/draw and haste activation. P1 has lands in graveyard for dies trigger. P2 has low life.
+
+[state]
+turn=6
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Cavalier of Flame
+p0battlefield=Mountain;Mountain;Mountain;Mountain;Mountain
+p0library=Island;Plains;Island;Plains;Island;Plains
+p0graveyard=Mountain;Mountain;Mountain
+p1life=6
+p1hand=
+p1battlefield=Plains;Plains;Plains
+p1library=Plains;Plains;Plains
+p1graveyard=

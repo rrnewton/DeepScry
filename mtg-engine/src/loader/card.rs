@@ -2693,6 +2693,44 @@ impl CardDefinition {
                 triggers.push(trigger);
             }
 
+            // Parse Constellation triggers (Mode$ ChangesZone with ValidCard$ Enchantment.YouCtrl)
+            // Constellation triggers when an enchantment you control enters the battlefield.
+            // Example: Archon of Sun's Grace: T:Mode$ ChangesZone | Origin$ Any | Destination$ Battlefield
+            //   | ValidCard$ Enchantment.YouCtrl | TriggerZones$ Battlefield | Execute$ TrigToken
+            if mode == Some("ChangesZone")
+                && params.get("Destination").map(|s| s.as_str()) == Some("Battlefield")
+                && params
+                    .get("ValidCard")
+                    .map(|s| s.as_str())
+                    .unwrap_or("")
+                    .starts_with("Enchantment.YouCtrl")
+            {
+                let mut effects = Vec::new();
+
+                // Check if we have Execute$ parameter (references a SVar with effects)
+                if let Some(exec_ref) = params.get("Execute") {
+                    if let Some(svar_params) = self.parsed_svars.get(exec_ref) {
+                        effects.extend(self.extract_effects_from_svar(svar_params));
+                    }
+                }
+
+                // Extract description from TriggerDescription$ if available
+                let description = params
+                    .get("TriggerDescription")
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| "Constellation".to_string());
+
+                // Create trigger with [constellation] flag for runtime filtering.
+                // trigger_self_only = false since this triggers on ANY enchantment you control.
+                let mut trigger = Trigger::new_any(
+                    TriggerEvent::EntersBattlefield,
+                    effects,
+                    format!("[constellation] {}", description),
+                );
+                trigger.trigger_self_only = false;
+                triggers.push(trigger);
+            }
+
             // Parse "dies" triggers (Mode$ ChangesZone with Origin$ Battlefield, Destination$ Graveyard)
             // Example: T:Mode$ ChangesZone | Origin$ Battlefield | Destination$ Graveyard | ValidCard$ Card.Self | Execute$ TrigAddMana
             // Also handles ValidCard$ Card.Self+Creature (e.g. Enduring Vitality: "when this dies,

@@ -762,6 +762,19 @@ impl GameState {
             return false;
         }
 
+        // "[constellation]": fires only when an enchantment controlled by trigger owner enters.
+        // Archon of Sun's Grace and similar Constellation cards use this marker.
+        if trigger.description.contains("[constellation]") {
+            let source_is_enchantment = self
+                .cards
+                .get(event_source_id)
+                .map(|c| c.is_enchantment())
+                .unwrap_or(false);
+            if !source_is_enchantment || source_controller != trigger_controller {
+                return false;
+            }
+        }
+
         // "[controller_only]" / controller_turn_only: fires only on controller's turn
         if trigger.controller_turn_only && trigger_controller != active_player {
             return false;

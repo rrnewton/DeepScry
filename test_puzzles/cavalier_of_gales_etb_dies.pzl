@@ -1,0 +1,21 @@
+[metadata]
+Name=Cavalier of Gales ETB and Dies Test
+Goal=Win
+Turns=5
+Difficulty=Medium
+Description=P1 casts Cavalier of Gales to test ETB draw3/put2 on library, and if dies: shuffle+scry2. P1 wins by attacking with 5/5 flier.
+
+[state]
+turn=6
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Cavalier of Gales
+p0battlefield=Island;Island;Island;Island;Island
+p0library=Plains;Island;Plains;Island;Plains;Island;Plains;Island
+p0graveyard=
+p1life=5
+p1hand=
+p1battlefield=Plains;Plains;Plains
+p1library=Plains;Plains;Plains
+p1graveyard=

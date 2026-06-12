@@ -1,0 +1,21 @@
+[metadata]
+Name=Runaway Steam-Kin Counter Accumulation Test
+Goal=Win
+Turns=4
+Difficulty=Medium
+Description=P1 has Runaway Steam-Kin in play. Cast red spells to get counters, then remove 3 counters for {R}{R}{R}. Verify trigger fires and mana ability.
+
+[state]
+turn=4
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Bonecrusher Giant;Bonecrusher Giant;Bonecrusher Giant
+p0battlefield=Mountain;Mountain;Mountain;Runaway Steam-Kin
+p0library=Mountain;Mountain;Mountain;Mountain
+p0graveyard=
+p1life=5
+p1hand=
+p1battlefield=Plains;Plains;Plains
+p1library=Plains;Plains;Plains
+p1graveyard=

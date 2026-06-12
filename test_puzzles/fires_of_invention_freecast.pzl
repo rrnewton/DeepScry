@@ -1,0 +1,21 @@
+[metadata]
+Name=Fires of Invention Free Cast Test
+Goal=Win
+Turns=5
+Difficulty=Medium
+Description=P1 has Fires of Invention in play. P1 has 5 lands. Verify that P1 can cast Teferi, Time Raveler (MV 3) without paying mana, and Cavalier of Flame (MV 5) would be castable free. Also P1 can cast at most 2 spells this turn.
+
+[state]
+turn=2
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Teferi, Time Raveler;Bonecrusher Giant
+p0battlefield=Mountain;Mountain;Mountain;Plains;Island;Fires of Invention
+p0library=Island;Plains;Island;Plains;Island;Plains
+p0graveyard=
+p1life=5
+p1hand=
+p1battlefield=Plains;Plains
+p1library=Plains;Plains;Plains
+p1graveyard=

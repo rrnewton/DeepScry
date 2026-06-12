@@ -1,0 +1,21 @@
+[metadata]
+Name=Robber of the Rich Exile Cast Test
+Goal=Win
+Turns=4
+Difficulty=Medium
+Description=P1 has Robber of the Rich (haste). P2 has more cards in hand. Verify attack trigger exiles top of P2 library, and that exiled card can be cast during Rogue attack turns.
+
+[state]
+turn=3
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=
+p0battlefield=Mountain;Mountain;Robber of the Rich
+p0library=Mountain;Mountain;Mountain;Mountain
+p0graveyard=
+p1life=5
+p1hand=Bonecrusher Giant;Bonecrusher Giant;Bonecrusher Giant
+p1battlefield=Plains;Plains;Plains
+p1library=Runaway Steam-Kin;Plains;Plains;Plains
+p1graveyard=

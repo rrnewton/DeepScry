@@ -302,6 +302,7 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
         ApiType::PumpAll => {
             // Mass pump: "Creatures you control get +1/+0 until end of turn"
             // Example: DB$ PumpAll | ValidCards$ Creature.YouCtrl | NumAtt$ +1
+            // Also handles keyword grants: AB$ PumpAll | KW$ Trample & Haste
             let mut power_bonus = 0;
             let mut toughness_bonus = 0;
 
@@ -315,11 +316,37 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
                 toughness_bonus = def;
             }
 
+            // Extract keyword grants (KW$) - optional, e.g. "Trample & Haste"
+            let keywords_granted: smallvec::SmallVec<[Keyword; 2]> = params
+                .get("KW")
+                .map(|kw_str| {
+                    kw_str
+                        .split(" & ")
+                        .filter_map(|kw| Keyword::from_string(kw.trim()))
+                        .collect()
+                })
+                .unwrap_or_default();
+
             // Get the filter (ValidCards$) - defaults to "Creature"
             let filter = params.get("ValidCards").unwrap_or("Creature").to_string();
 
-            // Only create effect if at least one bonus is non-zero
-            if power_bonus != 0 || toughness_bonus != 0 {
+            if !keywords_granted.is_empty() {
+                // Keyword-only (or keyword + P/T) grant: use AnimateAll which supports keywords.
+                // For pure keyword grants, power/toughness are None (unchanged).
+                let power = if power_bonus != 0 { Some(power_bonus) } else { None };
+                let toughness = if toughness_bonus != 0 {
+                    Some(toughness_bonus)
+                } else {
+                    None
+                };
+                Some(Effect::AnimateAll {
+                    controller: PlayerId::new(0), // Placeholder
+                    filter,
+                    power,
+                    toughness,
+                    keywords_granted,
+                })
+            } else if power_bonus != 0 || toughness_bonus != 0 {
                 Some(Effect::PumpAllCreatures {
                     controller: PlayerId::new(0), // Placeholder - filled in at effect execution
                     filter,
