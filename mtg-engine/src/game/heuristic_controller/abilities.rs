@@ -68,19 +68,59 @@ impl HeuristicController {
                     // Reference: PumpAi.java:98-105 (Main1), PumpAi.java:74, 358 (DeclareBlockers)
                     let current_step = view.current_step();
 
+                    // For Equipment like Umezawa's Jitte (the source is not a creature
+                    // but the pump targets the equipped creature), evaluate the equipped
+                    // creature instead of the equipment card itself. This allows the
+                    // heuristic to decide to activate Jitte's Charm during Main1/combat.
+                    // MTG CR 301.5c: equipment abilities are activated at instant speed,
+                    // but the AI activates them at sorcery-speed decision points for
+                    // simplicity.
+                    let pump_source: &Card = if !source.is_creature() {
+                        // If this card is attached to a creature, use that creature as
+                        // the pump target for heuristic evaluation.
+                        source.attached_to.and_then(|id| view.get_card(id)).unwrap_or(source)
+                    } else {
+                        source
+                    };
+
+                    let is_main1 = current_step == crate::game::Step::Main1;
+                    let is_main2 = current_step == crate::game::Step::Main2;
+
+                    log::debug!(
+                        target: "heuristic",
+                        "Pump ability eval: source={} is_creature={} step={:?} is_main1={} is_main2={}",
+                        source.name, source.is_creature(), current_step, is_main1, is_main2
+                    );
+
                     // Phase 1: Main1 - Enable better attacks
-                    if current_step == crate::game::Step::Main1 {
+                    if is_main1 {
                         // Check if pumping would enable better attacks
-                        if self.would_pump_enable_attack(source, view, power, toughness) {
+                        if self.would_pump_enable_attack(pump_source, view, power, toughness) {
                             return true;
                         }
+                    }
+
+                    // For modal abilities classified as Pump (e.g., Jitte's Charm
+                    // whose modes include GainLife and -1/-1 curse in addition to +2/+2
+                    // pump), activate during our main phases or End step when the source
+                    // is a non-creature (equipment/artifact) — the curse and life-gain
+                    // modes are valuable regardless of equipped status.
+                    // End step timing lets the AI burn counters after combat resolves.
+                    let is_end_step = current_step == crate::game::Step::End;
+                    if (is_main1 || is_main2 || is_end_step) && !source.is_creature() {
+                        log::debug!(
+                            target: "heuristic",
+                            "Modal pump on non-creature source {} (step={:?}): activating",
+                            source.name, current_step
+                        );
+                        return true;
                     }
 
                     // Phase 2: Declare Blockers - Combat pump evaluation
                     // Reference: PumpAi.java:74, 358 - pump abilities are most valuable during
                     // declare blockers when we can save creatures or kill blockers
                     if current_step == crate::game::Step::DeclareBlockers
-                        && self.should_activate_pump_during_combat(source, view, power, toughness)
+                        && self.should_activate_pump_during_combat(pump_source, view, power, toughness)
                     {
                         return true;
                     }
@@ -370,6 +410,42 @@ impl HeuristicController {
                 crate::core::Effect::DrawCards { .. } | crate::core::Effect::DrawCardsXPaid { .. }
             ) {
                 return ActivatedAbilityType::DrawCard;
+            }
+        }
+
+        // Check for modal (Charm) abilities — Umezawa's Jitte and similar.
+        // Classify based on the most "aggressive" mode in the choice set:
+        // PumpCreature mode → Pump (use same timing heuristic as firebreathing),
+        // GainLife-only → treat as Other (not enough board impact to force use).
+        // This lets the heuristic activate Jitte at sorcery speed so the chosen
+        // mode's effect is exercised. MTG CR 701.4a (mtg-911 B3 fix).
+        for effect in &ability.effects {
+            if let crate::core::Effect::ModalChoice { modes, .. } = effect {
+                // Look for the best pump-type mode.
+                let mut best_power = 0i32;
+                let mut best_toughness = 0i32;
+                for mode in modes {
+                    if let crate::core::Effect::PumpCreature {
+                        power_bonus,
+                        toughness_bonus,
+                        ..
+                    } = mode.effect.as_ref()
+                    {
+                        // Track the mode with the highest total bonus (positive pumps).
+                        if *power_bonus > best_power || *toughness_bonus > best_toughness {
+                            best_power = *power_bonus;
+                            best_toughness = *toughness_bonus;
+                        }
+                    }
+                }
+                // If any mode is a positive pump, classify as Pump so the AI will
+                // activate this during combat / pre-combat main phase.
+                if best_power > 0 || best_toughness > 0 {
+                    return ActivatedAbilityType::Pump {
+                        power: best_power,
+                        toughness: best_toughness,
+                    };
+                }
             }
         }
 

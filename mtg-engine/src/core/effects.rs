@@ -3198,6 +3198,13 @@ pub struct ModalMode {
     /// Zero means no extra cost. Used by tiered modal spells like Fire Magic where each
     /// tier (Fire/Fira/Firaga) has a different extra cost beyond the base mana cost.
     pub mode_cost: u8,
+    /// Whether this mode requires player-chosen targeting (ValidTgts$ was
+    /// present in the SVar). When `true`, target selection must happen after
+    /// mode selection (e.g. Jitte's JitteCurse "Target creature gets -1/-1").
+    /// When `false`, the target is pre-defined (Defined$ Equipped/Self/etc.)
+    /// or no targeting is needed (GainLife, DrawCards, …).
+    #[serde(default)]
+    pub needs_targeting: bool,
 }
 
 /// Which combat-damage recipient class a `DealsCombatDamage` trigger watches.

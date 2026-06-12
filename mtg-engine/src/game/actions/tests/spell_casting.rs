@@ -455,6 +455,7 @@ mod tests {
             description: "Destroy target creature with no counters on it.".to_string(),
             svar_name: "Destroy".to_string(),
             mode_cost: 0,
+            needs_targeting: false,
         };
 
         // For mode2, we'd use RemoveCounter but it's not implemented yet
@@ -467,6 +468,7 @@ mod tests {
             description: "Remove up to three counters from target creature.".to_string(),
             svar_name: "Remove".to_string(),
             mode_cost: 0,
+            needs_targeting: false,
         };
 
         let modal_effect = Effect::ModalChoice {
@@ -527,6 +529,7 @@ mod tests {
             description: "Destroy target creature".to_string(),
             svar_name: "Destroy".to_string(),
             mode_cost: 0,
+            needs_targeting: false,
         };
 
         spell.effects.push(Effect::ModalChoice {
@@ -582,6 +585,7 @@ mod tests {
             description: "Destroy".to_string(),
             svar_name: "Destroy".to_string(),
             mode_cost: 0,
+            needs_targeting: false,
         };
 
         let mode2 = ModalMode {
@@ -592,6 +596,7 @@ mod tests {
             description: "Deal 3 damage".to_string(),
             svar_name: "Damage".to_string(),
             mode_cost: 0,
+            needs_targeting: false,
         };
 
         spell.effects.push(Effect::ModalChoice {
@@ -668,6 +673,7 @@ mod tests {
             description: "Destroy target creature with no counters on it.".to_string(),
             svar_name: "Destroy".to_string(),
             mode_cost: 0,
+            needs_targeting: false,
         };
 
         // Mode 2: Remove counters (not used in this test)
@@ -680,6 +686,7 @@ mod tests {
             description: "Remove up to three counters from target creature.".to_string(),
             svar_name: "Remove".to_string(),
             mode_cost: 0,
+            needs_targeting: false,
         };
 
         spell.effects.push(Effect::ModalChoice {
@@ -790,6 +797,7 @@ mod tests {
             description: "Destroy target creature with no counters on it.".to_string(),
             svar_name: "Destroy".to_string(),
             mode_cost: 0,
+            needs_targeting: false,
         };
 
         // Mode 2: Remove up to 3 counters
@@ -802,6 +810,7 @@ mod tests {
             description: "Remove up to three counters from target creature.".to_string(),
             svar_name: "Remove".to_string(),
             mode_cost: 0,
+            needs_targeting: false,
         };
 
         spell.effects.push(Effect::ModalChoice {
@@ -895,6 +904,7 @@ mod tests {
             description: "Destroy target creature with no counters on it.".to_string(),
             svar_name: "Destroy".to_string(),
             mode_cost: 0,
+            needs_targeting: false,
         };
 
         // Mode 2: Remove counters
@@ -907,6 +917,7 @@ mod tests {
             description: "Remove up to three counters from target creature.".to_string(),
             svar_name: "Remove".to_string(),
             mode_cost: 0,
+            needs_targeting: false,
         };
 
         spell.effects.push(Effect::ModalChoice {
@@ -1429,6 +1440,7 @@ mod tests {
             description: "Destroy target creature with power 4 or greater.".to_string(),
             svar_name: "DBDestroy".to_string(),
             mode_cost: 0,
+            needs_targeting: false,
         };
 
         // Mode 2: Earthbend 3
@@ -1440,6 +1452,7 @@ mod tests {
             description: "Earthbend 3.".to_string(),
             svar_name: "DBEarthbend".to_string(),
             mode_cost: 0,
+            needs_targeting: false,
         };
 
         spell.effects.push(Effect::ModalChoice {

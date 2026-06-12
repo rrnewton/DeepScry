@@ -1259,6 +1259,9 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
                     description: format!("Mode: {}", name),
                     svar_name: name.to_string(),
                     mode_cost: 0,
+                    // Without SVar resolution we don't know targeting needs;
+                    // params_to_charm_effect_with_svars will set this correctly.
+                    needs_targeting: false,
                 })
                 .collect();
 
@@ -2238,12 +2241,17 @@ pub fn params_to_charm_effect_with_svars(params: &AbilityParams, svars: &HashMap
                 // Extract ModeCost$ — extra generic mana required to choose this mode
                 // (used by tiered modal spells like Fire Magic: Fire={0}, Fira={2}, Firaga={5})
                 let mode_cost = mode_params.get_u8("ModeCost").unwrap_or(0);
+                // ValidTgts$ present → player must choose a target when this
+                // mode is selected (e.g. JitteCurse "ValidTgts$ Creature").
+                // Defined$ or absent ValidTgts → target is pre-resolved.
+                let needs_targeting = mode_params.contains_key("ValidTgts");
 
                 modes.push(crate::core::ModalMode {
                     effect: Box::new(effect),
                     description,
                     svar_name: name.to_string(),
                     mode_cost,
+                    needs_targeting,
                 });
             } else {
                 log::warn!(

@@ -1860,6 +1860,60 @@ impl<'a> GameLoop<'a> {
                                             for &mode_idx in &selected_modes {
                                                 if let Some(mode) = modes.get(mode_idx) {
                                                     let sub = mode.effect.as_ref();
+
+                                                    // If this mode needs targeting (ValidTgts$ present in
+                                                    // the SVar, e.g. Jitte JitteCurse "Target creature gets
+                                                    // -1/-1") and no target was pre-chosen, ask the
+                                                    // controller now (before resolving). MTG CR 701.4a:
+                                                    // for activated abilities the mode choice happens as
+                                                    // part of activation; per-mode targeting follows.
+                                                    let mode_target: Option<CardId> =
+                                                        if mode.needs_targeting && chosen_targets_vec.is_empty() {
+                                                            // Collect valid targets for the sub-effect.
+                                                            // For PumpCreature (covers both +/- bonuses),
+                                                            // target any creature on the battlefield.
+                                                            let mut valid: SmallVec<[CardId; 8]> = SmallVec::new();
+                                                            for &cid in &self.game.battlefield.cards {
+                                                                if let Some(c) = self.game.cards.try_get(cid) {
+                                                                    if c.is_creature() {
+                                                                        valid.push(cid);
+                                                                    }
+                                                                }
+                                                            }
+                                                            if valid.is_empty() {
+                                                                None
+                                                            } else if valid.len() == 1 {
+                                                                Some(valid[0])
+                                                            } else {
+                                                                let prior_log_size = self.game.logger.log_count();
+                                                                let choice = self.choose_targets_with_hook(
+                                                                    controller,
+                                                                    current_priority,
+                                                                    card_id,
+                                                                    &valid,
+                                                                    1,
+                                                                    1,
+                                                                );
+                                                                let chosen = handle_choice_result_break!(
+                                                                    choice,
+                                                                    self.game,
+                                                                    current_priority
+                                                                );
+                                                                let replay_choice =
+                                                                    crate::game::ReplayChoice::Targets(chosen.clone());
+                                                                self.log_choice_point(
+                                                                    current_priority,
+                                                                    Some(replay_choice),
+                                                                    prior_log_size,
+                                                                );
+                                                                chosen.into_iter().next()
+                                                            }
+                                                        } else if !chosen_targets_vec.is_empty() {
+                                                            Some(chosen_targets_vec[0])
+                                                        } else {
+                                                            None
+                                                        };
+
                                                     // Resolve the most common placeholders in mode sub-effects.
                                                     let resolved_sub = match sub {
                                                         crate::core::Effect::GainLife { player, amount }
@@ -1875,11 +1929,11 @@ impl<'a> GameLoop<'a> {
                                                             power_bonus,
                                                             toughness_bonus,
                                                             keywords_granted,
-                                                        } if target.is_placeholder()
-                                                            && !chosen_targets_vec.is_empty() =>
-                                                        {
+                                                        } if target.is_placeholder() && mode_target.is_some() => {
+                                                            // Use the mode-specific target (either from
+                                                            // needs_targeting selection above or pre-chosen).
                                                             crate::core::Effect::PumpCreature {
-                                                                target: chosen_targets_vec[0],
+                                                                target: mode_target.unwrap(),
                                                                 power_bonus: *power_bonus,
                                                                 toughness_bonus: *toughness_bonus,
                                                                 keywords_granted: keywords_granted.clone(),
@@ -1891,9 +1945,9 @@ impl<'a> GameLoop<'a> {
                                                             toughness_bonus,
                                                             keywords_granted,
                                                         } if target.is_placeholder() => {
-                                                            // No chosen target — try the equipped creature
-                                                            // (Jitte JittePump: Defined$ Equipped). Fall
-                                                            // back to source card if not equipped.
+                                                            // No chosen target and no targeting needed
+                                                            // (Defined$ Equipped path). Use the equipped
+                                                            // creature, or fall back to the source card.
                                                             let pump_target = self
                                                                 .game
                                                                 .cards

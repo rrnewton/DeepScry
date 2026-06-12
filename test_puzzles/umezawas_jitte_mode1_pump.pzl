@@ -1,0 +1,24 @@
+[metadata]
+Name:Umezawa's Jitte — mode 1: +2/+2 pump equipped creature (B3 verify, mtg-911)
+Goal:Win
+Turns:3
+Difficulty:Easy
+Description:P0 controls Isamaru, Hound of Konda (Id:5) equipped with Umezawa's Jitte (Id:6, 2 CHARGE counters, AttachedTo:5). P0 activates the Jitte ability (remove 1 charge counter), chooses mode 1 (+2/+2 until EOT to Isamaru). Isamaru becomes 5/5. P0 attacks for lethal. Verifies B3 ModalChoice mode-dispatch fix: JittePump sub-effect must execute (Isamaru boosted to 5/5, not 3/3).
+
+[state]
+turn=3
+activeplayer=p0
+activephase=MAIN1
+p0life=5
+p0hand=
+p0battlefield=Plains; Plains; Plains; Isamaru, Hound of Konda|Id:5; Umezawa's Jitte|Id:6|Counters:CHARGE=2|AttachedTo:5
+p0library=Plains; Plains; Plains
+p0graveyard=
+p0exile=
+
+p1life=5
+p1hand=
+p1battlefield=Plains
+p1library=Plains; Plains; Plains
+p1graveyard=
+p1exile=
