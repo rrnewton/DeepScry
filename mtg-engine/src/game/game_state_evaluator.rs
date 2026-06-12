@@ -564,6 +564,11 @@ impl GameStateEvaluator {
                 StaticAbility::MayPlayFromLibrary { .. } => {
                     // Experimental Frenzy top-library grant: not applicable to Aura value.
                 }
+                StaticAbility::OpalescenceStyle { .. } => {
+                    // Opalescence continuous effect: turns non-Aura enchantments into
+                    // creatures with P/T = mana value.  High-value board-wide effect.
+                    // Not an Aura itself; no enchanted-creature value contribution.
+                }
             }
         }
 

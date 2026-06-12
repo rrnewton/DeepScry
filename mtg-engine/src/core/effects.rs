@@ -4262,6 +4262,29 @@ pub enum StaticAbility {
         /// Description for logging/display.
         description: String,
     },
+
+    /// Opalescence-style continuous effect (CR 613, Layers 4 + 7b):
+    /// each other non-Aura enchantment on the battlefield becomes a creature
+    /// in addition to its other types, with base power and base toughness each
+    /// equal to its mana value.
+    ///
+    /// Corresponds to Opalescence:
+    ///   `S:Mode$ Continuous | Affected$ Enchantment.nonAura+Other
+    ///    | SetPower$ AffectedX | SetToughness$ AffectedX | AddType$ Creature`
+    ///   `SVar:AffectedX:Count$CardManaCost`
+    ///
+    /// Applied at two layers:
+    ///  - **Layer 4** (type): `GameState::is_opalescence_creature()` returns `true`
+    ///    for any non-aura enchantment while this static is in play; the attacker
+    ///    and blocker collectors treat such permanents as creatures.
+    ///  - **Layer 7b** (set P/T): `get_pt_breakdown()` applies `setpt_value =
+    ///    Some((cmc, cmc))` for affected permanents (mana value from printed cost).
+    ///
+    /// MTG rules: CR 613.1a (layer 4), CR 613.4b (layer 7b), CR 110.4 (creature types).
+    OpalescenceStyle {
+        /// Description for logging/display.
+        description: String,
+    },
 }
 
 /// Condition checked at cast time for an [`StaticAbility::AlternativeCost`].

@@ -3345,6 +3345,54 @@ impl GameState {
         })
     }
 
+    /// True if some permanent on the battlefield has an `OpalescenceStyle` static
+    /// and `card` is a non-Aura enchantment OTHER than that source permanent.
+    ///
+    /// Implements the Layer-4 part of the Opalescence continuous effect (CR 613.1a):
+    /// while Opalescence is on the battlefield, each other non-Aura enchantment is
+    /// a creature in addition to its other types.
+    ///
+    /// Used to include enchantments-as-creatures in the legal-attackers and
+    /// legal-blockers lists.  Does NOT check whether the card is already a creature
+    /// (callers handle the `card.is_creature()` fast path themselves).
+    pub fn is_opalescence_creature(&self, card: &crate::core::Card) -> bool {
+        use crate::core::StaticAbility;
+        // A card is only an "Opalescence creature" if it is an enchantment (but not
+        // an Aura — Auras are attached to permanents and can't be declared as
+        // attackers or blockers per CR 303.4g / 508.1a).
+        if !card.definition.cache.is_enchantment {
+            return false;
+        }
+        // Auras (enchantments with the subtype Aura) are excluded by Opalescence's
+        // Affected$ filter (`Enchantment.nonAura+Other`).
+        if card.subtypes.contains(&crate::core::Subtype::new("Aura")) {
+            return false;
+        }
+        // Check if any OpalescenceStyle permanent is on the battlefield (other than
+        // the card itself — Opalescence says "other non-Aura enchantments").
+        self.battlefield.cards.iter().any(|&src_id| {
+            if src_id == card.id {
+                return false;
+            }
+            self.cards.try_get(src_id).is_some_and(|src| {
+                src.static_abilities
+                    .iter()
+                    .any(|sa| matches!(sa, StaticAbility::OpalescenceStyle { .. }))
+            })
+        })
+    }
+
+    /// Returns the mana value (CMC) of `card` as an `i32` for use as Opalescence
+    /// P/T (Layer 7b, CR 613.4b).  Returns `None` when no OpalescenceStyle static
+    /// applies to `card` (i.e. when `is_opalescence_creature` would return `false`).
+    pub fn opalescence_pt(&self, card: &crate::core::Card) -> Option<i32> {
+        if self.is_opalescence_creature(card) {
+            Some(i32::from(card.mana_cost.cmc()))
+        } else {
+            None
+        }
+    }
+
     /// Check state-based actions for aura attachment (MTG CR 704.5d)
     ///
     /// If an Aura is attached to an illegal permanent or not attached to anything,

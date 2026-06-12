@@ -5581,6 +5581,16 @@ impl CardDefinition {
             let mut is_characteristic_defining = false;
             let mut cda_pt_source: Option<crate::core::CdaPtSource> = None;
 
+            // Opalescence-specific parameters.
+            // `add_type_creature` is set when `AddType$ Creature` is present.
+            // `set_power_affected_x` / `set_toughness_affected_x` are set when
+            // `SetPower$ AffectedX` / `SetToughness$ AffectedX` are parsed.
+            // Together with `Affected$ Enchantment.nonAura+Other` these identify
+            // the Opalescence continuous-effect shape (Layer 4 + Layer 7b).
+            let mut add_type_creature = false;
+            let mut set_power_affected_x = false;
+            let mut set_toughness_affected_x = false;
+
             // AddTrigger$-specific parameter: SVar name of the trigger to grant to
             // affected permanents (Energy Flux, Aura Flux: upkeep sacrifice-unless-pay).
             let mut add_trigger_svar: Option<String> = None;
@@ -5852,20 +5862,47 @@ impl CardDefinition {
                             // layer-7a CDA. Combined with SetPower$/SetToughness$ below.
                             is_characteristic_defining = value.eq_ignore_ascii_case("True");
                         }
-                        "SetPower" | "SetToughness" => {
-                            // `SetPower$ X` / `SetToughness$ X` where X is an SVar name.
-                            // Only meaningful when `CharacteristicDefining$ True` is also
-                            // present (Serra Avatar). Resolve the SVar to a CdaPtSource.
-                            //
-                            // Supported SVar bodies:
-                            //   Count$YourLifeTotal → CdaPtSource::ControllerLifeTotal
-                            if cda_pt_source.is_none() {
-                                // Value is typically "X" — look it up in SVars.
+                        "SetPower" => {
+                            // `SetPower$ X` / `SetPower$ AffectedX`
+                            // Two shapes:
+                            //  (a) CDA (Serra Avatar): value is "X" backed by Count$YourLifeTotal.
+                            //  (b) Opalescence: value is "AffectedX" backed by Count$CardManaCost.
+                            if value == "AffectedX" {
+                                // Opalescence shape: set_power_affected_x flag.
+                                if let Some(svar_body) = self.svars.get("AffectedX") {
+                                    if svar_body.trim() == "Count$CardManaCost" {
+                                        set_power_affected_x = true;
+                                    }
+                                }
+                            } else if cda_pt_source.is_none() {
+                                // CDA shape (Serra Avatar): value is typically "X".
                                 if let Some(svar_body) = self.svars.get(value) {
                                     if svar_body.trim() == "Count$YourLifeTotal" {
                                         cda_pt_source = Some(crate::core::CdaPtSource::ControllerLifeTotal);
                                     }
                                 }
+                            }
+                        }
+                        "SetToughness" => {
+                            // Mirrors SetPower$ (see above).
+                            if value == "AffectedX" {
+                                if let Some(svar_body) = self.svars.get("AffectedX") {
+                                    if svar_body.trim() == "Count$CardManaCost" {
+                                        set_toughness_affected_x = true;
+                                    }
+                                }
+                            } else if cda_pt_source.is_none() {
+                                if let Some(svar_body) = self.svars.get(value) {
+                                    if svar_body.trim() == "Count$YourLifeTotal" {
+                                        cda_pt_source = Some(crate::core::CdaPtSource::ControllerLifeTotal);
+                                    }
+                                }
+                            }
+                        }
+                        "AddType" => {
+                            // `AddType$ Creature` — the Opalescence continuous AddType.
+                            if value.trim() == "Creature" {
+                                add_type_creature = true;
                             }
                         }
                         "AddTrigger" => {
@@ -6044,6 +6081,24 @@ impl CardDefinition {
                         description: description.clone(),
                     });
                 }
+            }
+
+            // Opalescence-style static (Layers 4 + 7b, CR 613.1a + 613.4b).
+            // Shape: S:Mode$ Continuous | Affected$ Enchantment.nonAura+Other
+            //        | SetPower$ AffectedX | SetToughness$ AffectedX | AddType$ Creature
+            //   SVar:AffectedX:Count$CardManaCost
+            // Detected when all three Opalescence flags are set AND Affected$ resolves
+            // to NonAuraEnchantmentsOther. We do NOT also require the shape to lack
+            // AddPower/AddToughness (N=0 from the default initialisation already guards that).
+            if is_continuous
+                && add_type_creature
+                && set_power_affected_x
+                && set_toughness_affected_x
+                && matches!(affected, AffectedSelector::NonAuraEnchantmentsOther)
+            {
+                abilities.push(StaticAbility::OpalescenceStyle {
+                    description: description.clone(),
+                });
             }
 
             // AddTrigger$ on a Continuous static: grant an upkeep trigger to all

@@ -233,9 +233,13 @@ impl GameState {
         // Evaluated dynamically so life-total changes propagate immediately.
         let characteristic_value = self.calculate_cda_pt(creature_id)?;
 
-        // Layer 7b (CR 613.4b): Set P/T effects
-        // TODO: Implement for effects like "becomes 0/1" or Lignify
-        let setpt_value = None;
+        // Layer 7b (CR 613.4b): Set P/T effects.
+        // Opalescence: enchantments-as-creatures have P/T = their mana value.
+        // "becomes 0/1" (Lignify etc.) is still a TODO.
+        let setpt_value = {
+            let card = self.cards.get(creature_id)?;
+            self.opalescence_pt(card).map(|v| (v, v))
+        };
 
         // Layer 7c (CR 613.4c): Modify P/T - continuous effects from other permanents
         let continuous_effects = self.calculate_modifypt_effects(creature_id)?;
@@ -1673,6 +1677,12 @@ impl GameState {
                     StaticAbility::MayPlayFromLibrary { .. } => {
                         // Experimental Frenzy top-of-library grant. Handled at cast time in
                         // push_castable_from_library; does not affect P/T.
+                    }
+                    StaticAbility::OpalescenceStyle { .. } => {
+                        // Opalescence: gives non-Aura enchantments the Creature type and
+                        // sets their P/T = mana value (Layer 7b). Handled via
+                        // GameState::opalescence_pt() in get_pt_breakdown(); the ModifyPT
+                        // layer (7c) is not involved.
                     }
                 }
             }

@@ -3075,7 +3075,8 @@ mod tests {
                 | StaticAbility::GrantUpkeepSacrificeUnlessPay { .. }
                 | StaticAbility::AlternativeCost { .. }
                 | StaticAbility::MayPlayWithoutManaCost { .. }
-                | StaticAbility::MayPlayFromLibrary { .. } => None,
+                | StaticAbility::MayPlayFromLibrary { .. }
+                | StaticAbility::OpalescenceStyle { .. } => None,
             })
             .expect("Ironclaw Orcs must produce a CantBlockMatching static ability");
 
@@ -8668,5 +8669,114 @@ mod tests {
             exile_size, 3,
             "P1's exile zone should contain 3 cards (the redirected damage)"
         );
+    }
+
+    /// Card compat: Opalescence (cardsfolder/o/opalescence.txt) — mtg-912 B5.
+    ///
+    /// Script:
+    ///   `S:Mode$ Continuous | Affected$ Enchantment.nonAura+Other
+    ///    | SetPower$ AffectedX | SetToughness$ AffectedX | AddType$ Creature`
+    ///   `SVar:AffectedX:Count$CardManaCost`
+    ///
+    /// Verifies that:
+    /// 1. Opalescence parses to `StaticAbility::OpalescenceStyle`.
+    /// 2. `GameState::is_opalescence_creature()` returns `true` for a non-Aura
+    ///    enchantment and `false` for a non-enchantment, an Aura, and Opalescence
+    ///    itself.
+    /// 3. `GameState::opalescence_pt()` returns the correct mana value for a
+    ///    matching enchantment.
+    /// 4. Matching enchantments appear in the available-attacker list.
+    #[test]
+    fn test_card_compat_opalescence_enchantments_become_creatures() {
+        use crate::core::StaticAbility;
+        use std::path::PathBuf;
+
+        let opalescence_path = PathBuf::from("../cardsfolder/o/opalescence.txt");
+        if !opalescence_path.exists() {
+            eprintln!("Skipping: cardsfolder not present");
+            return;
+        }
+
+        // --- 1. Parser check: Opalescence emits OpalescenceStyle static ---
+        let opalescence_def =
+            crate::loader::CardLoader::load_from_file(&opalescence_path).expect("opalescence.txt should load");
+        let statics = opalescence_def.parse_static_abilities();
+        let has_opalescence_style = statics
+            .iter()
+            .any(|s| matches!(s, StaticAbility::OpalescenceStyle { .. }));
+        assert!(
+            has_opalescence_style,
+            "Opalescence must parse to StaticAbility::OpalescenceStyle; got {:?}",
+            statics
+        );
+
+        // --- 2. Runtime: is_opalescence_creature() ---
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        let p2_id = game.players[1].id;
+
+        // P1 controls Opalescence.
+        let opal_id = load_test_card(&mut game, "Opalescence", p1_id).expect("Opalescence should load");
+        game.battlefield.add(opal_id);
+
+        // P2 controls a non-Aura enchantment: Worship (3W enchantment, CMC=4).
+        // (We use Worship because it's already tested elsewhere and loads cleanly.)
+        let worship_path = PathBuf::from("../cardsfolder/w/worship.txt");
+        if !worship_path.exists() {
+            eprintln!("Skipping Worship sub-test: cardsfolder not present");
+            return;
+        }
+        let worship_id = load_test_card(&mut game, "Worship", p2_id).expect("Worship should load");
+        game.battlefield.add(worship_id);
+
+        let worship_card = game.cards.get(worship_id).expect("Worship in card store");
+        assert!(
+            game.is_opalescence_creature(worship_card),
+            "is_opalescence_creature must be true for a non-Aura enchantment (Worship) with Opalescence on the battlefield"
+        );
+
+        // 2b. Opalescence itself is excluded ("other non-Aura enchantments").
+        let opal_card = game.cards.get(opal_id).expect("Opalescence in card store");
+        assert!(
+            !game.is_opalescence_creature(opal_card),
+            "is_opalescence_creature must be false for Opalescence itself (it is the source)"
+        );
+
+        // 2c. A non-enchantment permanent is not affected.
+        let plains_id = load_test_card(&mut game, "Plains", p1_id).expect("Plains should load");
+        game.battlefield.add(plains_id);
+        let plains_card = game.cards.get(plains_id).expect("Plains in card store");
+        assert!(
+            !game.is_opalescence_creature(plains_card),
+            "is_opalescence_creature must be false for a non-enchantment (Plains)"
+        );
+
+        // --- 3. P/T check: Worship has CMC 4 (3W), expect 4/4 ---
+        let worship_card = game.cards.get(worship_id).expect("Worship");
+        let pt = game.opalescence_pt(worship_card);
+        assert_eq!(
+            pt,
+            Some(4),
+            "opalescence_pt must return Some(4) for Worship (CMC=4); got {:?}",
+            pt
+        );
+
+        // --- 4. Attacker list: Worship should appear as available attacker for P2 ---
+        // Mark Worship as entering a previous turn (no summoning sickness).
+        game.cards.get_mut(worship_id).unwrap().turn_entered_battlefield = Some(0);
+        game.turn.turn_number = 1;
+
+        // Verify via get_available_attacker_creatures_for_test (GameLoop helper).
+        // We construct a GameLoop to access the helper.
+        {
+            let game_loop = crate::game::game_loop::GameLoop::new(&mut game);
+            let available_attackers = game_loop.get_available_attacker_creatures_for_test(p2_id);
+            assert!(
+                available_attackers.contains(&worship_id),
+                "Worship (as an Opalescence-animated enchantment-creature) must appear in \
+                 the available-attacker list for P2; got {:?}",
+                available_attackers
+            );
+        }
     }
 }

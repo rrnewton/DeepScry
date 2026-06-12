@@ -98,8 +98,12 @@ impl<'a> GameLoop<'a> {
         for &card_id in &self.game.battlefield.cards {
             // Using try_get() to avoid Result drop overhead in hot path
             if let Some(card) = self.game.cards.try_get(card_id) {
+                // A permanent is eligible as an attacker if it is a creature —
+                // either intrinsically (card.is_creature()) OR via an Opalescence-style
+                // continuous effect that gives it the Creature type (CR 613.1a Layer 4).
+                let counts_as_creature = card.is_creature() || self.game.is_opalescence_creature(card);
                 if card.controller == player_id
-                    && card.is_creature()
+                    && counts_as_creature
                     && !card.tapped
                     && !self.game.combat.is_attacking(card_id)
                 {
@@ -197,7 +201,8 @@ impl<'a> GameLoop<'a> {
             | StaticAbility::GrantUpkeepSacrificeUnlessPay { .. }
             | StaticAbility::AlternativeCost { .. }
             | StaticAbility::MayPlayWithoutManaCost { .. }
-            | StaticAbility::MayPlayFromLibrary { .. } => false,
+            | StaticAbility::MayPlayFromLibrary { .. }
+            | StaticAbility::OpalescenceStyle { .. } => false,
         }
     }
 
@@ -211,8 +216,12 @@ impl<'a> GameLoop<'a> {
         for &card_id in &self.game.battlefield.cards {
             // Using try_get() to avoid Result drop overhead in hot path
             if let Some(card) = self.game.cards.try_get(card_id) {
+                // A permanent is eligible as a blocker if it is a creature —
+                // either intrinsically (card.is_creature()) OR via an Opalescence-style
+                // continuous effect that gives it the Creature type (CR 613.1a Layer 4).
+                let counts_as_creature = card.is_creature() || self.game.is_opalescence_creature(card);
                 if card.controller == player_id
-                    && card.is_creature()
+                    && counts_as_creature
                     && !card.tapped
                     && !self.game.combat.is_blocking(card_id)
                     // Global CantAttackOrBlockMatching statics (e.g. Light of Day:
