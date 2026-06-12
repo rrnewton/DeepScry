@@ -1175,6 +1175,12 @@ impl<'a> GameLoop<'a> {
                 // execute_effect; the concrete CreateToken arm above handles
                 // logging at execution time.
             }
+            Effect::CreateEmblem { emblem_name, .. } => {
+                // Emblem creation is logged inside execute_create_emblem using
+                // the gamelog channel (which includes the player name). No
+                // duplicate log line needed here.
+                log::debug!(target: "emblem", "CreateEmblem '{}' logged by execute_create_emblem", emblem_name);
+            }
         }
     }
 }

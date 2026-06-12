@@ -2063,10 +2063,27 @@ pub fn params_to_effect_with_svars(params: &AbilityParams, svars: &HashMap<Strin
                             // - AddPower$/AddToughness$: P/T modifications
                             // - AddKeyword$: Grant keywords
                             //
-                            // These are usually created as StaticAbility objects during parsing,
-                            // not through AB$ Effect. When they appear in AB$ Effect context,
-                            // it's typically for temporary/until-end-of-turn effects.
-                            if def.params.get("MayPlay") == Some(&"True".to_string()) {
+                            // When Duration$ Permanent is present on the *outer* AB$ Effect,
+                            // this is a planeswalker ultimate creating an emblem (CR 113.2).
+                            // We parse the SVar body into a StaticAbility and return
+                            // Effect::CreateEmblem (command-zone objects the existing
+                            // continuous_effects machinery scans automatically).
+                            if params.get("Duration") == Some("Permanent") {
+                                let static_abilities =
+                                    super::card::CardDefinition::parse_static_abilities_from_svar_body(svar_body);
+                                if !static_abilities.is_empty() {
+                                    let emblem_name = params
+                                        .get("Name")
+                                        .map(|s| s.to_string())
+                                        .unwrap_or_else(|| "Emblem".to_string());
+                                    return Some(Effect::CreateEmblem {
+                                        controller: PlayerId::new(0), // placeholder — resolved at cast time
+                                        emblem_name,
+                                        static_abilities,
+                                        triggers: Vec::new(),
+                                    });
+                                }
+                            } else if def.params.get("MayPlay") == Some(&"True".to_string()) {
                                 // MayPlay effects grant permission to play cards from a zone
                                 // This is commonly used by Yawgmoth's Will, Future Sight effects
                                 // TODO(mtg-20): Add Effect::GrantMayPlay variant
@@ -2122,6 +2139,41 @@ pub fn params_to_effect_with_svars(params: &AbilityParams, svars: &HashMap<Strin
                 }
             }
         }
+
+        // Triggers$ X | Duration$ Permanent → planeswalker emblem with trigger ability
+        // Example: Sorin, Solemn Visitor ultimate
+        //   A:AB$ Effect | Triggers$ BOTTrig | Duration$ Permanent | ...
+        //   SVar:BOTTrig:Mode$ Phase | Phase$ Upkeep | ValidPlayer$ Player.Opponent |
+        //     TriggerZones$ Command | Execute$ SorinSac | TriggerDescription$ ...
+        //   SVar:SorinSac:DB$ Sacrifice | SacValid$ Creature | Defined$ TriggeredPlayer
+        if params.get("Duration") == Some("Permanent") {
+            if let Some(trig_svar_name) = params.get("Triggers") {
+                if let Some(trig_body) = svars.get(trig_svar_name) {
+                    // Resolve the Execute$ SVar body, if present
+                    let trig_params = super::card::tokenize_pipe_dollar(trig_body);
+                    let execute_body = trig_params
+                        .get("Execute")
+                        .and_then(|exec_name| svars.get(exec_name.as_str()))
+                        .map(|s| s.as_str());
+
+                    if let Some(trigger) =
+                        super::card::CardDefinition::parse_emblem_phase_trigger(trig_body, execute_body)
+                    {
+                        let emblem_name = params
+                            .get("Name")
+                            .map(|s| s.to_string())
+                            .unwrap_or_else(|| "Emblem".to_string());
+                        return Some(Effect::CreateEmblem {
+                            controller: PlayerId::new(0), // placeholder — resolved at cast time
+                            emblem_name,
+                            static_abilities: Vec::new(),
+                            triggers: vec![trigger],
+                        });
+                    }
+                }
+            }
+        }
+
         // Fall back to name-based detection if SVar lookup fails
         return params_to_effect(params);
     }

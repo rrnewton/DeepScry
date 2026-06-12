@@ -1945,6 +1945,33 @@ pub enum Effect {
         for_each_player: bool,
     },
 
+    /// Create a planeswalker emblem and place it in the controller's command zone
+    /// (CR 113.2 — emblems are objects with abilities, placed in the command zone,
+    /// that persist for the rest of the game and can never be removed).
+    ///
+    /// Corresponds to: `AB$ Effect | StaticAbilities$ X | Duration$ Permanent` or
+    /// `AB$ Effect | Triggers$ X | Duration$ Permanent` (with `Planeswalker$ True`).
+    ///
+    /// At resolution the engine mints a synthetic Card in the controller's command
+    /// zone with the given static abilities and/or triggers. The existing continuous-
+    /// effects system and phase-trigger scanning already check the command zone, so
+    /// no further special-casing is needed — the emblem acts exactly like a permanent
+    /// with those abilities, except it lives in the command zone instead of the
+    /// battlefield (CR 113.4: emblems have no controller; we track the creating
+    /// player as the owner for scoping purposes).
+    CreateEmblem {
+        /// The player who created the emblem (becomes the "controller" for scoping
+        /// static abilities such as "creatures you control get …")
+        controller: PlayerId,
+        /// Human-readable emblem name (e.g. "Emblem — Elspeth, Sun's Champion")
+        emblem_name: String,
+        /// Static abilities on the emblem (e.g. +2/+2 + flying to your creatures)
+        static_abilities: Vec<StaticAbility>,
+        /// Triggered abilities on the emblem (e.g. "at the beginning of each
+        /// opponent's upkeep, that player sacrifices a creature")
+        triggers: Vec<Trigger>,
+    },
+
     /// Create token(s) whose count is determined at trigger-resolution time from
     /// a dynamic amount (e.g. the number of counters on the triggering card).
     ///
@@ -2672,6 +2699,7 @@ impl Effect {
             | Effect::ReturnGraveyardCardToZone { .. }
             | Effect::SacrificeSelf { .. }
             | Effect::ReturnSelfAsEnchantment { .. }
+            | Effect::CreateEmblem { .. }
             | Effect::Unimplemented { .. }
             | Effect::NoOp { .. } => EffectTargetCategory::NoTargetNeeded,
 
@@ -3102,6 +3130,17 @@ pub struct Trigger {
     /// For TapsForMana triggers: activator restriction (You, Opponent, Player.NonActive, etc.)
     #[serde(default)]
     pub taps_for_mana_activator: Option<String>,
+
+    /// When true, trigger fires ONLY on opponents' turns, never on the
+    /// controller's own turn. Corresponds to `ValidPlayer$ Player.Opponent`
+    /// on upkeep/phase triggers. Example: Sorin, Solemn Visitor's emblem
+    /// "At the beginning of each opponent's upkeep, that player sacrifices a
+    /// creature." Without this flag the trigger would fire on ALL players'
+    /// upkeeps including the controller's own (wrong). Mutually exclusive with
+    /// `controller_turn_only` in practice — a trigger fires on your turns, the
+    /// opponent's turns, or all turns.
+    #[serde(default)]
+    pub opponent_turn_only: bool,
 }
 
 impl Trigger {
@@ -3134,6 +3173,7 @@ impl Trigger {
             present_self_dealt_damage_to_opponent: false,
             taps_for_mana_valid_card: None,
             taps_for_mana_activator: None,
+            opponent_turn_only: false,
         }
     }
 
@@ -3165,6 +3205,7 @@ impl Trigger {
             present_self_dealt_damage_to_opponent: false,
             taps_for_mana_valid_card: None,
             taps_for_mana_activator: None,
+            opponent_turn_only: false,
         }
     }
 
@@ -3202,6 +3243,7 @@ impl Trigger {
             present_self_dealt_damage_to_opponent: false,
             taps_for_mana_valid_card: None,
             taps_for_mana_activator: None,
+            opponent_turn_only: false,
         }
     }
 
@@ -3234,6 +3276,7 @@ impl Trigger {
             present_self_dealt_damage_to_opponent: false,
             taps_for_mana_valid_card: None,
             taps_for_mana_activator: None,
+            opponent_turn_only: false,
         }
     }
 }

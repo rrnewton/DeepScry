@@ -113,7 +113,8 @@ fn expand_all_players_effect(effect: &Effect, player_ids: &[PlayerId]) -> smallv
         | Effect::ClassLevelUp { .. }
         | Effect::SacrificeSelf { .. }
         | Effect::UnlessCostWrapper { .. }
-        | Effect::CreateTokenDynamic { .. } => false,
+        | Effect::CreateTokenDynamic { .. }
+        | Effect::CreateEmblem { .. } => false,
     };
 
     if !is_all_players {
@@ -241,7 +242,8 @@ fn expand_all_players_effect(effect: &Effect, player_ids: &[PlayerId]) -> smallv
             | Effect::ClassLevelUp { .. }
             | Effect::SacrificeSelf { .. }
             | Effect::UnlessCostWrapper { .. }
-            | Effect::CreateTokenDynamic { .. } => unreachable!(),
+            | Effect::CreateTokenDynamic { .. }
+            | Effect::CreateEmblem { .. } => unreachable!(),
         })
         .collect()
 }
@@ -3485,6 +3487,22 @@ impl GameState {
                 }
             }
 
+            // Resolve CreateEmblem controller placeholder to the actual caster.
+            // The loader sets controller to PlayerId::new(0) as placeholder;
+            // at runtime we resolve it to the spell's owner (the planeswalker's
+            // controller who activated the ultimate).
+            Effect::CreateEmblem {
+                controller,
+                emblem_name,
+                static_abilities,
+                triggers,
+            } if controller.is_placeholder() => Effect::CreateEmblem {
+                controller: card_owner,
+                emblem_name: emblem_name.clone(),
+                static_abilities: static_abilities.clone(),
+                triggers: triggers.clone(),
+            },
+
             // No resolution needed - return clone of original
             _ => effect.clone(),
         }
@@ -4024,6 +4042,15 @@ impl GameState {
                     token_script
                 );
                 self.execute_create_token(*controller, token_script, 1, *for_each_player)?;
+            }
+
+            Effect::CreateEmblem {
+                controller,
+                emblem_name,
+                static_abilities,
+                triggers,
+            } => {
+                self.execute_create_emblem(*controller, emblem_name, static_abilities, triggers)?;
             }
         }
         Ok(())

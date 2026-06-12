@@ -692,7 +692,8 @@ impl GameState {
                             | Effect::PreventAllCombatDamageThisTurn { .. }
                             | Effect::ExileIfWouldDieThisTurn { .. }
                             | Effect::ConditionalSelfCounter { .. }
-                            | Effect::CreateTokenDynamic { .. } => {
+                            | Effect::CreateTokenDynamic { .. }
+                            | Effect::CreateEmblem { .. } => {
                                 // Non-Destroy/Copy modes in modal spells
                                 // TODO(mtg-30): Add handlers for targeting modes that need them
                             }
@@ -756,7 +757,8 @@ impl GameState {
                 | Effect::ReturnSelfAsEnchantment { .. }
                 | Effect::PreventAllCombatDamageThisTurn { .. }
                 | Effect::ConditionalSelfCounter { .. }
-                | Effect::CreateTokenDynamic { .. } => {
+                | Effect::CreateTokenDynamic { .. }
+                | Effect::CreateEmblem { .. } => {
                     // These effects target players or have no targeting requirements
                     // AttachEquipment targeting is handled via Equip keyword abilities
                     // ChooseColor is a player choice effect (no permanent targets)
@@ -1369,7 +1371,8 @@ impl GameState {
                 | Effect::PreventAllCombatDamageThisTurn { .. }
                 | Effect::ConditionalSelfCounter { .. }
                 | Effect::UnlessCostWrapper { .. }
-                | Effect::CreateTokenDynamic { .. } => {
+                | Effect::CreateTokenDynamic { .. }
+                | Effect::CreateEmblem { .. } => {
                     // These effects target players or have no targeting requirements
                     // CreateDelayedTrigger targets creatures - handled via ValidTgts$ Creature
                     // CopySpellAbility doesn't need explicit targets - copies triggering spell
@@ -1707,6 +1710,7 @@ impl GameState {
             | Effect::PreventAllCombatDamageThisTurn { .. }
             | Effect::ConditionalSelfCounter { .. }
             | Effect::CreateTokenDynamic { .. }
+            | Effect::CreateEmblem { .. }
             // ExileIfWouldDieThisTurn reuses the parent DealDamage's target, so
             // it never needs its own target check.
             | Effect::ExileIfWouldDieThisTurn { .. }

@@ -298,6 +298,12 @@ impl<'a> GameLoop<'a> {
                 if t.controller_turn_only && card.controller != active_player {
                     return false;
                 }
+                // ValidPlayer$ Player.Opponent (Sorin emblem): fire only on opponents'
+                // turns — never on the controller's own upkeep. This is the inverse of
+                // controller_turn_only: skip if the active player IS the controller.
+                if t.opponent_turn_only && card.controller == active_player {
+                    return false;
+                }
                 // ValidPlayer$ Player.Chosen (Black Vise): fire only on the
                 // chosen player's turn. If no player has been chosen yet (card
                 // not yet ETB'd through the ChoosePlayer replacement), it cannot
@@ -369,6 +375,23 @@ impl<'a> GameLoop<'a> {
                     .cards
                     .try_get(card_id)
                     .is_some_and(|card| matches_trigger(card, crate::zones::Zone::Exile))
+                {
+                    triggered_cards.push(card_id);
+                }
+            }
+        }
+
+        // Command-zone triggers (emblems). Planeswalker ultimates place emblem
+        // objects in the command zone (CR 113.2). Only cards/emblems whose
+        // trigger explicitly opts into Command via `TriggerZones$ Command` are
+        // scanned here — games without emblems add nothing.
+        for (_, zones) in &self.game.player_zones {
+            for &card_id in &zones.command.cards {
+                if self
+                    .game
+                    .cards
+                    .try_get(card_id)
+                    .is_some_and(|card| matches_trigger(card, crate::zones::Zone::Command))
                 {
                     triggered_cards.push(card_id);
                 }

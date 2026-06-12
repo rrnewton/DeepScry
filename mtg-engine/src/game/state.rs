@@ -4210,7 +4210,8 @@ impl GameState {
                     | crate::core::Effect::DrawCardsXPaid { .. }
                     | crate::core::Effect::GainLifeDynamic { .. }
                     | crate::core::Effect::DiscardCardsXPaid { .. }
-                    | crate::core::Effect::CreateTokenDynamic { .. } => {
+                    | crate::core::Effect::CreateTokenDynamic { .. }
+                    | crate::core::Effect::CreateEmblem { .. } => {
                         // Other effect types not yet implemented for delayed triggers
                         // Note: CopySpellAbility inside ExecuteEffect is unusual;
                         // typically CopySpellAbility should be used with DelayedEffect::CopySpellAbility

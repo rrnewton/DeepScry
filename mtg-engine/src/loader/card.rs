@@ -5731,6 +5731,94 @@ impl CardDefinition {
 
         Some(trigger)
     }
+
+    /// Parse a single `StaticAbility` from a SVar body string of the form
+    /// `Mode$ Continuous | Affected$ ... | AddKeyword$ ... | AddPower$ ...`.
+    ///
+    /// Reuses the full `parse_static_abilities` machinery by wrapping the body
+    /// as an `S:` line in a temporary `CardDefinition`, then extracting the
+    /// resulting abilities. Returns an empty vec if the body cannot be parsed
+    /// as a recognized continuous static ability.
+    ///
+    /// Used by the emblem converter in `effect_converter.rs` to parse the
+    /// static-ability SVar for planeswalker ultimates like Elspeth, Sun's Champion.
+    pub fn parse_static_abilities_from_svar_body(body: &str) -> Vec<crate::core::StaticAbility> {
+        let mut tmp = CardDefinition::default();
+        tmp.raw_abilities.push(format!("S:{}", body));
+        tmp.parse_static_abilities()
+    }
+
+    /// Parse a Phase trigger from a SVar body and a companion Execute$ SVar body.
+    ///
+    /// Used for emblem triggers like Sorin, Solemn Visitor's
+    /// `Mode$ Phase | Phase$ Upkeep | ValidPlayer$ Player.Opponent |
+    ///  TriggerZones$ Command | Execute$ SorinSac`
+    /// where `execute_body` is the body of the Execute$ SVar (e.g.
+    /// `DB$ Sacrifice | SacValid$ Creature | Defined$ TriggeredPlayer`).
+    ///
+    /// Returns the constructed `Trigger`, or `None` if the body cannot be parsed.
+    pub fn parse_emblem_phase_trigger(trig_body: &str, execute_body: Option<&str>) -> Option<crate::core::Trigger> {
+        use crate::core::{Effect, PlayerId, Trigger, TriggerEvent};
+
+        let params = tokenize_pipe_dollar(trig_body);
+
+        let phase_token = params.get("Phase").map(|s| s.replace(' ', ""));
+        let trigger_event = match phase_token.as_deref() {
+            Some("Upkeep") => TriggerEvent::BeginningOfUpkeep,
+            Some(p) if p.eq_ignore_ascii_case("EndOfTurn") || p.eq_ignore_ascii_case("End") => {
+                TriggerEvent::BeginningOfEndStep
+            }
+            Some("BeginCombat") => TriggerEvent::BeginningOfCombat,
+            _ => return None,
+        };
+
+        let valid_player = params.get("ValidPlayer").map(|s| s.as_str());
+        let opponent_only = valid_player == Some("Player.Opponent");
+
+        // Parse effects from the Execute$ SVar body, if provided.
+        // SVar bodies do NOT have a colon prefix (they are just "DB$ Sacrifice | ..."),
+        // so we use tokenize_pipe_dollar directly instead of AbilityParams::parse.
+        let mut effects = Vec::new();
+        if let Some(exec_body) = execute_body {
+            let exec_params = tokenize_pipe_dollar(exec_body);
+            let db_type = exec_params.get("DB").map(|s| s.as_str());
+            if db_type == Some("Sacrifice") {
+                // DB$ Sacrifice | SacValid$ Creature | Defined$ TriggeredPlayer
+                // → ForceSacrifice placeholder resolved at trigger time to the
+                // triggered player (opponent whose upkeep it is).
+                let sac_valid = exec_params.get("SacValid").map(|s| s.as_str()).unwrap_or("Creature");
+                effects.push(Effect::ForceSacrifice {
+                    player: PlayerId::placeholder(),
+                    sac_type: sac_valid.to_string(),
+                    count: 1,
+                });
+            }
+        }
+
+        let description = params
+            .get("TriggerDescription")
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| "Emblem trigger".to_string());
+
+        let mut trigger = Trigger::new_any(trigger_event, effects, description);
+
+        // TriggerZones$ Command means this trigger fires from the command zone
+        let trigger_zones: smallvec::SmallVec<[crate::zones::Zone; 2]> = params
+            .get("TriggerZones")
+            .map(|s| {
+                s.split(',')
+                    .filter_map(|z| crate::zones::Zone::from_str_lenient(z.trim()))
+                    .collect()
+            })
+            .unwrap_or_else(|| smallvec::smallvec![crate::zones::Zone::Command]);
+        trigger.trigger_zones = trigger_zones;
+
+        if opponent_only {
+            trigger.opponent_turn_only = true;
+        }
+
+        Some(trigger)
+    }
 }
 
 #[cfg(test)]
@@ -8280,5 +8368,157 @@ Oracle:{T}: Gain control of target creature with power less than or equal to Old
         // The precise tapped + power-comparison duration is a follow-on (mtg-713 B1);
         // for now it is bounded by the source-presence duration rather than permanent.
         assert_eq!(om_dur, ControlDuration::WhileControlSource);
+    }
+
+    /// Planeswalker ultimate with `StaticAbilities$ X | Duration$ Permanent` creates
+    /// `Effect::CreateEmblem` with the continuous static ability parsed from the SVar body.
+    /// This covers Elspeth, Sun's Champion's -7: "creatures you control get +2/+2 and have flying."
+    #[test]
+    fn test_elspeth_emblem_ultimate_parses_create_emblem() {
+        use crate::core::Effect;
+
+        let content = r#"
+Name:Elspeth, Sun's Champion
+ManaCost:4 W W
+Types:Legendary Planeswalker Elspeth
+Loyalty:4
+A:AB$ Token | Cost$ AddCounter<1/LOYALTY> | TokenAmount$ 3 | TokenScript$ w_1_1_soldier | TokenOwner$ You | Planeswalker$ True | SpellDescription$ Create three 1/1 white Soldier creature tokens.
+A:AB$ DestroyAll | Cost$ SubCounter<3/LOYALTY> | ValidCards$ Creature.powerGE4 | Planeswalker$ True | SpellDescription$ Destroy all creatures with power 4 or greater.
+A:AB$ Effect | Cost$ SubCounter<7/LOYALTY> | Name$ Emblem — Elspeth, Sun's Champion | Image$ emblem_elspeth_suns_champion | StaticAbilities$ STFlying | Planeswalker$ True | Ultimate$ True | Duration$ Permanent | AILogic$ Always | SpellDescription$ You get an emblem with "Creatures you control get +2/+2 and have flying."
+SVar:STFlying:Mode$ Continuous | Affected$ Creature.YouCtrl | AffectedZone$ Battlefield | AddKeyword$ Flying | AddPower$ 2 | AddToughness$ 2 | Description$ Creatures you control get +2/+2 and have flying.
+Oracle:[-7]: You get an emblem with "Creatures you control get +2/+2 and have flying."
+"#;
+
+        let def = CardLoader::parse(content).unwrap();
+        let abilities = def.parse_activated_abilities();
+
+        // The -7 ability is the ultimate; find it by looking for CreateEmblem effect
+        let ultimate = abilities
+            .iter()
+            .find(|a| a.effects.iter().any(|e| matches!(e, Effect::CreateEmblem { .. })));
+        assert!(
+            ultimate.is_some(),
+            "Elspeth's -7 should produce a CreateEmblem effect; got abilities: {:?}",
+            abilities.iter().map(|a| &a.effects).collect::<Vec<_>>()
+        );
+
+        let Effect::CreateEmblem {
+            static_abilities,
+            triggers,
+            emblem_name,
+            ..
+        } = &ultimate.unwrap().effects[0]
+        else {
+            panic!("Expected CreateEmblem");
+        };
+        assert_eq!(emblem_name, "Emblem — Elspeth, Sun's Champion");
+        assert!(triggers.is_empty(), "Elspeth emblem has no triggers");
+        assert!(
+            !static_abilities.is_empty(),
+            "Elspeth emblem should have static abilities"
+        );
+
+        // Should have both ModifyPT (+2/+2) and GrantKeyword (Flying)
+        use crate::core::StaticAbility;
+        let has_pt = static_abilities.iter().any(|s| {
+            matches!(
+                s,
+                StaticAbility::ModifyPT {
+                    power: 2,
+                    toughness: 2,
+                    ..
+                }
+            )
+        });
+        let has_flying = static_abilities.iter().any(|s| {
+            matches!(
+                s,
+                StaticAbility::GrantKeyword {
+                    keyword: crate::core::Keyword::Flying,
+                    ..
+                }
+            )
+        });
+        assert!(
+            has_pt,
+            "Elspeth emblem should grant +2/+2; static_abilities={:?}",
+            static_abilities
+        );
+        assert!(
+            has_flying,
+            "Elspeth emblem should grant Flying; static_abilities={:?}",
+            static_abilities
+        );
+    }
+
+    /// Sorin, Solemn Visitor's ultimate creates `Effect::CreateEmblem` with a
+    /// phase trigger: "at the beginning of each opponent's upkeep, that player
+    /// sacrifices a creature." (opponent_turn_only + ForceSacrifice placeholder)
+    #[test]
+    fn test_sorin_emblem_ultimate_parses_create_emblem_with_trigger() {
+        use crate::core::Effect;
+
+        let content = r#"
+Name:Sorin, Solemn Visitor
+ManaCost:2 W B
+Types:Legendary Planeswalker Sorin
+Loyalty:4
+A:AB$ PumpAll | Cost$ AddCounter<1/LOYALTY> | Planeswalker$ True | ValidCards$ Creature.YouCtrl | NumAtt$ +1 | KW$ Lifelink | Duration$ UntilYourNextTurn | SpellDescription$ Until your next turn, creatures you control get +1/+0 and gain lifelink.
+A:AB$ Token | Cost$ SubCounter<2/LOYALTY> | Planeswalker$ True | TokenOwner$ You | TokenScript$ b_2_2_vampire_flying | SpellDescription$ Create a 2/2 black Vampire creature token with flying.
+A:AB$ Effect | Cost$ SubCounter<6/LOYALTY> | Planeswalker$ True | Ultimate$ True | Name$ Emblem — Sorin, Solemn Visitor | Triggers$ BOTTrig | Duration$ Permanent | AILogic$ Always | SpellDescription$ You get an emblem with "At the beginning of each opponent's upkeep, that player sacrifices a creature."
+SVar:BOTTrig:Mode$ Phase | Phase$ Upkeep | ValidPlayer$ Player.Opponent | TriggerZones$ Command | Execute$ SorinSac | TriggerDescription$ At the beginning of each opponent's upkeep, that player sacrifices a creature.
+SVar:SorinSac:DB$ Sacrifice | SacValid$ Creature | Defined$ TriggeredPlayer
+Oracle:[-6]: You get an emblem with "At the beginning of each opponent's upkeep, that player sacrifices a creature."
+"#;
+
+        let def = CardLoader::parse(content).unwrap();
+        let abilities = def.parse_activated_abilities();
+
+        // Find the CreateEmblem ability
+        let ultimate = abilities
+            .iter()
+            .find(|a| a.effects.iter().any(|e| matches!(e, Effect::CreateEmblem { .. })));
+        assert!(ultimate.is_some(), "Sorin's -6 should produce a CreateEmblem effect");
+
+        let Effect::CreateEmblem {
+            static_abilities,
+            triggers,
+            emblem_name,
+            ..
+        } = &ultimate.unwrap().effects[0]
+        else {
+            panic!("Expected CreateEmblem");
+        };
+
+        assert_eq!(emblem_name, "Emblem — Sorin, Solemn Visitor");
+        assert!(static_abilities.is_empty(), "Sorin emblem has no static abilities");
+        assert_eq!(triggers.len(), 1, "Sorin emblem should have 1 trigger");
+
+        let trigger = &triggers[0];
+        assert!(
+            trigger.opponent_turn_only,
+            "Sorin trigger fires on opponent's upkeep only"
+        );
+        assert_eq!(
+            trigger.event,
+            crate::core::TriggerEvent::BeginningOfUpkeep,
+            "Sorin trigger fires at beginning of upkeep"
+        );
+        // Should have ForceSacrifice with placeholder player
+        let has_force_sac = trigger.effects.iter().any(|e| {
+            matches!(
+                e,
+                Effect::ForceSacrifice {
+                    player,
+                    sac_type,
+                    count: 1,
+                } if player.is_placeholder() && sac_type == "Creature"
+            )
+        });
+        assert!(
+            has_force_sac,
+            "Sorin trigger should force opponent to sacrifice a creature; effects={:?}",
+            trigger.effects
+        );
     }
 }
