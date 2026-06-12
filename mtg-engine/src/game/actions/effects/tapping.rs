@@ -12,7 +12,7 @@
 //! — a direct write would desync server vs client shadow state (see
 //! `docs/NETWORK_ARCHITECTURE.md`). Behavior-preserving: bodies moved verbatim.
 
-use crate::core::{CardId, TriggerEvent};
+use crate::core::{CardId, PlayerId, TriggerEvent};
 use crate::game::GameState;
 use crate::Result;
 
@@ -97,6 +97,82 @@ impl GameState {
             let card_name = self.cards.get(card_id)?.name.clone();
             self.tap_permanent(card_id)?;
             self.logger.gamelog(&format!("{} ({}) is tapped", card_name, card_id));
+        }
+        Ok(())
+    }
+
+    /// [`Effect::TapPermanentsMatchingFilter`]: tap up to `count` untapped
+    /// permanents of the eligible types (e.g. `"Artifact,Creature,Land"`)
+    /// controlled by `player`.
+    ///
+    /// Used by Tangle Wire: "that player taps an untapped artifact, creature,
+    /// or land they control for each fade counter on Tangle Wire."
+    ///
+    /// AI heuristic: tap cheapest/least-impactful first — prefer artifacts over
+    /// creatures over lands, matching the discard-least-valuable principle from
+    /// the project coding guide.
+    pub(in crate::game::actions) fn execute_tap_permanents_matching_filter(
+        &mut self,
+        player: PlayerId,
+        choices_filter: &str,
+        count: u8,
+    ) -> Result<()> {
+        if count == 0 {
+            return Ok(());
+        }
+
+        // Parse filter: comma-separated type names, e.g. "Artifact,Creature,Land"
+        let filter_types: Vec<&str> = choices_filter.split(',').map(str::trim).collect();
+
+        // Collect all untapped permanents matching the filter controlled by the player
+        let mut candidates: Vec<CardId> = self
+            .battlefield
+            .cards
+            .iter()
+            .copied()
+            .filter(|&cid| {
+                self.cards
+                    .get(cid)
+                    .map(|card| {
+                        card.controller == player
+                            && !card.tapped
+                            && filter_types.iter().any(|&t| match t {
+                                "Artifact" => card.is_artifact(),
+                                "Creature" => card.is_creature(),
+                                "Land" => card.is_land(),
+                                _ => false,
+                            })
+                    })
+                    .unwrap_or(false)
+            })
+            .collect();
+
+        // AI heuristic: tap least-valuable first.
+        // Priority (tap first → least valuable): Artifact > Creature > Land.
+        // Within each type, no further ordering for now (stable sort preserves
+        // insertion order as a tiebreaker).
+        candidates.sort_by_key(|&cid| {
+            self.cards
+                .get(cid)
+                .map(|card| {
+                    if card.is_land() {
+                        2u8 // tap lands last (most valuable for mana)
+                    } else if card.is_creature() {
+                        1u8 // creatures second
+                    } else {
+                        0u8 // tap artifacts first (least disruptive)
+                    }
+                })
+                .unwrap_or(3)
+        });
+
+        let to_tap = candidates.into_iter().take(count as usize);
+        for cid in to_tap {
+            let card_name = self.cards.get(cid)?.name.clone();
+            self.tap_permanent(cid)?;
+            self.check_triggers(TriggerEvent::Taps, cid)?;
+            self.logger
+                .gamelog(&format!("{} (forced by Tangle Wire) is tapped", card_name));
         }
         Ok(())
     }

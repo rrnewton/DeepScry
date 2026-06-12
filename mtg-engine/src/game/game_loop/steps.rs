@@ -487,11 +487,127 @@ impl<'a> GameLoop<'a> {
                 .check_triggers_for_controller(trigger_event, card_id, active_player)?;
         }
 
+        // GrantUpkeepSacrificeUnlessPay statics (Energy Flux, Aura Flux):
+        // At the beginning of each player's upkeep, each affected permanent
+        // controlled by the active player must be sacrificed unless its
+        // controller pays the generic mana cost (CR 603.7 / CR 701.17).
+        // We scan only on upkeep triggers; these statics have no effect
+        // during other phase-trigger events.
+        if trigger_event == TriggerEvent::BeginningOfUpkeep {
+            self.check_grant_upkeep_sacrifice_statics(active_player)?;
+        }
+
         // Push reveals after phase triggers for network mode (server-side)
         // Triggered abilities can draw cards, and clients need the card IDs
         self.push_reveals(active_player);
         if let Some(opponent) = self.game.get_other_player_id(active_player) {
             self.push_reveals(opponent);
+        }
+
+        Ok(())
+    }
+
+    /// Fire "sacrifice unless you pay {N}" upkeep obligations imposed by
+    /// [`crate::core::StaticAbility::GrantUpkeepSacrificeUnlessPay`] statics
+    /// (Energy Flux, Aura Flux).
+    ///
+    /// For each `GrantUpkeepSacrificeUnlessPay` static currently on the
+    /// battlefield:
+    /// 1. Determine which permanents controlled by `active_player` are affected
+    ///    (using the static's `affected` selector).
+    /// 2. For each affected permanent, execute an
+    ///    `Effect::UnlessCostWrapper { SacrificeSelf, unless_cost: N generic }`.
+    ///
+    /// The source of the static ability is excluded from "Other" selectors
+    /// (e.g., Aura Flux does not tax itself). Energy Flux uses `Affected$ Artifact`
+    /// which has no "Other" qualifier and correctly taxes ALL artifacts including
+    /// Energy Flux itself (Energy Flux is not an artifact, so this is moot).
+    ///
+    /// CR 614.5 / CR 701.17: the obligation fires even if the permanent entered
+    /// the battlefield this same upkeep.
+    fn check_grant_upkeep_sacrifice_statics(&mut self, active_player: PlayerId) -> Result<()> {
+        use crate::core::{Effect, StaticAbility};
+
+        // Snapshot the battlefield once to avoid borrow issues.
+        let battlefield_snapshot: SmallVec<[CardId; 16]> = self.game.battlefield.cards.iter().copied().collect();
+
+        // Collect (source_id, affected_selector, unless_cost) triples from all
+        // GrantUpkeepSacrificeUnlessPay statics currently on the battlefield.
+        let grant_statics: SmallVec<[(CardId, crate::core::AffectedSelector, u8); 4]> = battlefield_snapshot
+            .iter()
+            .filter_map(|&src_id| {
+                let card = self.game.cards.try_get(src_id)?;
+                let sa = card.static_abilities.iter().find_map(|sa| {
+                    if let StaticAbility::GrantUpkeepSacrificeUnlessPay {
+                        affected, unless_cost, ..
+                    } = sa
+                    {
+                        Some((affected.clone(), *unless_cost))
+                    } else {
+                        None
+                    }
+                })?;
+                Some((src_id, sa.0, sa.1))
+            })
+            .collect();
+
+        if grant_statics.is_empty() {
+            return Ok(());
+        }
+
+        for (source_id, affected, unless_cost) in &grant_statics {
+            // Collect affected permanents controlled by active_player.
+            // We use selector_applies_to_permanent for general card types
+            // (not just creatures); fall back to a simple artifact/enchantment
+            // type check based on the selector variant.
+            let affected_permanents: SmallVec<[CardId; 8]> = battlefield_snapshot
+                .iter()
+                .filter(|&&perm_id| {
+                    // Only affects permanents controlled by the active player.
+                    let Ok(perm) = self.game.cards.get(perm_id) else {
+                        return false;
+                    };
+                    if perm.controller != active_player {
+                        return false;
+                    }
+                    self.game
+                        .affected_selector_matches_card(affected.clone(), perm_id, *source_id)
+                })
+                .copied()
+                .collect();
+
+            for perm_id in affected_permanents {
+                let Ok(perm) = self.game.cards.get(perm_id) else {
+                    continue;
+                };
+                let perm_name = perm.name.to_string();
+                let Ok(src_card) = self.game.cards.get(*source_id) else {
+                    continue;
+                };
+                let src_name = src_card.name.to_string();
+                let _ = perm; // Release borrow before mutating
+
+                // Build a mana cost for `unless_cost` generic mana.
+                let mana_cost = crate::core::ManaCost {
+                    generic: *unless_cost,
+                    ..Default::default()
+                };
+                let effect = Effect::UnlessCostWrapper {
+                    inner_effect: Box::new(Effect::SacrificeSelf { source: perm_id }),
+                    unless_cost: crate::core::effects::UnlessCost {
+                        cost: crate::core::effects::UnlessCostType::Mana(mana_cost),
+                        payer: active_player.as_u32().to_string(),
+                        switched: false,
+                    },
+                };
+
+                self.game.logger.normal(&format!(
+                    "{} (from {}): sacrifice unless you pay {{{}}}",
+                    perm_name, src_name, unless_cost
+                ));
+
+                self.game.execute_effect(&effect)?;
+            }
         }
 
         Ok(())

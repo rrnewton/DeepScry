@@ -2005,6 +2005,41 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
             })
         }
 
+        // `ChooseCard` — select N permanents matching a filter, then take an action
+        // (currently: tap each chosen card — Tangle Wire's forced-tap pattern).
+        //
+        // Tangle Wire script:
+        //   DB$ ChooseCard | Defined$ TriggeredPlayer | Choices$ Artifact.untapped+…,Creature.untapped+…,Land.untapped+… | Amount$ X | SubAbility$ DBTap
+        //   DB$ Tap | Defined$ ChosenCard
+        //   DB$ Cleanup | ClearChosenCard$ True
+        //
+        // We collapse the entire ChooseCard→Tap→Cleanup sub-ability chain into a
+        // single `Effect::TapPermanentsMatchingFilter`. The `SubAbility$` chain is
+        // NOT followed separately — the Tap and Cleanup steps are consumed here.
+        //
+        // The `Choices$` filter is normalised to a comma-separated list of base
+        // card types (stripping `.untapped+…` qualifiers) since the executor
+        // independently enforces "untapped" — only untapped permanents can be
+        // tapped. `Amount$ X` is stored as 0; the trigger executor resolves the
+        // fade-counter count at fire time.
+        ApiType::ChooseCard => {
+            // Only implement the "tap chosen cards" pattern.
+            // The sub-ability chain must end in DB$ Tap | Defined$ ChosenCard.
+            let choices_raw = params.get("Choices").unwrap_or("");
+            // Normalise: strip per-segment qualifiers, keep base types only.
+            // "Artifact.untapped+ActivePlayerCtrl" → "Artifact"
+            let choices_filter = choices_raw
+                .split(',')
+                .map(|seg| seg.trim().split('.').next().unwrap_or_else(|| seg.trim()).to_string())
+                .collect::<Vec<_>>()
+                .join(",");
+            Some(Effect::TapPermanentsMatchingFilter {
+                player: PlayerId::new(0), // placeholder → resolved to active player at trigger time
+                choices_filter,
+                count: 0, // placeholder → resolved from fade counters at trigger time
+            })
+        }
+
         // `StoreSVar` (Forge pseudo-API: stash a computed value into a card SVar
         // for a later effect to read) is an INTENTIONAL no-op in this engine.
         // Drain Life uses a StoreSVar chain only to compute its life-gain cap

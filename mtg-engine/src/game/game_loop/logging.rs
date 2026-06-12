@@ -1232,6 +1232,12 @@ impl<'a> GameLoop<'a> {
                     "{source_name} grants {player_name} {amount} extra land play{plural} this turn"
                 ));
             }
+            Effect::TapPermanentsMatchingFilter { player, count, .. } => {
+                let player_name = self.get_player_name(*player);
+                self.game.logger.gamelog(&format!(
+                    "{source_name} forces {player_name} to tap {count} permanents"
+                ));
+            }
         }
     }
 }

@@ -550,6 +550,10 @@ impl GameStateEvaluator {
                     // CDA P/T (Serra Avatar): lives on the creature itself, not
                     // an aura; no enchanted-creature value contribution.
                 }
+                StaticAbility::GrantUpkeepSacrificeUnlessPay { .. } => {
+                    // Upkeep sacrifice-unless-pay (Energy Flux, Aura Flux): lives on the
+                    // enchantment/artifact source, not an Aura; no enchanted-creature value.
+                }
             }
         }
 

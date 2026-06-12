@@ -1550,6 +1550,28 @@ pub enum Effect {
     /// Example: "Tap target creature"
     TapPermanent { target: CardId },
 
+    /// Tap N untapped permanents matching a filter controlled by a player.
+    ///
+    /// Corresponds to Tangle Wire's forced-tap trigger:
+    ///   `DB$ ChooseCard | Defined$ TriggeredPlayer | Choices$ <filter> | Amount$ X | SubAbility$ DBTap`
+    ///   `DB$ Tap | Defined$ ChosenCard`
+    ///
+    /// The converter collapses the ChooseCard→Tap→Cleanup sub-ability chain into
+    /// a single effect. The AI heuristic taps the least-valuable permanents first
+    /// (same as the discard heuristic: prefer to tap things that are already
+    /// somewhat restricted, e.g., tap creatures before lands).
+    TapPermanentsMatchingFilter {
+        /// The player who must tap permanents (placeholder: resolved to active player at trigger time).
+        player: PlayerId,
+        /// Combined filter string from `Choices$` (e.g. `"Artifact,Creature,Land"`).
+        /// Each comma-separated segment is a type that qualifies.
+        choices_filter: String,
+        /// Number of permanents to tap (`Amount$ X` = fade counter count at fire time;
+        /// stored as 0 at parse time and resolved to a concrete count by the
+        /// trigger executor before calling execute_effect).
+        count: u8,
+    },
+
     /// Untap a permanent
     /// Example: "Untap target land"
     UntapPermanent { target: CardId },
@@ -2942,7 +2964,8 @@ impl Effect {
             | Effect::TapAll { .. }
             | Effect::UntapAll { .. }
             | Effect::PutCounterAll { .. }
-            | Effect::ChangeZoneAll { .. } => EffectTargetCategory::UsesFilter,
+            | Effect::ChangeZoneAll { .. }
+            | Effect::TapPermanentsMatchingFilter { .. } => EffectTargetCategory::UsesFilter,
 
             // Modal spells have inner targeting
             Effect::ModalChoice { .. } => EffectTargetCategory::HasInnerTargeting,
@@ -3918,6 +3941,32 @@ pub enum StaticAbility {
     CharacteristicDefiningPt {
         /// What value to set power and toughness to.
         source: CdaPtSource,
+        /// Description for logging.
+        description: String,
+    },
+
+    /// Continuous effect that grants a "sacrifice unless you pay {N}" upkeep
+    /// trigger to all permanents matching `affected`.
+    ///
+    /// Corresponds to: `S:Mode$ Continuous | Affected$ X | AddTrigger$ UpkeepCostTrigger`
+    /// where `UpkeepCostTrigger` resolves to
+    ///   `Mode$ Phase | Phase$ Upkeep | ValidPlayer$ You | Execute$ TrigUpkeep`
+    /// and `TrigUpkeep` resolves to `DB$ Sacrifice | UnlessPayer$ You | UnlessCost$ N`.
+    ///
+    /// Example: Energy Flux ("All artifacts have 'At the beginning of your upkeep,
+    /// sacrifice this artifact unless you pay {2}.'").
+    /// Example: Aura Flux ("Other enchantments have 'At the beginning of your upkeep,
+    /// sacrifice this enchantment unless you pay {2}.'").
+    ///
+    /// While the source is on the battlefield, at the beginning of each player's
+    /// upkeep every affected permanent's controller must pay `unless_cost` generic
+    /// mana or sacrifice that permanent. Applied in `check_phase_triggers` by
+    /// scanning all `GrantUpkeepSacrificeUnlessPay` statics on the battlefield.
+    GrantUpkeepSacrificeUnlessPay {
+        /// Filter for which permanents are affected (e.g. `Artifact`, `Enchantment.Other`).
+        affected: AffectedSelector,
+        /// Generic mana cost to avoid sacrifice (e.g. 2 for Energy Flux / Aura Flux).
+        unless_cost: u8,
         /// Description for logging.
         description: String,
     },

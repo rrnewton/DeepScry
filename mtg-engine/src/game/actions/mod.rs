@@ -263,7 +263,8 @@ fn expand_all_players_effect(effect: &Effect, player_ids: &[PlayerId]) -> smallv
         | Effect::RevealCardsFromHand { .. }
         | Effect::PlayFromGraveyard { .. }
         | Effect::RepeatEach { .. }
-        | Effect::ExtraLandPlay { .. } => false,
+        | Effect::ExtraLandPlay { .. }
+        | Effect::TapPermanentsMatchingFilter { .. } => false,
     };
 
     if !is_all_players {
@@ -399,7 +400,8 @@ fn expand_all_players_effect(effect: &Effect, player_ids: &[PlayerId]) -> smallv
             | Effect::RevealCardsFromHand { .. }
             | Effect::PlayFromGraveyard { .. }
             | Effect::RepeatEach { .. }
-            | Effect::ExtraLandPlay { .. } => unreachable!(),
+            | Effect::ExtraLandPlay { .. }
+            | Effect::TapPermanentsMatchingFilter { .. } => unreachable!(),
         })
         .collect()
 }
@@ -1567,100 +1569,130 @@ impl GameState {
     fn apply_etb_counters(&mut self, card_id: CardId) -> Result<()> {
         use crate::core::{CounterType, Keyword, KeywordArgs};
 
-        let (counter_type, amount, card_name) = {
+        // --- EtbCounter keyword (generic: charge, P1P1, age, etc.) ---
+        let etb_grant: Option<(CounterType, u8, String)> = {
             let Some(card) = self.cards.try_get(card_id) else {
                 return Ok(());
             };
-            let Some(args) = card.keywords.get_args(Keyword::EtbCounter) else {
-                return Ok(());
-            };
-            let KeywordArgs::EtbCounter {
+            let card_name_str = card.name.to_string();
+            if let Some(KeywordArgs::EtbCounter {
                 counter_type,
                 amount,
                 condition: _,
-            } = args
-            else {
-                return Ok(());
-            };
-            let Some(ct) = CounterType::parse(counter_type) else {
-                log::warn!(
-                    "apply_etb_counters: unknown counter type '{}' on {}",
-                    counter_type,
-                    card.name
-                );
-                return Ok(());
-            };
-            // Clone the fields we need before the borrow of `args` ends.
-            let amount_str = amount.clone();
-            let card_name_str = card.name.clone();
-            let x_paid = card.x_paid;
-            let times_kicked = card.times_kicked;
-            // Clone SVars so we can look up SVar expressions without holding
-            // a borrow on `card` (which is borrowed through `args`).
-            let svars = card.svars.clone();
-            // Resolve the counter amount: numeric literal, the symbolic "X"/"Y"
-            // (X-cost spells, CR 107.3), or a named SVar (e.g. "XKicked" for
-            // Multikicker cards, CR 702.33a).  For X-cost permanents like
-            // Hangarback Walker, `x_paid` is set by the priority loop before the
-            // spell resolves.  For Multikicker permanents like Everflowing Chalice,
-            // `times_kicked` is set by the priority loop.
-            let amt = match amount_str.parse::<u8>() {
-                Ok(n) => n,
-                Err(_) if amount_str.eq_ignore_ascii_case("X") || amount_str.eq_ignore_ascii_case("Y") => x_paid,
-                Err(_) => {
-                    // Try looking up `amount_str` as a named SVar on the card itself
-                    // (e.g. "XKicked" → SVar:XKicked:Count$TimesKicked).
-                    if let Some(svar) = svars.get(&amount_str) {
-                        let expr = crate::core::CountExpression::parse(&amount_str, &svars);
-                        match expr {
-                            crate::core::CountExpression::TimesKicked => times_kicked,
-                            crate::core::CountExpression::Fixed(n) => n.max(0) as u8,
-                            crate::core::CountExpression::ValidPermanents { .. }
-                            | crate::core::CountExpression::CardsDrawnThisTurn
-                            | crate::core::CountExpression::CardsInHand { .. }
-                            | crate::core::CountExpression::XPaid
-                            | crate::core::CountExpression::TargetedCardPower
-                            | crate::core::CountExpression::TriggeredCardPower
-                            | crate::core::CountExpression::SpellsCastThisTurn
-                            | crate::core::CountExpression::ValidGraveyard { .. }
-                            | crate::core::CountExpression::Compare { .. }
-                            | crate::core::CountExpression::Kicked { .. }
-                            | crate::core::CountExpression::Bargain { .. } => {
-                                log::warn!(
-                                    "apply_etb_counters: SVar '{}' on {} resolves to unsupported \
-                                     expression '{}' — skipping",
-                                    amount_str,
-                                    card_name_str,
-                                    svar
-                                );
-                                return Ok(());
+            }) = card.keywords.get_args(Keyword::EtbCounter)
+            {
+                let Some(ct) = CounterType::parse(counter_type) else {
+                    log::warn!(
+                        "apply_etb_counters: unknown counter type '{}' on {}",
+                        counter_type,
+                        card_name_str
+                    );
+                    return Ok(());
+                };
+                // Clone the fields we need before the borrow of `args` ends.
+                let amount_str = amount.clone();
+                let x_paid = card.x_paid;
+                let times_kicked = card.times_kicked;
+                // Clone SVars so we can look up SVar expressions without holding
+                // a borrow on `card` (which is borrowed through `args`).
+                let svars = card.svars.clone();
+                // Resolve the counter amount: numeric literal, the symbolic "X"/"Y"
+                // (X-cost spells, CR 107.3), or a named SVar (e.g. "XKicked" for
+                // Multikicker cards, CR 702.33a).  For X-cost permanents like
+                // Hangarback Walker, `x_paid` is set by the priority loop before the
+                // spell resolves.  For Multikicker permanents like Everflowing Chalice,
+                // `times_kicked` is set by the priority loop.
+                let amt = match amount_str.parse::<u8>() {
+                    Ok(n) => n,
+                    Err(_) if amount_str.eq_ignore_ascii_case("X") || amount_str.eq_ignore_ascii_case("Y") => x_paid,
+                    Err(_) => {
+                        // Try looking up `amount_str` as a named SVar on the card itself
+                        // (e.g. "XKicked" → SVar:XKicked:Count$TimesKicked).
+                        if let Some(svar) = svars.get(&amount_str) {
+                            let expr = crate::core::CountExpression::parse(&amount_str, &svars);
+                            match expr {
+                                crate::core::CountExpression::TimesKicked => times_kicked,
+                                crate::core::CountExpression::Fixed(n) => n.max(0) as u8,
+                                crate::core::CountExpression::ValidPermanents { .. }
+                                | crate::core::CountExpression::CardsDrawnThisTurn
+                                | crate::core::CountExpression::CardsInHand { .. }
+                                | crate::core::CountExpression::XPaid
+                                | crate::core::CountExpression::TargetedCardPower
+                                | crate::core::CountExpression::TriggeredCardPower
+                                | crate::core::CountExpression::SpellsCastThisTurn
+                                | crate::core::CountExpression::ValidGraveyard { .. }
+                                | crate::core::CountExpression::Compare { .. }
+                                | crate::core::CountExpression::Kicked { .. }
+                                | crate::core::CountExpression::Bargain { .. } => {
+                                    log::warn!(
+                                        "apply_etb_counters: SVar '{}' on {} resolves to unsupported \
+                                         expression '{}' — skipping",
+                                        amount_str,
+                                        card_name_str,
+                                        svar
+                                    );
+                                    return Ok(());
+                                }
                             }
+                        } else {
+                            log::warn!(
+                                "apply_etb_counters: non-numeric amount '{}' on {} not yet supported",
+                                amount_str,
+                                card_name_str
+                            );
+                            return Ok(());
                         }
-                    } else {
-                        log::warn!(
-                            "apply_etb_counters: non-numeric amount '{}' on {} not yet supported",
-                            amount_str,
-                            card_name_str
-                        );
-                        return Ok(());
                     }
-                }
-            };
-            (ct, amt, card_name_str)
+                };
+                Some((ct, amt, card_name_str))
+            } else {
+                None
+            }
         };
 
-        if amount == 0 {
-            return Ok(());
+        if let Some((counter_type, amount, card_name)) = etb_grant {
+            if amount > 0 {
+                self.logger.gamelog(&format!(
+                    "{} enters the battlefield with {} {} counter{}",
+                    card_name,
+                    amount,
+                    counter_type.display_name(),
+                    if amount == 1 { "" } else { "s" }
+                ));
+                self.add_counters(card_id, counter_type, amount)?;
+            }
         }
 
-        self.logger.gamelog(&format!(
-            "{} enters the battlefield with {} {} counter{}",
-            card_name,
-            amount,
-            counter_type.display_name(),
-            if amount == 1 { "" } else { "s" }
-        ));
-        self.add_counters(card_id, counter_type, amount)?;
+        // --- Fading / Vanishing: enter with N fade / time counters (CR 702.32 / CR 702.63) ---
+        // These keywords are parsed as KeywordArgs::Fading { counters } /
+        // KeywordArgs::Vanishing { counters } but have no EtbCounter entry, so
+        // we handle them here explicitly.
+        let fading_grant: Option<(CounterType, u8, String)> = {
+            let Some(card) = self.cards.try_get(card_id) else {
+                return Ok(());
+            };
+            if let Some(KeywordArgs::Fading { counters }) = card.keywords.get_args(Keyword::Fading) {
+                Some((CounterType::Fade, *counters, card.name.to_string()))
+            } else if let Some(KeywordArgs::Vanishing { counters }) = card.keywords.get_args(Keyword::Vanishing) {
+                Some((CounterType::Time, *counters, card.name.to_string()))
+            } else {
+                None
+            }
+        };
+
+        if let Some((counter_type, amount, card_name)) = fading_grant {
+            if amount > 0 {
+                self.logger.gamelog(&format!(
+                    "{} enters the battlefield with {} {} counter{}",
+                    card_name,
+                    amount,
+                    counter_type.display_name(),
+                    if amount == 1 { "" } else { "s" }
+                ));
+                self.add_counters(card_id, counter_type, amount)?;
+            }
+        }
+
         Ok(())
     }
 
@@ -4181,6 +4213,11 @@ impl GameState {
             } => self.execute_gain_control(*target, *new_controller, *untap, duration, *source)?,
             Effect::Fight { fighter, target } => self.execute_fight(*fighter, *target)?,
             Effect::TapPermanent { target } => self.execute_tap_permanent(*target)?,
+            Effect::TapPermanentsMatchingFilter {
+                player,
+                choices_filter,
+                count,
+            } => self.execute_tap_permanents_matching_filter(*player, choices_filter, *count)?,
             Effect::UntapPermanent { target } => self.execute_untap_permanent(*target)?,
             Effect::TapOrUntapPermanent { target } => self.execute_tap_or_untap_permanent(*target)?,
             Effect::PumpCreature {
@@ -6757,6 +6794,41 @@ impl GameState {
                 // trigger). Also resolve the placeholder to the actual card.
                 Effect::SacrificeSelf { source } if source.is_placeholder() => {
                     effect = Effect::SacrificeSelf { source: card_id };
+                }
+
+                // Tangle Wire: "that player taps N permanents" where N = fade
+                // counter count on Tangle Wire (Count$CardCounters.FADE) and the
+                // player is the one whose upkeep fired (Defined$ TriggeredPlayer).
+                // Both are stored as placeholders at parse time and resolved here.
+                Effect::TapPermanentsMatchingFilter {
+                    player,
+                    choices_filter,
+                    count,
+                } => {
+                    // Resolve player placeholder (0) to active_player
+                    let resolved_player = if player.is_placeholder() {
+                        active_player
+                    } else {
+                        *player
+                    };
+                    // Resolve count placeholder (0) to the source card's FADE
+                    // counter count (Count$CardCounters.FADE).
+                    let fade_count = self
+                        .cards
+                        .try_get(card_id)
+                        .map(|c| c.get_counter(crate::core::CounterType::Fade))
+                        .unwrap_or(0);
+                    let resolved_count = if *count == 0 { fade_count } else { *count };
+                    if resolved_count == 0 {
+                        // No fade counters left — Tangle Wire about to be
+                        // sacrificed by Fading; skip the tap obligation.
+                        continue;
+                    }
+                    effect = Effect::TapPermanentsMatchingFilter {
+                        player: resolved_player,
+                        choices_filter: choices_filter.clone(),
+                        count: resolved_count,
+                    };
                 }
 
                 _ => {}

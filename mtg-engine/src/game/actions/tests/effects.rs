@@ -3069,7 +3069,8 @@ mod tests {
                 | StaticAbility::ExtraLandPlay { .. }
                 | StaticAbility::LifeFloor { .. }
                 | StaticAbility::DamageToExileLibrary { .. }
-                | StaticAbility::CharacteristicDefiningPt { .. } => None,
+                | StaticAbility::CharacteristicDefiningPt { .. }
+                | StaticAbility::GrantUpkeepSacrificeUnlessPay { .. } => None,
             })
             .expect("Ironclaw Orcs must produce a CantBlockMatching static ability");
 

@@ -2532,8 +2532,12 @@ impl CardDefinition {
         // Follow SubAbility chains for additional effects
         if let Some(sub_ref) = svar_params.get("SubAbility") {
             if let Some(sub_params) = self.parsed_svars.get(sub_ref) {
-                // Only follow if we haven't already handled this above (Attach case)
-                if svar_params.api_type != ApiType::Attach {
+                // Only follow if we haven't already handled this above.
+                // - Attach: SubAbility is handled inline in the Attach branch above.
+                // - ChooseCard: the entire ChooseCard→Tap→Cleanup chain is collapsed
+                //   into a single TapPermanentsMatchingFilter effect by the converter;
+                //   following the SubAbility$ here would double-emit the Tap step.
+                if svar_params.api_type != ApiType::Attach && svar_params.api_type != ApiType::ChooseCard {
                     effects.extend(self.extract_effects_from_svar(sub_params));
                 }
             }
@@ -3187,6 +3191,30 @@ impl CardDefinition {
                                 let wrapped =
                                     crate::loader::effect_converter::wrap_with_unless_cost(sac_self, svar_params);
                                 effects.push(wrapped);
+                            }
+
+                            // DB$ ChooseCard on a phase trigger (Tangle Wire):
+                            // "that player taps N untapped artifacts/creatures/lands
+                            //  they control for each fade counter on this permanent".
+                            // `ChooseCard | Choices$ <types> | Amount$ X | Mandatory$ True`
+                            // → TapPermanentsMatchingFilter { player: placeholder,
+                            //                                 choices_filter: <types>,
+                            //                                 count: 0 (resolved at fire time
+                            //                                 from fade counters) }.
+                            // The resolver in `check_triggers_for_controller` patches
+                            // `player` → active_player and `count` → fade counter count.
+                            if svar_params.api_type == ApiType::ChooseCard {
+                                let choices_raw = svar_params.get("Choices").unwrap_or("");
+                                let choices_filter = choices_raw
+                                    .split(',')
+                                    .map(|seg| seg.trim().split('.').next().unwrap_or_else(|| seg.trim()).to_string())
+                                    .collect::<Vec<_>>()
+                                    .join(",");
+                                effects.push(Effect::TapPermanentsMatchingFilter {
+                                    player: crate::core::PlayerId::new(0), // placeholder
+                                    choices_filter,
+                                    count: 0, // placeholder → fade counters at fire time
+                                });
                             }
 
                             // Fallback for counter-driven self-relocation chains
@@ -5399,6 +5427,10 @@ impl CardDefinition {
             let mut is_characteristic_defining = false;
             let mut cda_pt_source: Option<crate::core::CdaPtSource> = None;
 
+            // AddTrigger$-specific parameter: SVar name of the trigger to grant to
+            // affected permanents (Energy Flux, Aura Flux: upkeep sacrifice-unless-pay).
+            let mut add_trigger_svar: Option<String> = None;
+
             // Split by | and parse each parameter
             for param in ability.split('|') {
                 let param = param.trim();
@@ -5652,6 +5684,14 @@ impl CardDefinition {
                                 }
                             }
                         }
+                        "AddTrigger" => {
+                            // `AddTrigger$ <svar>` — grants an upkeep trigger to all
+                            // affected permanents. We resolve the SVar to determine the
+                            // trigger shape; currently only the
+                            // `DB$ Sacrifice | UnlessPayer$ You | UnlessCost$ N` (sacrifice
+                            // unless pay {N}) pattern is handled (Energy Flux, Aura Flux).
+                            add_trigger_svar = Some(value.to_string());
+                        }
                         _ => {} // Ignore other parameters (e.g., AddType$, Type$, Activator$)
                     }
                 }
@@ -5790,6 +5830,49 @@ impl CardDefinition {
                         source: cda_source,
                         description: description.clone(),
                     });
+                }
+            }
+
+            // AddTrigger$ on a Continuous static: grant an upkeep trigger to all
+            // affected permanents. Currently only the "sacrifice unless pay {N}"
+            // shape is recognized (Energy Flux, Aura Flux).
+            //
+            // Trigger SVar shape (from Energy Flux / Aura Flux):
+            //   UpkeepCostTrigger:Mode$ Phase | Phase$ Upkeep | ... | Execute$ TrigUpkeep
+            //   TrigUpkeep:DB$ Sacrifice | UnlessPayer$ You | UnlessCost$ 2
+            //
+            // We resolve the chain: AddTrigger$ -> TriggerSVar -> Execute$ -> EffectSVar
+            // and extract the `UnlessCost$` mana value. If the pattern matches, emit
+            // StaticAbility::GrantUpkeepSacrificeUnlessPay.
+            if is_continuous {
+                if let Some(ref trigger_svar_name) = add_trigger_svar {
+                    // Resolve the trigger SVar (e.g. "UpkeepCostTrigger")
+                    if let Some(trigger_body) = self.svars.get(trigger_svar_name) {
+                        let trigger_params = tokenize_pipe_dollar(trigger_body);
+                        // Must be a Phase$ Upkeep trigger
+                        let is_upkeep = trigger_params.get("Mode").map(|s| s.as_str()) == Some("Phase")
+                            && trigger_params.get("Phase").map(|s| s.as_str()) == Some("Upkeep");
+                        if is_upkeep {
+                            if let Some(execute_svar_name) = trigger_params.get("Execute") {
+                                if let Some(execute_body) = self.svars.get(execute_svar_name) {
+                                    let execute_params = tokenize_pipe_dollar(execute_body);
+                                    // Must be DB$ Sacrifice with UnlessCost$ N
+                                    let is_sac = execute_params.get("DB").map(|s| s.as_str()) == Some("Sacrifice");
+                                    if is_sac {
+                                        let unless_cost: u8 = execute_params
+                                            .get("UnlessCost")
+                                            .and_then(|s| s.parse().ok())
+                                            .unwrap_or(0);
+                                        abilities.push(StaticAbility::GrantUpkeepSacrificeUnlessPay {
+                                            affected: affected.clone(),
+                                            unless_cost,
+                                            description: description.clone(),
+                                        });
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }

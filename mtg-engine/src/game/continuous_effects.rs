@@ -748,6 +748,24 @@ impl GameState {
         Ok(None)
     }
 
+    /// Public wrapper over `selector_applies_to_creature` for general-purpose
+    /// permanent matching (not just creatures with P/T).
+    ///
+    /// Used by `check_grant_upkeep_sacrifice_statics` in `steps.rs` to determine
+    /// which permanents are affected by [`crate::core::StaticAbility::GrantUpkeepSacrificeUnlessPay`]
+    /// statics (Energy Flux, Aura Flux). Delegates to the same exhaustive
+    /// `selector_applies_to_creature` implementation; the name "creature" in the
+    /// delegate is historical — the function works for any permanent type because
+    /// it checks `cache.is_artifact`, `is_land()`, etc., not just `is_creature()`.
+    pub fn affected_selector_matches_card(
+        &self,
+        selector: crate::core::AffectedSelector,
+        card_id: CardId,
+        source_id: CardId,
+    ) -> bool {
+        self.selector_applies_to_creature(&selector, card_id, source_id)
+    }
+
     /// Calculate Layer 7c continuous effects (Equipment, anthems, etc).
     ///
     /// ## CR 613.4c
@@ -1638,6 +1656,11 @@ impl GameState {
                     StaticAbility::CharacteristicDefiningPt { .. } => {
                         // CDA P/T (Serra Avatar): handled in calculate_cda_pt() called
                         // in get_pt_breakdown() layer 7a — not a ModifyPT modifier.
+                    }
+                    StaticAbility::GrantUpkeepSacrificeUnlessPay { .. } => {
+                        // Upkeep sacrifice-unless-pay trigger grant (Energy Flux, Aura Flux).
+                        // Handled at upkeep time in check_grant_upkeep_sacrifice_statics();
+                        // does not affect P/T.
                     }
                 }
             }

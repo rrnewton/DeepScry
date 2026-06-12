@@ -193,7 +193,8 @@ impl<'a> GameLoop<'a> {
             | StaticAbility::ExtraLandPlay { .. }
             | StaticAbility::LifeFloor { .. }
             | StaticAbility::DamageToExileLibrary { .. }
-            | StaticAbility::CharacteristicDefiningPt { .. } => false,
+            | StaticAbility::CharacteristicDefiningPt { .. }
+            | StaticAbility::GrantUpkeepSacrificeUnlessPay { .. } => false,
         }
     }
 
