@@ -3045,12 +3045,18 @@ impl GameState {
         })
     }
 
-    /// True if some permanent on the battlefield has a `CastWithFlash` static
-    /// controlled by `player_id` whose filter matches `card`. Used to allow
-    /// casting noncreature spells as though they had flash (e.g. Valley Floodcaller).
+    /// True if `player_id` currently has flash-casting permission for `card`.
+    ///
+    /// Two sources are checked:
+    /// 1. A battlefield permanent controlled by `player_id` with a
+    ///    `StaticAbility::CastWithFlash` whose filter matches `card`
+    ///    (e.g. Valley Floodcaller's permanent static).
+    /// 2. A temporary `PersistentEffectKind::GrantCastWithFlash` effect whose
+    ///    filter matches `card` (e.g. Teferi, Time Raveler's +1 ability grant).
     pub fn player_has_cast_with_flash(&self, player_id: PlayerId, card: &crate::core::Card) -> bool {
         use crate::core::StaticAbility;
-        self.battlefield.cards.iter().any(|&id| {
+        // Check permanent battlefield statics
+        let has_static = self.battlefield.cards.iter().any(|&id| {
             self.cards.try_get(id).is_some_and(|src| {
                 src.controller == player_id
                     && src.static_abilities.iter().any(|sa| {
@@ -3061,7 +3067,13 @@ impl GameState {
                         }
                     })
             })
-        })
+        });
+        if has_static {
+            return true;
+        }
+        // Check temporary GrantCastWithFlash persistent effects
+        self.persistent_effects
+            .player_has_grant_cast_with_flash(player_id, card)
     }
 
     /// True if some permanent on the battlefield has a `CantPlayLand` static
@@ -4646,6 +4658,8 @@ impl GameState {
                     | crate::core::Effect::CreateTokenDynamic { .. }
                     | crate::core::Effect::CreateEmblem { .. }
                     | crate::core::Effect::PlayFromGraveyard { .. }
+                    | crate::core::Effect::GrantCastWithFlash { .. }
+                    | crate::core::Effect::ReturnPermanentToHand { .. }
                     | crate::core::Effect::RepeatEach { .. }
                     | crate::core::Effect::ExtraLandPlay { .. }
                     | crate::core::Effect::TapPermanentsMatchingFilter { .. }

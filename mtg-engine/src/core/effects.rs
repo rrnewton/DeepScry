@@ -1796,6 +1796,37 @@ pub enum Effect {
         multiplier: u8,
     },
 
+    /// Grant a player the ability to cast spells matching `valid_card` as though
+    /// they had flash, until end of turn.
+    ///
+    /// Corresponds to:
+    ///   `AB$ Effect | StaticAbilities$ STPlay | Duration$ UntilYourNextTurn`
+    ///   where `SVar:STPlay:Mode$ CastWithFlash | ValidCard$ <filter>`.
+    ///
+    /// Creates a `PersistentEffectKind::GrantCastWithFlash` for the spell's
+    /// controller. The priority loop checks this alongside `StaticAbility::CastWithFlash`
+    /// on battlefield permanents.
+    GrantCastWithFlash {
+        /// Player who may cast the affected spells with flash. Placeholder until resolved.
+        player: PlayerId,
+        /// Filter for which cards may be cast with flash (e.g. `Sorcery`).
+        valid_card: TargetRestriction,
+    },
+
+    /// Return a permanent to its owner's hand (bounce).
+    ///
+    /// Corresponds to: `AB$ ChangeZone | Origin$ Battlefield | Destination$ Hand | ValidTgts$ <filter>`
+    /// Examples: Teferi −3 (artifact/creature/enchantment), Petty Theft (nonland opponent-controlled).
+    ///
+    /// `target` is `CardId::placeholder()` until targeting resolves. `restriction` encodes
+    /// the `ValidTgts$` filter so target-validation and AI target-selection can apply it.
+    ReturnPermanentToHand {
+        /// The permanent to return. Placeholder until targeting resolves.
+        target: CardId,
+        /// Filter from the card's `ValidTgts$` (e.g. Artifact,Creature,Enchantment).
+        restriction: TargetRestriction,
+    },
+
     /// Exile a permanent
     /// Example: "Exile target creature" (Swords to Plowshares)
     /// Moves a card from the battlefield to the exile zone
@@ -3014,7 +3045,10 @@ impl Effect {
             | Effect::ExtraLandPlay { .. }
             // ChooseAndRememberOneOfEach reads from remembered_players (set by RepeatEach);
             // no cast-time target selection.
-            | Effect::ChooseAndRememberOneOfEach { .. } => EffectTargetCategory::NoTargetNeeded,
+            | Effect::ChooseAndRememberOneOfEach { .. }
+            // GrantCastWithFlash grants flash-casting permission to the spell's controller;
+            // no cast-time target is selected.
+            | Effect::GrantCastWithFlash { .. } => EffectTargetCategory::NoTargetNeeded,
 
             // Effects using filters (affect multiple permanents)
             Effect::PumpAllCreatures { .. }
@@ -3052,6 +3086,7 @@ impl Effect {
             | Effect::PutCounter { .. }
             | Effect::MultiplyCounter { .. }
             | Effect::RemoveCounter { .. }
+            | Effect::ReturnPermanentToHand { .. }
             | Effect::ExilePermanent { .. }
             | Effect::AttachEquipment { .. }
             | Effect::CopyPermanent { .. }
@@ -3473,6 +3508,18 @@ pub struct Trigger {
     /// AddTrigger$ <SVar>` at load time.
     #[serde(default)]
     pub mode_gate: Option<String>,
+
+    /// Intervening-if condition: trigger only fires if the defending player has
+    /// more cards in hand than the attacking card's controller (CR 603.4).
+    ///
+    /// Corresponds to `CheckSVar$ X | SVarCompare$ GTY` where
+    /// `SVar:X:Count$ValidHand Card.DefenderCtrl` and
+    /// `SVar:Y:Count$ValidHand Card.YouOwn` on an Attacks trigger.
+    ///
+    /// Example: Robber of the Rich — "Whenever CARDNAME attacks, if defending
+    /// player has more cards in hand than you, exile the top card of their library."
+    #[serde(default)]
+    pub requires_defender_hand_gt_controller: bool,
 }
 
 impl Trigger {
@@ -3507,6 +3554,7 @@ impl Trigger {
             taps_for_mana_activator: None,
             opponent_turn_only: false,
             mode_gate: None,
+            requires_defender_hand_gt_controller: false,
         }
     }
 
@@ -3540,6 +3588,7 @@ impl Trigger {
             taps_for_mana_activator: None,
             opponent_turn_only: false,
             mode_gate: None,
+            requires_defender_hand_gt_controller: false,
         }
     }
 
@@ -3579,6 +3628,7 @@ impl Trigger {
             taps_for_mana_activator: None,
             opponent_turn_only: false,
             mode_gate: None,
+            requires_defender_hand_gt_controller: false,
         }
     }
 
@@ -3613,6 +3663,7 @@ impl Trigger {
             taps_for_mana_activator: None,
             opponent_turn_only: false,
             mode_gate: None,
+            requires_defender_hand_gt_controller: false,
         }
     }
 }

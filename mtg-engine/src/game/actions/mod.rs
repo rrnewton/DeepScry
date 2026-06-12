@@ -216,6 +216,8 @@ fn expand_all_players_effect(effect: &Effect, player_ids: &[PlayerId]) -> smallv
         | Effect::Proliferate
         | Effect::ChangeZoneAll { .. }
         | Effect::RemoveCounter { .. }
+        | Effect::GrantCastWithFlash { .. }
+        | Effect::ReturnPermanentToHand { .. }
         | Effect::ExilePermanent { .. }
         | Effect::ExileIfWouldDieThisTurn { .. }
         | Effect::SearchLibrary { .. }
@@ -354,6 +356,8 @@ fn expand_all_players_effect(effect: &Effect, player_ids: &[PlayerId]) -> smallv
             | Effect::Proliferate
             | Effect::ChangeZoneAll { .. }
             | Effect::RemoveCounter { .. }
+            | Effect::GrantCastWithFlash { .. }
+            | Effect::ReturnPermanentToHand { .. }
             | Effect::ExilePermanent { .. }
             | Effect::ExileIfWouldDieThisTurn { .. }
             | Effect::SearchLibrary { .. }
@@ -3461,6 +3465,21 @@ impl GameState {
                     effect.clone()
                 }
             }
+            Effect::ReturnPermanentToHand { target, restriction } if target.is_placeholder() => {
+                if *target_index < chosen_targets.len() {
+                    let resolved_target = chosen_targets[*target_index];
+                    *target_index += 1;
+                    // Record bounced permanent so chained SubAbilities (e.g. Teferi's draw)
+                    // can find it via last_resolved_target / Defined$ TargetedController.
+                    *last_resolved_target = Some(resolved_target);
+                    Effect::ReturnPermanentToHand {
+                        target: resolved_target,
+                        restriction: restriction.clone(),
+                    }
+                } else {
+                    effect.clone()
+                }
+            }
             Effect::ExilePermanent { target } if target.is_placeholder() => {
                 if *target_index < chosen_targets.len() {
                     let resolved_target = chosen_targets[*target_index];
@@ -4068,6 +4087,14 @@ impl GameState {
                 amount: *amount,
             },
 
+            // GrantCastWithFlash: resolve placeholder player to the spell's controller.
+            Effect::GrantCastWithFlash { player, valid_card } if player.is_placeholder() => {
+                Effect::GrantCastWithFlash {
+                    player: card_owner,
+                    valid_card: valid_card.clone(),
+                }
+            }
+
             // No resolution needed - return clone of original
             _ => effect.clone(),
         }
@@ -4356,6 +4383,7 @@ impl GameState {
                 counter_type,
                 amount,
             } => self.execute_remove_counter(*target, *counter_type, *amount)?,
+            Effect::ReturnPermanentToHand { target, .. } => self.execute_return_permanent_to_hand(*target)?,
             Effect::ExilePermanent { target } => self.execute_exile_permanent(*target)?,
             Effect::ExileIfWouldDieThisTurn { target } => self.execute_exile_if_would_die_this_turn(*target)?,
             Effect::PlayFromGraveyard {
@@ -4480,6 +4508,9 @@ impl GameState {
             Effect::GrantCantBeBlocked { target } => self.execute_grant_cant_be_blocked(*target)?,
 
             Effect::ExtraLandPlay { player, amount } => self.execute_extra_land_play(*player, *amount)?,
+            Effect::GrantCastWithFlash { player, valid_card } => {
+                self.execute_grant_cast_with_flash(*player, valid_card.clone())?
+            }
 
             Effect::Regenerate { target } => self.execute_regenerate(*target)?,
 
@@ -6434,6 +6465,33 @@ impl GameState {
                             }
                         }
                     }
+                    Effect::ReturnPermanentToHand {
+                        target: ref mut target_id,
+                        restriction: ref restr,
+                    } => {
+                        if target_id.is_placeholder() {
+                            let restr_clone = restr.clone();
+                            let mut candidates: smallvec::SmallVec<[CardId; 8]> = self
+                                .battlefield
+                                .cards
+                                .iter()
+                                .filter(|&card_id| {
+                                    if let Some(card) = self.cards.try_get(*card_id) {
+                                        card.controller != controller
+                                            && restr_clone.matches(card)
+                                            && targeting::is_legal_target(card, controller, &trigger_source_colors)
+                                    } else {
+                                        false
+                                    }
+                                })
+                                .copied()
+                                .collect();
+                            candidates.sort_by_key(|id| id.as_u32());
+                            if let Some(&chosen_id) = candidates.first() {
+                                *target_id = chosen_id;
+                            }
+                        }
+                    }
                     Effect::ExilePermanent {
                         target: ref mut target_id,
                     } => {
@@ -7727,6 +7785,7 @@ impl GameState {
             effects: SmallVec<[Effect; 2]>,
             optional: bool,
             cost: Option<crate::core::Cost>,
+            requires_defender_hand_gt_controller: bool,
         }
 
         let (controller, creature_power, triggers): (PlayerId, u8, SmallVec<[TriggerData; 1]>) = {
@@ -7742,6 +7801,7 @@ impl GameState {
                         effects: SmallVec::from_iter(trigger.effects.iter().cloned()),
                         optional: trigger.optional,
                         cost: trigger.cost.clone(),
+                        requires_defender_hand_gt_controller: trigger.requires_defender_hand_gt_controller,
                     });
                 }
             }
@@ -7751,6 +7811,35 @@ impl GameState {
 
         // Process each trigger - borrow is released, safe to call execute_effect
         for trigger_data in triggers {
+            // Evaluate intervening-if condition: defending player must have more cards in hand
+            // than the attacker's controller (CR 603.4).
+            // Robber of the Rich: CheckSVar$ X | SVarCompare$ GTY where
+            //   X = Count$ValidHand Card.DefenderCtrl (defender's hand)
+            //   Y = Count$ValidHand Card.YouOwn (controller's hand)
+            if trigger_data.requires_defender_hand_gt_controller {
+                let defending_player_opt = self.combat.get_defending_player(attacker_id);
+                let condition_met = if let Some(defending_player) = defending_player_opt {
+                    let defender_hand_size = self
+                        .get_player_zones(defending_player)
+                        .map(|zones| zones.hand.cards.len())
+                        .unwrap_or(0);
+                    let controller_hand_size = self
+                        .get_player_zones(controller)
+                        .map(|zones| zones.hand.cards.len())
+                        .unwrap_or(0);
+                    defender_hand_size > controller_hand_size
+                } else {
+                    false
+                };
+                if !condition_met {
+                    log::debug!(
+                        "Skipping attack trigger on {} — intervening-if condition not met (defender hand <= controller hand)",
+                        trigger_data.card_name
+                    );
+                    continue;
+                }
+            }
+
             // For optional triggers with costs, check if cost can be paid
             let mut sacrifice_target: Option<CardId> = None;
             let mut sacrificed_power: u8 = 0;

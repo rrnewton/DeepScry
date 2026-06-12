@@ -221,6 +221,24 @@ pub enum PersistentEffectKind {
         /// Number of extra plays granted (usually 1).
         amount: u8,
     },
+
+    /// Temporary "cast with flash" grant for matching spells, valid until end of turn.
+    ///
+    /// Created by `AB$ Effect | StaticAbilities$ STPlay | Duration$ UntilYourNextTurn`
+    /// where the SVar body is `Mode$ CastWithFlash | ValidCard$ <filter>`.
+    ///
+    /// Example: Teferi, Time Raveler's +1 — "Until your next turn, you may cast sorcery
+    /// spells as though they had flash."
+    ///
+    /// Cleanup: `CleanupCondition::EndOfTurn` (conservative approximation; the true rule
+    /// is "until your next turn", but EndOfTurn is correct for the current active player's
+    /// full-turn grant in a 2-player game: the grant expires at end of the opponent's turn).
+    GrantCastWithFlash {
+        /// Player who may cast the affected spells with flash.
+        player: PlayerId,
+        /// Filter for which cards may be cast with flash (e.g. `Sorcery`).
+        valid_card: crate::core::TargetRestriction,
+    },
 }
 
 /// Condition that triggers automatic cleanup of a persistent effect.
@@ -483,6 +501,22 @@ impl PersistentEffectStore {
     /// Check if there are no active effects.
     pub fn is_empty(&self) -> bool {
         self.effects.is_empty()
+    }
+
+    /// True if any active `GrantCastWithFlash` persistent effect allows `player`
+    /// to cast `card` as though it had flash.
+    ///
+    /// Used by the priority action-enumeration loop to offer sorceries (and other
+    /// non-instant spells) as castable at instant speed when Teferi's +1 is in
+    /// effect (or any similar temporary `CastWithFlash` grant).
+    pub fn player_has_grant_cast_with_flash(&self, player: PlayerId, card: &crate::core::Card) -> bool {
+        self.effects.iter().any(|e| {
+            if let PersistentEffectKind::GrantCastWithFlash { player: p, valid_card } = &e.kind {
+                *p == player && valid_card.matches(card)
+            } else {
+                false
+            }
+        })
     }
 
     /// Sum the number of extra land plays granted to `player` by temporary

@@ -254,6 +254,38 @@ impl GameState {
     /// `CleanupCondition::EndOfTurn`.  The permanent form (Oracle of Mul Daya,
     /// Exploration enchantment, …) is handled via `StaticAbility::ExtraLandPlay`
     /// on the battlefield card and does NOT create a persistent effect.
+    /// [`Effect::GrantCastWithFlash`]: create a `PersistentEffectKind::GrantCastWithFlash`
+    /// that lets `player` cast spells matching `valid_card` as though they had flash
+    /// until end of turn (CR 702.8a). Used by Teferi, Time Raveler's +1 ability.
+    pub(in crate::game::actions) fn execute_grant_cast_with_flash(
+        &mut self,
+        player: PlayerId,
+        valid_card: crate::core::TargetRestriction,
+    ) -> Result<()> {
+        use crate::core::{CleanupCondition, PersistentEffectKind};
+
+        let player_name = self
+            .get_player(player)
+            .map(|p| p.name.as_str().to_string())
+            .unwrap_or_else(|_| format!("Player {}", player.as_u32()));
+
+        let source = crate::core::CardId::new(0);
+
+        self.persistent_effects.add(
+            PersistentEffectKind::GrantCastWithFlash { player, valid_card },
+            source,
+            player,
+            CleanupCondition::EndOfTurn,
+        );
+
+        self.logger.gamelog(&format!(
+            "{} may cast spells as though they had flash until end of turn.",
+            player_name
+        ));
+
+        Ok(())
+    }
+
     pub(in crate::game::actions) fn execute_extra_land_play(&mut self, player: PlayerId, amount: u8) -> Result<()> {
         use crate::core::{CleanupCondition, PersistentEffectKind};
 

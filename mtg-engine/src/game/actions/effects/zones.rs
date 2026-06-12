@@ -464,6 +464,20 @@ impl GameState {
         Ok(())
     }
 
+    /// [`Effect::ReturnPermanentToHand`]: return the target permanent from the
+    /// battlefield to its owner's hand (bounce). CR 701.20.
+    /// Fizzles on a placeholder or reuse-previous sentinel.
+    pub(in crate::game::actions) fn execute_return_permanent_to_hand(&mut self, target: CardId) -> Result<()> {
+        if target.is_placeholder() || target.is_reuse_previous() {
+            return Ok(());
+        }
+        let owner = self.cards.get(target)?.owner;
+        let card_name = self.cards.get(target)?.name.to_string();
+        self.logger.gamelog(&format!("Returned {} to hand", card_name));
+        self.move_card(target, Zone::Battlefield, Zone::Hand, owner)?;
+        Ok(())
+    }
+
     /// [`Effect::ExilePermanent`]: move the target from battlefield to exile.
     /// Fizzles on an unresolved/reuse-previous sentinel.
     pub(in crate::game::actions) fn execute_exile_permanent(&mut self, target: CardId) -> Result<()> {

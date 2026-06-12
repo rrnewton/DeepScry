@@ -592,6 +592,16 @@ impl<'a> GameLoop<'a> {
                 );
                 self.game.logger.gamelog(&message);
             }
+            Effect::ReturnPermanentToHand { target, .. } => {
+                let target_name = self
+                    .game
+                    .cards
+                    .get(*target)
+                    .map(|c| c.name.as_str())
+                    .unwrap_or("Unknown");
+                let message = format!("{source_name} ({source_id}) returns {target_name} ({target}) to hand");
+                self.game.logger.gamelog(&message);
+            }
             Effect::ExilePermanent { target } => {
                 let target_name = self
                     .game
@@ -1244,6 +1254,12 @@ impl<'a> GameLoop<'a> {
                 let player_name = self.get_player_name(*player);
                 self.game.logger.gamelog(&format!(
                     "{source_name} forces {player_name} to tap {count} permanents"
+                ));
+            }
+            Effect::GrantCastWithFlash { player, .. } => {
+                let player_name = self.get_player_name(*player);
+                self.game.logger.gamelog(&format!(
+                    "{source_name} grants {player_name} flash-casting permission this turn"
                 ));
             }
         }

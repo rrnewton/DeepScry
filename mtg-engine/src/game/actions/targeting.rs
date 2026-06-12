@@ -390,6 +390,20 @@ impl GameState {
                         valid_targets.push(card_id);
                     }
                 }
+                Effect::ReturnPermanentToHand { target, restriction } if target.is_placeholder() => {
+                    // Bounce effect: return target permanent to its owner's hand.
+                    // Use the parsed TargetRestriction from ValidTgts$ to filter valid targets.
+                    // Examples: Teferi -3 (Artifact,Creature,Enchantment), Petty Theft (nonland OppCtrl).
+                    for &card_id in &self.battlefield.cards {
+                        if let Ok(target_card) = self.cards.get(card_id) {
+                            if restriction.matches(target_card)
+                                && is_legal_target(target_card, spell_owner, &spell_colors)
+                            {
+                                valid_targets.push(card_id);
+                            }
+                        }
+                    }
+                }
                 Effect::ExilePermanent { target } if target.is_placeholder() => {
                     // Exile can target any permanent (typically creatures, like Swords to Plowshares)
                     // Use cached targeting restrictions like DestroyPermanent
@@ -643,6 +657,7 @@ impl GameState {
                             | Effect::TapPermanent { .. }
                             | Effect::UntapPermanent { .. }
                             | Effect::TapOrUntapPermanent { .. }
+                            | Effect::ReturnPermanentToHand { .. }
                             | Effect::ExilePermanent { .. }
                             | Effect::Airbend { .. }
                             | Effect::Earthbend { .. }
@@ -702,7 +717,8 @@ impl GameState {
                             | Effect::RepeatEach { .. }
                             | Effect::ExtraLandPlay { .. }
                             | Effect::TapPermanentsMatchingFilter { .. }
-                            | Effect::ChooseAndRememberOneOfEach { .. } => {
+                            | Effect::ChooseAndRememberOneOfEach { .. }
+                            | Effect::GrantCastWithFlash { .. } => {
                                 // Non-Destroy/Copy modes in modal spells
                                 // TODO(mtg-30): Add handlers for targeting modes that need them
                             }
@@ -829,6 +845,7 @@ impl GameState {
                 | Effect::UntapPermanent { .. }
                 | Effect::TapOrUntapPermanent { .. }
                 | Effect::CounterSpell { .. }
+                | Effect::ReturnPermanentToHand { .. }
                 | Effect::ExilePermanent { .. }
                 // ExileIfWouldDieThisTurn rides on the parent DealDamage's
                 // target (no independent targeting); nothing to enumerate here.
@@ -869,6 +886,8 @@ impl GameState {
                 Effect::UnlessCostWrapper { .. } => {
                     // For now, skip - inner effect targeting handled when we implement full UnlessCost
                 }
+                // GrantCastWithFlash operates on the controller (no cast-time target needed).
+                Effect::GrantCastWithFlash { .. } => {}
             }
         }
 
@@ -1514,6 +1533,7 @@ impl GameState {
                 | Effect::UntapPermanent { .. }
                 | Effect::TapOrUntapPermanent { .. }
                 | Effect::CounterSpell { .. }
+                | Effect::ReturnPermanentToHand { .. }
                 | Effect::ExilePermanent { .. }
                 | Effect::ExileIfWouldDieThisTurn { .. }
                 | Effect::Airbend { .. }
@@ -1538,7 +1558,10 @@ impl GameState {
                 // PlayFromGraveyard targets a graveyard card; targeting is handled
                 // through get_valid_targets_for_ability (activated ability path).
                 // If it ever appears as a spell sub-effect, target is pre-specified.
-                | Effect::PlayFromGraveyard { .. } => {
+                | Effect::PlayFromGraveyard { .. }
+                // GrantCastWithFlash grants the controller flash-casting permission;
+                // no cast-time target needed for activated abilities either.
+                | Effect::GrantCastWithFlash { .. } => {
                     // Target already specified (guard failed: target.as_u32() != 0)
                     // PumpAllCreatures doesn't use explicit targets - it affects all matching creatures
                     // Earthbend target was handled above when target.is_placeholder()
@@ -1745,6 +1768,17 @@ impl GameState {
                 // (players are always valid targets)
                 true
             }
+            Effect::ReturnPermanentToHand { target, restriction } if target.is_placeholder() => {
+                // Bounce requires at least one permanent matching the ValidTgts$ filter.
+                let restr = restriction.clone();
+                self.battlefield.cards.iter().any(|&card_id| {
+                    if let Ok(card) = self.cards.get(card_id) {
+                        restr.matches(card) && is_legal_target(card, spell_owner, source_colors)
+                    } else {
+                        false
+                    }
+                })
+            }
             Effect::ExilePermanent { target } if target.is_placeholder() => {
                 // Exile requires a permanent target
                 self.battlefield.cards.iter().any(|&card_id| {
@@ -1844,7 +1878,9 @@ impl GameState {
             // TapPermanentsMatchingFilter uses a filter; no cast-time permanent target needed.
             | Effect::TapPermanentsMatchingFilter { .. }
             // ChooseAndRememberOneOfEach reads from remembered_players; no cast-time target.
-            | Effect::ChooseAndRememberOneOfEach { .. } => true, // Filter-based / no-target effects
+            | Effect::ChooseAndRememberOneOfEach { .. }
+            // GrantCastWithFlash grants the controller flash permission — no permanent target needed.
+            | Effect::GrantCastWithFlash { .. } => true, // Filter-based / no-target effects
 
             // ===== EXHAUSTIVE EFFECT HANDLING =====
             // Effects with pre-specified targets (guard failed: target.as_u32() != 0)
@@ -1854,6 +1890,7 @@ impl GameState {
             | Effect::DealDamageDivided { .. }
             | Effect::DealDamageDynamic { .. } => true, // TargetRef::Player/Permanent already specified
             Effect::DestroyPermanent { .. }
+            | Effect::ReturnPermanentToHand { .. }
             | Effect::PumpCreature { .. }
             | Effect::DebuffCreature { .. }
             | Effect::PumpCreatureVariable { .. }

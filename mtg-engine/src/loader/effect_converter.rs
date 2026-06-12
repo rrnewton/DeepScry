@@ -475,6 +475,21 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
                     source: CardId::new(0), // Placeholder — resolved in check_death_triggers
                 });
             }
+            // Bounce: return a permanent from battlefield to its owner's hand.
+            // Covers Teferi −3, Petty Theft, and any other
+            // `Origin$ Battlefield | Destination$ Hand | ValidTgts$ <filter>` ability.
+            // TargetMin$ 0 means the target is optional (up-to-one); we emit a
+            // placeholder — resolution fizzles cleanly when no legal target exists.
+            if params.get("Origin") == Some("Battlefield") && params.get("Destination") == Some("Hand") {
+                let restriction = params
+                    .get("ValidTgts")
+                    .map(TargetRestriction::parse)
+                    .unwrap_or_else(TargetRestriction::any);
+                return Some(Effect::ReturnPermanentToHand {
+                    target: CardId::new(0), // Placeholder — resolved at targeting time
+                    restriction,
+                });
+            }
             // Check for exile effects: Origin$ Battlefield + Destination$ Exile
             if params.get("Origin") == Some("Battlefield") && params.get("Destination") == Some("Exile") {
                 Some(Effect::ExilePermanent {
@@ -2348,6 +2363,21 @@ pub fn params_to_effect_with_svars(params: &AbilityParams, svars: &HashMap<Strin
                                     static_ability_name
                                 );
                             }
+                        }
+                        StaticAbilityMode::CastWithFlash => {
+                            // Mode$ CastWithFlash: grant the controller flash-casting
+                            // permission for the matching cards until end of turn.
+                            // Example: Teferi, Time Raveler +1:
+                            //   SVar:STPlay:Mode$ CastWithFlash | ValidCard$ Sorcery
+                            let valid_card = def
+                                .params
+                                .get("ValidCard")
+                                .map(|v| crate::core::TargetRestriction::parse(v.as_str()))
+                                .unwrap_or_else(crate::core::TargetRestriction::any);
+                            return Some(Effect::GrantCastWithFlash {
+                                player: PlayerId::new(0), // placeholder → resolved to controller at runtime
+                                valid_card,
+                            });
                         }
                         // Trigger modes are handled by parse_triggers(), not effect conversion
                         StaticAbilityMode::MustAttack => {

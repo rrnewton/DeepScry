@@ -3415,8 +3415,68 @@ impl CardDefinition {
                             // CardId::new(0) is placeholder - resolved at trigger execution time
                             effects.push(Effect::UntapPermanent { target: CardId::new(0) });
                         }
+
+                        // DB$ Dig | DestinationZone$ Exile | Defined$ TriggeredDefendingPlayer —
+                        // exile top card(s) of the DEFENDING player's library on attack.
+                        // Robber of the Rich: "exile the top card of their library"
+                        //
+                        // Only handle the specific exile-to-opponent shape (DestinationZone$ Exile
+                        // + Defined$ TriggeredDefendingPlayer or Opponent). Self-Dig variants like
+                        // Master Piandao (no DestinationZone$, targets own library) are NOT
+                        // handled here and require dedicated future support.
+                        if svar_params.api_type == ApiType::DigMultiple
+                            && svar_params.get("DestinationZone") == Some("Exile")
+                            && matches!(
+                                svar_params.get("Defined"),
+                                Some("TriggeredDefendingPlayer" | "Opponent")
+                            )
+                        {
+                            let dig_count = svar_params
+                                .get("DigNum")
+                                .and_then(|s| s.parse::<u8>().ok())
+                                .unwrap_or(1);
+                            let change_all = svar_params.get("ChangeNum") == Some("All");
+                            let change_count = if change_all {
+                                dig_count
+                            } else {
+                                svar_params
+                                    .get("ChangeNum")
+                                    .and_then(|s| s.parse::<u8>().ok())
+                                    .unwrap_or(1)
+                            };
+                            effects.push(Effect::Dig {
+                                dig_count,
+                                change_count,
+                                change_all,
+                                destination: crate::zones::Zone::Exile,
+                                rest_destination: crate::zones::Zone::Library,
+                                may_play: false,
+                                may_play_without_mana_cost: false,
+                                target_self: false, // always targets defending player's library
+                                optional: false,
+                                rest_random: false,
+                                reveal: false,
+                                change_valid: smallvec::SmallVec::new(),
+                            });
+                        }
                     }
                 }
+
+                // Detect intervening-if condition: CheckSVar$ X | SVarCompare$ GTY where
+                // SVar:X:Count$ValidHand Card.DefenderCtrl and SVar:Y:Count$ValidHand Card.YouOwn
+                // This means "fires only if defending player has more cards in hand than controller"
+                let requires_defender_hand_gt_controller = {
+                    let check_svar = params.get("CheckSVar").map(|s| s.as_str());
+                    let svar_compare = params.get("SVarCompare").map(|s| s.as_str());
+                    if check_svar == Some("X") && svar_compare == Some("GTY") {
+                        let x_def = self.svars.get("X").map(|s| s.as_str());
+                        let y_def = self.svars.get("Y").map(|s| s.as_str());
+                        x_def == Some("Count$ValidHand Card.DefenderCtrl")
+                            && y_def == Some("Count$ValidHand Card.YouOwn")
+                    } else {
+                        false
+                    }
+                };
 
                 // Extract description from TriggerDescription$ if available
                 let description = params
@@ -3429,7 +3489,7 @@ impl CardDefinition {
                     description.to_lowercase().contains("you may") || params.contains_key("OptionalDecider");
 
                 // Create appropriate trigger type based on optional and cost
-                let trigger = if is_optional {
+                let mut trigger = if is_optional {
                     if let Some(cost) = trigger_cost {
                         Trigger::new_optional_with_cost(TriggerEvent::Attacks, effects, description, cost)
                     } else {
@@ -3438,6 +3498,7 @@ impl CardDefinition {
                 } else {
                     Trigger::new(TriggerEvent::Attacks, effects, description)
                 };
+                trigger.requires_defender_hand_gt_controller = requires_defender_hand_gt_controller;
 
                 triggers.push(trigger);
             }

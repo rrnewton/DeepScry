@@ -713,6 +713,7 @@ impl HeuristicController {
                     | crate::core::Effect::Loot { .. }
                     | crate::core::Effect::Dig { .. }
                     | crate::core::Effect::CopyPermanent { .. }
+                    | crate::core::Effect::ReturnPermanentToHand { .. }
                     | crate::core::Effect::ExilePermanent { .. }
                     | crate::core::Effect::Balance { .. }
                     | crate::core::Effect::AddTurn { .. }

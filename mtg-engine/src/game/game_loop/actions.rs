@@ -1028,7 +1028,10 @@ impl<'a> GameLoop<'a> {
                 | PersistentEffectKind::Suspend { .. }
                 | PersistentEffectKind::CantBeBlocked { .. }
                 // ExtraLandPlay is queried via can_play_land_effective(), not here
-                | PersistentEffectKind::ExtraLandPlay { .. } => {}
+                | PersistentEffectKind::ExtraLandPlay { .. }
+                // GrantCastWithFlash is queried via player_has_cast_with_flash(), not here.
+                // It modifies the timing of already-offered spells; no new abilities to offer.
+                | PersistentEffectKind::GrantCastWithFlash { .. } => {}
             }
         }
     }
@@ -1713,6 +1716,8 @@ impl<'a> GameLoop<'a> {
                 Effect::TapPermanent { target } if target.is_placeholder() => true,
                 // UntapPermanent with placeholder target
                 Effect::UntapPermanent { target } if target.is_placeholder() => true,
+                // ReturnPermanentToHand with placeholder target (bounce)
+                Effect::ReturnPermanentToHand { target, .. } if target.is_placeholder() => true,
                 // ExilePermanent with placeholder target
                 Effect::ExilePermanent { target } if target.is_placeholder() => true,
                 // CopyPermanent with placeholder target
