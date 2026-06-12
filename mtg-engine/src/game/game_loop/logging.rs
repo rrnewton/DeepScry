@@ -1196,6 +1196,14 @@ impl<'a> GameLoop<'a> {
                 // duplicate log line needed here.
                 log::debug!(target: "emblem", "CreateEmblem '{}' logged by execute_create_emblem", emblem_name);
             }
+            Effect::RearrangeTopOfLibrary { .. } => {
+                // The gamelog line ("P? looks at the top N cards ...") is emitted
+                // inside execute_rearrange_top_of_library. Nothing to surface here.
+            }
+            Effect::SkipUntapStep { .. } => {
+                // The gamelog line ("P? will skip their next untap step") is emitted
+                // inside execute_skip_untap_step. Nothing to surface here.
+            }
         }
     }
 }

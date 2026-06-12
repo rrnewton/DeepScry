@@ -694,6 +694,8 @@ impl GameState {
                             | Effect::PreventAllCombatDamageThisTurn { .. }
                             | Effect::ExileIfWouldDieThisTurn { .. }
                             | Effect::ConditionalSelfCounter { .. }
+                            | Effect::RearrangeTopOfLibrary { .. }
+                            | Effect::SkipUntapStep { .. }
                             | Effect::CreateTokenDynamic { .. }
                             | Effect::CreateEmblem { .. }
                             | Effect::PlayFromGraveyard { .. } => {
@@ -762,6 +764,8 @@ impl GameState {
                 | Effect::ReturnSelfAsEnchantment { .. }
                 | Effect::PreventAllCombatDamageThisTurn { .. }
                 | Effect::ConditionalSelfCounter { .. }
+                | Effect::RearrangeTopOfLibrary { .. }
+                | Effect::SkipUntapStep { .. }
                 | Effect::CreateTokenDynamic { .. }
                 | Effect::CreateEmblem { .. }
                 // PlayFromGraveyard is triggered from a planeswalker activated ability;
@@ -781,6 +785,9 @@ impl GameState {
                     // ReturnSelfAsEnchantment: death trigger self-return, no cast-time targeting
                     // PreventAllCombatDamageThisTurn: reuses last_resolved_target, no cast-time target
                     // PlayFromGraveyard: targeting via get_valid_targets_for_ability (activated ability path)
+                    // RearrangeTopOfLibrary: controller looks at own library top, no cast-time targeting
+                    // SkipUntapStep: opponent auto-targeted (resolved from ValidTgts$ during init), no
+                    //   separate cast-time targeting step needed
                 }
                 // Effects with already-specified targets (non-zero target field)
                 // The handlers above only match when target.is_placeholder()
@@ -1383,6 +1390,8 @@ impl GameState {
                 | Effect::ReturnSelfAsEnchantment { .. }
                 | Effect::PreventAllCombatDamageThisTurn { .. }
                 | Effect::ConditionalSelfCounter { .. }
+                | Effect::RearrangeTopOfLibrary { .. }
+                | Effect::SkipUntapStep { .. }
                 | Effect::UnlessCostWrapper { .. }
                 | Effect::CreateTokenDynamic { .. }
                 | Effect::CreateEmblem { .. } => {
@@ -1400,6 +1409,8 @@ impl GameState {
                     // ReturnGraveyardCardToHand: AI picks matching card, no cast-time targeting
                     // ReturnSelfAsEnchantment: death trigger self-return, no cast-time targeting
                     // PreventAllCombatDamageThisTurn: reuses UntapPermanent's last_resolved_target
+                    // RearrangeTopOfLibrary: controller looks at own library top, no targeting
+                    // SkipUntapStep: opponent auto-targeted (ValidTgts$ resolved at init)
                 }
                 Effect::PlayFromGraveyard {
                     target,
@@ -1773,6 +1784,8 @@ impl GameState {
             | Effect::ReturnSelfAsEnchantment { .. }
             | Effect::PreventAllCombatDamageThisTurn { .. }
             | Effect::ConditionalSelfCounter { .. }
+            | Effect::RearrangeTopOfLibrary { .. }
+            | Effect::SkipUntapStep { .. }
             | Effect::CreateTokenDynamic { .. }
             | Effect::CreateEmblem { .. }
             // ExileIfWouldDieThisTurn reuses the parent DealDamage's target, so

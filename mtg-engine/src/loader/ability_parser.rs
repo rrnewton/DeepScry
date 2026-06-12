@@ -278,6 +278,23 @@ pub enum ApiType {
     ///   NumPhases$ 1 - number of extra combat phases
     AddPhase,
 
+    // === Library Manipulation ===
+    /// Look at the top N cards of a player's library, then put them back in any order.
+    /// Example: Sensei's Divining Top — "Look at the top three cards of your library,
+    ///   then put them back in any order."
+    /// Parameters:
+    ///   Defined$ You - who looks (usual: self)
+    ///   NumCards$ 3  - how many cards to look at (default 3)
+    RearrangeTopOfLibrary,
+
+    // === Step/Phase Skipping ===
+    /// Cause a player to skip their next untap step (CR 502.1).
+    /// Example: Yosei, the Morning Star — "target player skips their next untap step"
+    /// Parameters:
+    ///   ValidTgts$ Player / Defined$ - who skips
+    ///   Step$ Untap                  - which step to skip (only Untap handled so far)
+    SkipPhase,
+
     // === Avatar Set Mechanics ===
     /// Airbend: Exile target, owner may cast it for {2} from exile.
     /// CR 701.65b
@@ -428,6 +445,12 @@ impl ApiType {
             // Extra Phases
             "AddPhase" => Self::AddPhase,
 
+            // Library Manipulation
+            "RearrangeTopOfLibrary" => Self::RearrangeTopOfLibrary,
+
+            // Step/Phase Skipping
+            "SkipPhase" => Self::SkipPhase,
+
             // Avatar Set Mechanics
             "Airbend" => Self::Airbend,
             "Earthbend" => Self::Earthbend,
@@ -521,6 +544,8 @@ impl ApiType {
             Self::FlipACoin => "FlipACoin",
             Self::Balance => "Balance",
             Self::AddPhase => "AddPhase",
+            Self::RearrangeTopOfLibrary => "RearrangeTopOfLibrary",
+            Self::SkipPhase => "SkipPhase",
             Self::Airbend => "Airbend",
             Self::Earthbend => "Earthbend",
             Self::Charm => "Charm",

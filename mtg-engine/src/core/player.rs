@@ -76,6 +76,14 @@ pub struct Player {
     /// Number of spells cast this turn (for storm-like effects and spell counting)
     #[serde(default)]
     pub spells_cast_this_turn: u8,
+
+    /// When true, this player's next untap step is skipped entirely (CR 502.1).
+    ///
+    /// Set by `Effect::SkipUntapStep` (e.g. Yosei, the Morning Star die trigger).
+    /// Cleared — and applied — at the start of `untap_step` the first time the
+    /// player reaches their untap step after the flag is set.
+    #[serde(default)]
+    pub skip_untap_next_turn: bool,
 }
 
 impl Player {
@@ -97,6 +105,7 @@ impl Player {
             damage_prevention: 0,
             source_prevention_shields: Vec::new(),
             spells_cast_this_turn: 0,
+            skip_untap_next_turn: false,
         }
     }
 

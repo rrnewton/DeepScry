@@ -2360,4 +2360,138 @@ mod tests {
             rewind_to_log_len(&mut game, baseline);
         }
     }
+
+    /// B2 Sensei's Divining Top — `RearrangeTopOfLibrary` should resolve
+    /// without emitting a warning and should leave the library order unchanged
+    /// (which is a valid choice per CR 701.22: "put them back in any order").
+    ///
+    /// Before the fix: resolved as `Effect::Unimplemented`, producing 15 k+
+    /// "WARNING: Effect 'RearrangeTopOfLibrary' is not yet implemented" gamelog
+    /// entries in 2005 World Championship games (mtg-910 B2).
+    #[test]
+    fn test_rearrange_top_of_library_no_warning() {
+        use crate::core::Effect;
+        use crate::game::state::GameState;
+
+        let mut game = GameState::new_two_player("Alice".to_string(), "Bob".to_string(), 20);
+        let alice = game.players[0].id;
+
+        // Put three cards on top of Alice's library.
+        let c1 = game.next_card_id();
+        let c2 = game.next_card_id();
+        let c3 = game.next_card_id();
+        for (id, name) in [(c1, "CardA"), (c2, "CardB"), (c3, "CardC")] {
+            game.cards
+                .insert(id, crate::core::Card::new(id, name.to_string(), alice));
+            if let Some(zones) = game.get_player_zones_mut(alice) {
+                zones.library.cards.push(id);
+            }
+        }
+
+        // Capture the library order before resolution.
+        let order_before: Vec<_> = game
+            .get_player_zones(alice)
+            .map(|z| z.library.cards.clone())
+            .unwrap_or_default();
+
+        // Execute RearrangeTopOfLibrary via the main dispatcher (as in real play).
+        game.execute_effect(&Effect::RearrangeTopOfLibrary {
+            player: alice,
+            count: 3,
+        })
+        .unwrap();
+
+        // Library order must be unchanged (valid AI choice).
+        let order_after: Vec<_> = game
+            .get_player_zones(alice)
+            .map(|z| z.library.cards.clone())
+            .unwrap_or_default();
+        assert_eq!(
+            order_before, order_after,
+            "Library order must be preserved by the AI RearrangeTopOfLibrary path"
+        );
+
+        // The log must NOT contain the "Unimplemented" warning.
+        let log_text: String = game
+            .logger
+            .logs()
+            .iter()
+            .map(|l| l.message.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            !log_text.contains("not yet implemented"),
+            "RearrangeTopOfLibrary must not emit an Unimplemented warning; got log:\n{log_text}"
+        );
+
+        // Confirm the Effect enum itself is parsed correctly (converter).
+        let params = crate::loader::ability_parser::AbilityParams::parse(
+            "A:AB$ RearrangeTopOfLibrary | Cost$ 1 | Defined$ You | NumCards$ 3",
+        )
+        .unwrap();
+        let eff = crate::loader::effect_converter::params_to_effect(&params).unwrap();
+        assert!(
+            matches!(eff, Effect::RearrangeTopOfLibrary { count: 3, .. }),
+            "Converter must produce RearrangeTopOfLibrary{{count:3}}, got {eff:?}"
+        );
+    }
+
+    /// B4 Yosei, the Morning Star — `SkipUntapStep` should cause the target
+    /// player's permanents to NOT untap on their next untap step.
+    ///
+    /// Before the fix: `SkipPhase | Step$ Untap` resolved as
+    /// `Effect::Unimplemented` (no SkipPhase handling existed) so the untap-
+    /// skip did nothing (mtg-910 B4).
+    ///
+    /// MTG rules: CR 502.1 — "Skip the untap step" is a continuous effect that
+    /// replaces the affected player's untap step with nothing (CR 614.11).
+    #[test]
+    fn test_skip_untap_step_yosei() {
+        use crate::game::state::GameState;
+        use crate::game::ZeroController;
+
+        let mut game = GameState::new_two_player("Alice".to_string(), "Bob".to_string(), 20);
+        let (alice, bob) = {
+            let mut it = game.players.iter().map(|p| p.id);
+            (it.next().unwrap(), it.next().unwrap())
+        };
+
+        // Put a tapped land under Bob's control on the battlefield.
+        let land_id = game.next_card_id();
+        let mut land = crate::core::Card::new(land_id, "Forest".to_string(), bob);
+        land.types.push(crate::core::CardType::Land);
+        land.tap();
+        game.cards.insert(land_id, land);
+        game.battlefield.add(land_id);
+
+        // Apply the SkipUntapStep effect on Bob (Yosei dies targeting Bob).
+        game.execute_effect(&crate::core::Effect::SkipUntapStep { player: bob })
+            .unwrap();
+        assert!(
+            game.players.iter().find(|p| p.id == bob).unwrap().skip_untap_next_turn,
+            "Bob's skip_untap_next_turn flag must be set after execute_skip_untap_step"
+        );
+
+        // Advance turn to Bob's turn so the untap_step fires for Bob.
+        game.turn.active_player = bob;
+        {
+            let mut game_loop = GameLoop::new(&mut game);
+            let mut controller1 = ZeroController::new(alice);
+            let mut controller2 = ZeroController::new(bob);
+            game_loop.untap_step(&mut controller1, &mut controller2).unwrap();
+        }
+
+        // The land should remain TAPPED — Bob's untap step was skipped.
+        let land_after = game.cards.get(land_id).unwrap();
+        assert!(
+            land_after.tapped,
+            "Bob's land must remain tapped after SkipUntapStep (untap step was skipped)"
+        );
+
+        // The flag must be consumed (cleared) after being applied.
+        assert!(
+            !game.players.iter().find(|p| p.id == bob).unwrap().skip_untap_next_turn,
+            "skip_untap_next_turn flag must be cleared after the untap step consumed it"
+        );
+    }
 }

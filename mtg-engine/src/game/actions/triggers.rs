@@ -598,6 +598,30 @@ pub fn resolve_effect_placeholder(effect: &Effect, ctx: &TriggerContext) -> Effe
         },
 
         // =========================================================================
+        // RearrangeTopOfLibrary: resolve controller/opponent placeholder.
+        // Sensei's Divining Top: `Defined$ You` → placeholder → controller.
+        // =========================================================================
+        Effect::RearrangeTopOfLibrary { player, count } if player.is_placeholder() => Effect::RearrangeTopOfLibrary {
+            player: ctx.controller,
+            count: *count,
+        },
+        Effect::RearrangeTopOfLibrary { player, count } if player.is_target_opponent() => {
+            Effect::RearrangeTopOfLibrary {
+                player: ctx.opponent.unwrap_or(ctx.controller),
+                count: *count,
+            }
+        }
+
+        // =========================================================================
+        // SkipUntapStep: resolve the ValidTgts$ Player → opponent sentinel.
+        // Yosei, the Morning Star die trigger targets the opponent.
+        // =========================================================================
+        Effect::SkipUntapStep { player } if player.is_placeholder() => Effect::SkipUntapStep { player: ctx.controller },
+        Effect::SkipUntapStep { player } if player.is_target_opponent() => Effect::SkipUntapStep {
+            player: ctx.opponent.unwrap_or(ctx.controller),
+        },
+
+        // =========================================================================
         // Default: return clone unchanged
         // =========================================================================
         other => other.clone(),

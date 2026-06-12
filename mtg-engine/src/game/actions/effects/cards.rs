@@ -55,6 +55,51 @@ impl GameState {
         Ok(())
     }
 
+    /// [`Effect::RearrangeTopOfLibrary`]: look at the top `count` cards of
+    /// `player`'s library, then put them back in any order (CR 701.22 "look
+    /// at").
+    ///
+    /// **AI path**: the current library order is kept unchanged. Putting cards
+    /// back in the same order is always a legal choice under the rules
+    /// ("you may arrange them in any order" does not require re-ordering).
+    /// The main benefit is that the ability resolves without emitting an
+    /// `Unimplemented` warning, eliminating 15 k+ spurious warnings in the
+    /// 2005 World Championship game set (Sensei's Divining Top — mtg-910 B2).
+    ///
+    /// **MTG rules**: CR 701.22a — "To 'look at' a card, you look at it
+    /// without revealing it." The cards stay on top of the library in the
+    /// chosen order; this executor leaves them in the same order, which is
+    /// one valid outcome of the choice.
+    pub(in crate::game::actions) fn execute_rearrange_top_of_library(
+        &mut self,
+        player: PlayerId,
+        count: u8,
+    ) -> Result<()> {
+        let top_count = {
+            let lib_len = self
+                .get_player_zones(player)
+                .map(|z| z.library.cards.len())
+                .unwrap_or(0);
+            (count as usize).min(lib_len)
+        };
+
+        if top_count == 0 {
+            return Ok(());
+        }
+
+        let p = player.as_u32() + 1;
+        self.logger.gamelog(&format!(
+            "P{} looks at the top {} card{} of their library, puts them back in the same order",
+            p,
+            top_count,
+            if top_count == 1 { "" } else { "s" }
+        ));
+
+        // The library order is not changed (valid choice per CR 701.22).
+        // No undo log entry needed — nothing was mutated.
+        Ok(())
+    }
+
     /// [`Effect::Scry`] — fallback path (CR 701.18). The controller-dispatched
     /// path lives in `priority.rs`; reaching execute_effect means there is no
     /// controller access, so default to keeping every revealed card on top in

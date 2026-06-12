@@ -2528,6 +2528,32 @@ pub enum Effect {
         max_mana_value: Option<u8>,
     },
 
+    /// Look at the top N cards of `player`'s library, then put them back in any
+    /// order (CR 701.22 — "look at"). In the AI-only path the order is
+    /// unchanged (keeping the current top order is always a legal choice per
+    /// the rules); the important effect is that the ability resolves without
+    /// emitting an `Unimplemented` warning.
+    ///
+    /// Sensei's Divining Top: `A:AB$ RearrangeTopOfLibrary | Defined$ You | NumCards$ 3`
+    RearrangeTopOfLibrary {
+        /// The player who looks at (and re-orders) the top of their library.
+        player: crate::core::PlayerId,
+        /// Number of cards to look at (default 3).
+        count: u8,
+    },
+
+    /// Cause `player` to skip their next untap step (CR 502.1).
+    ///
+    /// The skip flag is set on the player's `Player::skip_untap_next_turn` field
+    /// and cleared by the `untap_step` handler the next time that player
+    /// reaches their untap step.
+    ///
+    /// Yosei, the Morning Star: `DB$ SkipPhase | ValidTgts$ Player | Step$ Untap`
+    SkipUntapStep {
+        /// The player whose next untap step will be skipped.
+        player: crate::core::PlayerId,
+    },
+
     /// Placeholder for a recognized but unimplemented effect
     /// Produced instead of silently dropping the effect, so that spell resolution
     /// can warn/error instead of silently no-op'ing.
@@ -2768,6 +2794,8 @@ impl Effect {
             | Effect::SacrificeSelf { .. }
             | Effect::ReturnSelfAsEnchantment { .. }
             | Effect::CreateEmblem { .. }
+            | Effect::RearrangeTopOfLibrary { .. }
+            | Effect::SkipUntapStep { .. }
             | Effect::Unimplemented { .. }
             | Effect::NoOp { .. } => EffectTargetCategory::NoTargetNeeded,
 

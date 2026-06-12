@@ -107,6 +107,8 @@ fn expand_all_players_effect(effect: &Effect, player_ids: &[PlayerId]) -> smallv
         | Effect::ReturnSelfAsEnchantment { .. }
         | Effect::PreventAllCombatDamageThisTurn { .. }
         | Effect::ConditionalSelfCounter { .. }
+        | Effect::RearrangeTopOfLibrary { .. }
+        | Effect::SkipUntapStep { .. }
         | Effect::Unimplemented { .. }
         | Effect::NoOp { .. }
         | Effect::GainLifeDynamic { .. }
@@ -239,6 +241,8 @@ fn expand_all_players_effect(effect: &Effect, player_ids: &[PlayerId]) -> smallv
             | Effect::ReturnSelfAsEnchantment { .. }
             | Effect::PreventAllCombatDamageThisTurn { .. }
             | Effect::ConditionalSelfCounter { .. }
+            | Effect::RearrangeTopOfLibrary { .. }
+            | Effect::SkipUntapStep { .. }
             | Effect::Unimplemented { .. }
             | Effect::NoOp { .. }
             | Effect::GainLifeDynamic { .. }
@@ -3284,6 +3288,18 @@ impl GameState {
                 player: card_owner,
                 count: *count,
             },
+            // RearrangeTopOfLibrary — Defined$ You → controller (card_owner).
+            Effect::RearrangeTopOfLibrary { player, count } if player.is_placeholder() => {
+                Effect::RearrangeTopOfLibrary {
+                    player: card_owner,
+                    count: *count,
+                }
+            }
+            // SkipUntapStep — ValidTgts$ Player → opponent; Defined$ You → self.
+            Effect::SkipUntapStep { player } if player.is_placeholder() => Effect::SkipUntapStep { player: card_owner },
+            Effect::SkipUntapStep { player } if player.is_target_opponent() => Effect::SkipUntapStep {
+                player: opponent_id.unwrap_or(card_owner),
+            },
             Effect::AddTurn { player, num_turns } if player.is_placeholder() => Effect::AddTurn {
                 player: card_owner,
                 num_turns: *num_turns,
@@ -4081,6 +4097,10 @@ impl GameState {
 
             Effect::AddPhase { count } => self.execute_add_phase(*count)?,
             Effect::Clone { .. } => self.execute_clone_fallback()?,
+            Effect::RearrangeTopOfLibrary { player, count } => {
+                self.execute_rearrange_top_of_library(*player, *count)?
+            }
+            Effect::SkipUntapStep { player } => self.execute_skip_untap_step(*player)?,
             Effect::Unimplemented { api_type } => self.execute_unimplemented(api_type)?,
             Effect::NoOp { api_type } => self.execute_noop(api_type)?,
 

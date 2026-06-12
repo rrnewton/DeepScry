@@ -61,6 +61,37 @@ impl<'a> GameLoop<'a> {
             return Ok(None);
         }
 
+        // Yosei / SkipUntapStep: the active player's `skip_untap_next_turn`
+        // flag was set by a `Effect::SkipUntapStep` effect (CR 502.1 —
+        // "skip their next untap step"). Consume the flag now: clear it,
+        // log it for undo, log for the gamelog, and return early without
+        // untapping anything (the entire untap step is skipped for this
+        // player's permanents).
+        let player_skips_this_untap = self
+            .game
+            .players
+            .iter()
+            .find(|p| p.id == active_player)
+            .is_some_and(|p| p.skip_untap_next_turn);
+        if player_skips_this_untap {
+            // Clear the flag (undo-logged so a mid-turn rewind restores it).
+            let prior_log_size = self.game.logger.log_count();
+            if let Some(player) = self.game.players.iter_mut().find(|p| p.id == active_player) {
+                player.skip_untap_next_turn = false;
+            }
+            self.game.undo_log.log(
+                crate::undo::GameAction::SetSkipUntapNextTurn {
+                    player_id: active_player,
+                    old_value: true,
+                    new_value: false,
+                },
+                prior_log_size,
+            );
+            let player_name = self.get_player_name(active_player);
+            self.log_normal(&format!("{} skips their untap step", player_name));
+            return Ok(None);
+        }
+
         // Winter Orb (CR 502 untap-restriction): while an UNTAPPED permanent
         // with the `UntapAdjust:Land:N` lock is on the battlefield, a player may
         // untap at most N lands during their untap step. The lock is re-derived

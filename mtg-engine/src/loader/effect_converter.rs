@@ -1982,6 +1982,36 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
             api_type: "StoreSVar".to_string(),
         }),
 
+        // `RearrangeTopOfLibrary` — look at the top N cards, put them back in any
+        // order (CR 701.22). In the AI path we keep the same order (always legal).
+        // Sensei's Divining Top: `A:AB$ RearrangeTopOfLibrary | Defined$ You | NumCards$ 3`
+        ApiType::RearrangeTopOfLibrary => {
+            // `Defined$ You` → controller (placeholder); other Defined$ values
+            // also resolve to the controller for this ability type.
+            let player = match params.get("Defined") {
+                Some("You") | None => PlayerId::placeholder(),
+                // Opponent-targeted variant (not currently used by any card we support)
+                _ => PlayerId::target_opponent(),
+            };
+            let count = params.get_u8("NumCards").unwrap_or(3);
+            Some(Effect::RearrangeTopOfLibrary { player, count })
+        }
+
+        // `SkipPhase` with `Step$ Untap` — cause target player to skip their
+        // next untap step (CR 502.1). Yosei, the Morning Star die trigger.
+        // `DB$ SkipPhase | ValidTgts$ Player | Step$ Untap | IsCurse$ True`
+        // Only the Untap step variant is handled; Phase$ (BeginCombat) falls
+        // through to Unimplemented (emits a warning but does not crash).
+        ApiType::SkipPhase if params.get("Step") == Some("Untap") => {
+            // ValidTgts$ Player → opponent (AI auto-target); Defined$ You → self.
+            let player = match (params.get("Defined"), params.get("ValidTgts")) {
+                (Some("You"), _) => PlayerId::placeholder(),
+                (_, Some(vt)) if vt.contains("Player") => PlayerId::target_opponent(),
+                _ => PlayerId::placeholder(),
+            };
+            Some(Effect::SkipUntapStep { player })
+        }
+
         // Recognized but not yet implemented API types produce an Unimplemented effect
         // so that spell resolution can warn instead of silently no-op'ing
         _ => {
@@ -4221,9 +4251,9 @@ Oracle:Target creature gets +3/+1 until end of turn. Create a Clue token.
 
     #[test]
     fn test_unimplemented_effect_produces_variant() {
-        // Unknown effect types should produce Unimplemented, not None
-        // Use a truly unimplemented API type (not LoseLife, which is now implemented)
-        let params = AbilityParams::parse("A:SP$ RearrangeTopOfLibrary | NumCards$ 3").unwrap();
+        // Unknown effect types should produce Unimplemented, not None.
+        // Use a truly unrecognized API type string (not one that is now implemented).
+        let params = AbilityParams::parse("A:SP$ UnknownFutureApi | SomeParam$ 3").unwrap();
         let effect = params_to_effect(&params);
         assert!(
             effect.is_some(),
@@ -4232,9 +4262,37 @@ Oracle:Target creature gets +3/+1 until end of turn. Create a Clue token.
 
         match effect.unwrap() {
             Effect::Unimplemented { api_type } => {
-                assert_eq!(api_type, "RearrangeTopOfLibrary", "Should record the API type name");
+                assert_eq!(api_type, "UnknownFutureApi", "Should record the API type name");
             }
             _ => panic!("Expected Unimplemented effect"),
+        }
+    }
+
+    #[test]
+    fn test_rearrange_top_of_library_converts() {
+        // RearrangeTopOfLibrary (Sensei's Divining Top) should now produce the
+        // concrete Effect::RearrangeTopOfLibrary, not Effect::Unimplemented.
+        let params =
+            AbilityParams::parse("A:AB$ RearrangeTopOfLibrary | Cost$ 1 | Defined$ You | NumCards$ 3").unwrap();
+        let effect = params_to_effect(&params);
+        assert!(effect.is_some(), "RearrangeTopOfLibrary must produce Some(effect)");
+        match effect.unwrap() {
+            Effect::RearrangeTopOfLibrary { count, .. } => {
+                assert_eq!(count, 3, "NumCards$ 3 should produce count = 3");
+            }
+            other => panic!("Expected RearrangeTopOfLibrary, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_skip_phase_untap_converts() {
+        // SkipPhase with Step$ Untap (Yosei trigger) should produce Effect::SkipUntapStep.
+        let params = AbilityParams::parse("A:DB$ SkipPhase | ValidTgts$ Player | Step$ Untap | IsCurse$ True").unwrap();
+        let effect = params_to_effect(&params);
+        assert!(effect.is_some(), "SkipPhase/Untap must produce Some(effect)");
+        match effect.unwrap() {
+            Effect::SkipUntapStep { .. } => {}
+            other => panic!("Expected SkipUntapStep, got {:?}", other),
         }
     }
 }

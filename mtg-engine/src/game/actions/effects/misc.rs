@@ -197,6 +197,37 @@ impl GameState {
         Ok(())
     }
 
+    /// [`Effect::SkipUntapStep`]: set the `skip_untap_next_turn` flag on
+    /// `player`, causing their next untap step to be skipped (CR 502.1).
+    ///
+    /// Yosei, the Morning Star die trigger:
+    ///   `DB$ SkipPhase | ValidTgts$ Player | Step$ Untap`
+    ///
+    /// The flag is consumed (and cleared) at the start of the next
+    /// `untap_step` for that player.
+    pub(in crate::game::actions) fn execute_skip_untap_step(&mut self, player: PlayerId) -> Result<()> {
+        let Some(p) = self.players.iter_mut().find(|p| p.id == player) else {
+            return Ok(()); // Player has already lost; ignore gracefully.
+        };
+        let old_value = p.skip_untap_next_turn;
+        p.skip_untap_next_turn = true;
+
+        let prior_log_size = self.logger.log_count();
+        self.undo_log.log(
+            crate::undo::GameAction::SetSkipUntapNextTurn {
+                player_id: player,
+                old_value,
+                new_value: true,
+            },
+            prior_log_size,
+        );
+
+        let player_num = player.as_u32() + 1;
+        self.logger
+            .gamelog(&format!("P{} will skip their next untap step", player_num));
+        Ok(())
+    }
+
     /// [`Effect::Unimplemented`]: an effect API not yet modeled — log a warning
     /// and a gamelog line, then resolve as a no-op (so the gap is visible).
     pub(in crate::game::actions) fn execute_unimplemented(&mut self, api_type: &str) -> Result<()> {

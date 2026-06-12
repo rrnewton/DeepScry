@@ -4523,6 +4523,8 @@ impl GameState {
                     | crate::core::Effect::ReturnSelfAsEnchantment { .. }
                     | crate::core::Effect::PreventAllCombatDamageThisTurn { .. }
                     | crate::core::Effect::ConditionalSelfCounter { .. }
+                    | crate::core::Effect::RearrangeTopOfLibrary { .. }
+                    | crate::core::Effect::SkipUntapStep { .. }
                     | crate::core::Effect::Unimplemented { .. }
                     | crate::core::Effect::NoOp { .. }
                     | crate::core::Effect::ClassLevelUp { .. }

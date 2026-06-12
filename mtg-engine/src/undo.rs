@@ -488,6 +488,18 @@ pub enum GameAction {
     /// per-action undo oracle exact.
     PushExtraTurn { player: PlayerId },
 
+    /// Set or clear the `Player::skip_untap_next_turn` flag.
+    ///
+    /// Set by `Effect::SkipUntapStep` (Yosei die trigger) and cleared at the
+    /// start of `untap_step` when the flag is consumed.
+    SetSkipUntapNextTurn {
+        player_id: PlayerId,
+        /// Value the field held BEFORE this action (for undo).
+        old_value: bool,
+        /// Value the field was SET TO by this action.
+        new_value: bool,
+    },
+
     /// Records that a brand-new entity (a token, via `Effect::CreateToken`) was
     /// minted: `next_card_id()` advanced `next_entity_id`, the instance was
     /// inserted into the EntityStore, and it was added to the battlefield — all
@@ -870,6 +882,17 @@ impl fmt::Display for GameAction {
             GameAction::PushExtraTurn { player } => {
                 write!(f, "PushExtraTurn(P{})", player.as_u32())
             }
+            GameAction::SetSkipUntapNextTurn {
+                player_id,
+                old_value,
+                new_value,
+            } => write!(
+                f,
+                "SetSkipUntapNextTurn(P{} {} -> {})",
+                player_id.as_u32(),
+                old_value,
+                new_value
+            ),
             GameAction::CreateEntity { card_id } => {
                 write!(f, "CreateEntity(card={})", card_id.as_u32())
             }
@@ -1617,6 +1640,16 @@ impl GameAction {
                 // boundary pop_front may have already drained it).
                 if game.extra_turns.back() == Some(player) {
                     game.extra_turns.pop_back();
+                }
+            }
+            GameAction::SetSkipUntapNextTurn {
+                player_id,
+                old_value,
+                new_value: _,
+            } => {
+                // Restore the previous skip_untap_next_turn flag value.
+                if let Some(player) = game.players.iter_mut().find(|p| p.id == *player_id) {
+                    player.skip_untap_next_turn = *old_value;
                 }
             }
             GameAction::CreateEntity { card_id } => {
