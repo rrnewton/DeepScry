@@ -120,6 +120,10 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
         ApiType::Draw => {
             // Defined$ Player = each player (Wheel of Fortune)
             // Defined$ Remembered = draw for remembered players only (Raphael's Technique)
+            // ValidTgts$ Player = target player draws (Ancestral Recall). The caster
+            //   can choose self or opponent; until full player-targeting UI lands (mtg-564)
+            //   we default the placeholder to the controller (self-draw), which is by far
+            //   the most common usage. Opponent targeting remains unimplemented.
             // otherwise controller placeholder
             let player = match params.get("Defined") {
                 Some("Player") => PlayerId::all_players(),

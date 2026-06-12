@@ -657,6 +657,25 @@ impl<'a> GameLoop<'a> {
                                     if has_valid_targets {
                                         self.abilities_buffer.push(SpellAbility::CastSpell { card_id });
                                     }
+                                } else if let Some(graveyard_filter) = Self::spell_requires_graveyard_target(card) {
+                                    // For spells like Regrowth that target a card in a graveyard
+                                    // (CR 601.2c: can't cast without at least one legal target).
+                                    // YouCtrl effects search only the caster's graveyard; unrestricted
+                                    // effects (e.g. Debtors' Knell) search all graveyards.
+                                    let has_valid_targets = self.game.player_zones.iter().any(|(pid, zones)| {
+                                        if graveyard_filter.own_only && *pid != player_id {
+                                            return false;
+                                        }
+                                        zones.graveyard.cards.iter().any(|&gy_id| {
+                                            self.game
+                                                .cards
+                                                .try_get(gy_id)
+                                                .is_some_and(|gy_card| graveyard_filter.type_matches(gy_card))
+                                        })
+                                    });
+                                    if has_valid_targets {
+                                        self.abilities_buffer.push(SpellAbility::CastSpell { card_id });
+                                    }
                                 } else {
                                     // For non-targeting spells, check if we understand them
                                     // Instants/sorceries with empty effects likely have unimplemented
@@ -1549,6 +1568,73 @@ impl<'a> GameLoop<'a> {
                 }
                 _ => false,
             }
+        })
+    }
+
+    /// Check if a spell requires a graveyard card target (e.g. Regrowth, Reclaim).
+    ///
+    /// Returns `Some(GraveyardTargetFilter)` when the spell has a
+    /// `ReturnGraveyardCardToHand` or `ReturnGraveyardCardToZone` effect so that
+    /// `push_castable_spells` can gate the offer on there being at least one
+    /// matching card in the relevant graveyard (CR 601.2c).
+    ///
+    /// `ReturnGraveyardCardToHand` always searches only the caster's own graveyard
+    /// (these spells always use `ValidTgts$ Card.YouCtrl` / `Instant.YouCtrl` etc.).
+    /// `ReturnGraveyardCardToZone` can search any graveyard (Goryo's Vengeance,
+    /// Debtors' Knell) — we conservatively require *some* graveyard to be non-empty.
+    #[allow(clippy::wildcard_enum_match_arm)]
+    fn spell_requires_graveyard_target(card: &crate::core::Card) -> Option<GraveyardTargetFilter<'_>> {
+        use crate::core::Effect;
+
+        for effect in &card.effects {
+            match effect {
+                Effect::ReturnGraveyardCardToHand { type_filter, .. } => {
+                    return Some(GraveyardTargetFilter {
+                        type_filter: type_filter.as_str(),
+                        // Forge ValidTgts$ Card.YouCtrl — always the caster's own GY.
+                        own_only: true,
+                    });
+                }
+                Effect::ReturnGraveyardCardToZone { type_filter, .. } => {
+                    return Some(GraveyardTargetFilter {
+                        type_filter: type_filter.as_str(),
+                        // May target any player's GY (Goryo's Vengeance, etc.).
+                        own_only: false,
+                    });
+                }
+                _ => {}
+            }
+        }
+        None
+    }
+}
+
+/// Descriptor returned by `spell_requires_graveyard_target` that captures which
+/// graveyard(s) to search and what card types count as legal targets.
+struct GraveyardTargetFilter<'a> {
+    /// Comma-separated type filter (e.g. `"Instant,Sorcery"`, `"Card"`).
+    /// Empty means any card type is a legal target.
+    type_filter: &'a str,
+    /// When `true` only the casting player's own graveyard is searched
+    /// (`YouCtrl` effects like Regrowth/Reclaim).  When `false` all
+    /// graveyards are eligible (e.g. Debtors' Knell / Goryo's Vengeance).
+    own_only: bool,
+}
+
+impl GraveyardTargetFilter<'_> {
+    fn type_matches(&self, card: &crate::core::Card) -> bool {
+        if self.type_filter.is_empty() {
+            return true;
+        }
+        self.type_filter.split(',').any(|t| match t.trim() {
+            "Instant" => card.is_instant(),
+            "Sorcery" => card.is_sorcery(),
+            "Creature" => card.is_creature(),
+            "Land" => card.is_land(),
+            "Artifact" => card.is_artifact(),
+            "Enchantment" => card.is_enchantment(),
+            "Card" => true,
+            _ => false,
         })
     }
 }

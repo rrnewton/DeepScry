@@ -1808,4 +1808,75 @@ Oracle:At the beginning of each player's draw step, if Howling Mine is untapped,
             "placeholder and triggered_player sentinels must be distinct"
         );
     }
+
+    /// CR 601.2c: A spell with a required target cannot be cast unless at least one
+    /// legal target exists.  Regrowth (`ValidTgts$ Card.YouCtrl` from the graveyard)
+    /// must NOT be offered as a castable option when the caster's graveyard is empty.
+    ///
+    /// This is regression coverage for the bug where push_castable_spells offered
+    /// Regrowth unconditionally because `ReturnGraveyardCardToHand` was classified
+    /// as `NoTargetNeeded` — it fell into the generic "has effects → offer it" branch
+    /// without checking whether a legal target existed in the graveyard.
+    #[test]
+    fn test_regrowth_not_offered_with_empty_graveyard() {
+        use crate::core::{Color, Effect, ManaCost, SpellAbility};
+        use crate::game::game_loop::GameLoop;
+        use crate::game::{Step, VerbosityLevel};
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let players: Vec<_> = game.players.iter().map(|p| p.id).collect();
+        let p1_id = players[0];
+        game.turn.active_player = p1_id;
+        game.turn.current_step = Step::Main1;
+        game.stack.clear();
+
+        // Build a minimal Regrowth card: sorcery with ReturnGraveyardCardToHand effect.
+        let regrowth_id = game.next_card_id();
+        let mut regrowth = Card::new(regrowth_id, "Regrowth".to_string(), p1_id);
+        regrowth.add_type(CardType::Sorcery);
+        regrowth.mana_cost = ManaCost::from_string("1G");
+        regrowth.effects.push(Effect::ReturnGraveyardCardToHand {
+            player: PlayerId::placeholder(),
+            type_filter: String::new(),
+        });
+        game.cards.insert(regrowth_id, regrowth);
+        if let Some(zones) = game.get_player_zones_mut(p1_id) {
+            zones.hand.add(regrowth_id);
+        }
+
+        // Fund mana so cost isn't the gate (Regrowth costs {1}{G}: 1 generic + 1 green).
+        let player = game.get_player_mut(p1_id).unwrap();
+        player.mana_pool.add_color(Color::Green);
+        player.mana_pool.add_color(Color::Colorless); // covers the {1} generic portion
+
+        // --- Case 1: empty graveyard → must NOT be offered ---
+        {
+            let mut gl = GameLoop::new(&mut game).with_verbosity(VerbosityLevel::Silent);
+            gl.push_castable_spells(p1_id);
+            let abilities: Vec<SpellAbility> = gl.get_abilities_buffer().to_vec();
+            assert!(
+                abilities.iter().all(|a| a.card_id() != regrowth_id),
+                "Regrowth must not be offered when graveyard is empty (CR 601.2c)"
+            );
+        }
+
+        // --- Case 2: put a card in the graveyard → must be offered ---
+        let gravel_id = game.next_card_id();
+        let mut gravel = Card::new(gravel_id, "Forest".to_string(), p1_id);
+        gravel.add_type(CardType::Land);
+        gravel.controller = p1_id;
+        game.cards.insert(gravel_id, gravel);
+        if let Some(zones) = game.get_player_zones_mut(p1_id) {
+            zones.graveyard.add(gravel_id);
+        }
+        {
+            let mut gl2 = GameLoop::new(&mut game).with_verbosity(VerbosityLevel::Silent);
+            gl2.push_castable_spells(p1_id);
+            let abilities2: Vec<SpellAbility> = gl2.get_abilities_buffer().to_vec();
+            assert!(
+                abilities2.iter().any(|a| a.card_id() == regrowth_id),
+                "Regrowth must be offered when graveyard has a card (CR 601.2c)"
+            );
+        }
+    }
 }
