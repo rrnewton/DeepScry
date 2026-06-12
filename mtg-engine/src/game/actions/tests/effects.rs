@@ -8671,6 +8671,140 @@ mod tests {
         );
     }
 
+    /// Parser regression: Teferi, Time Raveler's static
+    /// `S:Mode$ CantBeCast | ValidCard$ Card | Caster$ Opponent | OnlySorcerySpeed$ True`
+    /// must load with `only_sorcery_speed = true` and `caster_restriction = Opponent`.
+    #[test]
+    fn test_card_compat_teferi_time_raveler_static_parses_only_sorcery_speed() {
+        use crate::core::{CasterRestriction, StaticAbility};
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("../cardsfolder/t/teferi_time_raveler.txt");
+        if !path.exists() {
+            eprintln!("Skipping: cardsfolder not present at {:?}", path);
+            return;
+        }
+        let def = crate::loader::CardLoader::load_from_file(&path).expect("Teferi, Time Raveler should load");
+        assert_eq!(def.name.as_str(), "Teferi, Time Raveler");
+
+        let card = def.instantiate(CardId::new(1), PlayerId::new(0));
+
+        // Find the CantBeCast static that encodes "opponents cast only at sorcery speed"
+        let teferi_static = card.static_abilities.iter().find_map(|sa| {
+            if let StaticAbility::CantBeCast {
+                caster_restriction,
+                only_sorcery_speed,
+                ..
+            } = sa
+            {
+                Some((*caster_restriction, *only_sorcery_speed))
+            } else {
+                None
+            }
+        });
+
+        let (caster_restriction, only_sorcery_speed) =
+            teferi_static.expect("Teferi should have a CantBeCast static ability");
+
+        assert_eq!(
+            caster_restriction,
+            CasterRestriction::Opponent,
+            "Teferi's static must restrict opponents (Caster$ Opponent)"
+        );
+        assert!(
+            only_sorcery_speed,
+            "Teferi's static must have only_sorcery_speed=true (OnlySorcerySpeed$ True)"
+        );
+    }
+
+    /// Runtime enforcement: Teferi, Time Raveler's static prevents opponents from
+    /// casting instants (or any spell) outside their own sorcery window.
+    ///
+    /// Scenario A: P2's instant in hand is NOT offered as a cast action during
+    ///   P1's main phase (P2 is opponent; not sorcery window for P2).
+    /// Scenario B: P2's instant IS offered during P2's own main phase with empty
+    ///   stack (sorcery window for P2, so Teferi's prohibition is lifted).
+    #[test]
+    fn test_teferi_time_raveler_opponents_cannot_cast_outside_sorcery_window() {
+        use crate::core::SpellAbility;
+        use crate::game::game_loop::GameLoop;
+        use crate::game::{Step, VerbosityLevel};
+        use std::path::PathBuf;
+
+        // Need both Teferi and an instant (Lightning Bolt) from the cardsfolder.
+        let teferi_path = PathBuf::from("../cardsfolder/t/teferi_time_raveler.txt");
+        let bolt_path = PathBuf::from("../cardsfolder/l/lightning_bolt.txt");
+        if !teferi_path.exists() || !bolt_path.exists() {
+            eprintln!("Skipping: cardsfolder not present");
+            return;
+        }
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        let p2_id = game.players[1].id;
+
+        // P1 controls Teferi on the battlefield.
+        let teferi_id =
+            load_test_card(&mut game, "Teferi, Time Raveler", p1_id).expect("Teferi, Time Raveler should load");
+        game.battlefield.add(teferi_id);
+
+        // P2 has Lightning Bolt in hand and a Mountain to pay {R}.
+        let bolt_id = load_test_card(&mut game, "Lightning Bolt", p2_id).expect("Lightning Bolt should load");
+        if let Some(zones) = game.get_player_zones_mut(p2_id) {
+            zones.hand.add(bolt_id);
+        }
+        let mountain_id = load_test_card(&mut game, "Mountain", p2_id).expect("Mountain should load");
+        game.battlefield.add(mountain_id);
+        if let Ok(c) = game.cards.get_mut(mountain_id) {
+            c.controller = p2_id;
+            c.tapped = false;
+        }
+
+        // --- Scenario A: P1's main phase, stack empty ---
+        // P2 is the opponent; they are NOT in a sorcery window (not their turn).
+        // Teferi's prohibition SHOULD block P2 from casting Lightning Bolt.
+        game.turn.active_player = p1_id;
+        game.turn.current_step = Step::Main1;
+        // stack is already empty
+
+        let buffer_a = {
+            let mut gl = GameLoop::new(&mut game).with_verbosity(VerbosityLevel::Silent);
+            gl.push_castable_spells(p2_id);
+            gl.get_abilities_buffer().to_vec()
+        };
+
+        let bolt_offered_a = buffer_a
+            .iter()
+            .any(|sa| matches!(sa, SpellAbility::CastSpell { card_id, .. } if *card_id == bolt_id));
+        assert!(
+            !bolt_offered_a,
+            "Teferi, Time Raveler: opponent P2 must NOT be offered Lightning Bolt \
+             during P1's main phase (not P2's sorcery window). Buffer: {:?}",
+            buffer_a
+        );
+
+        // --- Scenario B: P2's own main phase, stack empty ---
+        // P2 IS in a sorcery window, so Teferi's prohibition is lifted.
+        game.turn.active_player = p2_id;
+        game.turn.current_step = Step::Main1;
+
+        let buffer_b = {
+            let mut gl2 = GameLoop::new(&mut game).with_verbosity(VerbosityLevel::Silent);
+            gl2.push_castable_spells(p2_id);
+            gl2.get_abilities_buffer().to_vec()
+        };
+
+        let bolt_offered_b = buffer_b
+            .iter()
+            .any(|sa| matches!(sa, SpellAbility::CastSpell { card_id, .. } if *card_id == bolt_id));
+        assert!(
+            bolt_offered_b,
+            "Teferi, Time Raveler: P2 MUST be offered Lightning Bolt during their \
+             own main phase with empty stack (sorcery window lifted). Buffer: {:?}",
+            buffer_b
+        );
+    }
+
     /// Card compat: Opalescence (cardsfolder/o/opalescence.txt) — mtg-912 B5.
     ///
     /// Script:

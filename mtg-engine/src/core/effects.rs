@@ -3962,6 +3962,15 @@ pub enum StaticAbility {
         /// Frenzy: "you can't cast spells from your hand").
         /// `None` means the restriction applies regardless of origin zone.
         origin_restriction: Option<crate::zones::Zone>,
+        /// If `true`, the prohibition is lifted when the affected player IS in
+        /// a sorcery window (active player, main phase, empty stack). This
+        /// models Teferi, Time Raveler's static: "Each opponent can cast spells
+        /// only any time they could cast a sorcery." Corresponds to
+        /// `OnlySorcerySpeed$ True` in the Forge card script.
+        ///
+        /// Concretely: the prohibition fires if the caster_restriction matches
+        /// AND the caster is NOT currently in a sorcery window.
+        only_sorcery_speed: bool,
         /// Description for logging.
         description: String,
     },

@@ -5339,11 +5339,16 @@ impl CardDefinition {
                         let origin_restriction = params
                             .get("Origin")
                             .and_then(|v| crate::zones::Zone::from_str_lenient(v.trim()));
+                        let only_sorcery_speed = params
+                            .get("OnlySorcerySpeed")
+                            .map(|v| v.trim().eq_ignore_ascii_case("true"))
+                            .unwrap_or(false);
                         let description = params.get("Description").cloned().unwrap_or_default();
                         abilities.push(StaticAbility::CantBeCast {
                             valid_card,
                             caster_restriction,
                             origin_restriction,
+                            only_sorcery_speed,
                             description,
                         });
                     }

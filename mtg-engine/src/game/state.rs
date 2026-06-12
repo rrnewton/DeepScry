@@ -3103,6 +3103,11 @@ impl GameState {
     pub fn is_cast_prohibited(&self, caster_id: crate::core::PlayerId, card: &crate::core::Card) -> bool {
         use crate::core::{CasterRestriction, StaticAbility};
         let active = self.turn.active_player;
+        // Pre-compute the caster's sorcery window: active player, main phase, empty stack.
+        // Used by OnlySorcerySpeed statics (Teferi, Time Raveler) which prohibit casting
+        // only when the player is OUTSIDE a sorcery window.
+        let caster_in_sorcery_window =
+            caster_id == active && self.turn.current_step.is_sorcery_speed() && self.stack.is_empty();
         self.battlefield.cards.iter().any(|&id| {
             self.cards.try_get(id).is_some_and(|src| {
                 src.static_abilities.iter().any(|sa| {
@@ -3110,6 +3115,7 @@ impl GameState {
                         valid_card,
                         caster_restriction,
                         origin_restriction,
+                        only_sorcery_speed,
                         ..
                     } = sa
                     {
@@ -3118,6 +3124,12 @@ impl GameState {
                         // zone-specific callers (`has_hand_cast_prohibition`).
                         // Skip them here so library-cast offers are not blocked.
                         if origin_restriction.is_some() {
+                            return false;
+                        }
+                        // OnlySorcerySpeed statics (Teferi, Time Raveler): the
+                        // prohibition is lifted when the caster IS in a sorcery
+                        // window (active player, main phase, empty stack).
+                        if *only_sorcery_speed && caster_in_sorcery_window {
                             return false;
                         }
                         // First check if the card matches the filter
