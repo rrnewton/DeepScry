@@ -1722,6 +1722,10 @@ impl GameState {
                         // battlefield. Does not affect P/T; enforced at trigger-dispatch
                         // time in check_triggers_inner via is_creature_etb_trigger_suppressed.
                     }
+                    StaticAbility::TokenCreationBonus { .. } => {
+                        // Token-creation replacement (Donatello, the Brains). Applied
+                        // inside execute_create_token; not a P/T modifier.
+                    }
                 }
             }
         }

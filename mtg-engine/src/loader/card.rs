@@ -862,8 +862,14 @@ impl CardDefinition {
 
     /// Extract all TokenScript references from this card's abilities
     ///
-    /// Scans all raw_abilities for SVar lines containing "DB$ Token" and extracts
-    /// the TokenScript$ parameter value. Returns unique token script names.
+    /// Scans all raw_abilities for token script references and returns unique
+    /// token script names. Covers three forms:
+    ///
+    /// 1. `SVar:NAME:DB$ Token | TokenScript$ <script>` — explicit token creation
+    /// 2. `A:SP$ Token | TokenScript$ <script>` / `T:...` direct spell/trigger lines
+    /// 3. `SVar:NAME:DB$ ReplaceToken | Type$ AddToken | TokenScript$ <script>` —
+    ///    token-creation replacement (e.g. Donatello, the Brains via
+    ///    `StaticAbility::TokenCreationBonus`)
     ///
     /// Example:
     /// - Input: `SVar:TrigToken:DB$ Token | TokenScript$ c_a_food_sac | TokenAmount$ 1`
@@ -886,6 +892,14 @@ impl CardDefinition {
                                 // individual script name is loaded as its own file.
                                 for name in script.split(',') {
                                     token_scripts.insert(name.trim().to_string());
+                                }
+                            }
+                        } else if params.api_type == ApiType::ReplaceToken {
+                            // DB$ ReplaceToken | Type$ AddToken | TokenScript$ <script>
+                            // (Donatello, the Brains / TokenCreationBonus replacement)
+                            if params.get("Type") == Some("AddToken") {
+                                if let Some(script) = params.get("TokenScript") {
+                                    token_scripts.insert(script.to_string());
                                 }
                             }
                         }
@@ -6406,6 +6420,11 @@ impl CardDefinition {
         //     | ReplaceWith$ <SVar> | ...
         // where <SVar> resolves to `ReplaceCount$DamageAmount/Plus.N` (Torbran).
         // We model this as StaticAbility::DamageIncrease { bonus: N } on the host.
+        //
+        // Also handles `R:Event$ CreateToken | ValidToken$ Card.YouCtrl |
+        // ReplaceWith$ <svar>` where the SVar has `Type$ AddToken | Amount$ N |
+        // TokenScript$ <script>` — converted to StaticAbility::TokenCreationBonus
+        // (e.g. Donatello, the Brains).
         for ability in &self.raw_abilities {
             let Some(body) = ability.strip_prefix("R:") else {
                 continue;
@@ -6569,6 +6588,51 @@ impl CardDefinition {
                         .to_string()
                 });
                 abilities.push(StaticAbility::LifeFloor { description });
+            }
+
+            // --- Donatello / TokenCreationBonus shape (CR 614.5d non-recursive) ---
+            // R:Event$ CreateToken | ActiveZones$ Battlefield |
+            //   ValidToken$ Card.YouCtrl | ReplaceWith$ <svar>
+            //
+            // Only handle the `ValidToken$ Card.YouCtrl` (controller's
+            // own tokens) shape; other shapes are not yet modelled.
+            if params.get("Event") == Some(&"CreateToken") {
+                let valid_token = params.get("ValidToken").copied().unwrap_or("");
+                if valid_token == "Card.YouCtrl" {
+                    if let Some(replace_svar_name) = params.get("ReplaceWith").copied() {
+                        if let Some(svar_body) = self.svars.get(replace_svar_name) {
+                            let mut svar_params: std::collections::HashMap<&str, &str> =
+                                std::collections::HashMap::new();
+                            for part in svar_body.split('|') {
+                                if let Some((k, v)) = part.split_once('$') {
+                                    svar_params.insert(k.trim(), v.trim());
+                                }
+                            }
+                            if svar_params.get("DB") == Some(&"ReplaceToken")
+                                && svar_params.get("Type") == Some(&"AddToken")
+                            {
+                                if let Some(token_script) = svar_params.get("TokenScript").copied() {
+                                    let amount: u8 =
+                                        svar_params.get("Amount").and_then(|s| s.parse().ok()).unwrap_or(1);
+                                    let description =
+                                        params.get("Description").map(|s| s.to_string()).unwrap_or_else(|| {
+                                            format!(
+                                                "If one or more tokens would be created under your control, \
+                                                 those tokens plus {amount} additional {} token(s) are created \
+                                                 instead.",
+                                                token_script
+                                            )
+                                        });
+                                    abilities.push(StaticAbility::TokenCreationBonus {
+                                        token_script: token_script.to_string(),
+                                        amount,
+                                        description,
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
 
@@ -10397,5 +10461,55 @@ Oracle:Prowess
             "SearchLibrary filter must target enchantments, got: {filter}"
         );
         assert_eq!(dest, Zone::Battlefield, "SearchLibrary destination must be Battlefield");
+    }
+
+    /// Donatello, the Brains (mtg-452): `R:Event$ CreateToken | ValidToken$
+    /// Card.YouCtrl | ReplaceWith$ DBReplace` + `SVar:DBReplace:DB$ ReplaceToken |
+    /// Type$ AddToken | Amount$ 1 | TokenScript$ c_a_mutagen_sac` should parse into
+    /// a `StaticAbility::TokenCreationBonus` with script = "c_a_mutagen_sac" and
+    /// amount = 1.
+    #[test]
+    fn test_token_creation_bonus_parses_from_replace_token_svar() {
+        use crate::core::StaticAbility;
+
+        let donatello = CardLoader::parse(
+            r#"
+Name:Donatello, the Brains
+ManaCost:2 U
+Types:Legendary Creature Mutant Ninja Turtle
+PT:2/4
+R:Event$ CreateToken | ActiveZones$ Battlefield | ValidToken$ Card.YouCtrl | ReplaceWith$ DBReplace | Description$ If one or more tokens would be created under your control, those tokens plus an additional Mutagen token are created instead.
+SVar:DBReplace:DB$ ReplaceToken | Type$ AddToken | Amount$ 1 | TokenScript$ c_a_mutagen_sac
+Oracle:If one or more tokens would be created under your control, those tokens plus an additional Mutagen token are created instead.
+"#,
+        )
+        .unwrap();
+
+        let abilities = donatello.parse_static_abilities();
+        let bonus = abilities.iter().find_map(|sa| {
+            if let StaticAbility::TokenCreationBonus {
+                token_script, amount, ..
+            } = sa
+            {
+                Some((token_script.as_str(), *amount))
+            } else {
+                None
+            }
+        });
+        assert_eq!(
+            bonus,
+            Some(("c_a_mutagen_sac", 1)),
+            "Donatello must parse one TokenCreationBonus(c_a_mutagen_sac, 1); got: {:?}",
+            abilities
+        );
+
+        // extract_token_scripts must include the Mutagen token script so the
+        // puzzle/game loader can preload c_a_mutagen_sac.
+        let scripts = donatello.extract_token_scripts();
+        assert!(
+            scripts.contains(&"c_a_mutagen_sac".to_string()),
+            "extract_token_scripts must include c_a_mutagen_sac; got: {:?}",
+            scripts
+        );
     }
 }

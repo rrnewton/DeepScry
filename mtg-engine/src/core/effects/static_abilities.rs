@@ -572,6 +572,28 @@ pub enum StaticAbility {
         /// Description for logging/display.
         description: String,
     },
+
+    /// Token-creation replacement (CR 614): when tokens would be created under
+    /// this permanent's controller's control, also create additional tokens of
+    /// a different script.
+    ///
+    /// Corresponds to:
+    /// `R:Event$ CreateToken | ActiveZones$ Battlefield | ValidToken$ Card.YouCtrl
+    ///  | ReplaceWith$ <svar>`
+    /// where `<svar>` resolves to
+    /// `DB$ ReplaceToken | Type$ AddToken | Amount$ N | TokenScript$ <script>`.
+    ///
+    /// Example: Donatello, the Brains — "If one or more tokens would be created
+    /// under your control, those tokens plus an additional Mutagen token are
+    /// created instead." (TMNT Commander set)
+    TokenCreationBonus {
+        /// Token script name for the additional token (e.g. `"c_a_mutagen_sac"`).
+        token_script: String,
+        /// Number of extra tokens to create per creation event.
+        amount: u8,
+        /// Human-readable description for logging.
+        description: String,
+    },
 }
 
 /// Condition checked at cast time for an [`StaticAbility::AlternativeCost`].

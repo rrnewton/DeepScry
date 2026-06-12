@@ -257,7 +257,8 @@ impl<'a> GameLoop<'a> {
             | StaticAbility::MayPlayWithoutManaCost { .. }
             | StaticAbility::MayPlayFromLibrary { .. }
             | StaticAbility::OpalescenceStyle { .. }
-            | StaticAbility::DisableCreatureEtbTriggers { .. } => false,
+            | StaticAbility::DisableCreatureEtbTriggers { .. }
+            | StaticAbility::TokenCreationBonus { .. } => false,
         }
     }
 

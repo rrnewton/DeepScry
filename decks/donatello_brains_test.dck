@@ -1,0 +1,12 @@
+[metadata]
+Name=Donatello the Brains Test
+Description=Targeted compatibility test for Donatello, the Brains (mtg-452). Tests replacement effect (token creation adds Mutagen token) and basic combat.
+
+[Main]
+20 Island
+10 Plains
+4 Donatello, the Brains
+4 Raise the Alarm
+4 Grizzly Bears
+
+[Sideboard]

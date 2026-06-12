@@ -28,6 +28,12 @@ impl GameState {
     /// names (e.g. Wurmcoil Engine: `"c_3_3_a_phyrexian_wurm_deathtouch,
     /// c_3_3_a_phyrexian_wurm_lifelink"`). When multiple names are present,
     /// one token of each distinct kind is created per repetition of `amount`.
+    ///
+    /// Applies `StaticAbility::TokenCreationBonus` replacement effects (CR 614):
+    /// if any battlefield permanent controlled by a token recipient carries this
+    /// static, additional tokens are minted for that player after the originals.
+    /// The bonus minting is non-recursive (CR 614.5d: a replacement effect cannot
+    /// apply to itself).
     pub(in crate::game::actions) fn execute_create_token(
         &mut self,
         controller: PlayerId,
@@ -64,80 +70,45 @@ impl GameState {
         // For WASM builds, tokens are bundled with deck data.
         let token_def = self.token_definitions.get(token_script).cloned();
 
-        if let Some(token_def) = token_def {
-            // Determine which players get tokens
-            let player_ids: Vec<PlayerId> = if for_each_player {
-                // Each player creates tokens (TokenOwner$ Player)
-                self.players.iter().map(|p| p.id).collect()
-            } else {
-                // Only the specified controller
-                vec![controller]
-            };
+        // Determine which players get tokens.
+        let player_ids: Vec<PlayerId> = if for_each_player {
+            self.players.iter().map(|p| p.id).collect()
+        } else {
+            vec![controller]
+        };
 
-            for player_id in player_ids {
-                // Use actual token definition
-                for _ in 0..amount {
-                    let token_id = self.next_card_id();
-
-                    // Shadow game dedup: in shadow games, tokens for opponent actions are
-                    // pre-added via CardRevealed(TokenCreated) before this effect runs.
-                    // CardRevealed uses insert_if_vacant (doesn't advance next_entity_id),
-                    // so next_card_id() here returns the SAME id that was pre-added.
-                    // We must skip to avoid the EntityStore write-once panic.
-                    // For locally-created tokens (own actions in native shadow game),
-                    // cards.contains() is false so we proceed normally.
-                    if self.is_shadow_game && self.cards.contains(token_id) {
-                        // Pre-added by CardRevealed; ensure it's on the battlefield too.
-                        if !self.battlefield.contains(token_id) {
-                            self.battlefield.add(token_id);
-                        }
+        // Collect TokenCreationBonus statics for each receiving player (read-only
+        // scan before mutations so there's no borrow conflict). Each tuple is
+        // (recipient, bonus_script, bonus_amount). CR 614.5d: we don't
+        // recurse — the bonus minting itself does NOT re-trigger this logic.
+        let bonuses: Vec<(PlayerId, String, u8)> = {
+            use crate::core::StaticAbility;
+            let mut result = Vec::new();
+            for &card_id in &self.battlefield.cards {
+                if let Ok(card) = self.cards.get(card_id) {
+                    let ctrl = card.controller;
+                    if !player_ids.contains(&ctrl) {
                         continue;
                     }
+                    for sa in &card.static_abilities {
+                        if let StaticAbility::TokenCreationBonus {
+                            token_script: bonus_script,
+                            amount: bonus_amt,
+                            ..
+                        } = sa
+                        {
+                            result.push((ctrl, bonus_script.clone(), *bonus_amt));
+                        }
+                    }
+                }
+            }
+            result
+        };
 
-                    // Instantiate token from definition
-                    let mut token = token_def.instantiate(token_id, player_id);
-
-                    // Mark as token and set controller
-                    token.is_token = true;
-                    token.controller = player_id;
-
-                    // Add token to game
-                    let token_name = token.name.to_string();
-                    self.cards.insert(token_id, token);
-
-                    // Log the entity mint so a rewind can remove the
-                    // token AND roll `next_entity_id` back (mtg-ba6uq #3).
-                    // next_card_id() already advanced next_entity_id and
-                    // cards.insert added the instance — both unlogged
-                    // until now, so a rewind leaked the token and replay
-                    // minted a duplicate at a higher id. Logged BEFORE the
-                    // reveal/battlefield placement so the LIFO undo
-                    // reverses those first, then this clears the entity.
-                    let mint_log_size = self.logger.log_count();
-                    self.undo_log.log(
-                        crate::undo::GameAction::CreateEntity { card_id: token_id },
-                        mint_log_size,
-                    );
-
-                    // NETWORK: Reveal token to all players so server sends
-                    // CardRevealed(TokenCreated). Without this, clients don't
-                    // know the token's identity (causes desync).
-                    let prior_log_size = self.logger.log_count();
-                    self.maybe_reveal_to_all(token_id, prior_log_size);
-
-                    // Put token onto the battlefield
-                    self.battlefield.add(token_id);
-
-                    // Debug log token creation
-                    log::debug!(target: "token", "Created token {} (id={}) under player {}'s control",
-                        token_name, token_id.as_u32(), player_id.as_u32());
-
-                    // Log token creation (official game action)
-                    self.logger.gamelog(&format!(
-                        "Created {} under {}'s control",
-                        token_name,
-                        self.get_player(player_id)?.name
-                    ));
+        if let Some(token_def) = token_def {
+            for &player_id in &player_ids {
+                for _ in 0..amount {
+                    self.mint_single_token(&token_def, player_id)?;
                 }
             }
         } else {
@@ -149,6 +120,89 @@ impl GameState {
                 token_script
             );
         }
+
+        // Apply TokenCreationBonus replacements (non-recursive, CR 614.5d).
+        // One bonus event fires per (player, source) pair regardless of how many
+        // original tokens were created (the bonus is a flat additional amount,
+        // not per-original-token).
+        for (player_id, bonus_script, bonus_amount) in &bonuses {
+            let bonus_def = self.token_definitions.get(bonus_script.as_str()).cloned();
+            if let Some(def) = bonus_def {
+                for _ in 0..*bonus_amount {
+                    self.mint_single_token(&def, *player_id)?;
+                }
+            } else {
+                log::warn!(
+                    "TokenCreationBonus: token definition '{}' not found — skipping",
+                    bonus_script
+                );
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Instantiate a single token from `def` under `player_id`'s control and
+    /// place it on the battlefield. Handles undo-log, network reveal, and the
+    /// shadow-game dedup (pre-added `CardRevealed(TokenCreated)` tokens).
+    ///
+    /// This is the shared mint primitive used by both the original token
+    /// creation and the `TokenCreationBonus` replacement path (non-recursive).
+    fn mint_single_token(&mut self, def: &crate::loader::CardDefinition, player_id: PlayerId) -> Result<()> {
+        let token_id = self.next_card_id();
+
+        // Shadow game dedup: in shadow games, tokens for opponent actions are
+        // pre-added via CardRevealed(TokenCreated) before this effect runs.
+        // CardRevealed uses insert_if_vacant (doesn't advance next_entity_id),
+        // so next_card_id() here returns the SAME id that was pre-added.
+        // We must skip to avoid the EntityStore write-once panic.
+        // For locally-created tokens (own actions in native shadow game),
+        // cards.contains() is false so we proceed normally.
+        if self.is_shadow_game && self.cards.contains(token_id) {
+            if !self.battlefield.contains(token_id) {
+                self.battlefield.add(token_id);
+            }
+            return Ok(());
+        }
+
+        let mut token = def.instantiate(token_id, player_id);
+        token.is_token = true;
+        token.controller = player_id;
+
+        let token_name = token.name.to_string();
+        self.cards.insert(token_id, token);
+
+        // Log the entity mint so a rewind can remove the token AND roll
+        // `next_entity_id` back (mtg-ba6uq #3). Logged BEFORE the
+        // reveal/battlefield placement so the LIFO undo reverses those first.
+        let mint_log_size = self.logger.log_count();
+        self.undo_log.log(
+            crate::undo::GameAction::CreateEntity { card_id: token_id },
+            mint_log_size,
+        );
+
+        // NETWORK: Reveal token to all players so server sends
+        // CardRevealed(TokenCreated). Without this, clients don't
+        // know the token's identity (causes desync).
+        let prior_log_size = self.logger.log_count();
+        self.maybe_reveal_to_all(token_id, prior_log_size);
+
+        self.battlefield.add(token_id);
+
+        log::debug!(
+            target: "token",
+            "Created token {} (id={}) under player {}'s control",
+            token_name,
+            token_id.as_u32(),
+            player_id.as_u32()
+        );
+
+        self.logger.gamelog(&format!(
+            "Created {} under {}'s control",
+            token_name,
+            self.get_player(player_id)?.name
+        ));
+
         Ok(())
     }
 

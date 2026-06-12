@@ -507,9 +507,11 @@ impl GameStateEvaluator {
                 | StaticAbility::CantBeCast { .. }
                 | StaticAbility::CantPlayLand { .. }
                 | StaticAbility::CantBlockMatching { .. }
-                | StaticAbility::CastWithFlash { .. } => {
-                    // Set/color-hoser statics (City in a Bottle, etc.) and the
-                    // self block-restriction (Ironclaw Orcs) live on the
+                | StaticAbility::CastWithFlash { .. }
+                | StaticAbility::TokenCreationBonus { .. } => {
+                    // Set/color-hoser statics (City in a Bottle, etc.), the
+                    // self block-restriction (Ironclaw Orcs), and the token-
+                    // creation bonus (Donatello, the Brains) live on the
                     // creature/artifact itself, not an aura attached to a
                     // creature; they contribute no enchanted-creature value.
                 }

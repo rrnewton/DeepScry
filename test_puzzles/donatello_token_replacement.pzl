@@ -1,0 +1,21 @@
+[metadata]
+Name=Donatello the Brains Token Replacement
+Goal=VerifyTokenReplacement
+Turns=2
+Difficulty=Easy
+Description=P1 has Donatello, the Brains on the battlefield plus mana. Casting Raise the Alarm (creates 2 Soldier tokens) should also create an additional Mutagen token due to Donatello's replacement effect. Verifies mtg-452 replacement effect R:Event$ CreateToken.
+
+[state]
+turn=3
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Raise the Alarm
+p0battlefield=Island;Island;Plains;Donatello, the Brains
+p0library=Island;Island;Island
+p0graveyard=
+p1life=20
+p1hand=
+p1battlefield=Grizzly Bears
+p1library=Plains;Plains;Plains
+p1graveyard=

@@ -3079,7 +3079,8 @@ mod tests {
                 | StaticAbility::MayPlayWithoutManaCost { .. }
                 | StaticAbility::MayPlayFromLibrary { .. }
                 | StaticAbility::OpalescenceStyle { .. }
-                | StaticAbility::DisableCreatureEtbTriggers { .. } => None,
+                | StaticAbility::DisableCreatureEtbTriggers { .. }
+                | StaticAbility::TokenCreationBonus { .. } => None,
             })
             .expect("Ironclaw Orcs must produce a CantBlockMatching static ability");
 
