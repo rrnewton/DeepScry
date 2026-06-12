@@ -405,6 +405,20 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
         }
 
         ApiType::ChangeZone => {
+            // Enduring Vitality death trigger:
+            //   DB$ ChangeZone | Defined$ TriggeredNewCardLKICopy | Origin$ Graveyard
+            //   | Destination$ Battlefield | StaticEffect$ Animate
+            // "Return it to the battlefield... It's an enchantment."
+            // The `Animate` SVar strips creature types and adds Enchantment.
+            if params.get("Defined") == Some("TriggeredNewCardLKICopy")
+                && params.get("Origin") == Some("Graveyard")
+                && params.get("Destination") == Some("Battlefield")
+                && params.get("StaticEffect").is_some()
+            {
+                return Some(Effect::ReturnSelfAsEnchantment {
+                    source: CardId::new(0), // Placeholder — resolved in check_death_triggers
+                });
+            }
             // Check for exile effects: Origin$ Battlefield + Destination$ Exile
             if params.get("Origin") == Some("Battlefield") && params.get("Destination") == Some("Exile") {
                 Some(Effect::ExilePermanent {

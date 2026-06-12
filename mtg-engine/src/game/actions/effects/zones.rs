@@ -425,9 +425,14 @@ impl GameState {
             self.apply_regeneration_shield(target)?;
         } else {
             let dest = self.death_destination_for_card(target);
-            // Check death triggers BEFORE moving the card (trigger still has access to card data)
-            let _ = self.check_death_triggers(target);
+            // Move the card to the graveyard/exile FIRST (per CR 704.3 — state-based actions move
+            // the card before triggers fire), then fire death triggers with the card now in
+            // its destination zone. This is required for triggers like Enduring Vitality whose
+            // death trigger returns the card from the graveyard — the card must already be in
+            // the graveyard when the trigger effect executes, so the graveyard→battlefield move
+            // in execute_return_self_as_enchantment finds it there.
             self.move_card(target, Zone::Battlefield, dest, owner)?;
+            let _ = self.check_death_triggers(target);
         }
         Ok(())
     }
@@ -568,18 +573,20 @@ impl GameState {
                 // CR 701.15a: Regeneration replaces destruction
                 self.apply_regeneration_shield(card_id)?;
             } else {
-                let _ = self.check_death_triggers(card_id);
                 let card_name = self
                     .cards
                     .get(card_id)
                     .map(|c| c.name.to_string())
                     .unwrap_or_else(|_| "Unknown".to_string());
+                // Move the card first (CR 704.3), then fire death triggers so any
+                // "return from graveyard" trigger sees the card in its destination zone.
                 self.move_card(
                     card_id,
                     Zone::Battlefield,
                     self.death_destination_for_card(card_id),
                     owner,
                 )?;
+                let _ = self.check_death_triggers(card_id);
                 self.logger
                     .gamelog(&format!("{} ({}) is destroyed", card_name, card_id));
             }
@@ -612,18 +619,20 @@ impl GameState {
             .collect();
 
         for (card_id, owner) in targets {
-            let _ = self.check_death_triggers(card_id);
             let card_name = self
                 .cards
                 .try_get(card_id)
                 .map(|c| c.name.to_string())
                 .unwrap_or_else(|| "Unknown".to_string());
+            // Move the card first (CR 704.3), then fire death triggers so any
+            // "return from graveyard" trigger sees the card in its destination zone.
             self.move_card(
                 card_id,
                 Zone::Battlefield,
                 self.death_destination_for_card(card_id),
                 owner,
             )?;
+            let _ = self.check_death_triggers(card_id);
             self.logger
                 .gamelog(&format!("{} ({}) is sacrificed", card_name, card_id));
         }
@@ -1025,6 +1034,90 @@ impl GameState {
             "{} returns {} from graveyard to {}",
             player_name, card_name, dest_label
         ));
+        Ok(())
+    }
+
+    /// [`Effect::ReturnSelfAsEnchantment`]: return the card (that just died) from
+    /// the graveyard to the battlefield under its owner's control, but strip all
+    /// creature (and other non-enchantment) card types so the resulting permanent
+    /// is purely an enchantment.
+    ///
+    /// This implements Enduring Vitality's death trigger:
+    ///   "When Enduring Vitality dies, if it was a creature, return it to the
+    ///    battlefield under its owner's control. It's an enchantment."
+    ///
+    /// Rules context (CR 400.7 / CR 110.5c):
+    ///   - The card returns as a new object; its creature sub-types and creature
+    ///     card type are stripped so it is now only an Enchantment.
+    ///   - It will no longer trigger dies-as-creature triggers (the `+Creature`
+    ///     guard in the trigger's ValidCard filter prevents re-triggering).
+    pub(in crate::game::actions) fn execute_return_self_as_enchantment(
+        &mut self,
+        source: crate::core::CardId,
+    ) -> crate::Result<()> {
+        use crate::core::CardType;
+
+        // Fizzle gracefully if the source ID is unresolved or not in graveyard.
+        if source.is_placeholder() {
+            log::debug!("ReturnSelfAsEnchantment: unresolved placeholder — fizzling");
+            return Ok(());
+        }
+
+        // Find the card's owner (needed for move_card destination routing).
+        let (card_name, owner) = {
+            let card = match self.cards.try_get(source) {
+                Some(c) => c,
+                None => {
+                    log::debug!("ReturnSelfAsEnchantment: card {:?} not found — fizzling", source);
+                    return Ok(());
+                }
+            };
+            (card.name.as_str().to_string(), card.owner)
+        };
+
+        // Verify the card is in the graveyard (it should be — we just came from
+        // check_death_triggers, but guard defensively).
+        let in_graveyard = self
+            .get_player_zones(owner)
+            .is_some_and(|z| z.graveyard.cards.contains(&source));
+        if !in_graveyard {
+            log::debug!(
+                "ReturnSelfAsEnchantment: {} ({:?}) not in graveyard — fizzling",
+                card_name,
+                source
+            );
+            return Ok(());
+        }
+
+        // Move from graveyard → battlefield under the owner's control.
+        self.move_card(source, Zone::Graveyard, Zone::Battlefield, owner)?;
+
+        // Strip all card types except Enchantment so the permanent is purely
+        // an enchantment and no longer a creature (CR 110.5c, CR 205.1a).
+        // We preserve Legendary if present (rule 704.5j), Land type removal
+        // doesn't apply here, but we do remove Creature + Artifact + Instant/Sorcery.
+        {
+            let card = self.cards.get_mut(source)?;
+            // Keep only Enchantment (and Land, which shouldn't be present but is
+            // harmless to preserve). Strip Creature, Artifact, Planeswalker, etc.
+            card.types
+                .retain(|t| matches!(t, CardType::Enchantment | CardType::Land));
+            // Ensure Enchantment is present (it should already be, but be safe).
+            if !card.types.contains(&CardType::Enchantment) {
+                card.types.push(CardType::Enchantment);
+            }
+            // Refresh cached is_creature / is_enchantment / ... flags.
+            card.refresh_type_cache();
+        }
+
+        self.logger.gamelog(&format!(
+            "{} returns to the battlefield as an enchantment (no longer a creature)",
+            card_name
+        ));
+
+        // Fire ETB triggers for the returning permanent (CR 603.6a).
+        self.check_triggers(crate::core::TriggerEvent::EntersBattlefield, source)?;
+
         Ok(())
     }
 

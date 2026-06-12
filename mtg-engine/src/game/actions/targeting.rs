@@ -688,6 +688,7 @@ impl GameState {
                             | Effect::ReturnCardsFromGraveyardToHand { .. }
                             | Effect::ReturnGraveyardCardToHand { .. }
                             | Effect::ReturnGraveyardCardToZone { .. }
+                            | Effect::ReturnSelfAsEnchantment { .. }
                             | Effect::PreventAllCombatDamageThisTurn { .. }
                             | Effect::ExileIfWouldDieThisTurn { .. }
                             | Effect::ConditionalSelfCounter { .. }
@@ -752,6 +753,7 @@ impl GameState {
                 | Effect::ReturnCardsFromGraveyardToHand { .. }
                 | Effect::ReturnGraveyardCardToHand { .. }
                 | Effect::ReturnGraveyardCardToZone { .. }
+                | Effect::ReturnSelfAsEnchantment { .. }
                 | Effect::PreventAllCombatDamageThisTurn { .. }
                 | Effect::ConditionalSelfCounter { .. }
                 | Effect::CreateTokenDynamic { .. } => {
@@ -764,6 +766,7 @@ impl GameState {
                     // ReturnCardsFromGraveyardToHand: works on the caster's graveyard, no targeting
                     // ReturnGraveyardCardToHand: AI picks matching card, no cast-time targeting
                     // ReturnGraveyardCardToZone: AI picks matching card, no cast-time targeting
+                    // ReturnSelfAsEnchantment: death trigger self-return, no cast-time targeting
                     // PreventAllCombatDamageThisTurn: reuses last_resolved_target, no cast-time target
                 }
                 // Effects with already-specified targets (non-zero target field)
@@ -1362,6 +1365,7 @@ impl GameState {
                 | Effect::ReturnCardsFromGraveyardToHand { .. }
                 | Effect::ReturnGraveyardCardToHand { .. }
                 | Effect::ReturnGraveyardCardToZone { .. }
+                | Effect::ReturnSelfAsEnchantment { .. }
                 | Effect::PreventAllCombatDamageThisTurn { .. }
                 | Effect::ConditionalSelfCounter { .. }
                 | Effect::UnlessCostWrapper { .. }
@@ -1376,6 +1380,7 @@ impl GameState {
                     // SelfExileFromStack: operates on the resolving spell itself, no targets
                     // ReturnCardsFromGraveyardToHand: uses remembered_cards count, no targeting
                     // ReturnGraveyardCardToHand: AI picks matching card, no cast-time targeting
+                    // ReturnSelfAsEnchantment: death trigger self-return, no cast-time targeting
                     // PreventAllCombatDamageThisTurn: reuses UntapPermanent's last_resolved_target
                 }
                 // Effects with pre-specified targets (guard failed: target.as_u32() != 0)
@@ -1698,6 +1703,7 @@ impl GameState {
             | Effect::ReturnCardsFromGraveyardToHand { .. }
             | Effect::ReturnGraveyardCardToHand { .. }
             | Effect::ReturnGraveyardCardToZone { .. }
+            | Effect::ReturnSelfAsEnchantment { .. }
             | Effect::PreventAllCombatDamageThisTurn { .. }
             | Effect::ConditionalSelfCounter { .. }
             | Effect::CreateTokenDynamic { .. }

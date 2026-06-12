@@ -2643,10 +2643,24 @@ impl CardDefinition {
 
             // Parse "dies" triggers (Mode$ ChangesZone with Origin$ Battlefield, Destination$ Graveyard)
             // Example: T:Mode$ ChangesZone | Origin$ Battlefield | Destination$ Graveyard | ValidCard$ Card.Self | Execute$ TrigAddMana
+            // Also handles ValidCard$ Card.Self+Creature (e.g. Enduring Vitality: "when this dies,
+            // if it was a creature") — the `+Creature` qualifier is a type guard that ensures the
+            // trigger only fires when the card was a creature when it died, preventing re-triggering
+            // if the card re-enters as a non-creature (e.g. pure enchantment).
+            let valid_card_is_self = params
+                .get("ValidCard")
+                .map(|s| {
+                    // Accept "Card.Self" exactly, or "Card.Self+<extra>" qualifiers
+                    // (e.g. "Card.Self+Creature").  We tokenize on "+" and check the
+                    // first segment starts with "Card.Self" to avoid false positives.
+                    let parts: Vec<&str> = s.split('+').collect();
+                    parts.first().map(|p| p.trim() == "Card.Self").unwrap_or(false)
+                })
+                .unwrap_or(false);
             if mode == Some("ChangesZone")
                 && params.get("Origin").map(|s| s.as_str()) == Some("Battlefield")
                 && params.get("Destination").map(|s| s.as_str()) == Some("Graveyard")
-                && params.get("ValidCard").map(|s| s.as_str()) == Some("Card.Self")
+                && valid_card_is_self
             {
                 let mut effects = Vec::new();
 

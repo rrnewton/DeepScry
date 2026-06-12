@@ -1157,7 +1157,8 @@ impl<'a> GameLoop<'a> {
             }
             Effect::ReturnCardsFromGraveyardToHand { .. }
             | Effect::ReturnGraveyardCardToHand { .. }
-            | Effect::ReturnGraveyardCardToZone { .. } => {
+            | Effect::ReturnGraveyardCardToZone { .. }
+            | Effect::ReturnSelfAsEnchantment { .. } => {
                 // Individual card-return log lines are emitted inside execute_effect.
                 // Nothing to surface at the top level.
             }

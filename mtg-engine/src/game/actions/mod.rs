@@ -104,6 +104,7 @@ fn expand_all_players_effect(effect: &Effect, player_ids: &[PlayerId]) -> smallv
         | Effect::ReturnCardsFromGraveyardToHand { .. }
         | Effect::ReturnGraveyardCardToHand { .. }
         | Effect::ReturnGraveyardCardToZone { .. }
+        | Effect::ReturnSelfAsEnchantment { .. }
         | Effect::PreventAllCombatDamageThisTurn { .. }
         | Effect::ConditionalSelfCounter { .. }
         | Effect::Unimplemented { .. }
@@ -231,6 +232,7 @@ fn expand_all_players_effect(effect: &Effect, player_ids: &[PlayerId]) -> smallv
             | Effect::ReturnCardsFromGraveyardToHand { .. }
             | Effect::ReturnGraveyardCardToHand { .. }
             | Effect::ReturnGraveyardCardToZone { .. }
+            | Effect::ReturnSelfAsEnchantment { .. }
             | Effect::PreventAllCombatDamageThisTurn { .. }
             | Effect::ConditionalSelfCounter { .. }
             | Effect::Unimplemented { .. }
@@ -3775,6 +3777,8 @@ impl GameState {
                 *library_position,
             )?,
 
+            Effect::ReturnSelfAsEnchantment { source } => self.execute_return_self_as_enchantment(*source)?,
+
             Effect::ConditionalSelfCounter {
                 source,
                 condition,
@@ -6497,7 +6501,15 @@ impl GameState {
 
             // Execute each effect with placeholder resolution
             for effect in effects_to_execute {
-                let effect = resolve_effect_placeholder(&effect, &ctx);
+                let mut effect = resolve_effect_placeholder(&effect, &ctx);
+
+                // Resolve ReturnSelfAsEnchantment placeholder — the dying card IS the source.
+                // This fires for Enduring Vitality's "when this dies, return it as enchantment" trigger.
+                if let Effect::ReturnSelfAsEnchantment { source } = &effect {
+                    if source.is_placeholder() {
+                        effect = Effect::ReturnSelfAsEnchantment { source: dying_card_id };
+                    }
+                }
 
                 // Log AddMana effects specially (Su-Chi death trigger)
                 if let Effect::AddMana { .. } = &effect {
@@ -7660,12 +7672,10 @@ impl GameState {
                                 .gamelog(&format!("{} sacrifices {} to Balance", player_name, card.name));
                         }
 
-                        // Check death triggers BEFORE moving the card
-                        let _ = self.check_death_triggers(card_id);
-
-                        // Move to graveyard (or exile if finality counter)
+                        // Move to graveyard/exile FIRST (CR 704.3), then fire death triggers.
                         let dest = self.death_destination_for_card(card_id);
                         self.move_card(card_id, Zone::Battlefield, dest, owner)?;
+                        let _ = self.check_death_triggers(card_id);
 
                         // Check sacrifice triggers (e.g., Pirate Peddlers)
                         let _ = self.check_triggers(TriggerEvent::Sacrificed, card_id);

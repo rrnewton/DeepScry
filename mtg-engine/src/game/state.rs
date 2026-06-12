@@ -4200,6 +4200,7 @@ impl GameState {
                     | crate::core::Effect::ReturnCardsFromGraveyardToHand { .. }
                     | crate::core::Effect::ReturnGraveyardCardToHand { .. }
                     | crate::core::Effect::ReturnGraveyardCardToZone { .. }
+                    | crate::core::Effect::ReturnSelfAsEnchantment { .. }
                     | crate::core::Effect::PreventAllCombatDamageThisTurn { .. }
                     | crate::core::Effect::ConditionalSelfCounter { .. }
                     | crate::core::Effect::Unimplemented { .. }

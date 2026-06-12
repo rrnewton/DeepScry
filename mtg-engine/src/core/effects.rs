@@ -1861,6 +1861,31 @@ pub enum Effect {
         library_position: u8,
     },
 
+    /// Return a card that just died from the graveyard to the battlefield,
+    /// but only as an enchantment (removing all creature types).
+    ///
+    /// Corresponds to Enduring Vitality's death trigger:
+    ///   `DB$ ChangeZone | Defined$ TriggeredNewCardLKICopy | Origin$ Graveyard
+    ///    | Destination$ Battlefield | StaticEffect$ Animate`
+    /// with Animate: `Mode$ Continuous | Affected$ Card.IsRemembered |
+    ///   AddType$ Enchantment | RemoveCardTypes$ True`
+    ///
+    /// Semantics (CR 400.7, CR 110.5c):
+    /// 1. Find the source card in the graveyard (by CardId).
+    /// 2. Move it from Graveyard → Battlefield under its owner's control.
+    /// 3. Remove all card types that are not Enchantment (strip Creature type etc.)
+    ///    and ensure it has the Enchantment card type — so the resulting permanent
+    ///    is purely an enchantment and will not re-trigger "when this creature dies."
+    ///
+    /// Cards using this:
+    ///   - Enduring Vitality: "When Enduring Vitality dies, if it was a creature,
+    ///     return it to the battlefield under its owner's control. It's an enchantment."
+    ReturnSelfAsEnchantment {
+        /// The card that died and should be returned. Resolved from the dying card's
+        /// CardId in `check_death_triggers`; placeholder (CardId::new(0)) until then.
+        source: CardId,
+    },
+
     /// Execute an inner effect only if the source card currently satisfies a
     /// counter-count condition (e.g. `ConditionPresent$ Card.counters_EQ0_SCREAM`).
     ///
@@ -2646,6 +2671,7 @@ impl Effect {
             | Effect::ReturnGraveyardCardToHand { .. }
             | Effect::ReturnGraveyardCardToZone { .. }
             | Effect::SacrificeSelf { .. }
+            | Effect::ReturnSelfAsEnchantment { .. }
             | Effect::Unimplemented { .. }
             | Effect::NoOp { .. } => EffectTargetCategory::NoTargetNeeded,
 
