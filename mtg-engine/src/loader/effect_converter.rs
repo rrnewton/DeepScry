@@ -4,7 +4,7 @@
 
 use super::ability_parser::{AbilityParams, ApiType};
 use super::svar_parser::{parse_svar, ParsedSVar, StaticAbilityMode};
-use crate::core::{CardId, Effect, Keyword, PlayerId, RepeatEachIterate, TargetRef, TargetRestriction};
+use crate::core::{CardId, Effect, Keyword, PlayerId, RepeatEachIterate, TargetRef, TargetRestriction, TargetType};
 use smallvec::SmallVec;
 use std::collections::HashMap;
 
@@ -2023,7 +2023,49 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
         // tapped. `Amount$ X` is stored as 0; the trigger executor resolves the
         // fade-counter count at fire time.
         ApiType::ChooseCard => {
-            // Only implement the "tap chosen cards" pattern.
+            // Two sub-patterns of ChooseCard:
+            //
+            // A) `ChooseEach$ T1 & T2 & ...` — Tragic Arrogance pattern:
+            //    choose one permanent of EACH listed type from among the
+            //    remembered player's permanents, then remember them all.
+            //    → Produces `Effect::ChooseAndRememberOneOfEach { types }`.
+            //
+            // B) `Choices$ T1,T2,...` with `Amount$ X | SubAbility$ DBTap` —
+            //    Tangle Wire pattern: tap N permanents of the listed types.
+            //    → Produces `Effect::TapPermanentsMatchingFilter`.
+            if let Some(choose_each_raw) = params.get("ChooseEach") {
+                // Parse "Artifact & Creature & Enchantment & Planeswalker"
+                // into a Vec<TargetType>.
+                let types: Vec<TargetType> = choose_each_raw
+                    .split('&')
+                    .filter_map(|s| {
+                        let s = s.trim();
+                        match s {
+                            "Artifact" => Some(TargetType::Artifact),
+                            "Creature" => Some(TargetType::Creature),
+                            "Enchantment" => Some(TargetType::Enchantment),
+                            "Planeswalker" => Some(TargetType::Planeswalker),
+                            "Land" => Some(TargetType::Land),
+                            _ => {
+                                log::warn!(
+                                    target: "effect_converter",
+                                    "ChooseCard ChooseEach$: unrecognised type '{}', skipping",
+                                    s
+                                );
+                                None
+                            }
+                        }
+                    })
+                    .collect();
+                if types.is_empty() {
+                    return Some(Effect::Unimplemented {
+                        api_type: format!("ChooseCard(ChooseEach-empty:{choose_each_raw})"),
+                    });
+                }
+                return Some(Effect::ChooseAndRememberOneOfEach { types });
+            }
+
+            // Pattern B: "tap chosen cards" (Tangle Wire).
             // The sub-ability chain must end in DB$ Tap | Defined$ ChosenCard.
             let choices_raw = params.get("Choices").unwrap_or("");
             // Normalise: strip per-segment qualifiers, keep base types only.
@@ -4534,5 +4576,75 @@ Oracle:Target creature gets +3/+1 until end of turn. Create a Clue token.
             Effect::SkipUntapStep { .. } => {}
             other => panic!("Expected SkipUntapStep, got {:?}", other),
         }
+    }
+
+    /// Tragic Arrogance's `YouChoose` SVar:
+    ///   `DB$ ChooseCard | ChooseEach$ Artifact & Creature & Enchantment & Planeswalker`
+    /// must produce `Effect::ChooseAndRememberOneOfEach { types }` with exactly
+    /// the four recognised permanent types.
+    #[test]
+    fn test_choose_card_choose_each_tragic_arrogance() {
+        use crate::core::{Effect, TargetType};
+        let params = AbilityParams::parse(
+            "A:DB$ ChooseCard | Defined$ You | Choices$ Permanent \
+             | ChooseEach$ Artifact & Creature & Enchantment & Planeswalker \
+             | ControlledByPlayer$ Remembered | RememberChosen$ True | Mandatory$ True | Reveal$ True",
+        )
+        .unwrap();
+        let effect = params_to_effect(&params);
+        assert!(
+            effect.is_some(),
+            "ChooseCard with ChooseEach$ must produce Some(effect)"
+        );
+        match effect.unwrap() {
+            Effect::ChooseAndRememberOneOfEach { types } => {
+                assert_eq!(types.len(), 4, "Expected 4 types, got {}: {:?}", types.len(), types);
+                assert!(types.contains(&TargetType::Artifact), "Artifact must be in types");
+                assert!(types.contains(&TargetType::Creature), "Creature must be in types");
+                assert!(types.contains(&TargetType::Enchantment), "Enchantment must be in types");
+                assert!(
+                    types.contains(&TargetType::Planeswalker),
+                    "Planeswalker must be in types"
+                );
+            }
+            other => panic!("Expected ChooseAndRememberOneOfEach, got {:?}", other),
+        }
+    }
+
+    /// Tangle Wire's `ChooseCard` (without `ChooseEach$`) must still produce
+    /// `Effect::TapPermanentsMatchingFilter` — regression guard.
+    #[test]
+    fn test_choose_card_tangle_wire_unaffected() {
+        let params = AbilityParams::parse(
+            "A:DB$ ChooseCard | Defined$ TriggeredPlayer \
+             | Choices$ Artifact.untapped+ActivePlayerCtrl,Creature.untapped+ActivePlayerCtrl,\
+               Land.untapped+ActivePlayerCtrl | Amount$ X | SubAbility$ DBTap",
+        )
+        .unwrap();
+        let effect = params_to_effect(&params);
+        assert!(effect.is_some(), "ChooseCard (Tangle Wire) must produce Some(effect)");
+        match effect.unwrap() {
+            Effect::TapPermanentsMatchingFilter { .. } => {}
+            other => panic!(
+                "Expected TapPermanentsMatchingFilter (Tangle Wire pattern), got {:?}",
+                other
+            ),
+        }
+    }
+
+    /// `TargetRestriction::parse` must recognise `!IsRemembered` as
+    /// `requires_not_remembered = true` (Tragic Arrogance SacAllOthers).
+    #[test]
+    fn test_target_restriction_parse_not_remembered() {
+        use crate::core::TargetRestriction;
+        let r = TargetRestriction::parse("Permanent.nonLand+!IsRemembered");
+        assert!(
+            r.requires_not_remembered,
+            "!IsRemembered must set requires_not_remembered = true"
+        );
+        assert!(
+            !r.requires_remembered,
+            "IsRemembered flag must NOT be set when only !IsRemembered is present"
+        );
     }
 }

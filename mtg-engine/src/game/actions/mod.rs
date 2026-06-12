@@ -237,6 +237,7 @@ fn expand_all_players_effect(effect: &Effect, player_ids: &[PlayerId]) -> smallv
         | Effect::CopySpellAbility { .. }
         | Effect::ImmediateTrigger { .. }
         | Effect::ClearRemembered
+        | Effect::ChooseAndRememberOneOfEach { .. }
         | Effect::AddTurn { .. }
         | Effect::AddPhase { .. }
         | Effect::ChooseColor { .. }
@@ -374,6 +375,7 @@ fn expand_all_players_effect(effect: &Effect, player_ids: &[PlayerId]) -> smallv
             | Effect::CopySpellAbility { .. }
             | Effect::ImmediateTrigger { .. }
             | Effect::ClearRemembered
+            | Effect::ChooseAndRememberOneOfEach { .. }
             | Effect::AddTurn { .. }
             | Effect::AddPhase { .. }
             | Effect::ChooseColor { .. }
@@ -4569,6 +4571,11 @@ impl GameState {
                 self.execute_immediate_trigger(condition, sub_effects)?
             }
             Effect::ClearRemembered => self.execute_clear_remembered()?,
+
+            // ChooseAndRememberOneOfEach: for each type in the list, choose one
+            // permanent of that type controlled by the current loop player
+            // (remembered_players[0]) and push it onto remembered_cards.
+            Effect::ChooseAndRememberOneOfEach { types } => self.execute_choose_and_remember_one_of_each(types)?,
 
             // RepeatEach: for each member of iterate_over, set it as the
             // remembered card/player, then execute each sub-effect once.

@@ -4634,7 +4634,8 @@ impl GameState {
                     | crate::core::Effect::PlayFromGraveyard { .. }
                     | crate::core::Effect::RepeatEach { .. }
                     | crate::core::Effect::ExtraLandPlay { .. }
-                    | crate::core::Effect::TapPermanentsMatchingFilter { .. } => {
+                    | crate::core::Effect::TapPermanentsMatchingFilter { .. }
+                    | crate::core::Effect::ChooseAndRememberOneOfEach { .. } => {
                         // Other effect types not yet implemented for delayed triggers
                         // Note: CopySpellAbility inside ExecuteEffect is unusual;
                         // typically CopySpellAbility should be used with DelayedEffect::CopySpellAbility

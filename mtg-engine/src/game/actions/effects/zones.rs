@@ -696,6 +696,9 @@ impl GameState {
     ) -> Result<()> {
         // Each player sacrifices all permanents matching the restriction (e.g., All is Dust)
         // Sacrifice bypasses indestructible and regeneration (CR 701.17)
+        // Snapshot remembered_cards so we can pass the slice to
+        // `matches_with_remembered` without conflicting borrows.
+        let remembered: smallvec::SmallVec<[CardId; 8]> = self.remembered_cards.iter().copied().collect();
         let targets: Vec<(CardId, PlayerId)> = self
             .battlefield
             .cards
@@ -703,7 +706,7 @@ impl GameState {
             .copied()
             .filter_map(|card_id| {
                 let card = self.cards.try_get(card_id)?;
-                if restriction.matches(card) {
+                if restriction.matches_with_remembered(card, &remembered) {
                     Some((card_id, card.owner))
                 } else {
                     None

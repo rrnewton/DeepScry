@@ -991,6 +991,14 @@ impl<'a> GameLoop<'a> {
                 let message = format!("{source_name} ({source_id}) clears remembered cards");
                 self.game.logger.gamelog(&message);
             }
+            Effect::ChooseAndRememberOneOfEach { types } => {
+                let type_names: Vec<String> = types.iter().map(|t| format!("{t:?}")).collect();
+                let message = format!(
+                    "{source_name} ({source_id}) chooses one of each: {}",
+                    type_names.join(", ")
+                );
+                self.game.logger.gamelog(&message);
+            }
             Effect::ChooseColor { player, .. } => {
                 let player_name = self.get_player_name(*player);
                 let message = format!("{source_name} ({source_id}) {player_name} chooses a color");

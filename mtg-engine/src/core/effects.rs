@@ -738,6 +738,15 @@ pub struct TargetRestriction {
     /// If true, target must be in the "remembered" set (unimplemented — always fails)
     #[serde(default)]
     pub requires_remembered: bool,
+    /// If true, target must NOT be in the "remembered" set — `!IsRemembered` qualifier.
+    ///
+    /// Used by Tragic Arrogance's `SacAllOthers`:
+    ///   `ValidCards$ Permanent.nonLand+!IsRemembered`
+    /// At runtime, `execute_sacrifice_all` calls
+    /// `matches_excluding_remembered(&game.remembered_cards)` which returns false
+    /// for any card whose id appears in the remembered list.
+    #[serde(default)]
+    pub requires_not_remembered: bool,
     /// If true, target must NOT be an artifact (e.g. The Abyss's
     /// `Creature.nonArtifact`). Artifact creatures are excluded.
     #[serde(default)]
@@ -806,6 +815,7 @@ impl TargetRestriction {
             power_le: None,
             requires_nontoken: false,
             requires_remembered: false,
+            requires_not_remembered: false,
             requires_nonartifact: false,
             required_color: None,
             required_set: None,
@@ -828,6 +838,7 @@ impl TargetRestriction {
             power_le: None,
             requires_nontoken: false,
             requires_remembered: false,
+            requires_not_remembered: false,
             requires_nonartifact: false,
             required_color: None,
             required_set: None,
@@ -1017,6 +1028,7 @@ impl TargetRestriction {
             && !self.requires_no_counters
             && !self.requires_nontoken
             && !self.requires_remembered
+            && !self.requires_not_remembered
             && !self.requires_nonartifact
             && self.required_color.is_none()
             && self.required_set.is_none()
@@ -1034,6 +1046,23 @@ impl TargetRestriction {
     /// callers that genuinely have no source (none today filter on `Other`).
     pub fn matches_excluding(&self, card: &crate::core::Card, source: crate::core::CardId) -> bool {
         if self.requires_other && card.id == source {
+            return false;
+        }
+        self.matches(card)
+    }
+
+    /// Like [`TargetRestriction::matches`], but also enforces the
+    /// `requires_not_remembered` qualifier at runtime by checking the provided
+    /// remembered-card slice.
+    ///
+    /// Used by `execute_sacrifice_all` for Tragic Arrogance's
+    /// `ValidCards$ Permanent.nonLand+!IsRemembered`: a permanent whose id
+    /// appears in `remembered` is the one the caster chose to keep, so it must
+    /// NOT be sacrificed.
+    pub fn matches_with_remembered(&self, card: &crate::core::Card, remembered: &[crate::core::CardId]) -> bool {
+        // If this filter requires cards that are NOT in the remembered list,
+        // reject any card whose id IS in remembered.
+        if self.requires_not_remembered && remembered.contains(&card.id) {
             return false;
         }
         self.matches(card)
@@ -1095,6 +1124,7 @@ impl TargetRestriction {
         let mut requires_no_counters = false;
         let mut requires_nontoken = false;
         let mut requires_remembered = false;
+        let mut requires_not_remembered = false;
         let mut requires_nonartifact = false;
         let mut requires_noncreature = false;
         let mut requires_defender = false;
@@ -1122,6 +1152,7 @@ impl TargetRestriction {
                         "!HasCounters" => requires_no_counters = true,
                         "!token" => requires_nontoken = true,
                         "IsRemembered" => requires_remembered = true,
+                        "!IsRemembered" => requires_not_remembered = true,
                         "YouCtrl" => controller = ControllerRestriction::YouCtrl,
                         "OppCtrl" => controller = ControllerRestriction::OppCtrl,
                         "ActivePlayerCtrl" => controller = ControllerRestriction::ActivePlayerCtrl,
@@ -1203,6 +1234,7 @@ impl TargetRestriction {
             power_le,
             requires_nontoken,
             requires_remembered,
+            requires_not_remembered,
             requires_nonartifact,
             required_color,
             required_set,
@@ -2506,6 +2538,32 @@ pub enum Effect {
     /// This effect clears the game.remembered_cards storage after ImmediateTrigger has checked it.
     ClearRemembered,
 
+    /// For each permanent type in `types`, choose one permanent of that type
+    /// controlled by the player in `remembered_players[0]` and push the chosen
+    /// permanents onto `game.remembered_cards`.
+    ///
+    /// Corresponds to Tragic Arrogance's `YouChoose` SVar:
+    ///   `DB$ ChooseCard | Defined$ You | ChooseEach$ Artifact & Creature & Enchantment & Planeswalker
+    ///    | ControlledByPlayer$ Remembered | RememberChosen$ True | Mandatory$ True`
+    ///
+    /// The CASTER (Defined$ You) makes each choice from among permanents
+    /// controlled by the current-loop player (`ControlledByPlayer$ Remembered`,
+    /// where Remembered = the player stored in `remembered_players[0]` by the
+    /// enclosing `RepeatEach | RepeatPlayers$ Player` loop).
+    ///
+    /// AI heuristic:
+    /// - When choosing for ITSELF (current loop player == caster): keep the
+    ///   highest-mana-value permanent of each type (save the best).
+    /// - When choosing for an OPPONENT: keep the lowest-mana-value permanent
+    ///   of each type (sacrifice the opponent's best).
+    /// - If a player controls no permanent of a given type, that type is
+    ///   silently skipped (nothing is remembered for it).
+    ChooseAndRememberOneOfEach {
+        /// The permanent types to iterate over (one choice per type).
+        /// Parsed from `ChooseEach$ Artifact & Creature & Enchantment & Planeswalker`.
+        types: Vec<TargetType>,
+    },
+
     /// Choose a color (WUBRG) and store it on the source card.
     ///
     /// Corresponds to: `AB$ ChooseColor | Cost$ ... | Defined$ You`
@@ -2953,7 +3011,10 @@ impl Effect {
             | Effect::RepeatEach { .. }
             // ExtraLandPlay grants a land-play permission to a specific player;
             // no cast-time target is selected (player is the spell's controller).
-            | Effect::ExtraLandPlay { .. } => EffectTargetCategory::NoTargetNeeded,
+            | Effect::ExtraLandPlay { .. }
+            // ChooseAndRememberOneOfEach reads from remembered_players (set by RepeatEach);
+            // no cast-time target selection.
+            | Effect::ChooseAndRememberOneOfEach { .. } => EffectTargetCategory::NoTargetNeeded,
 
             // Effects using filters (affect multiple permanents)
             Effect::PumpAllCreatures { .. }

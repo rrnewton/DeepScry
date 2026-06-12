@@ -701,7 +701,8 @@ impl GameState {
                             | Effect::PlayFromGraveyard { .. }
                             | Effect::RepeatEach { .. }
                             | Effect::ExtraLandPlay { .. }
-                            | Effect::TapPermanentsMatchingFilter { .. } => {
+                            | Effect::TapPermanentsMatchingFilter { .. }
+                            | Effect::ChooseAndRememberOneOfEach { .. } => {
                                 // Non-Destroy/Copy modes in modal spells
                                 // TODO(mtg-30): Add handlers for targeting modes that need them
                             }
@@ -780,7 +781,9 @@ impl GameState {
                 // ExtraLandPlay grants permission to the spell controller; no cast-time target.
                 | Effect::ExtraLandPlay { .. }
                 // TapPermanentsMatchingFilter uses a filter, not a specific cast-time target.
-                | Effect::TapPermanentsMatchingFilter { .. } => {
+                | Effect::TapPermanentsMatchingFilter { .. }
+                // ChooseAndRememberOneOfEach reads from remembered_players; no cast-time target.
+                | Effect::ChooseAndRememberOneOfEach { .. } => {
                     // These effects target players or have no targeting requirements
                     // AttachEquipment targeting is handled via Equip keyword abilities
                     // ChooseColor is a player choice effect (no permanent targets)
@@ -1411,7 +1414,9 @@ impl GameState {
                 | Effect::RepeatEach { .. }
                 | Effect::ExtraLandPlay { .. }
                 // TapPermanentsMatchingFilter uses a filter, not a cast-time target.
-                | Effect::TapPermanentsMatchingFilter { .. } => {
+                | Effect::TapPermanentsMatchingFilter { .. }
+                // ChooseAndRememberOneOfEach reads from remembered_players; no cast-time target.
+                | Effect::ChooseAndRememberOneOfEach { .. } => {
                     // These effects target players or have no targeting requirements
                     // CreateDelayedTrigger targets creatures - handled via ValidTgts$ Creature
                     // CopySpellAbility doesn't need explicit targets - copies triggering spell
@@ -1816,7 +1821,9 @@ impl GameState {
             // ExtraLandPlay targets the spell controller — no permanent target needed.
             | Effect::ExtraLandPlay { .. }
             // TapPermanentsMatchingFilter uses a filter; no cast-time permanent target needed.
-            | Effect::TapPermanentsMatchingFilter { .. } => true, // Filter-based / no-target effects
+            | Effect::TapPermanentsMatchingFilter { .. }
+            // ChooseAndRememberOneOfEach reads from remembered_players; no cast-time target.
+            | Effect::ChooseAndRememberOneOfEach { .. } => true, // Filter-based / no-target effects
 
             // ===== EXHAUSTIVE EFFECT HANDLING =====
             // Effects with pre-specified targets (guard failed: target.as_u32() != 0)
