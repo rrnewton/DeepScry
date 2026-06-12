@@ -1157,6 +1157,7 @@ impl<'a> GameLoop<'a> {
             }
             Effect::ReturnCardsFromGraveyardToHand { .. }
             | Effect::PutCardsFromHandOnTopOfLibrary { .. }
+            | Effect::RevealCardsFromHand { .. }  // reveal logged inside execute_effect
             | Effect::ReturnGraveyardCardToHand { .. }
             | Effect::ReturnGraveyardCardToZone { .. }
             | Effect::ReturnSelfAsEnchantment { .. } => {

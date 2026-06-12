@@ -46,30 +46,43 @@ impl GameState {
             self.logger
                 .normal("Warning: produces_chosen_color in execute_effect - source card unknown");
         }
-        if amount_var.is_some() {
-            // Variable mana should be resolved before reaching execute_effect
-            self.logger
-                .normal("Warning: amount_var in execute_effect - should be resolved in ManaEngine");
-        }
+        // `remembered*N` — Metalworker-style: add `mana * remembered_amount * N`.
+        // Encoded by effect_converter when it detects `Remembered$Amount[/Twice]`
+        // in the SVar referenced by `Amount$`.
+        let effective_mana = if let Some(var) = amount_var {
+            if let Some(mult_str) = var.strip_prefix("remembered*") {
+                let mult: u32 = mult_str.parse().unwrap_or(1);
+                let remembered = self.remembered_amount.unwrap_or(0);
+                let total = remembered * mult;
+                mana.multiply(total as u8)
+            } else {
+                // Unknown variable: warn and fall through to base mana (1 unit).
+                self.logger
+                    .normal(&format!("Warning: unresolved amount_var '{var}' in execute_add_mana"));
+                *mana
+            }
+        } else {
+            *mana
+        };
         let p = self.get_player_mut(player)?;
 
         // Add each component of the mana cost to the pool
-        for _ in 0..mana.white {
+        for _ in 0..effective_mana.white {
             p.mana_pool.add_color(Color::White);
         }
-        for _ in 0..mana.blue {
+        for _ in 0..effective_mana.blue {
             p.mana_pool.add_color(Color::Blue);
         }
-        for _ in 0..mana.black {
+        for _ in 0..effective_mana.black {
             p.mana_pool.add_color(Color::Black);
         }
-        for _ in 0..mana.red {
+        for _ in 0..effective_mana.red {
             p.mana_pool.add_color(Color::Red);
         }
-        for _ in 0..mana.green {
+        for _ in 0..effective_mana.green {
             p.mana_pool.add_color(Color::Green);
         }
-        for _ in 0..mana.colorless {
+        for _ in 0..effective_mana.colorless {
             p.mana_pool.add_color(Color::Colorless);
         }
 
@@ -77,7 +90,7 @@ impl GameState {
         self.undo_log.log(
             crate::undo::GameAction::AddMana {
                 player_id: player,
-                mana: *mana,
+                mana: effective_mana,
             },
             prior_log_size,
         );

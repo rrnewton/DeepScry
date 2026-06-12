@@ -404,6 +404,28 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
             })
         }
 
+        ApiType::Reveal => {
+            // "Reveal any number of <type> cards from your hand" — Metalworker,
+            // Tolarian Academy-adjacent effects, etc.
+            //
+            //   AB$ Reveal | Cost$ T | RevealValid$ Card.Artifact+YouCtrl
+            //              | AnyNumber$ True | RememberRevealed$ True
+            //              | SubAbility$ DBMetalWorkerMana
+            //
+            // The filter is `RevealValid$`; `AnyNumber$ True` means the controller
+            // may reveal zero or more; `RememberRevealed$ True` stores the count in
+            // `GameState::remembered_amount` for use by the chained Mana sub-ability.
+            let filter = params.get("RevealValid").unwrap_or("Card").to_string();
+            let any_number = params.get("AnyNumber") == Some("True");
+            let remember_count = params.get("RememberRevealed") == Some("True");
+            Some(Effect::RevealCardsFromHand {
+                player: PlayerId::placeholder(),
+                filter,
+                any_number,
+                remember_count,
+            })
+        }
+
         ApiType::ChangeZone => {
             // Enduring Vitality death trigger:
             //   DB$ ChangeZone | Defined$ TriggeredNewCardLKICopy | Origin$ Graveyard
@@ -2282,6 +2304,50 @@ pub fn params_to_effect_with_svars(params: &AbilityParams, svars: &HashMap<Strin
                         amount,
                         reference: CardId::placeholder(),
                     });
+                }
+            }
+        }
+    }
+
+    // ApiType::Mana with a variable Amount$ that resolves to Remembered$Amount (with
+    // optional multiplier): e.g. Metalworker's
+    //   SVar:MetalWorkerX:Remembered$Amount/Twice
+    //   DB$ Mana | Produced$ C | Amount$ MetalWorkerX
+    // The Amount$ SVar body carries the multiplier suffix ("/Twice" = ×2).
+    // We encode it as `amount_var = "remembered*<N>"` so the executor can read
+    // `GameState::remembered_amount * N` at runtime.
+    if params.api_type == ApiType::Mana {
+        if let Some(amount_str) = params.get("Amount") {
+            // Only check when Amount$ is not a plain integer or "X" (those are
+            // handled by the base converter).
+            if amount_str.parse::<u8>().is_err() && amount_str != "X" {
+                if let Some(svar_body) = svars.get(amount_str) {
+                    // Recognised patterns: "Remembered$Amount" and "Remembered$Amount/Twice"
+                    let multiplier: Option<u32> = if svar_body.starts_with("Remembered$Amount") {
+                        let suffix = svar_body.trim_start_matches("Remembered$Amount");
+                        match suffix {
+                            "" => Some(1),
+                            "/Twice" => Some(2),
+                            _ => None,
+                        }
+                    } else {
+                        None
+                    };
+                    if let Some(mult) = multiplier {
+                        let produced_str = params.get("Produced").unwrap_or("C");
+                        use crate::core::ManaCost;
+                        // Base ManaCost = 1 of the produced type (multiplied at runtime by remembered*mult)
+                        let unit_mana = ManaCost::from_string(produced_str);
+                        let produces_chosen_color = produced_str.contains("Chosen");
+                        // Encode the dynamic amount as "remembered*<mult>" for the executor.
+                        let amount_var = format!("remembered*{mult}");
+                        return Some(Effect::AddMana {
+                            player: PlayerId::placeholder(),
+                            mana: unit_mana,
+                            produces_chosen_color,
+                            amount_var: Some(amount_var),
+                        });
+                    }
                 }
             }
         }

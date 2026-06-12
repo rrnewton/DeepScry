@@ -115,7 +115,8 @@ fn expand_all_players_effect(effect: &Effect, player_ids: &[PlayerId]) -> smallv
         | Effect::UnlessCostWrapper { .. }
         | Effect::CreateTokenDynamic { .. }
         | Effect::CreateEmblem { .. }
-        | Effect::PutCardsFromHandOnTopOfLibrary { .. } => false,
+        | Effect::PutCardsFromHandOnTopOfLibrary { .. }
+        | Effect::RevealCardsFromHand { .. } => false,
     };
 
     if !is_all_players {
@@ -245,7 +246,8 @@ fn expand_all_players_effect(effect: &Effect, player_ids: &[PlayerId]) -> smallv
             | Effect::UnlessCostWrapper { .. }
             | Effect::CreateTokenDynamic { .. }
             | Effect::CreateEmblem { .. }
-            | Effect::PutCardsFromHandOnTopOfLibrary { .. } => unreachable!(),
+            | Effect::PutCardsFromHandOnTopOfLibrary { .. }
+            | Effect::RevealCardsFromHand { .. } => unreachable!(),
         })
         .collect()
 }
@@ -3110,6 +3112,19 @@ impl GameState {
                     count: *count,
                 }
             }
+            // "Reveal any number of cards from your hand" (Metalworker-style Reveal ability).
+            // Always targets the ability's controller. Resolve placeholder here.
+            Effect::RevealCardsFromHand {
+                player,
+                filter,
+                any_number,
+                remember_count,
+            } if player.is_placeholder() => Effect::RevealCardsFromHand {
+                player: card_owner,
+                filter: filter.clone(),
+                any_number: *any_number,
+                remember_count: *remember_count,
+            },
             // "Return one matching card from your graveyard to hand" — also targets
             // the spell/trigger controller by default. Resolve placeholder.
             Effect::ReturnGraveyardCardToHand { player, type_filter } if player.is_placeholder() => {
@@ -3799,6 +3814,18 @@ impl GameState {
                     .unwrap_or_default();
                 let chosen = self.pick_cards_to_put_back_heuristic(&hand, *count as usize);
                 self.execute_put_cards_from_hand_on_top_of_library(*player, &chosen)?;
+            }
+            Effect::RevealCardsFromHand {
+                player,
+                filter,
+                any_number: _,
+                remember_count,
+            } => {
+                // Count matching cards in hand, reveal them (log), and optionally
+                // store the count in remembered_amount for chained sub-abilities.
+                // Non-interactive: we reveal ALL matching cards (the heuristic equivalent
+                // of "reveal as many as possible to maximise the Mana sub-ability").
+                self.execute_reveal_cards_from_hand(*player, filter, *remember_count)?;
             }
             Effect::ReturnGraveyardCardToHand { player, type_filter } => {
                 self.execute_return_graveyard_card_to_hand(*player, type_filter)?

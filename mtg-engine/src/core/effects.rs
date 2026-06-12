@@ -1819,6 +1819,28 @@ pub enum Effect {
     /// specified number of cards back (if available).
     PutCardsFromHandOnTopOfLibrary { player: PlayerId, count: u8 },
 
+    /// Reveal any number of matching cards from a player's hand, optionally
+    /// storing the count in `GameState::remembered_amount` for use by
+    /// chained sub-abilities (e.g. Metalworker: "reveal artifact cards; add
+    /// {C}{C} for each").
+    ///
+    /// Corresponds to `AB$ Reveal | RevealValid$ <filter> | AnyNumber$ True |
+    /// RememberRevealed$ True | SubAbility$ DBMana`.
+    ///
+    /// MTG CR 701.15 (Reveal): a player reveals a card by showing it to all
+    /// other players.  The effect is mandatory if `AnyNumber$ False`; with
+    /// `AnyNumber$ True` the controller chooses how many to reveal (≥ 0).
+    RevealCardsFromHand {
+        /// Player whose hand to reveal from.
+        player: PlayerId,
+        /// Card filter string (e.g. `"Card.Artifact+YouCtrl"`).
+        filter: String,
+        /// If true, the player chooses how many to reveal (≥ 0).
+        any_number: bool,
+        /// If true, store the revealed count in `GameState::remembered_amount`.
+        remember_count: bool,
+    },
+
     /// Return exactly one card matching a type filter from a player's graveyard
     /// to their hand.  The AI picks the highest-value matching card.
     ///
@@ -2697,6 +2719,7 @@ impl Effect {
             | Effect::MoveSelfBetweenZones { .. }
             | Effect::ReturnCardsFromGraveyardToHand { .. }
             | Effect::PutCardsFromHandOnTopOfLibrary { .. }
+            | Effect::RevealCardsFromHand { .. }
             | Effect::PreventAllCombatDamageThisTurn { .. }
             | Effect::ConditionalSelfCounter { .. }
             // Clone chooses which permanent to copy at resolution time (ETB

@@ -31,10 +31,37 @@
 //! - **Non-network / local AI** games: neither field is set; the heuristic
 //!   runs as before (hidden info is acceptable when there is no network shadow).
 
-use crate::core::{CardId, DigFilter, PlayerId};
+use crate::core::{Card, CardId, DigFilter, PlayerId};
 use crate::game::GameState;
 use crate::zones::Zone;
 use crate::Result;
+
+/// Check whether a card matches a `RevealValid$` filter string.
+///
+/// Filter syntax: `"Card.Artifact+YouCtrl"`, `"Card.Creature"`, etc.
+/// We extract the first dot-delimited segment after `Card.` (if present) and
+/// check it against the card's types.  `+YouCtrl` and similar qualifiers are
+/// always true here (we only reveal cards from the controlling player's own hand).
+///
+/// Returns `true` for the catch-all filter `"Card"` (no type restriction).
+fn card_matches_reveal_filter(card: &Card, filter: &str) -> bool {
+    // Normalise: drop "Card." prefix, take just the type segment before "+".
+    let type_part = filter
+        .strip_prefix("Card.")
+        .unwrap_or(filter)
+        .split('+')
+        .next()
+        .unwrap_or(filter);
+
+    if type_part.is_empty() || type_part == "Card" {
+        return true; // No type restriction.
+    }
+
+    // Match against card type names (case-insensitive).
+    card.types
+        .iter()
+        .any(|t| format!("{t:?}").eq_ignore_ascii_case(type_part))
+}
 
 impl GameState {
     /// [`Effect::Dig`]: look at the top `dig_count` cards of a library and move
@@ -842,6 +869,78 @@ impl GameState {
             (cmc, id.as_u32())
         });
         sorted.into_iter().take(count).collect()
+    }
+
+    /// [`Effect::RevealCardsFromHand`]: reveal matching cards from a player's
+    /// hand and optionally store the revealed count in
+    /// [`GameState::remembered_amount`] for use by chained sub-abilities.
+    ///
+    /// Filter syntax follows Forge's `RevealValid$` field, e.g.
+    /// `"Card.Artifact+YouCtrl"`.  Currently we match on card types contained
+    /// in the filter string (`Artifact`, `Land`, `Creature`, …); the `+YouCtrl`
+    /// qualifier is implicit (we always reveal *your own* hand cards here).
+    ///
+    /// Non-interactive: reveals ALL matching cards (maximises the mana gained
+    /// from a Metalworker, which is the correct greedy play with the zero
+    /// controller since Metalworker's mana scales with revealed artifacts).
+    ///
+    /// MTG CR 701.15 (Reveal): a player reveals a card by showing it to all
+    /// other players.  The revealed cards stay in the hand after the reveal.
+    pub(crate) fn execute_reveal_cards_from_hand(
+        &mut self,
+        player: PlayerId,
+        filter: &str,
+        remember_count: bool,
+    ) -> Result<()> {
+        let player_name = self
+            .get_player(player)
+            .ok()
+            .map(|p| p.name.as_str())
+            .unwrap_or("?")
+            .to_string();
+
+        // Collect matching card IDs from hand (cards stay in hand after reveal).
+        let matching: smallvec::SmallVec<[CardId; 8]> = self
+            .get_player_zones(player)
+            .map(|z| {
+                z.hand
+                    .cards
+                    .iter()
+                    .copied()
+                    .filter(|&id| {
+                        self.cards
+                            .try_get(id)
+                            .map(|c| card_matches_reveal_filter(c, filter))
+                            .unwrap_or(false)
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let count = matching.len();
+
+        // Log each revealed card (all players see the reveal — CR 701.15).
+        for &id in &matching {
+            let card_name = self
+                .cards
+                .try_get(id)
+                .map(|c| c.name.as_str())
+                .unwrap_or("?")
+                .to_string();
+            self.logger.gamelog(&format!("{player_name} reveals {card_name}"));
+        }
+
+        if count == 0 {
+            self.logger
+                .gamelog(&format!("{player_name} reveals no cards (no matching cards in hand)"));
+        }
+
+        // Optionally remember the count for the chained sub-ability.
+        if remember_count {
+            self.remembered_amount = Some(count as u32);
+        }
+
+        Ok(())
     }
 
     /// [`Effect::ReturnGraveyardCardToHand`]: return exactly one card matching
