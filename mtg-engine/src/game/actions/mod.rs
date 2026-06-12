@@ -7477,6 +7477,41 @@ impl GameState {
         Err(MtgError::InvalidAction("Invalid damage target".to_string()))
     }
 
+    /// Check whether damage from `source_id` to `target_id` (a creature) is
+    /// prevented by an attached Aura's `PreventDamageToEnchantedByChosenColor`
+    /// static ability (CR 615.1 — Prismatic Ward shape).
+    ///
+    /// Returns `true` if the damage should be fully prevented (source has the
+    /// chosen color of an attached prevention Aura), `false` otherwise.
+    /// Information-independent: only reads the source's public color identity.
+    pub fn is_color_prevented_by_aura(&self, target_id: CardId, source_id: CardId) -> bool {
+        let source_colors: smallvec::SmallVec<[crate::core::Color; 2]> =
+            self.cards.get(source_id).map(|c| c.colors.clone()).unwrap_or_default();
+        if source_colors.is_empty() {
+            return false;
+        }
+        for aura_id in self.get_attached_auras(target_id) {
+            let Ok(aura) = self.cards.get(aura_id) else {
+                continue;
+            };
+            let has_prevent_static = aura.static_abilities.iter().any(|a| {
+                matches!(
+                    a,
+                    crate::core::StaticAbility::PreventDamageToEnchantedByChosenColor { .. }
+                )
+            });
+            if !has_prevent_static {
+                continue;
+            }
+            if let Some(chosen_color) = aura.chosen_color {
+                if source_colors.contains(&chosen_color) {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
     /// Deal damage to a creature
     ///
     /// MTG Rules 120.3: Damage dealt to a creature or planeswalker remains until the cleanup step
@@ -7493,6 +7528,38 @@ impl GameState {
         };
 
         if is_creature {
+            // Check Prismatic Ward / color-prevention Aura statics (CR 615.1):
+            // If any attached Aura has StaticAbility::PreventDamageToEnchantedByChosenColor
+            // AND the damage source has the chosen color, all damage is prevented.
+            if let Some(source_id) = self.current_damage_source {
+                if self.is_color_prevented_by_aura(target_id, source_id) {
+                    // Find the aura name for logging (use first matching aura).
+                    let aura_name = self
+                        .get_attached_auras(target_id)
+                        .into_iter()
+                        .find(|&aura_id| {
+                            self.cards
+                                .get(aura_id)
+                                .map(|a| {
+                                    a.static_abilities.iter().any(|s| {
+                                        matches!(
+                                            s,
+                                            crate::core::StaticAbility::PreventDamageToEnchantedByChosenColor { .. }
+                                        )
+                                    })
+                                })
+                                .unwrap_or(false)
+                        })
+                        .and_then(|aura_id| self.cards.get(aura_id).ok().map(|a| a.name.clone()))
+                        .unwrap_or_else(|| "Prevention Aura".into());
+                    self.logger.normal(&format!(
+                        "{} prevents {} damage to {} ({}) (chosen color prevention)",
+                        aura_name, amount, creature_name, target_id
+                    ));
+                    return Ok(());
+                }
+            }
+
             // Apply damage prevention shield (CR 615.1)
             let actual_amount = {
                 let card = self.cards.get_mut(target_id)?;

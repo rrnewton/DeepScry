@@ -720,6 +720,21 @@ impl GameState {
                     // Use explicit damage assignments from SMART algorithm
                     for (blocker_id, damage) in assignments {
                         if *damage > 0 {
+                            // Prismatic Ward / color-prevention Aura: if the attacker's
+                            // color is the chosen color of a prevention Aura on the
+                            // blocker, skip this damage entirely (CR 615.1).
+                            if self.is_color_prevented_by_aura(*blocker_id, attacker_id) {
+                                self.logger.normal(&format!(
+                                    "Prevented {} combat damage to {} ({}) by color-prevention Aura",
+                                    damage,
+                                    self.cards
+                                        .try_get(*blocker_id)
+                                        .map(|c| c.name.as_str())
+                                        .unwrap_or("creature"),
+                                    blocker_id
+                                ));
+                                continue;
+                            }
                             *damage_to_creatures.entry(*blocker_id).or_insert(0) += damage;
                             *damage_dealt_by_creature.entry(attacker_id).or_insert(0) += damage;
                             damage_sources_per_target
@@ -790,6 +805,21 @@ impl GameState {
                         };
 
                         if damage_to_assign > 0 {
+                            // Prismatic Ward / color-prevention Aura: check before
+                            // assigning single-blocker combat damage (CR 615.1).
+                            if self.is_color_prevented_by_aura(*blocker_id, attacker_id) {
+                                self.logger.normal(&format!(
+                                    "Prevented {} combat damage to {} ({}) by color-prevention Aura",
+                                    damage_to_assign,
+                                    self.cards
+                                        .try_get(*blocker_id)
+                                        .map(|c| c.name.as_str())
+                                        .unwrap_or("creature"),
+                                    blocker_id
+                                ));
+                                remaining_power -= damage_to_assign;
+                                continue;
+                            }
                             *damage_to_creatures.entry(*blocker_id).or_insert(0) += damage_to_assign;
                             *damage_dealt_by_creature.entry(attacker_id).or_insert(0) += damage_to_assign;
                             damage_sources_per_target
@@ -876,25 +906,41 @@ impl GameState {
                         .get_effective_power(*blocker_id)
                         .unwrap_or_else(|_| i32::from(blocker.current_power()));
                     if blocker_power > 0 {
-                        *damage_to_creatures.entry(attacker_id).or_insert(0) += blocker_power;
-                        // Track damage for lifelink
-                        *damage_dealt_by_creature.entry(*blocker_id).or_insert(0) += blocker_power;
-                        damage_sources_per_target
-                            .entry(attacker_id)
-                            .or_default()
-                            .insert(*blocker_id);
-                        // Track deathtouch damage from blocker (MTG Rules 702.2b)
-                        // Uses has_keyword_with_effects to account for granted deathtouch
-                        if self.has_keyword_with_effects(*blocker_id, Keyword::Deathtouch) {
-                            deathtouch_damaged_creatures.insert(attacker_id);
+                        // Prismatic Ward / color-prevention Aura on the ATTACKER:
+                        // if attacker has a color-prevention Aura and the blocker's
+                        // color matches the chosen color, prevent combat damage
+                        // from the blocker to the attacker (CR 615.1).
+                        if self.is_color_prevented_by_aura(attacker_id, *blocker_id) {
+                            self.logger.normal(&format!(
+                                "Prevented {} combat damage to {} ({}) by color-prevention Aura",
+                                blocker_power,
+                                self.cards
+                                    .try_get(attacker_id)
+                                    .map(|c| c.name.as_str())
+                                    .unwrap_or("creature"),
+                                attacker_id
+                            ));
+                        } else {
+                            *damage_to_creatures.entry(attacker_id).or_insert(0) += blocker_power;
+                            // Track damage for lifelink
+                            *damage_dealt_by_creature.entry(*blocker_id).or_insert(0) += blocker_power;
+                            damage_sources_per_target
+                                .entry(attacker_id)
+                                .or_default()
+                                .insert(*blocker_id);
+                            // Track deathtouch damage from blocker (MTG Rules 702.2b)
+                            // Uses has_keyword_with_effects to account for granted deathtouch
+                            if self.has_keyword_with_effects(*blocker_id, Keyword::Deathtouch) {
+                                deathtouch_damaged_creatures.insert(attacker_id);
+                            }
+                            // Log per-direction damage: blocker -> attacker
+                            self.log_combat_damage_to_creature(
+                                blocker_name.as_str(),
+                                *blocker_id,
+                                attacker_id,
+                                blocker_power,
+                            );
                         }
-                        // Log per-direction damage: blocker -> attacker
-                        self.log_combat_damage_to_creature(
-                            blocker_name.as_str(),
-                            *blocker_id,
-                            attacker_id,
-                            blocker_power,
-                        );
                     }
                 }
             } else {

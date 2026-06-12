@@ -1,0 +1,33 @@
+---
+title: 'Card Compatibility: Artifact Ward (aura source-filtered prevent — same class as Prismatic Ward)'
+status: open
+priority: 3
+issue_type: task
+created_at: 2026-06-12T05:14:23.180126531+00:00
+updated_at: 2026-06-12T05:14:23.180126531+00:00
+---
+
+# Description
+
+## Bug
+
+Artifact Ward (Alpha/Beta/1994 sets) uses the same R:Event$ DamageDone | Prevent$ True | ValidTarget$ Creature.EnchantedBy pattern as Prismatic Ward but with ValidSource$ Artifact (any artifact source) instead of ValidSource$ Card.ChosenColor.
+
+Card script:
+  R:Event$ DamageDone | Prevent$ True | ActiveZones$ Battlefield | ValidTarget$ Creature.EnchantedBy | ValidSource$ Artifact | Description$ Prevent all damage that would be dealt to enchanted creature by artifact sources.
+
+The loader does NOT currently recognize ValidSource$ Artifact for this shape — it would silently drop the prevention, same way Prismatic Ward did before the fix in claude/compat-1995-wave2 (mtg-917).
+
+## Bug class
+
+'Aura-based source-filtered prevention' — any R:Event$ DamageDone | Prevent$ True | ValidTarget$ Creature.EnchantedBy | ValidSource$ <filter> shape that isn't Card.ChosenColor is unhandled.
+
+Other similar cards to check: Argothian Pixies (ValidSource$ Artifact.Creature), Armored Transport (ValidSource$ Creature.blockingSource).
+
+## Fix
+
+Extend is_color_prevented_by_aura (or replace with a more general is_damage_prevented_by_aura helper) to handle:
+- Artifact source filter (source card has is_artifact())
+- Other source-type filters per ValidSource$ values
+
+Filed as CONCERN follow-up from Prismatic Ward rules review in claude/compat-1995-wave2.

@@ -3564,6 +3564,23 @@ pub enum StaticAbility {
         /// Description for logging.
         description: String,
     },
+
+    /// Continuous damage-prevention replacement effect (CR 614.1e / 615.1):
+    /// prevent all damage from sources of the chosen color to the enchanted
+    /// creature.
+    ///
+    /// Corresponds to Prismatic Ward's static:
+    ///   `R:Event$ DamageDone | Prevent$ True | ValidTarget$ Creature.EnchantedBy
+    ///    | ValidSource$ Card.ChosenColor`
+    ///
+    /// The chosen color is stored on the Aura card at ETB time (via
+    /// `K:ETBReplacement:Other:ChooseColor`). At damage resolution, if the
+    /// source card's colors include the chosen color and the target creature is
+    /// the enchanted creature, the damage is prevented.
+    PreventDamageToEnchantedByChosenColor {
+        /// Description for logging.
+        description: String,
+    },
 }
 
 /// Target selector for cost reduction abilities

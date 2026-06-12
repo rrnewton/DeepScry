@@ -517,6 +517,11 @@ impl GameStateEvaluator {
                     // Damage-increase statics (Torbran) live on the creature
                     // itself, not an aura; no enchanted-creature value.
                 }
+                StaticAbility::PreventDamageToEnchantedByChosenColor { .. } => {
+                    // Prismatic Ward: prevents damage from chosen color to
+                    // enchanted creature. Moderate defensive value.
+                    value += 20;
+                }
             }
         }
 

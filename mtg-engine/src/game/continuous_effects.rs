@@ -1569,6 +1569,10 @@ impl GameState {
                         // affect P/T; applied at damage-dealing time in
                         // get_damage_boost_for_source / combat post-processing.
                     }
+                    StaticAbility::PreventDamageToEnchantedByChosenColor { .. } => {
+                        // Prismatic Ward color-prevention: doesn't affect P/T;
+                        // applied at damage-dealing time in deal_damage_to_creature.
+                    }
                 }
             }
         }

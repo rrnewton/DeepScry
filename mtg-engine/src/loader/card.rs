@@ -5473,9 +5473,29 @@ impl CardDefinition {
                 let valid_source = params.get("ValidSource").copied().unwrap_or("");
                 let valid_target = params.get("ValidTarget").copied().unwrap_or("");
                 let replace_with = params.get("ReplaceWith").copied().unwrap_or("");
-                // This narrowly matches the Torbran shape:
-                // - source must be a red card controlled by the ability's controller
-                // - target must be an opponent player or opponent-controlled permanent
+                let prevent = params.get("Prevent").copied().unwrap_or("False");
+
+                // --- Prismatic Ward shape (CR 615.1 continuous prevent by chosen color) ---
+                // Shape: Event$ DamageDone | Prevent$ True | ValidTarget$ Creature.EnchantedBy
+                //        | ValidSource$ Card.ChosenColor
+                // Prevent all damage dealt to the enchanted creature by sources of the chosen color.
+                let is_prevent = prevent == "True";
+                let targets_enchanted = valid_target.split(',').any(|q| q.trim() == "Creature.EnchantedBy");
+                let source_is_chosen_color = valid_source.split('+').any(|q| q.trim() == "Card.ChosenColor");
+                if is_prevent && targets_enchanted && source_is_chosen_color {
+                    let description = params.get("Description").map(|s| s.to_string()).unwrap_or_else(|| {
+                        "Prevent all damage dealt to enchanted creature by sources of the chosen color.".to_string()
+                    });
+                    abilities.push(StaticAbility::PreventDamageToEnchantedByChosenColor { description });
+                    continue;
+                }
+
+                // --- Torbran shape (CR 614.1a damage-increase replacement) ---
+                // Shape: Event$ DamageDone | ValidSource$ Card.RedSource+YouCtrl
+                //        | ValidTarget$ Player.Opponent,Permanent.OppCtrl
+                //        | ReplaceWith$ <svar>
+                // where SVar:<svar>:DB$ ReplaceEffect | VarName$ DamageAmount | VarValue$ X
+                //       SVar:X:ReplaceCount$DamageAmount/Plus.<N>
                 let is_red_source_you_ctrl = valid_source
                     .split('+')
                     .any(|q| q.trim() == "RedSource" || q.trim() == "Card.RedSource");
