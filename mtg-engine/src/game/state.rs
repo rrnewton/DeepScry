@@ -3452,6 +3452,29 @@ impl GameState {
         })
     }
 
+    /// True if some permanent on the battlefield carries a
+    /// `DisableCreatureEtbTriggers` static (i.e. Torpor Orb is in play).
+    ///
+    /// Used in `check_triggers_inner` to suppress `TriggerEvent::EntersBattlefield`
+    /// triggers when the entering permanent is a creature (CR 603.6b / Torpor Orb).
+    ///
+    /// `entering_card` is the card that just entered the battlefield; the check
+    /// only suppresses the trigger if that card is a creature, matching Torpor
+    /// Orb's `ValidCause$ Creature` clause.
+    pub fn is_creature_etb_trigger_suppressed(&self, entering_card: &crate::core::Card) -> bool {
+        if !entering_card.is_creature() {
+            return false;
+        }
+        use crate::core::StaticAbility;
+        self.battlefield.cards.iter().any(|&id| {
+            self.cards.try_get(id).is_some_and(|src| {
+                src.static_abilities
+                    .iter()
+                    .any(|sa| matches!(sa, StaticAbility::DisableCreatureEtbTriggers { .. }))
+            })
+        })
+    }
+
     /// True if some permanent on the battlefield has an `OpalescenceStyle` static
     /// and `card` is a non-Aura enchantment OTHER than that source permanent.
     ///

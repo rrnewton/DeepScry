@@ -5504,6 +5504,30 @@ impl CardDefinition {
                         });
                     }
                 }
+                "DisableTriggers" => {
+                    // Torpor Orb: creatures entering the battlefield don't cause
+                    // triggered abilities to trigger.
+                    //
+                    // Card script shape (Torpor Orb):
+                    //   S:Mode$ DisableTriggers | ValidCause$ Creature
+                    //   | ValidMode$ ChangesZone,ChangesZoneAll | Destination$ Battlefield
+                    //
+                    // We recognise any `DisableTriggers` static whose `ValidCause$`
+                    // includes `Creature` and whose `Destination$` is `Battlefield` (or is
+                    // absent, which defaults to Battlefield in most creature-ETB shapes).
+                    // Other DisableTriggers shapes (e.g. non-creature entering) would need
+                    // their own variant; for now Torpor Orb is the only relevant card.
+                    let valid_cause = params.get("ValidCause").map_or("", |v| v);
+                    let destination = params.get("Destination").map_or("Battlefield", |v| v);
+                    let is_creature_etb = valid_cause.contains("Creature") && destination == "Battlefield";
+                    if is_creature_etb {
+                        let description = params
+                            .get("Description")
+                            .cloned()
+                            .unwrap_or_else(|| "Creatures entering don't cause abilities to trigger.".to_owned());
+                        abilities.push(StaticAbility::DisableCreatureEtbTriggers { description });
+                    }
+                }
                 "Always" => {
                     // State-trigger sweep. We model only the SacrificeAll/
                     // DestroyAll form keyed off an IsPresent$ filter (City in a

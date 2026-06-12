@@ -569,6 +569,10 @@ impl GameStateEvaluator {
                     // creatures with P/T = mana value.  High-value board-wide effect.
                     // Not an Aura itself; no enchanted-creature value contribution.
                 }
+                StaticAbility::DisableCreatureEtbTriggers { .. } => {
+                    // Torpor Orb: suppresses creature ETB triggers globally.
+                    // Not an Aura; no enchanted-creature value contribution.
+                }
             }
         }
 

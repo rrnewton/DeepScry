@@ -1684,6 +1684,11 @@ impl GameState {
                         // GameState::opalescence_pt() in get_pt_breakdown(); the ModifyPT
                         // layer (7c) is not involved.
                     }
+                    StaticAbility::DisableCreatureEtbTriggers { .. } => {
+                        // Torpor Orb: suppresses ETB triggers on creatures entering the
+                        // battlefield. Does not affect P/T; enforced at trigger-dispatch
+                        // time in check_triggers_inner via is_creature_etb_trigger_suppressed.
+                    }
                 }
             }
         }

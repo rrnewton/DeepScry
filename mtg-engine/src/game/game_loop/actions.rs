@@ -202,7 +202,8 @@ impl<'a> GameLoop<'a> {
             | StaticAbility::AlternativeCost { .. }
             | StaticAbility::MayPlayWithoutManaCost { .. }
             | StaticAbility::MayPlayFromLibrary { .. }
-            | StaticAbility::OpalescenceStyle { .. } => false,
+            | StaticAbility::OpalescenceStyle { .. }
+            | StaticAbility::DisableCreatureEtbTriggers { .. } => false,
         }
     }
 

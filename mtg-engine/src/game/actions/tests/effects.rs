@@ -3076,7 +3076,8 @@ mod tests {
                 | StaticAbility::AlternativeCost { .. }
                 | StaticAbility::MayPlayWithoutManaCost { .. }
                 | StaticAbility::MayPlayFromLibrary { .. }
-                | StaticAbility::OpalescenceStyle { .. } => None,
+                | StaticAbility::OpalescenceStyle { .. }
+                | StaticAbility::DisableCreatureEtbTriggers { .. } => None,
             })
             .expect("Ironclaw Orcs must produce a CantBlockMatching static ability");
 
@@ -8912,5 +8913,168 @@ mod tests {
                 available_attackers
             );
         }
+    }
+
+    /// Card compat: Torpor Orb — `StaticAbility::DisableCreatureEtbTriggers` (mtg-881).
+    ///
+    /// Script:
+    ///   `S:Mode$ DisableTriggers | ValidCause$ Creature | ValidMode$ ChangesZone,ChangesZoneAll
+    ///    | Destination$ Battlefield`
+    ///
+    /// Verifies two things:
+    /// 1. Torpor Orb's static ability parses to `DisableCreatureEtbTriggers`.
+    /// 2. `is_creature_etb_trigger_suppressed` returns `true` for a creature when
+    ///    Torpor Orb is on the battlefield, and `false` for a non-creature.
+    ///
+    /// MTG rules: CR 603.6b — "Some effects can turn off abilities." Torpor Orb
+    /// prevents creatures that enter the battlefield from causing triggered
+    /// abilities to trigger (WotC rules guidance 2012).
+    #[test]
+    fn test_card_compat_torpor_orb_disables_creature_etb_triggers() {
+        use std::path::PathBuf;
+
+        if !PathBuf::from("../cardsfolder/t/torpor_orb.txt").exists() {
+            eprintln!("Skipping: cardsfolder not present");
+            return;
+        }
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        let p2_id = game.players[1].id;
+
+        // P1 controls Torpor Orb (typical sideboard card — put it on P1's side).
+        let orb_id = load_test_card(&mut game, "Torpor Orb", p1_id).expect("Torpor Orb should load");
+        game.battlefield.add(orb_id);
+
+        // --- 1. Verify Torpor Orb parses the DisableCreatureEtbTriggers static ---
+        {
+            let orb = game.cards.get(orb_id).expect("Torpor Orb card");
+            let has_disable_static = orb
+                .static_abilities
+                .iter()
+                .any(|sa| matches!(sa, crate::core::StaticAbility::DisableCreatureEtbTriggers { .. }));
+            assert!(
+                has_disable_static,
+                "Torpor Orb must have a DisableCreatureEtbTriggers static ability; \
+                 parsed statics: {:?}",
+                orb.static_abilities
+                    .iter()
+                    .map(|s| format!("{s:?}"))
+                    .collect::<Vec<_>>()
+            );
+        }
+
+        // --- 2. is_creature_etb_trigger_suppressed: true for a creature ---
+        // Wood Elves has a well-defined ETB trigger (search for Forest).
+        let elves_id = load_test_card(&mut game, "Wood Elves", p2_id).expect("Wood Elves should load");
+        // Put Wood Elves on the battlefield so it exists as a permanent.
+        game.battlefield.add(elves_id);
+
+        {
+            let elves = game.cards.get(elves_id).expect("Wood Elves card");
+            assert!(
+                game.is_creature_etb_trigger_suppressed(elves),
+                "is_creature_etb_trigger_suppressed must be true for a creature (Wood Elves) \
+                 while Torpor Orb is on the battlefield"
+            );
+        }
+
+        // --- 3. is_creature_etb_trigger_suppressed: false for a non-creature ---
+        // Torpor Orb itself (an artifact, not a creature) must NOT be suppressed.
+        {
+            let orb = game.cards.get(orb_id).expect("Torpor Orb card");
+            assert!(
+                !game.is_creature_etb_trigger_suppressed(orb),
+                "is_creature_etb_trigger_suppressed must be false for a non-creature (Torpor Orb itself)"
+            );
+        }
+
+        // --- 4. is_creature_etb_trigger_suppressed: false when Torpor Orb is removed ---
+        game.battlefield.remove(orb_id);
+        {
+            let elves = game.cards.get(elves_id).expect("Wood Elves card");
+            assert!(
+                !game.is_creature_etb_trigger_suppressed(elves),
+                "is_creature_etb_trigger_suppressed must be false for a creature when \
+                 Torpor Orb is no longer on the battlefield"
+            );
+        }
+    }
+
+    /// Card compat: Torpor Orb — end-to-end trigger suppression via `check_triggers`
+    /// (mtg-881, follow-up to `test_card_compat_torpor_orb_disables_creature_etb_triggers`).
+    ///
+    /// Verifies that when Torpor Orb is on the battlefield and a creature fires
+    /// `TriggerEvent::EntersBattlefield`, `check_triggers` returns without firing any
+    /// ETB effect. We measure the player's library size before and after to confirm
+    /// that Wood Elves' "search for a Forest" ETB trigger was NOT executed.
+    ///
+    /// MTG rules: CR 603.6b — Torpor Orb prevents creatures from causing triggered
+    /// abilities to trigger when they enter the battlefield.
+    #[test]
+    fn test_torpor_orb_check_triggers_suppression() {
+        use crate::core::TriggerEvent;
+        use std::path::PathBuf;
+
+        if !PathBuf::from("../cardsfolder/t/torpor_orb.txt").exists()
+            || !PathBuf::from("../cardsfolder/w/wood_elves.txt").exists()
+        {
+            eprintln!("Skipping: cardsfolder not present");
+            return;
+        }
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        let p2_id = game.players[1].id;
+
+        // Set up a library for P2 (Wood Elves controller) so the search-library
+        // trigger has something to find.
+        let forest_id = load_test_card(&mut game, "Forest", p2_id).expect("Forest should load");
+        game.get_player_zones_mut(p2_id).unwrap().library.cards.push(forest_id);
+        let initial_lib_size = game.get_player_zones(p2_id).unwrap().library.cards.len();
+
+        // P1 controls Torpor Orb.
+        let orb_id = load_test_card(&mut game, "Torpor Orb", p1_id).expect("Torpor Orb should load");
+        game.battlefield.add(orb_id);
+
+        // P2's Wood Elves enters the battlefield.
+        let elves_id = load_test_card(&mut game, "Wood Elves", p2_id).expect("Wood Elves should load");
+        game.battlefield.add(elves_id);
+
+        // Fire the ETB event for Wood Elves — WITH Torpor Orb in play.
+        game.check_triggers(TriggerEvent::EntersBattlefield, elves_id)
+            .expect("check_triggers should not error");
+
+        // Wood Elves' "search for Forest" trigger must NOT have fired.
+        let lib_size_after = game.get_player_zones(p2_id).unwrap().library.cards.len();
+        assert_eq!(
+            lib_size_after, initial_lib_size,
+            "Torpor Orb must suppress Wood Elves' ETB trigger: library should be unchanged \
+             (before={initial_lib_size}, after={lib_size_after})"
+        );
+
+        // --- Sanity check: without Torpor Orb the trigger DOES fire ---
+        game.battlefield.remove(orb_id);
+
+        // Reset library to one Forest again.
+        let forest2_id = load_test_card(&mut game, "Forest", p2_id).expect("Forest should load");
+        game.get_player_zones_mut(p2_id).unwrap().library.cards.clear();
+        game.get_player_zones_mut(p2_id).unwrap().library.cards.push(forest2_id);
+        let lib_before_no_orb = game.get_player_zones(p2_id).unwrap().library.cards.len();
+
+        // A NEW Wood Elves enters without Torpor Orb — trigger should fire.
+        let elves2_id = load_test_card(&mut game, "Wood Elves", p2_id).expect("Wood Elves should load");
+        game.battlefield.add(elves2_id);
+
+        game.check_triggers(TriggerEvent::EntersBattlefield, elves2_id)
+            .expect("check_triggers should not error");
+
+        let lib_after_no_orb = game.get_player_zones(p2_id).unwrap().library.cards.len();
+        // Library should have decreased (Forest was put onto battlefield).
+        assert!(
+            lib_after_no_orb < lib_before_no_orb,
+            "Without Torpor Orb, Wood Elves' ETB trigger must fire and reduce the library \
+             (before={lib_before_no_orb}, after={lib_after_no_orb})"
+        );
     }
 }

@@ -5991,6 +5991,27 @@ impl GameState {
         let source_card_is_land = self.cards.try_get(source_card_id).is_some_and(|c| c.is_land());
         let source_card_controller = self.cards.try_get(source_card_id).map(|c| c.controller);
 
+        // Torpor Orb check (CR 603.6b): if a DisableCreatureEtbTriggers static is in
+        // play and the triggering event is a creature entering the battlefield, ALL
+        // EntersBattlefield triggers are suppressed for that creature. We pre-compute
+        // this flag so the Phase 1 filter can short-circuit without re-scanning the
+        // battlefield for every candidate trigger.
+        let creature_etb_suppressed = event == TriggerEvent::EntersBattlefield
+            && self
+                .cards
+                .try_get(source_card_id)
+                .is_some_and(|c| self.is_creature_etb_trigger_suppressed(c));
+
+        if creature_etb_suppressed {
+            if let Some(c) = self.cards.try_get(source_card_id) {
+                log::info!(
+                    "Torpor Orb: suppressing all ETB triggers for creature {} (CR 603.6b)",
+                    c.name
+                );
+            }
+            return Ok(());
+        }
+
         // Phase 1: Collect matching triggers with their metadata
         // Use flat_map to avoid inner Vec allocation per card - most cards have no matching triggers
         let candidate_triggers: Vec<TriggerInfo> = self

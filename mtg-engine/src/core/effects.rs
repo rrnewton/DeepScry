@@ -4272,6 +4272,28 @@ pub enum StaticAbility {
         description: String,
     },
 
+    /// Torpor Orb: while this permanent is on the battlefield, creatures entering
+    /// the battlefield don't cause triggered abilities to trigger (CR 603.6b).
+    ///
+    /// Corresponds to Torpor Orb's card script:
+    ///   `S:Mode$ DisableTriggers | ValidCause$ Creature | ValidMode$ ChangesZone,ChangesZoneAll
+    ///    | Destination$ Battlefield`
+    ///
+    /// Applied in `check_triggers_inner`: before firing any
+    /// `TriggerEvent::EntersBattlefield` trigger, we check whether any permanent
+    /// on the battlefield has this static and the entering card is a creature. If
+    /// so, the trigger is suppressed (the trigger still "technically" triggers per
+    /// CR 603.6b — it just doesn't go on the stack).
+    ///
+    /// MTG rules: CR 603.6b — "Some effects can turn off abilities. If an effect
+    /// states that abilities of a permanent are turned off, that permanent loses
+    /// all abilities for the duration of the effect."  Torpor Orb is the canonical
+    /// example of suppressing ETB triggers across ALL creatures while it's in play.
+    DisableCreatureEtbTriggers {
+        /// Description for logging.
+        description: String,
+    },
+
     /// Opalescence-style continuous effect (CR 613, Layers 4 + 7b):
     /// each other non-Aura enchantment on the battlefield becomes a creature
     /// in addition to its other types, with base power and base toughness each
