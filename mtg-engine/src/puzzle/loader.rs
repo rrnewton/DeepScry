@@ -253,6 +253,7 @@ async fn create_card_from_definition<'a>(
     let mut card = paper_card.instantiate(card_id, owner);
 
     // Apply basic modifiers (tapped state and counters)
+    let mut has_explicit_loyalty = false;
     for modifier in &card_def.modifiers {
         match modifier {
             CardModifier::Tapped => card.tapped = true,
@@ -261,6 +262,9 @@ async fn create_card_from_definition<'a>(
                 for (counter_type, count) in counters {
                     if *count > 0 {
                         card.add_counter(*counter_type, *count as u8);
+                    }
+                    if *counter_type == crate::core::CounterType::Loyalty {
+                        has_explicit_loyalty = true;
                     }
                 }
             }
@@ -285,6 +289,17 @@ async fn create_card_from_definition<'a>(
             }
             // Skip modifiers that need second pass or aren't supported yet
             _ => {}
+        }
+    }
+
+    // Planeswalkers placed directly on the battlefield (not cast from the stack)
+    // must enter with their printed starting loyalty counters (CR 306.5b).
+    // When the spell resolution path is used, `priority.rs` applies starting
+    // loyalty after the spell resolves; puzzle placement bypasses that path, so
+    // we apply it here — unless the puzzle explicitly set loyalty counters.
+    if !has_explicit_loyalty {
+        if let Some(loyalty) = paper_card.loyalty {
+            card.add_counter(crate::core::CounterType::Loyalty, loyalty);
         }
     }
 

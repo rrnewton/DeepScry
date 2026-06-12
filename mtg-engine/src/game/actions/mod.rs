@@ -4131,6 +4131,19 @@ impl GameState {
             Effect::CreateTokenDynamic {
                 controller,
                 token_script,
+                amount: crate::core::DynamicAmount::Count(expr),
+                for_each_player,
+            } => {
+                // Count$… expression (e.g. Avenger of Zendikar: TokenAmount$ X,
+                // SVar:X:Count$Valid Land.YouCtrl). Evaluate the count expression
+                // against the controller's current game state at resolution time.
+                let n = self.evaluate_count_expression(expr, *controller).unwrap_or(0).max(0) as u8;
+                self.execute_create_token(*controller, token_script, n, *for_each_player)?;
+            }
+
+            Effect::CreateTokenDynamic {
+                controller,
+                token_script,
                 for_each_player,
                 ..
             } => {

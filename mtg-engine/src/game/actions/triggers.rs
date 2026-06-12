@@ -541,6 +541,30 @@ pub fn resolve_effect_placeholder(effect: &Effect, ctx: &TriggerContext) -> Effe
             }
         }
 
+        // Count$… token amount (e.g. Avenger of Zendikar: TokenAmount$ X,
+        // SVar:X:Count$Valid Land.YouCtrl).  The actual count is evaluated
+        // against the live game state in execute_effect, so we only need to
+        // resolve the controller placeholder here and leave the DynamicAmount
+        // intact for execute_effect to finish.
+        Effect::CreateTokenDynamic {
+            controller,
+            token_script,
+            amount: dynamic @ crate::core::DynamicAmount::Count(_),
+            for_each_player,
+        } => {
+            let resolved_controller = if controller.is_placeholder() {
+                ctx.controller
+            } else {
+                *controller
+            };
+            Effect::CreateTokenDynamic {
+                controller: resolved_controller,
+                token_script: token_script.clone(),
+                amount: dynamic.clone(),
+                for_each_player: *for_each_player,
+            }
+        }
+
         // =========================================================================
         // Mass pump: controller placeholder
         // =========================================================================

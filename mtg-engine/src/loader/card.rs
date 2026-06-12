@@ -2293,13 +2293,16 @@ impl CardDefinition {
         let amount = match DynamicAmount::parse(token_amount_str, &self.svars)? {
             DynamicAmount::Fixed(_) => return None,
             dynamic @ DynamicAmount::TriggeredCardCounters(_) => dynamic,
+            // Count$… expressions (e.g. Avenger of Zendikar: TokenAmount$ X where
+            // SVar:X:Count$Valid Land.YouCtrl) are evaluated at resolution time
+            // against the current game state by execute_effect / execute_create_token.
+            dynamic @ DynamicAmount::Count(_) => dynamic,
             // Other DynamicAmount variants are not yet used by token-creation
             // effects; fall through to params_to_effect (amount=1 safe default).
             DynamicAmount::TargetPower
             | DynamicAmount::TargetManaValue
             | DynamicAmount::DamageDealt
             | DynamicAmount::DamageDealtCappedByTarget { .. }
-            | DynamicAmount::Count(_)
             | DynamicAmount::SacrificedToughness => return None,
         };
 

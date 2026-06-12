@@ -8208,4 +8208,68 @@ mod tests {
             panic!("Expected ModalChoice effect");
         }
     }
+
+    /// Regression test for B-token (mtg-914): Avenger of Zendikar `TokenAmount$ X`
+    /// where SVar:X:Count$Valid Land.YouCtrl must create one Plant token per land,
+    /// not a hard-coded 1 token.
+    ///
+    /// Before the fix, `create_token_dynamic_from_params` returned `None` for
+    /// `DynamicAmount::Count`, falling through to `params_to_effect` which called
+    /// `get_u8("TokenAmount")` on "X" — failing silently and defaulting to 1.
+    /// After the fix, `CreateTokenDynamic { amount: Count(ValidPermanents) }` is
+    /// emitted and resolved at execution time against the live battlefield.
+    ///
+    /// This test verifies that the card loader parses the SVar-token chain into a
+    /// `CreateTokenDynamic { amount: Count(_) }` effect (loader-shape check).
+    ///
+    /// See: mtg-914 (2010 WC tracker), mtg-915 (broken-card backlog).
+    #[test]
+    fn test_token_amount_count_expression_avenger_of_zendikar() {
+        use crate::core::CardId;
+        use crate::core::PlayerId;
+        use crate::loader::CardDatabase;
+        use std::path::PathBuf;
+
+        let cardsfolder = PathBuf::from("../cardsfolder");
+        if !cardsfolder.join("a/avenger_of_zendikar.txt").exists() {
+            eprintln!("Skipping: cardsfolder not present");
+            return;
+        }
+
+        let db = CardDatabase::new(cardsfolder);
+        let rt = tokio::runtime::Runtime::new().unwrap();
+
+        let card_def = rt
+            .block_on(async { db.get_card("Avenger of Zendikar").await })
+            .expect("DB lookup should not fail")
+            .expect("Avenger of Zendikar should exist in cardsfolder");
+
+        // Instantiate the card to get its parsed triggers.
+        let card_id = CardId::new(1);
+        let owner = PlayerId::new(0);
+        let card = card_def.instantiate(card_id, owner);
+
+        // The ETB trigger's Execute$ SVar (TrigToken) must parse to CreateTokenDynamic
+        // with a Count(...) DynamicAmount.  The loader calls
+        // create_token_dynamic_from_params which, after the fix, routes
+        // DynamicAmount::Count through instead of returning None.
+        let has_dynamic_count_token = card.triggers.iter().flat_map(|t| t.effects.iter()).any(|eff| {
+            matches!(
+                eff,
+                crate::core::Effect::CreateTokenDynamic {
+                    amount: crate::core::DynamicAmount::Count(_),
+                    ..
+                }
+            )
+        });
+
+        assert!(
+            has_dynamic_count_token,
+            "Avenger of Zendikar ETB trigger should produce CreateTokenDynamic {{ Count(...) }}. \
+             Check create_token_dynamic_from_params — DynamicAmount::Count must not fall through \
+             to the params_to_effect fixed-amount path. \
+             Trigger effects: {:?}",
+            card.triggers.iter().flat_map(|t| t.effects.iter()).collect::<Vec<_>>()
+        );
+    }
 }
