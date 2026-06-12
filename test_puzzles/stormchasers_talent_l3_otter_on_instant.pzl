@@ -1,0 +1,24 @@
+[metadata]
+Name:Stormchaser's Talent L3 SpellCast trigger creates Otter token
+Goal:Win
+Turns:3
+Difficulty:Easy
+Description:Stormchaser's Talent enters battlefield pre-levelled at 2 (Counters:LEVEL=2). Activating the Level 3 ability ({5}{U}) advances the Class to level 3, installing the ongoing SpellCast trigger. Casting Lightning Bolt (an instant) then fires that trigger, creating a 1/1 blue/red Otter creature token with prowess. This confirms the L3 ongoing trigger works correctly (mtg-881 wave4).
+
+[state]
+turn=2
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Lightning Bolt
+p0library=Island; Island; Island; Island; Island
+p0graveyard=
+p0battlefield=Stormchaser's Talent|Counters:LEVEL=2|NoETBTrigs; Mountain; Mountain; Mountain; Mountain; Mountain; Island; Island
+p0exile=
+
+p1life=20
+p1hand=
+p1library=Plains; Plains; Plains; Plains; Plains
+p1graveyard=
+p1battlefield=Grizzly Bears
+p1exile=

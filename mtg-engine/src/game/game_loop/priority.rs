@@ -2406,7 +2406,23 @@ impl<'a> GameLoop<'a> {
                                             // Scry: snapshot → controller → apply (mirror of
                                             // the spell-resolution branch; see
                                             // resolve_top_spell_with_discard_hook above).
-                                            crate::core::Effect::Scry { player, count, .. } => {
+                                            crate::core::Effect::Scry {
+                                                player,
+                                                count,
+                                                only_if_bargained,
+                                            } => {
+                                                // Condition$ Bargain: skip scry unless source
+                                                // card was bargained (CR 702.162).
+                                                if *only_if_bargained {
+                                                    let is_bargained = self
+                                                        .game
+                                                        .cards
+                                                        .try_get(card_id)
+                                                        .is_some_and(|c| c.bargain_paid);
+                                                    if !is_bargained {
+                                                        continue;
+                                                    }
+                                                }
                                                 let scry_player = if player.is_placeholder() {
                                                     current_priority
                                                 } else {
@@ -4037,7 +4053,21 @@ impl<'a> GameLoop<'a> {
                     //   - no currently-shipping deck triggers scry on a path
                     //     that hits this gap (server-local + client-shadow)
                     //     before some other unrelated desync fires.
-                    crate::core::Effect::Scry { player, count, .. } => {
+                    crate::core::Effect::Scry {
+                        player,
+                        count,
+                        only_if_bargained,
+                    } => {
+                        // Condition$ Bargain: skip scry unless the source spell
+                        // was bargained (CR 702.162). Check bargain_paid on the
+                        // resolving spell (spell_id) — same check as execute_effect.
+                        if *only_if_bargained {
+                            let is_bargained = self.game.cards.try_get(spell_id).is_some_and(|c| c.bargain_paid);
+                            if !is_bargained {
+                                // Condition not met — skip the scry silently.
+                                continue;
+                            }
+                        }
                         let scry_player = *player;
                         let revealed = self.game.scry_snapshot_top_n(scry_player, *count);
                         if !revealed.is_empty() {

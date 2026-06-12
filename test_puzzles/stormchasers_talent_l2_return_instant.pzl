@@ -1,0 +1,24 @@
+[metadata]
+Name:Stormchaser's Talent L2 ClassLevelGained trigger returns instant
+Goal:Win
+Turns:3
+Difficulty:Easy
+Description:Stormchaser's Talent enters battlefield pre-levelled at 1 (Counters:LEVEL=1). Activating the Level 2 ability ({3}{U}) advances the Class to level 2, firing the ClassLevelGained trigger that returns a target instant or sorcery from the graveyard to hand. This confirms the L2 trigger works correctly (mtg-881 wave4).
+
+[state]
+turn=2
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=
+p0library=Island; Island; Island; Island; Island
+p0graveyard=Lightning Bolt
+p0battlefield=Stormchaser's Talent|Counters:LEVEL=1|NoETBTrigs; Island; Island; Island; Island; Island
+p0exile=
+
+p1life=20
+p1hand=
+p1library=Plains; Plains; Plains; Plains; Plains
+p1graveyard=
+p1battlefield=Grizzly Bears
+p1exile=

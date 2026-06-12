@@ -1,0 +1,24 @@
+[metadata]
+Name:Valley Floodcaller PumpAll trigger on noncreature spell
+Goal:Win
+Turns:3
+Difficulty:Easy
+Description:Valley Floodcaller (Otter Wizard 2/2 with Flash) is on the battlefield alongside Otter-Penguin (1/1 Otter). Casting Lightning Bolt (a noncreature instant) fires the SpellCast trigger, which pumps all Birds/Frogs/Otters/Rats you control +1/+1 until end of turn and untaps them. Valley Floodcaller (2/2 Otter Wizard) becomes 3/3 and Otter-Penguin becomes 2/2. Verifies PumpAll fires correctly with valid Otter targets present (mtg-881 wave4).
+
+[state]
+turn=2
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Lightning Bolt
+p0library=Island; Island; Island; Island; Island
+p0graveyard=
+p0battlefield=Valley Floodcaller|SummonSick; Otter-Penguin|SummonSick; Mountain; Mountain; Mountain
+p0exile=
+
+p1life=20
+p1hand=
+p1library=Plains; Plains; Plains; Plains; Plains
+p1graveyard=
+p1battlefield=Grizzly Bears
+p1exile=
