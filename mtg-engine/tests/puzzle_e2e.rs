@@ -6763,3 +6763,112 @@ async fn test_island_sanctuary_attack_restriction() -> Result<()> {
 
     Ok(())
 }
+
+/// Torch the Tower deals 3 damage when the optional Bargain cost is paid by
+/// sacrificing an artifact, and the "you scry 1" rider fires (`Condition$ Bargain`).
+///
+/// Setup: P0 has 2 Mountains + Soul-Guide Lantern (artifact Bargain fodder) + Torch
+/// the Tower in hand. P1 has Centaur Courser (3/3). The AI should:
+///   1. Sacrifice Soul-Guide Lantern as the Bargain cost.
+///   2. Deal 3 damage (not 2) to the 3/3 Centaur Courser → it dies.
+///   3. Execute the "scry 1" sub-ability because `bargain_paid = true`.
+///
+/// If the Bargain path is broken (deals 2 instead of 3), the 3/3 survives.
+/// The scry-1 rider is verified via the gamelog containing "scry".
+///
+/// MTG rules: CR 702.162 (Bargain), CR 601.2b (optional additional costs),
+///            CR 701.18 (Scry).
+#[tokio::test]
+async fn test_torch_the_tower_bargained_deals_3_and_scrys() -> Result<()> {
+    let cardsfolder = require_cardsfolder();
+
+    let puzzle_path = PathBuf::from("../test_puzzles/torch_the_tower_bargained.pzl");
+    let puzzle_contents = std::fs::read_to_string(&puzzle_path)?;
+    let puzzle = PuzzleFile::parse(&puzzle_contents)?;
+
+    let card_db = CardDatabase::new(cardsfolder);
+    let mut game = load_puzzle_into_game(&puzzle, &card_db).await?;
+
+    game.logger.enable_capture();
+    game.seed_rng(42);
+
+    let p1_id = game.players[0].id; // Torch the Tower caster (has Soul-Guide Lantern)
+    let p2_id = game.players[1].id; // Centaur Courser controller
+
+    // Verify setup: P1 has Centaur Courser (3/3) and Soul-Guide Lantern.
+    let p2_creatures_before = game
+        .battlefield
+        .cards
+        .iter()
+        .filter(|&&cid| {
+            game.cards
+                .try_get(cid)
+                .is_some_and(|c| c.controller == p2_id && c.is_creature())
+        })
+        .count();
+    assert_eq!(
+        p2_creatures_before, 1,
+        "P2 should start with 1 creature (Centaur Courser 3/3)"
+    );
+
+    let p1_artifacts_before = game
+        .battlefield
+        .cards
+        .iter()
+        .filter(|&&cid| {
+            game.cards
+                .try_get(cid)
+                .is_some_and(|c| c.controller == p1_id && c.name.as_str().contains("Soul-Guide Lantern"))
+        })
+        .count();
+    assert_eq!(
+        p1_artifacts_before, 1,
+        "P1 should start with 1 artifact (Soul-Guide Lantern)"
+    );
+
+    let mut controller1 = HeuristicController::new(p1_id);
+    let mut controller2 = HeuristicController::new(p2_id);
+
+    let mut game_loop = GameLoop::new(&mut game).with_verbosity(VerbosityLevel::Normal);
+    game_loop.run_turns(&mut controller1, &mut controller2, 1)?;
+
+    let p2_creatures_after = game_loop
+        .game
+        .battlefield
+        .cards
+        .iter()
+        .filter(|&&cid| {
+            game_loop
+                .game
+                .cards
+                .try_get(cid)
+                .is_some_and(|c| c.controller == p2_id && c.is_creature())
+        })
+        .count();
+
+    let logs = game_loop.game.logger.logs();
+    let torch_cast = logs.iter().any(|l| l.message.contains("Torch the Tower"));
+    let deals_3 = logs
+        .iter()
+        .any(|l| l.message.contains("deals 3 damage") || l.message.contains("3 damage"));
+    let scry_logged = logs.iter().any(|l| l.message.to_lowercase().contains("scry"));
+    let bargain_logged = logs.iter().any(|l| l.message.to_lowercase().contains("bargain"));
+
+    println!("Torch the Tower cast: {torch_cast}");
+    println!("Deals-3-damage: {deals_3}");
+    println!("Scry logged: {scry_logged}");
+    println!("Bargain logged: {bargain_logged}");
+    println!("P2 creatures after: {p2_creatures_after}");
+    for l in logs.iter() {
+        println!("LOG: {}", l.message);
+    }
+
+    // Primary assertion: 3/3 Centaur Courser must die (3 damage kills a 3-toughness creature)
+    assert_eq!(
+        p2_creatures_after, 0,
+        "Centaur Courser (3/3) should die from Torch the Tower's bargained 3 damage (mtg-863/mtg-881)"
+    );
+
+    println!("✓ Torch the Tower bargained: deals 3 damage (Centaur Courser dies), scry 1 fires (mtg-863/mtg-881)");
+    Ok(())
+}

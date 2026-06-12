@@ -934,6 +934,15 @@ pub struct Card {
     #[serde(default)]
     pub times_kicked: u8,
 
+    /// Whether the Bargain optional additional cost (CR 702.162) was paid when
+    /// casting this spell — i.e. the caster sacrificed an artifact, enchantment,
+    /// or token. Set by the priority loop just before `cast_spell_8_step`; cleared
+    /// in the cleanup step. Drives `CountExpression::Bargain` evaluation (Torch
+    /// the Tower `SVar:X:Count$Bargain.3.2`) and `Condition$ Bargain` sub-effects
+    /// (the "you scry 1" rider on Torch the Tower).
+    #[serde(default)]
+    pub bargain_paid: bool,
+
     /// If set, a zone-change replacement applies: should this creature die this
     /// turn, it is exiled instead of going to the graveyard (CR 614). Set by
     /// `Effect::ExileIfWouldDieThisTurn` (Disintegrate's
@@ -1071,6 +1080,8 @@ pub struct CardStateSnapshot {
     pub damage_prevention: i32,
     pub x_paid: u8,
     pub times_kicked: u8,
+    #[serde(default)]
+    pub bargain_paid: bool,
     pub exile_if_would_die_this_turn: bool,
     pub exile_if_would_go_to_graveyard_this_turn: bool,
     pub prevent_all_combat_damage_this_turn: bool,
@@ -1146,6 +1157,7 @@ impl Card {
             damage_prevention: 0,
             x_paid: 0,
             times_kicked: 0,
+            bargain_paid: false,
             exile_if_would_die_this_turn: false,
             exile_if_would_go_to_graveyard_this_turn: false,
             prevent_all_combat_damage_this_turn: false,
@@ -1198,6 +1210,7 @@ impl Card {
             damage_prevention: self.damage_prevention,
             x_paid: self.x_paid,
             times_kicked: self.times_kicked,
+            bargain_paid: self.bargain_paid,
             exile_if_would_die_this_turn: self.exile_if_would_die_this_turn,
             exile_if_would_go_to_graveyard_this_turn: self.exile_if_would_go_to_graveyard_this_turn,
             prevent_all_combat_damage_this_turn: self.prevent_all_combat_damage_this_turn,
@@ -1249,6 +1262,7 @@ impl Card {
         self.damage_prevention = snapshot.damage_prevention;
         self.x_paid = snapshot.x_paid;
         self.times_kicked = snapshot.times_kicked;
+        self.bargain_paid = snapshot.bargain_paid;
         self.exile_if_would_die_this_turn = snapshot.exile_if_would_die_this_turn;
         self.exile_if_would_go_to_graveyard_this_turn = snapshot.exile_if_would_go_to_graveyard_this_turn;
         self.prevent_all_combat_damage_this_turn = snapshot.prevent_all_combat_damage_this_turn;
@@ -1436,6 +1450,7 @@ impl Card {
         self.damage_prevention = 0;
         self.x_paid = 0;
         self.times_kicked = 0;
+        self.bargain_paid = false;
         self.exile_if_would_die_this_turn = false;
         self.exile_if_would_go_to_graveyard_this_turn = false;
         self.prevent_all_combat_damage_this_turn = false;

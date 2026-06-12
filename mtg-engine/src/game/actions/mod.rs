@@ -779,6 +779,7 @@ impl GameState {
                         card_owner,
                         opponent_id,
                         &mut last_resolved_target,
+                        Some(card_id),
                     );
                     log::debug!(target: "resolve_spell", "Effect[{}] after resolve: {:?}", effect_index, resolved);
 
@@ -1284,6 +1285,7 @@ impl GameState {
                     card_owner,
                     opponent_id,
                     &mut last_resolved_target,
+                    Some(card_id),
                 );
                 let resolved = Self::resolve_choose_color_source(resolved, card_id);
                 let resolved = Self::resolve_self_target(resolved, card_id);
@@ -2890,6 +2892,7 @@ impl GameState {
     /// resolution needs.
     #[inline]
     #[allow(clippy::wildcard_enum_match_arm)]
+    #[allow(clippy::too_many_arguments)]
     fn resolve_effect_target(
         &self,
         effect: &Effect,
@@ -2898,6 +2901,7 @@ impl GameState {
         card_owner: PlayerId,
         opponent_id: Option<PlayerId>,
         last_resolved_target: &mut Option<CardId>,
+        source_card_id: Option<CardId>,
     ) -> Effect {
         match effect {
             // DealDamage with a player placeholder (`Defined$ You`) → the
@@ -2953,14 +2957,18 @@ impl GameState {
 
             // DealDamageDynamic: resolve the chosen target AND evaluate the
             // CountExpression (e.g. Combustion Technique's
-            // `Count$ValidGraveyard Lesson.YouOwn/Plus.2`) against the caster's
-            // controller right now, then produce a concrete DealDamage so
-            // execute_effect can run without needing the controller context.
+            // `Count$ValidGraveyard Lesson.YouOwn/Plus.2`, or Torch the Tower's
+            // `Count$Bargain.3.2`) against the caster's controller right now,
+            // then produce a concrete DealDamage so execute_effect can run
+            // without needing the controller context.
             Effect::DealDamageDynamic {
                 target: TargetRef::None,
                 count,
             } => {
-                let amount = self.evaluate_count_expression(count, card_owner).unwrap_or(0).max(0);
+                let amount = self
+                    .evaluate_count_with_source(count, card_owner, source_card_id)
+                    .unwrap_or(0)
+                    .max(0);
                 if *target_index < chosen_targets.len() {
                     let raw = chosen_targets[*target_index];
                     *target_index += 1;
@@ -2980,7 +2988,10 @@ impl GameState {
             }
             // DealDamageDynamic with a resolved target: just evaluate the count.
             Effect::DealDamageDynamic { target, count } => {
-                let amount = self.evaluate_count_expression(count, card_owner).unwrap_or(0).max(0);
+                let amount = self
+                    .evaluate_count_with_source(count, card_owner, source_card_id)
+                    .unwrap_or(0)
+                    .max(0);
                 Effect::DealDamage {
                     target: target.clone(),
                     amount,
@@ -3636,9 +3647,14 @@ impl GameState {
                 };
                 Effect::DrainMana { player: resolved }
             }
-            Effect::Scry { player, count } if player.is_placeholder() => Effect::Scry {
+            Effect::Scry {
+                player,
+                count,
+                only_if_bargained,
+            } if player.is_placeholder() => Effect::Scry {
                 player: card_owner,
                 count: *count,
+                only_if_bargained: *only_if_bargained,
             },
             Effect::Surveil { player, count } if player.is_placeholder() => Effect::Surveil {
                 player: card_owner,
@@ -3849,6 +3865,7 @@ impl GameState {
                     card_owner,
                     opponent_id,
                     last_resolved_target,
+                    source_card_id,
                 );
 
                 // Resolve payer reference to concrete PlayerId
@@ -4197,7 +4214,29 @@ impl GameState {
             } => self.execute_animate_all(*controller, filter, *power, *toughness, keywords_granted)?,
             Effect::Mill { player, count } => self.execute_mill(*player, *count)?,
             Effect::DrainMana { player } => self.execute_drain_mana(*player)?,
-            Effect::Scry { player, count } => self.execute_scry(*player, *count)?,
+            Effect::Scry {
+                player,
+                count,
+                only_if_bargained,
+            } => {
+                // Condition$ Bargain: only scry if the source spell was bargained
+                // (CR 702.162). We use current_damage_source as the source card
+                // reference because the scry fires as a SubAbility of DealDamage
+                // (Torch the Tower) while the damage source is still set.
+                if *only_if_bargained {
+                    let is_bargained = self
+                        .current_damage_source
+                        .and_then(|id| self.cards.try_get(id))
+                        .is_some_and(|c| c.bargain_paid);
+                    if !is_bargained {
+                        // Condition not met — skip the scry silently.
+                    } else {
+                        self.execute_scry(*player, *count)?;
+                    }
+                } else {
+                    self.execute_scry(*player, *count)?;
+                }
+            }
             Effect::Surveil { player, count } => self.execute_surveil(*player, *count)?,
             Effect::AddTurn { player, num_turns } => self.execute_add_turn(*player, *num_turns)?,
             Effect::CounterSpell {
@@ -7778,6 +7817,23 @@ impl GameState {
         }
     }
 
+    /// Set a card's `bargain_paid` flag (CR 702.162 — Bargain optional sacrifice cost),
+    /// snapshotting the prior value for undo first. Mirrors `set_times_kicked_logged`.
+    /// No-op if the card is missing.
+    pub(crate) fn set_bargain_paid_logged(&mut self, card_id: CardId, paid: bool) {
+        let Some(prev) = self.cards.try_get(card_id).map(|c| c.bargain_paid) else {
+            return;
+        };
+        let prior_log_size = self.logger.log_count();
+        self.undo_log.log(
+            crate::undo::GameAction::SetBargainPaid { card_id, prev },
+            prior_log_size,
+        );
+        if let Ok(card) = self.cards.get_mut(card_id) {
+            card.bargain_paid = paid;
+        }
+    }
+
     fn apply_source_prevention_shields(&mut self, target_id: PlayerId, source: Option<CardId>, amount: i32) -> i32 {
         let Some(source) = source else { return amount };
         if amount <= 0 {
@@ -8503,6 +8559,39 @@ impl GameState {
                 .map(|c| i32::from(c.get_counter(*counter_type)))
                 .unwrap_or(0),
         }
+    }
+
+    /// Evaluate a [`CountExpression`](crate::core::CountExpression) with optional
+    /// source-spell context for per-cast fields (`bargain_paid`, `times_kicked`).
+    ///
+    /// Wraps `evaluate_count_expression`; the only difference is that
+    /// `CountExpression::Bargain` reads `source_card.bargain_paid` when
+    /// `source_card_id` is `Some`, rather than conservatively returning the
+    /// unbargained value. Use this in spell-resolution paths (DealDamageDynamic)
+    /// where `card_id` (the resolving spell) is available.
+    fn evaluate_count_with_source(
+        &self,
+        expr: &crate::core::CountExpression,
+        controller: PlayerId,
+        source_card_id: Option<CardId>,
+    ) -> Result<i32> {
+        use crate::core::CountExpression;
+        if let CountExpression::Bargain {
+            bargained_value,
+            unbargained_value,
+        } = expr
+        {
+            // Use the actual bargain_paid state on the resolving spell when available.
+            let is_bargained = source_card_id
+                .and_then(|id| self.cards.try_get(id))
+                .is_some_and(|c| c.bargain_paid);
+            return Ok(if is_bargained {
+                *bargained_value
+            } else {
+                *unbargained_value
+            });
+        }
+        self.evaluate_count_expression(expr, controller)
     }
 
     /// Evaluate a [`CountExpression`](crate::core::CountExpression) to a

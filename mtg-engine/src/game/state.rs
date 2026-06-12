@@ -4120,6 +4120,7 @@ impl GameState {
                     effect: Box::new(crate::core::Effect::Scry {
                         player: player_id,
                         count: scry_count,
+                        only_if_bargained: false,
                     }),
                 },
             );
@@ -4430,7 +4431,7 @@ impl GameState {
                             }
                         }
                     }
-                    crate::core::Effect::Scry { player, count } => {
+                    crate::core::Effect::Scry { player, count, .. } => {
                         // Sphinx of Foresight: "scry 3 at the beginning of your first upkeep"
                         // from opening-hand reveal. The delayed trigger was registered at game
                         // start with a concrete player ID and count. Use the GameState-level

@@ -1609,8 +1609,21 @@ pub enum Effect {
     /// Example: "Scry 1" or "Scry 2"
     /// Corresponds to: DB$ Scry | ScryNum$ N
     ///
+    /// `only_if_bargained` — when true (produced by `Condition$ Bargain` in the
+    /// card script), the scry is skipped unless the source spell was bargained
+    /// (i.e. `Card.bargain_paid == true`). Used by Torch the Tower's rider:
+    /// "If this spell was bargained, ... you scry 1."
+    ///
     /// AI heuristic: Keep spells, put excess lands on bottom
-    Scry { player: PlayerId, count: u8 },
+    Scry {
+        player: PlayerId,
+        count: u8,
+        /// Only execute if the source spell was bargained (CR 702.162).
+        /// Defaults to `false` (unconditional scry) for all cards except
+        /// those with `Condition$ Bargain` in their scry sub-ability.
+        #[serde(default)]
+        only_if_bargained: bool,
+    },
 
     /// Take an extra turn after this one (CR 500.7)
     /// Example: "Take an extra turn after this one" (Time Walk)

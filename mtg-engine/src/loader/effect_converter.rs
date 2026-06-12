@@ -371,10 +371,13 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
         ApiType::Scry => {
             // Scry N - look at top N cards, put any on bottom
             // Example: "DB$ Scry | ScryNum$ 1"
+            // Example with condition: "DB$ Scry | ScryNum$ 1 | Condition$ Bargain"
             let count = params.get_u8("ScryNum").unwrap_or(1);
+            let only_if_bargained = params.get("Condition") == Some("Bargain");
             Some(Effect::Scry {
                 player: PlayerId::new(0), // Placeholder - filled in at trigger execution
                 count,
+                only_if_bargained,
             })
         }
 

@@ -319,9 +319,14 @@ pub fn resolve_effect_placeholder(effect: &Effect, ctx: &TriggerContext) -> Effe
             count: *count,
         },
 
-        Effect::Scry { player, count } if player.is_placeholder() => Effect::Scry {
+        Effect::Scry {
+            player,
+            count,
+            only_if_bargained,
+        } if player.is_placeholder() => Effect::Scry {
             player: ctx.controller,
             count: *count,
+            only_if_bargained: *only_if_bargained,
         },
 
         // Library-search triggered abilities (e.g. Pattern of Rebirth: "when

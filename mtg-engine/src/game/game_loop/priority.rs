@@ -1222,6 +1222,69 @@ impl<'a> GameLoop<'a> {
                                     }
                                 }
 
+                                // Step 2d: Bargain payment (CR 702.162)
+                                // If the spell has the Bargain keyword, the caster
+                                // may sacrifice an artifact, enchantment, or token as
+                                // an optional additional cost. Heuristic: always pay
+                                // Bargain if there is a token available (cheapest
+                                // sacrifice, maximum value from the rider).
+                                {
+                                    let has_bargain = self
+                                        .game
+                                        .cards
+                                        .try_get(card_id)
+                                        .is_some_and(|c| c.keywords.contains(crate::core::Keyword::Bargain));
+                                    if has_bargain {
+                                        // Find a token on the battlefield controlled by current_priority
+                                        // to sacrifice (tokens are the cheapest Bargain fodder).
+                                        // Fall back to any artifact or enchantment.
+                                        let sacrifice_target = self
+                                            .game
+                                            .battlefield
+                                            .cards
+                                            .iter()
+                                            .find(|&&pid| {
+                                                self.game.cards.try_get(pid).is_some_and(|c| {
+                                                    c.controller == current_priority
+                                                        && c.id != card_id
+                                                        && (c.is_token
+                                                            || c.is_type(&crate::core::CardType::Artifact)
+                                                            || c.is_type(&crate::core::CardType::Enchantment))
+                                                })
+                                            })
+                                            .copied();
+                                        if let Some(sacrifice_id) = sacrifice_target {
+                                            // Mark bargain_paid BEFORE cast_spell_8_step
+                                            // (which reads it at resolution).
+                                            self.game.set_bargain_paid_logged(card_id, true);
+                                            // Perform the sacrifice: move to graveyard.
+                                            let dest = self.game.death_destination_for_card(sacrifice_id);
+                                            let _ = self.game.move_card(
+                                                sacrifice_id,
+                                                crate::zones::Zone::Battlefield,
+                                                dest,
+                                                current_priority,
+                                            );
+                                            if self.verbosity >= VerbosityLevel::Normal && !self.replaying {
+                                                if let Some(sac_name) = self
+                                                    .game
+                                                    .cards
+                                                    .try_get(sacrifice_id)
+                                                    .map(|c| c.name.as_str().to_string())
+                                                {
+                                                    self.game.logger.gamelog(&format!(
+                                                        "  → Bargain: sacrificed {} as additional cost",
+                                                        sac_name
+                                                    ));
+                                                }
+                                            }
+                                        } else {
+                                            // No sacrifice target — cannot pay Bargain; reset flag.
+                                            self.game.set_bargain_paid_logged(card_id, false);
+                                        }
+                                    }
+                                }
+
                                 // Get valid targets BEFORE calling cast_spell_8_step
                                 // (we can't borrow controller inside the closure)
                                 // Note: For modal spells, this runs AFTER mode selection
@@ -2343,7 +2406,7 @@ impl<'a> GameLoop<'a> {
                                             // Scry: snapshot → controller → apply (mirror of
                                             // the spell-resolution branch; see
                                             // resolve_top_spell_with_discard_hook above).
-                                            crate::core::Effect::Scry { player, count } => {
+                                            crate::core::Effect::Scry { player, count, .. } => {
                                                 let scry_player = if player.is_placeholder() {
                                                     current_priority
                                                 } else {
@@ -3974,7 +4037,7 @@ impl<'a> GameLoop<'a> {
                     //   - no currently-shipping deck triggers scry on a path
                     //     that hits this gap (server-local + client-shadow)
                     //     before some other unrelated desync fires.
-                    crate::core::Effect::Scry { player, count } => {
+                    crate::core::Effect::Scry { player, count, .. } => {
                         let scry_player = *player;
                         let revealed = self.game.scry_snapshot_top_n(scry_player, *count);
                         if !revealed.is_empty() {
