@@ -700,6 +700,103 @@ impl<'a> GameLoop<'a> {
         Ok(())
     }
 
+    /// Check and fire AttackerUnblocked triggers after blockers are declared.
+    ///
+    /// For each attacker that has no assigned blocker, fire that creature's
+    /// `TriggerEvent::AttackerUnblocked` triggers (if any).
+    ///
+    /// Example: Floral Spuzzem — "Whenever CARDNAME attacks and isn't blocked,
+    /// you may destroy target artifact defending player controls."
+    pub(super) fn check_attacker_unblocked_triggers(&mut self, attacking_player: PlayerId) -> Result<()> {
+        use crate::core::TriggerEvent;
+        use smallvec::SmallVec;
+
+        // Collect attackers that are NOT blocked (no blockers in the reverse map).
+        let unblocked: SmallVec<[crate::core::CardId; 4]> = self
+            .game
+            .combat
+            .attackers
+            .iter()
+            .filter_map(|(&attacker_id, _defending_player)| {
+                // An attacker is unblocked if attacker_blockers has no entry or empty vec for it
+                let is_blocked = self
+                    .game
+                    .combat
+                    .attacker_blockers
+                    .get(&attacker_id)
+                    .is_some_and(|blockers| !blockers.is_empty());
+                if !is_blocked {
+                    Some(attacker_id)
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        if unblocked.is_empty() {
+            return Ok(());
+        }
+
+        // Collect which attackers have AttackerUnblocked triggers to fire
+        struct UnblockedTriggerInfo {
+            attacker_id: crate::core::CardId,
+            controller: crate::core::PlayerId,
+            defending_player: crate::core::PlayerId,
+        }
+
+        let trigger_infos: SmallVec<[UnblockedTriggerInfo; 2]> = unblocked
+            .iter()
+            .filter_map(|&attacker_id| {
+                let card = self.game.cards.try_get(attacker_id)?;
+                let has_trigger = card.triggers.iter().any(|t| t.event == TriggerEvent::AttackerUnblocked);
+                if !has_trigger {
+                    return None;
+                }
+                let controller = card.controller;
+                // The defending player is stored directly in the attackers map
+                let &defending_player = self.game.combat.attackers.get(&attacker_id)?;
+                Some(UnblockedTriggerInfo {
+                    attacker_id,
+                    controller,
+                    defending_player,
+                })
+            })
+            .collect();
+
+        // Fire each trigger
+        for info in trigger_infos {
+            if self.verbosity >= VerbosityLevel::Normal && !self.replaying {
+                let name = self
+                    .game
+                    .cards
+                    .try_get(info.attacker_id)
+                    .map(|c| c.name.as_str())
+                    .unwrap_or("Unknown");
+                self.game
+                    .logger
+                    .gamelog(&format!("{} attacks and isn't blocked — trigger fires", name));
+            }
+
+            // Fire triggers via check_triggers_for_controller with the attacker as the source.
+            // The `opponent` in TriggerContext is the defending player, which becomes the
+            // target for effects like "destroy target artifact DEFENDING PLAYER controls".
+            self.game.check_triggers_for_controller_with_opponent(
+                TriggerEvent::AttackerUnblocked,
+                info.attacker_id,
+                info.controller,
+                Some(info.defending_player),
+            )?;
+        }
+
+        // Push reveals
+        self.push_reveals(attacking_player);
+        if let Some(opponent) = self.game.get_other_player_id(attacking_player) {
+            self.push_reveals(opponent);
+        }
+
+        Ok(())
+    }
+
     /// Upkeep step - priority round for triggers and actions
     pub(super) fn upkeep_step(
         &mut self,

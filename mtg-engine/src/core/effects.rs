@@ -1211,6 +1211,11 @@ impl TargetRestriction {
                         "YouCtrl" => controller = ControllerRestriction::YouCtrl,
                         "OppCtrl" => controller = ControllerRestriction::OppCtrl,
                         "ActivePlayerCtrl" => controller = ControllerRestriction::ActivePlayerCtrl,
+                        // Forge DSL: "ControlledBy TriggeredDefendingPlayer" — target must be
+                        // controlled by the defending player in the current combat.  In a 2-player
+                        // game the defending player is always the opponent of the attacker, so we
+                        // map this to OppCtrl for targeting purposes.
+                        "ControlledBy TriggeredDefendingPlayer" => controller = ControllerRestriction::OppCtrl,
                         "nonArtifact" => requires_nonartifact = true,
                         "nonCreature" => requires_noncreature = true,
                         "Other" => requires_other = true,

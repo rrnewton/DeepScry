@@ -1568,6 +1568,7 @@ impl Card {
         self.exile_if_would_go_to_graveyard_this_turn = false;
         self.prevent_all_combat_damage_this_turn = false;
         self.dealt_damage_to_opponent_this_turn = false;
+        self.attacked_this_turn = false;
         self.exhausted_abilities = SmallVec::new();
         self.cast_as_adventure = false;
     }

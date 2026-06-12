@@ -7340,6 +7340,98 @@ impl GameState {
         Ok(())
     }
 
+    /// Like [`check_triggers_for_controller`] but injects a known `opponent` into
+    /// the [`TriggerContext`] so effects that target the defending / opposing player
+    /// are resolved against the correct player.
+    ///
+    /// Used by `AttackerUnblocked` triggers (Floral Spuzzem) where the defending
+    /// player is the explicit opponent in the trigger context.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the source card or any effect execution fails.
+    pub fn check_triggers_for_controller_with_opponent(
+        &mut self,
+        event: TriggerEvent,
+        card_id: CardId,
+        active_player: PlayerId,
+        opponent: Option<PlayerId>,
+    ) -> Result<()> {
+        // Get the card's triggers
+        let effects_to_execute: Vec<Effect> = {
+            let card = self.cards.get(card_id)?;
+            card.triggers
+                .iter()
+                .filter(|trigger| trigger.event == event)
+                .flat_map(|trigger| trigger.effects.clone())
+                .collect()
+        };
+
+        if effects_to_execute.is_empty() {
+            return Ok(());
+        }
+
+        let controller = self.cards.get(card_id)?.controller;
+        let trigger_source_colors: smallvec::SmallVec<[crate::core::Color; 2]> =
+            self.cards.get(card_id)?.colors.clone();
+
+        let mut ctx = TriggerContext::new(card_id, controller);
+        if let Some(opp) = opponent {
+            ctx = ctx.with_opponent(opp);
+        }
+
+        for effect in effects_to_execute {
+            let mut effect = resolve_effect_placeholder(&effect, &ctx);
+
+            // Resolve DestroyPermanent placeholder against the defending player's
+            // permanents (OppCtrl means "controlled by the attacker's opponent"
+            // which is the defending player). We use `active_player` here as the
+            // "active player" for restriction evaluation, but pass `opponent` as the
+            // "target pool" player.
+            if let Effect::DestroyPermanent {
+                target,
+                ref restriction,
+                no_regenerate,
+            } = effect.clone()
+            {
+                if target.is_placeholder() {
+                    // For OppCtrl targets, the target pool is the defending player
+                    // (= the attacker's opponent).
+                    let pool_player = opponent.unwrap_or(active_player);
+                    if let Some(target_id) = self.choose_triggered_destroy_target(
+                        restriction,
+                        controller,
+                        pool_player,
+                        &trigger_source_colors,
+                    ) {
+                        effect = Effect::DestroyPermanent {
+                            target: target_id,
+                            restriction: restriction.clone(),
+                            no_regenerate,
+                        };
+                    } else {
+                        // No legal target — trigger fizzles
+                        log::debug!(
+                            target: "triggers",
+                            "AttackerUnblocked destroy trigger fizzled — no valid target for {:?}",
+                            restriction
+                        );
+                        continue;
+                    }
+                }
+            }
+
+            if let Some(card) = self.cards.try_get(card_id) {
+                self.logger
+                    .normal(&format!("{} AttackerUnblocked trigger effect", card.name));
+            }
+
+            self.execute_effect(&effect)?;
+        }
+
+        Ok(())
+    }
+
     /// Check and execute SpellCast triggers when a spell is cast
     ///
     /// This handles "Whenever you cast a [noncreature] spell" triggers like:

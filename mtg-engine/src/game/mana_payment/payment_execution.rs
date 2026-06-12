@@ -942,6 +942,15 @@ impl GameState {
 
                 // Sacrifice the permanents (move to graveyard or exile if finality) and check triggers
                 for sac_id in to_sacrifice.iter().take(*count as usize) {
+                    // Capture the toughness BEFORE the card leaves the battlefield
+                    // (Diamond Valley: "gain life equal to the sacrificed creature's toughness").
+                    // Stored in GameState::last_sacrificed_toughness for GainLifeDynamic
+                    // (DynamicAmount::SacrificedToughness) to read at resolution time.
+                    if let Ok(sac_card) = self.cards.get(*sac_id) {
+                        if sac_card.is_creature() {
+                            self.last_sacrificed_toughness = Some(i32::from(sac_card.current_toughness()));
+                        }
+                    }
                     let owner = self.cards.get(*sac_id)?.owner;
                     let dest = self.death_destination_for_card(*sac_id);
                     self.move_card(*sac_id, Zone::Battlefield, dest, owner)?;

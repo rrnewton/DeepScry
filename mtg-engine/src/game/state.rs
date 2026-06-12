@@ -172,6 +172,20 @@ pub struct GameState {
     #[serde(skip)]
     pub current_spell_controller: Option<crate::core::PlayerId>,
 
+    /// Toughness of the creature most recently sacrificed as an activation cost,
+    /// captured BEFORE the card leaves the battlefield.
+    ///
+    /// Used by Diamond Valley's `AB$ GainLife | LifeAmount$ X` where
+    /// `SVar:X:Sacrificed$CardToughness`. The toughness is set in
+    /// `pay_ability_cost(Cost::SacrificePattern { .. })` and read in
+    /// `resolve_dynamic_amount(DynamicAmount::SacrificedToughness)`.
+    ///
+    /// Transient resolution scratch — always cleared back to `None` before
+    /// control returns to the game loop (or overwritten on the next sacrifice).
+    /// `#[serde(skip)]` so snapshots / network shadow state are unaffected.
+    #[serde(skip)]
+    pub last_sacrificed_toughness: Option<i32>,
+
     /// Delayed triggers waiting to fire on specific events.
     ///
     /// Delayed triggers are created by effects and fire when conditions are met:
@@ -520,6 +534,7 @@ impl GameState {
             current_damage_source: None,
             damage_dealt_by_source: None,
             current_spell_controller: None,
+            last_sacrificed_toughness: None,
             delayed_triggers: DelayedTriggerStore::new(),
             remembered_cards: smallvec::SmallVec::new(),
             remembered_players: smallvec::SmallVec::new(),
@@ -4934,6 +4949,96 @@ impl GameState {
                             self.scry_apply_decision(player, &revealed, &decision)?;
                         }
                     }
+
+                    // DestroyPermanent with placeholder target: the tracked card
+                    // IS the target (Berserk: "destroy that creature if it attacked
+                    // this turn"). card_id here is the `tracked_card` from the
+                    // delayed trigger registration — the Berserked creature.
+                    // We check the `attacked_this_turn` flag set when the
+                    // creature was declared as an attacker.
+                    crate::core::Effect::DestroyPermanent {
+                        target, no_regenerate, ..
+                    } if target.is_placeholder() => {
+                        // Only destroy if the creature attacked this turn
+                        let did_attack = self
+                            .cards
+                            .try_get(card_id)
+                            .map(|c| c.attacked_this_turn)
+                            .unwrap_or(false);
+
+                        if !did_attack {
+                            log::debug!(
+                                target: "delayed_triggers",
+                                "DestroyPermanent delayed trigger: card {:?} did not attack this turn — skipping",
+                                card_id
+                            );
+                        } else if self.battlefield.contains(card_id) {
+                            let no_regen = no_regenerate;
+                            let has_indestructible =
+                                self.cards.try_get(card_id).is_some_and(|c| c.has_indestructible());
+                            let has_regen_shield =
+                                self.cards.try_get(card_id).is_some_and(|c| c.regeneration_shields > 0);
+
+                            if has_indestructible {
+                                log::debug!(
+                                    target: "delayed_triggers",
+                                    "DestroyPermanent delayed trigger: card {:?} is indestructible — skipping",
+                                    card_id
+                                );
+                            } else if has_regen_shield && !no_regen {
+                                self.apply_regeneration_shield(card_id)?;
+                            } else {
+                                let owner = self.cards.get(card_id)?.owner;
+                                let dest = self.death_destination_for_card(card_id);
+                                let name = self
+                                    .cards
+                                    .try_get(card_id)
+                                    .map(|c| c.name.to_string())
+                                    .unwrap_or_default();
+                                log::debug!(
+                                    target: "delayed_triggers",
+                                    "DestroyPermanent delayed trigger: destroying {} ({:?})",
+                                    name, card_id
+                                );
+                                let _ = self.check_death_triggers(card_id);
+                                self.move_card(card_id, Zone::Battlefield, dest, owner)?;
+                            }
+                        } else {
+                            log::debug!(
+                                target: "delayed_triggers",
+                                "DestroyPermanent delayed trigger: card {:?} no longer on battlefield — skipping",
+                                card_id
+                            );
+                        }
+                    }
+
+                    crate::core::Effect::DestroyAll { restriction, .. } => {
+                        // DestroyAll in a delayed ExecuteEffect (e.g. Siren's Call:
+                        // "Destroy all attacking non-Wall creatures that aren't blocked").
+                        // Delegate to the standard execute_effect path; it already
+                        // handles TargetRestriction, indestructible, etc.
+                        let effect_clone = crate::core::Effect::DestroyAll {
+                            restriction,
+                            no_regenerate: false,
+                        };
+                        self.execute_effect(&effect_clone)?;
+                    }
+
+                    crate::core::Effect::GainLifeDynamic {
+                        player,
+                        amount,
+                        reference,
+                    } => {
+                        // Delegate to the standard execute_effect path so the
+                        // dynamic amount is resolved consistently.
+                        let effect_clone = crate::core::Effect::GainLifeDynamic {
+                            player,
+                            amount,
+                            reference,
+                        };
+                        self.execute_effect(&effect_clone)?;
+                    }
+
                     crate::core::Effect::DealDamage { .. }
                     | crate::core::Effect::DealDamageDivided { .. }
                     | crate::core::Effect::DealDamageDynamic { .. }
@@ -4977,7 +5082,6 @@ impl GameState {
                     | crate::core::Effect::PreventDamage { .. }
                     | crate::core::Effect::PreventDamageFromSource { .. }
                     | crate::core::Effect::LoseLife { .. }
-                    | crate::core::Effect::DestroyAll { .. }
                     | crate::core::Effect::SacrificeAll { .. }
                     | crate::core::Effect::DamageAll { .. }
                     | crate::core::Effect::ForceSacrifice { .. }
@@ -5017,7 +5121,6 @@ impl GameState {
                     | crate::core::Effect::ClassLevelUp { .. }
                     | crate::core::Effect::DealDamageXPaid { .. }
                     | crate::core::Effect::DrawCardsXPaid { .. }
-                    | crate::core::Effect::GainLifeDynamic { .. }
                     | crate::core::Effect::DiscardCardsXPaid { .. }
                     | crate::core::Effect::CreateTokenDynamic { .. }
                     | crate::core::Effect::CreateEmblem { .. }
@@ -5121,6 +5224,7 @@ impl Clone for GameState {
             current_damage_source: self.current_damage_source,
             damage_dealt_by_source: self.damage_dealt_by_source,
             current_spell_controller: self.current_spell_controller,
+            last_sacrificed_toughness: self.last_sacrificed_toughness,
             delayed_triggers: self.delayed_triggers.clone(),
             remembered_cards: self.remembered_cards.clone(),
             remembered_players: self.remembered_players.clone(),

@@ -3548,10 +3548,13 @@ impl CardDefinition {
             }
 
             // Parse AttackerUnblocked triggers (Mode$ AttackerUnblocked)
+            // Unified handler covering Draw (Eternal of Harsh Truths), Discard
+            // (Abyssal Nightstalker), Destroy (Floral Spuzzem), and generic Execute$ SVars.
             // Example: T:Mode$ AttackerUnblocked | ValidCard$ Card.Self | Execute$ TrigDraw | TriggerDescription$ ...
             // Fires at end of declare-blockers step for each unblocked attacker with this trigger.
             if mode == Some("AttackerUnblocked") && params.get("ValidCard").map(|s| s.as_str()) == Some("Card.Self") {
-                use crate::core::{Effect, PlayerId};
+                use crate::core::{Effect, PlayerId, TriggerEvent};
+                use crate::loader::effect_converter::params_to_effect;
 
                 let mut effects = Vec::new();
 
@@ -3568,10 +3571,8 @@ impl CardDefinition {
                                 player: PlayerId::new(0), // placeholder → controller
                                 count: draw_count,
                             });
-                        }
-
-                        // DB$ Discard — defending player discards (e.g. Abyssal Nightstalker)
-                        if svar_params.api_type == ApiType::Discard {
+                        } else if svar_params.api_type == ApiType::Discard {
+                            // DB$ Discard — defending player discards (e.g. Abyssal Nightstalker)
                             let discard_count = svar_params
                                 .get("NumCards")
                                 .and_then(|s| s.parse::<u8>().ok())
@@ -3583,7 +3584,16 @@ impl CardDefinition {
                                 optional: false,
                                 remember_discarding_players: false,
                             });
+                        } else if svar_params.api_type == ApiType::Destroy {
+                            // DB$ Destroy — destroy target artifact/permanent (e.g. Floral Spuzzem)
+                            if let Some(destroy_effect) = params_to_effect(svar_params) {
+                                effects.push(destroy_effect);
+                            }
+                        } else {
+                            effects.extend(self.extract_effects_from_svar(svar_params));
                         }
+                        // Follow SubAbility$ chain
+                        self.follow_sub_ability_chain(svar_params, &mut effects);
                     }
                 }
 

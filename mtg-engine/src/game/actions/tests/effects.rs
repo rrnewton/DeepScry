@@ -9344,4 +9344,193 @@ mod tests {
             assert!(*gain_control);
         }
     }
+
+    // =========================================================================
+    // 1994 Wave 8 Card Compatibility Tests (mtg-709)
+    // =========================================================================
+
+    /// Ivory Tower parses correctly: artifact with a BeginningOfUpkeep trigger
+    /// that fires GainLifeDynamic(Count(CardsInHand{minus:4})).
+    ///
+    /// Verifies the loader produces the right trigger shape for
+    /// `T:Mode$ Phase | Phase$ Upkeep | Execute$ TrigGainLife`
+    /// with `SVar:X:Count$ValidHand Card.YouOwn/Minus.4`.
+    #[test]
+    fn test_card_compat_ivory_tower() {
+        use crate::core::{CountExpression, CountModifier, DynamicAmount, TriggerEvent};
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("../cardsfolder/i/ivory_tower.txt");
+        if !path.exists() {
+            eprintln!("Skipping: cardsfolder not present at {:?}", path);
+            return;
+        }
+        let def = crate::loader::CardLoader::load_from_file(&path).expect("Ivory Tower should load");
+
+        assert_eq!(def.name.as_str(), "Ivory Tower");
+        assert_eq!(def.mana_cost.generic, 1, "Ivory Tower costs {{1}}");
+        assert!(def.types.contains(&CardType::Artifact), "Must be an Artifact");
+
+        let card = def.instantiate(CardId::new(1), PlayerId::new(0));
+
+        // Must have exactly one upkeep trigger that fires on the controller's turn
+        let trigger = card
+            .triggers
+            .iter()
+            .find(|t| t.event == TriggerEvent::BeginningOfUpkeep)
+            .expect("Ivory Tower must have a BeginningOfUpkeep trigger");
+        assert!(
+            trigger.controller_turn_only,
+            "Ivory Tower fires only on controller's upkeep"
+        );
+
+        // The effect must be GainLifeDynamic with a CardsInHand/Minus.4 count
+        let gain_effect = trigger
+            .effects
+            .iter()
+            .find(|e| matches!(e, Effect::GainLifeDynamic { .. }))
+            .expect("Ivory Tower's trigger must produce a GainLifeDynamic effect");
+
+        let Effect::GainLifeDynamic { amount, .. } = gain_effect else {
+            unreachable!("matched GainLifeDynamic above");
+        };
+        assert!(
+            matches!(
+                amount,
+                DynamicAmount::Count(CountExpression::CardsInHand {
+                    modifier: CountModifier::Minus(4),
+                    ..
+                })
+            ),
+            "Ivory Tower's life gain must be Count(CardsInHand/Minus.4), got {amount:?}"
+        );
+    }
+
+    /// Berserk parses as an instant that includes a `CreateDelayedTrigger` effect
+    /// (end-step destroy) AND the `PumpCreatureVariable` (+X/+0 trample) effect.
+    ///
+    /// Verifies:
+    /// - The spell effect chain includes `PumpCreatureVariable` (grants trample, +X/+0)
+    /// - The spell effect chain includes `CreateDelayedTrigger` with a Phase end-step condition
+    /// - The `attacked_this_turn` field is added and cleared by `reset_transient_state`
+    #[test]
+    fn test_card_compat_berserk_parse() {
+        use crate::core::{Card, CardId, PlayerId, TriggerEvent};
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("../cardsfolder/b/berserk.txt");
+        if !path.exists() {
+            eprintln!("Skipping: cardsfolder not present at {:?}", path);
+            return;
+        }
+        let def = crate::loader::CardLoader::load_from_file(&path).expect("Berserk should load");
+        assert_eq!(def.name.as_str(), "Berserk");
+        // {G} instant
+        assert_eq!(def.mana_cost.green, 1);
+        assert_eq!(def.mana_cost.generic, 0);
+        assert!(def.types.contains(&CardType::Instant));
+
+        let card = def.instantiate(CardId::new(1), PlayerId::new(0));
+        // No upkeep / combat triggers on the card itself — Berserk's delay is SP$
+        assert!(
+            card.triggers.is_empty(),
+            "Berserk card must have no triggers (it creates a delayed trigger when cast)"
+        );
+
+        // Spell effects should include PumpCreatureVariable (grants Trample, +X/+0 via
+        // SVar:X:Targeted$CardPower = power at resolution time) and CreateDelayedTrigger
+        // for the end-step destroy condition.
+        let has_pump = card
+            .effects
+            .iter()
+            .any(|e| matches!(e, Effect::PumpCreatureVariable { .. }));
+        let has_delayed = card
+            .effects
+            .iter()
+            .any(|e| matches!(e, Effect::CreateDelayedTrigger { .. }));
+        assert!(
+            has_pump,
+            "Berserk must have a PumpCreatureVariable effect (variable +X/+0 pump via TargetedCardPower)"
+        );
+        assert!(
+            has_delayed,
+            "Berserk must create a delayed trigger (end-step destroy condition)"
+        );
+
+        // Verify Card::attacked_this_turn starts false
+        let test_id = CardId::new(99);
+        let mut dummy_card = Card::new(test_id, "Test", PlayerId::new(0));
+        assert!(!dummy_card.attacked_this_turn, "attacked_this_turn must start false");
+        dummy_card.attacked_this_turn = true;
+        dummy_card.reset_transient_state(None);
+        assert!(
+            !dummy_card.attacked_this_turn,
+            "attacked_this_turn must be cleared by reset_transient_state"
+        );
+        let _ = TriggerEvent::AttackerUnblocked; // ensure the variant compiles
+    }
+
+    /// Floral Spuzzem parses correctly: creature with an `AttackerUnblocked` trigger
+    /// that optionally destroys a target artifact controlled by the defending player.
+    ///
+    /// Verifies:
+    /// - One `TriggerEvent::AttackerUnblocked` trigger
+    /// - The trigger is optional
+    /// - The trigger effect is `DestroyPermanent` targeting artifacts with `OppCtrl`
+    #[test]
+    fn test_card_compat_floral_spuzzem() {
+        use crate::core::effects::ControllerRestriction;
+        use crate::core::{CardType, TargetType, TriggerEvent};
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("../cardsfolder/f/floral_spuzzem.txt");
+        if !path.exists() {
+            eprintln!("Skipping: cardsfolder not present at {:?}", path);
+            return;
+        }
+        let def = crate::loader::CardLoader::load_from_file(&path).expect("Floral Spuzzem should load");
+        assert_eq!(def.name.as_str(), "Floral Spuzzem");
+        assert!(def.types.contains(&CardType::Creature), "Must be a Creature");
+
+        let card = def.instantiate(CardId::new(1), PlayerId::new(0));
+
+        // Must have exactly one AttackerUnblocked trigger
+        let unblocked_triggers: Vec<_> = card
+            .triggers
+            .iter()
+            .filter(|t| t.event == TriggerEvent::AttackerUnblocked)
+            .collect();
+        assert_eq!(
+            unblocked_triggers.len(),
+            1,
+            "Floral Spuzzem must have exactly one AttackerUnblocked trigger, got {}",
+            unblocked_triggers.len()
+        );
+        let trigger = unblocked_triggers[0];
+        assert!(
+            trigger.optional,
+            "Floral Spuzzem's trigger must be optional ('you may destroy')"
+        );
+
+        // The trigger effect must destroy an artifact controlled by an opponent (OppCtrl)
+        let destroy_effect = trigger
+            .effects
+            .iter()
+            .find(|e| matches!(e, Effect::DestroyPermanent { .. }))
+            .expect("Floral Spuzzem's trigger must have a DestroyPermanent effect");
+
+        let Effect::DestroyPermanent { restriction, .. } = destroy_effect else {
+            unreachable!("matched DestroyPermanent above");
+        };
+        assert!(
+            restriction.types.contains(&TargetType::Artifact),
+            "Target must be an artifact (got types {:?})",
+            restriction.types
+        );
+        assert_eq!(
+            restriction.controller,
+            ControllerRestriction::OppCtrl,
+            "Target must be controlled by an opponent (defending player)"
+        );
+    }
 }

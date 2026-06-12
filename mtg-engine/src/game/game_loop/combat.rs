@@ -372,23 +372,11 @@ impl<'a> GameLoop<'a> {
 
         // MTG CR 509.4 / 603.6: After blockers are declared, fire "attacks and
         // isn't blocked" (AttackerUnblocked) triggers for each attacker that has
-        // no blockers assigned.  These are per-attacker triggers (like Attacks),
-        // not batch triggers (like AttackersDeclared).
-        {
-            use crate::core::TriggerEvent;
-            // Collect attackers that are still on the battlefield and unblocked.
-            // Sort by CardId for deterministic trigger order (same as ReplayChoice
-            // iteration order in the damage step).
-            let unblocked_attackers: smallvec::SmallVec<[crate::core::CardId; 8]> = self
-                .get_current_attackers()
-                .into_iter()
-                .filter(|&a| self.game.battlefield.contains(a) && !self.game.combat.is_blocked(a))
-                .collect();
-
-            for attacker_id in unblocked_attackers {
-                self.game.check_triggers(TriggerEvent::AttackerUnblocked, attacker_id)?;
-            }
-        }
+        // no blockers assigned.  Uses check_attacker_unblocked_triggers which
+        // threads the defending player through TriggerContext so effects like
+        // Floral Spuzzem can target "artifact defending player controls".
+        let active_player = self.game.turn.active_player;
+        self.check_attacker_unblocked_triggers(active_player)?;
 
         // MTG Rules 509.4: After blockers are declared, players receive priority
         if let Some(result) = self.priority_round(controller1, controller2)? {

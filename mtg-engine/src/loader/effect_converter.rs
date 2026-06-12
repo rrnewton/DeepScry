@@ -2556,6 +2556,23 @@ pub fn params_to_effect_with_svars(params: &AbilityParams, svars: &HashMap<Strin
         return params_to_effect(params);
     }
 
+    // GainLife: when LifeAmount$ X refers to a Sacrificed$CardToughness SVar
+    // (Diamond Valley), emit GainLifeDynamic(SacrificedToughness) instead.
+    // `params_to_effect` can't do this because it has no SVar access.
+    if params.api_type == ApiType::GainLife {
+        if let Some(life_amount_str) = params.get("LifeAmount") {
+            if let Some(dyn_amount) = crate::core::DynamicAmount::parse(life_amount_str, svars) {
+                if !matches!(dyn_amount, crate::core::DynamicAmount::Fixed(_)) {
+                    return Some(Effect::GainLifeDynamic {
+                        player: crate::core::PlayerId::new(0), // Placeholder — filled at cast time
+                        amount: dyn_amount,
+                        reference: crate::core::CardId::placeholder(),
+                    });
+                }
+            }
+        }
+    }
+
     // DealDamage: when NumDmg$ X refers to a Count$ValidGraveyard (or any other
     // non-xPaid Count$) SVar, emit DealDamageDynamic instead of DealDamageXPaid.
     // `params_to_effect` can't do this because it has no SVar access.
