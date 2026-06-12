@@ -2392,6 +2392,37 @@ fn test_dig_filter_matches() {
     assert!(!DigFilter::Artifact.matches(&creature));
 }
 
+/// Test that Island Sanctuary's draw-replacement cache flag is set.
+///
+/// Island Sanctuary has:
+///   `R:Event$ Draw | ActivePhases$ Draw | PlayerTurn$ True | Optional$ True
+///    | ValidPlayer$ You | ReplaceWith$ SanctuaryEffect`
+///
+/// The loader must recognise this shape and set `cache.is_island_sanctuary = true`.
+/// (mtg-917 B4)
+#[test]
+fn test_load_island_sanctuary_cache_flag() -> Result<()> {
+    let path = PathBuf::from("cardsfolder/i/island_sanctuary.txt");
+    if !path.exists() {
+        return Ok(()); // skip if cardsfolder absent
+    }
+
+    let def = CardLoader::load_from_file(&path)?;
+    assert_eq!(def.name.as_str(), "Island Sanctuary");
+
+    let card_id = CardId::new(1);
+    let player_id = PlayerId::new(1);
+    let card = def.instantiate(card_id, player_id);
+
+    assert!(
+        card.definition.cache.is_island_sanctuary,
+        "Island Sanctuary must have is_island_sanctuary cache flag set. \
+         The R:Event$ Draw | PlayerTurn$ True | Optional$ True replacement was not detected."
+    );
+
+    Ok(())
+}
+
 /// Test that Orgg's conditional CantAttack static is parsed correctly.
 ///
 /// Orgg has two statics:

@@ -604,6 +604,42 @@ impl<'a> GameLoop<'a> {
             return Ok(None);
         }
 
+        // Island Sanctuary (CR 614 draw-replacement): while the active player
+        // controls an Island Sanctuary, they may skip their mandatory draw; if
+        // they do, they gain protection against non-flying, non-islandwalk
+        // creatures attacking them until their next turn.
+        //
+        // AI simplification: the AI always activates the replacement (skips
+        // draw + takes protection) because Island Sanctuary's AI:RemoveDeck:All
+        // means only human players will play it in practice, and an unconditional
+        // always-on activation is correct for the AI's defensive posture.
+        // TODO(mtg-917): offer the actual yes/no choice to human controllers.
+        let sanctuary_active = self.game.battlefield.cards.iter().any(|&id| {
+            self.game
+                .cards
+                .try_get(id)
+                .is_some_and(|c| c.controller == active_player && c.definition.cache.is_island_sanctuary)
+        });
+        if sanctuary_active {
+            if let Ok(player) = self.game.get_player_mut(active_player) {
+                player.island_sanctuary_protected = true;
+            }
+            self.log_normal(
+                "Island Sanctuary: skipping draw — you can only be attacked by creatures \
+                 with flying and/or islandwalk until your next turn.",
+            );
+            // Skip the mandatory draw entirely — the replacement consumed it.
+            // Still fire "beginning of draw step" triggers (CR 603.3).
+            self.check_phase_triggers(TriggerEvent::BeginningOfDraw)?;
+            if !self.replaying && self.verbosity >= VerbosityLevel::Normal {
+                self.print_battlefield_state();
+            }
+            if let Some(result) = self.priority_round(controller1, controller2)? {
+                return Ok(Some(result));
+            }
+            return Ok(None);
+        }
+
         // No re-entry guard needed (mtg-610): a WASM network re-entry rewinds to
         // the turn start and replays, so the mandatory draw runs exactly once per
         // turn from a clean turn-start state rather than being re-executed on a
@@ -893,9 +929,11 @@ impl<'a> GameLoop<'a> {
 
         // Clear player damage prevention shields at end of turn (CR 514.2),
         // including source-filtered shields (Circle of Protection).
+        // Also clear Island Sanctuary protection (duration "until your next turn").
         for player in &mut self.game.players {
             player.damage_prevention = 0;
             player.source_prevention_shields.clear();
+            player.island_sanctuary_protected = false;
         }
 
         Ok(None)

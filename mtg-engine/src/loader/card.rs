@@ -818,6 +818,8 @@ impl CardDefinition {
         card.definition.cache.etb_choose_player = self.etb_choose_player;
         // Fireball's `{1}`-per-extra-target relative cost (CR 601.2f).
         card.definition.cache.spell_relative_target_cost = self.has_relative_self_target_cost();
+        // Island Sanctuary: skip-draw-for-protection replacement (CR 614).
+        card.definition.cache.is_island_sanctuary = self.is_island_sanctuary_card();
 
         // Parse keywords
         card.keywords = self.parse_keywords();
@@ -5700,6 +5702,44 @@ impl CardDefinition {
             }
         }
         None
+    }
+
+    /// Detect Island Sanctuary's "skip your draw step for combat protection"
+    /// replacement, expressed as
+    ///   `R:Event$ Draw | ActivePhases$ Draw | PlayerTurn$ True | Optional$ True
+    ///    | ValidPlayer$ You | ReplaceWith$ <SVar>`.
+    ///
+    /// Parsed structurally (tokenize on `|` then `$`), never via substring
+    /// matching. Returns `true` when the permanent carries this replacement so
+    /// the draw-step handler can offer the choice and set the per-turn
+    /// `Player::island_sanctuary_protected` flag.
+    pub(crate) fn is_island_sanctuary_card(&self) -> bool {
+        for ability in &self.raw_abilities {
+            let Some(body) = ability.strip_prefix("R:") else {
+                continue;
+            };
+            let mut is_draw_event = false;
+            let mut is_draw_phase = false;
+            let mut is_player_turn = false;
+            let mut is_optional = false;
+            for token in body.split('|') {
+                let token = token.trim();
+                let Some((key, value)) = token.split_once('$') else {
+                    continue;
+                };
+                match (key.trim(), value.trim()) {
+                    ("Event", "Draw") => is_draw_event = true,
+                    ("ActivePhases", "Draw") => is_draw_phase = true,
+                    ("PlayerTurn", "True") => is_player_turn = true,
+                    ("Optional", "True") => is_optional = true,
+                    _ => {}
+                }
+            }
+            if is_draw_event && is_draw_phase && is_player_turn && is_optional {
+                return true;
+            }
+        }
+        false
     }
 
     /// Parse an SVar body as an activated ability

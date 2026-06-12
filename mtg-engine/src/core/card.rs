@@ -202,6 +202,16 @@ pub struct CardCache {
     /// no per-turn flag). `N` is the per-untap-step land allowance (1 for
     /// Winter Orb).
     pub limits_land_untap: Option<u8>,
+
+    /// Precomputed: Island Sanctuary draw-replacement enchantment.
+    ///
+    /// While this permanent is on the battlefield and it is the controller's
+    /// draw step, the engine skips the mandatory draw and grants the controlling
+    /// player "Island Sanctuary protection" for the turn (only creatures with
+    /// flying or islandwalk may attack them). Derived from a replacement of the
+    /// shape `R:Event$ Draw | ActivePhases$ Draw | PlayerTurn$ True | Optional$
+    /// True | ...` (Island Sanctuary, 2nd Edition Alpha).
+    pub is_island_sanctuary: bool,
 }
 
 impl Default for CardCache {
@@ -276,6 +286,7 @@ impl CardCache {
             etb_exclude_colors: SmallVec::new(),
             etb_choose_player: false,
             limits_land_untap: None,
+            is_island_sanctuary: false,
         }
     }
 

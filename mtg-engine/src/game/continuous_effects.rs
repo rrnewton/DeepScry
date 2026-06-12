@@ -1794,6 +1794,31 @@ impl GameState {
         self.get_granted_keywords(creature_id).contains(keyword)
     }
 
+    /// Returns `true` if `creature_id` has islandwalk (Landwalk:Island).
+    ///
+    /// Used by the Island Sanctuary enforcement to distinguish creatures that
+    /// may bypass the protection (flying or islandwalk) from those that cannot.
+    /// Checks both innate keywords and granted keywords from continuous effects.
+    pub fn has_islandwalk(&self, creature_id: CardId) -> bool {
+        use crate::core::keyword_set::KeywordArgs;
+        use crate::core::Subtype;
+        // Check the card's own keyword list first (fast path).
+        if let Ok(card) = self.cards.get(creature_id) {
+            let island_subtype = Subtype::new("Island");
+            if card
+                .keywords
+                .iter_args()
+                .any(|kw| matches!(kw, KeywordArgs::Landwalk { land_type } if *land_type == island_subtype))
+            {
+                return true;
+            }
+        }
+        // Granted keywords from continuous effects do not carry argument data
+        // (they carry only the base Keyword variant), so granted islandwalk is
+        // not distinguishable here — conservatively return false.
+        false
+    }
+
     /// Get all activated abilities granted to a permanent by continuous effects.
     ///
     /// ## CR 613 Layer 6

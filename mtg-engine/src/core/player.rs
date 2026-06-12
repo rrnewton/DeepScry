@@ -84,6 +84,15 @@ pub struct Player {
     /// player reaches their untap step after the flag is set.
     #[serde(default)]
     pub skip_untap_next_turn: bool,
+
+    /// Island Sanctuary protection active this turn (CR 614 replacement effect).
+    ///
+    /// Set to `true` when the player activates Island Sanctuary's draw-skip
+    /// replacement during their draw step. While `true`, only creatures with
+    /// flying or islandwalk may attack this player (CR 508.1). Cleared in the
+    /// cleanup step (CR 514.2) alongside other per-turn replacements.
+    #[serde(default)]
+    pub island_sanctuary_protected: bool,
 }
 
 impl Player {
@@ -106,6 +115,7 @@ impl Player {
             source_prevention_shields: Vec::new(),
             spells_cast_this_turn: 0,
             skip_untap_next_turn: false,
+            island_sanctuary_protected: false,
         }
     }
 

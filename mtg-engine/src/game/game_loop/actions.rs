@@ -85,6 +85,16 @@ impl<'a> GameLoop<'a> {
         // Pre-compute the defending player id once (2-player: the other player).
         let defending_player_id = self.game.players.iter().find(|p| p.id != player_id).map(|p| p.id);
 
+        // Island Sanctuary protection (CR 614): if the defending player activated
+        // sanctuary this turn, only creatures with flying or islandwalk may attack.
+        let defender_has_sanctuary = defending_player_id.is_some_and(|def_id| {
+            self.game
+                .players
+                .iter()
+                .find(|p| p.id == def_id)
+                .is_some_and(|p| p.island_sanctuary_protected)
+        });
+
         for &card_id in &self.game.battlefield.cards {
             // Using try_get() to avoid Result drop overhead in hot path
             if let Some(card) = self.game.cards.try_get(card_id) {
@@ -113,7 +123,17 @@ impl<'a> GameLoop<'a> {
                         .iter()
                         .any(|sa| self.cant_attack_static_fires(sa, defending_player_id));
 
-                    if !has_summoning_sickness && !has_defender && !blocked_by_cant_attack_static {
+                    // Island Sanctuary (CR 614): only creatures with flying or
+                    // islandwalk (Landwalk:Island) can attack a protected player.
+                    let blocked_by_sanctuary = defender_has_sanctuary
+                        && !self.game.has_keyword_with_effects(card_id, Keyword::Flying)
+                        && !self.game.has_islandwalk(card_id);
+
+                    if !has_summoning_sickness
+                        && !has_defender
+                        && !blocked_by_cant_attack_static
+                        && !blocked_by_sanctuary
+                    {
                         creatures.push(card_id);
                     }
                 }

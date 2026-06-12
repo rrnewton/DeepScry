@@ -6635,3 +6635,131 @@ async fn test_torch_the_tower_base_damage_unbargained() -> Result<()> {
     println!("✓ Torch the Tower: deals 2 damage (Count$Bargain.3.2 evaluates correctly, mtg-863)");
     Ok(())
 }
+
+/// Test Island Sanctuary's attack-restriction replacement effect (mtg-917 B4).
+///
+/// Island Sanctuary reads: "If you would draw a card during your draw step, instead
+/// you may skip that draw. If you do, until your next turn, you can't be attacked
+/// except by creatures with flying and/or islandwalk."
+///
+/// This test verifies:
+/// 1. A non-flying, non-islandwalk creature cannot attack a player protected by
+///    Island Sanctuary (declare_attacker returns Err).
+/// 2. A creature with flying CAN attack a protected player (returns Ok).
+/// 3. Without Island Sanctuary protection, any creature can attack normally.
+///
+/// (CR 508.1 attack legality, CR 614 draw replacement.)
+#[tokio::test]
+async fn test_island_sanctuary_attack_restriction() -> Result<()> {
+    use mtg_engine::core::{CardId, PlayerId};
+    use mtg_engine::game::state::GameState;
+
+    let cardsfolder = require_cardsfolder();
+
+    // Helper: build a 2-player game with Island Sanctuary on P1's side.
+    // P0 has a Grizzly Bears (2/2, no evasion) ready to attack.
+    // sanctuary_active: if true, P1 has island_sanctuary_protected set.
+    let make_game = |sanctuary_active: bool| -> mtg_engine::Result<(GameState, PlayerId, CardId, PlayerId)> {
+        let mut game = GameState::new_two_player("P0".to_string(), "P1".to_string(), 20);
+        let mut players_iter = game.players.iter().map(|p| p.id);
+        let p0_id = players_iter.next().unwrap();
+        let p1_id = players_iter.next().unwrap();
+        drop(players_iter);
+
+        // P0 has a Grizzly Bears (not summoning sick).
+        let bears_def = mtg_engine::loader::CardLoader::load_from_file(&cardsfolder.join("g/grizzly_bears.txt"))?;
+        let bears_id = game.next_card_id();
+        let mut bears = bears_def.instantiate(bears_id, p0_id);
+        bears.turn_entered_battlefield = Some(0); // not summoning sick
+        game.cards.insert(bears_id, bears);
+        game.battlefield.add(bears_id);
+
+        // Island Sanctuary on P1's side (on the battlefield, owned by P1).
+        let sanctuary_def =
+            mtg_engine::loader::CardLoader::load_from_file(&cardsfolder.join("i/island_sanctuary.txt"))?;
+        let sanctuary_id = game.next_card_id();
+        let sanctuary_card = sanctuary_def.instantiate(sanctuary_id, p1_id);
+        game.cards.insert(sanctuary_id, sanctuary_card);
+        game.battlefield.add(sanctuary_id);
+
+        // Optionally activate sanctuary protection on P1.
+        if sanctuary_active {
+            if let Ok(p1) = game.get_player_mut(p1_id) {
+                p1.island_sanctuary_protected = true;
+            }
+        }
+
+        game.turn.turn_number = 3; // not turn 1
+        game.turn.active_player = p0_id;
+
+        Ok((game, p0_id, bears_id, p1_id))
+    };
+
+    // --- Case 1: sanctuary ACTIVE — Grizzly Bears (no evasion) cannot attack ---
+    {
+        let (mut game, p0_id, bears_id, _p1_id) = make_game(true)?;
+        let result = game.declare_attacker(p0_id, bears_id);
+        assert!(
+            result.is_err(),
+            "Grizzly Bears must NOT be able to attack a player protected by Island Sanctuary. \
+             Got: {:?}",
+            result
+        );
+        println!("✓ Island Sanctuary: non-evasion creature correctly blocked from attacking");
+    }
+
+    // --- Case 2: sanctuary NOT active — Grizzly Bears can attack ---
+    {
+        let (mut game, p0_id, bears_id, _p1_id) = make_game(false)?;
+        let result = game.declare_attacker(p0_id, bears_id);
+        assert!(
+            result.is_ok(),
+            "Grizzly Bears must be able to attack when Island Sanctuary protection is inactive. \
+             Got: {:?}",
+            result
+        );
+        println!("✓ Island Sanctuary: normal attack works without sanctuary active");
+    }
+
+    // --- Case 3: sanctuary ACTIVE but creature has flying — can attack ---
+    {
+        let mut game = GameState::new_two_player("P0".to_string(), "P1".to_string(), 20);
+        let mut players_iter = game.players.iter().map(|p| p.id);
+        let p0_id = players_iter.next().unwrap();
+        let p1_id = players_iter.next().unwrap();
+        drop(players_iter);
+
+        // P0 has an Air Elemental (flying) or similar; fall back to Serra Angel.
+        // Try Air Elemental (a/air_elemental.txt), or load any flying creature.
+        let flier_path = cardsfolder.join("a/air_elemental.txt");
+        if !flier_path.exists() {
+            println!("ℹ Island Sanctuary flying-attacker test skipped (no air_elemental.txt)");
+            return Ok(());
+        }
+        let flier_def = mtg_engine::loader::CardLoader::load_from_file(&flier_path)?;
+        let flier_id = game.next_card_id();
+        let mut flier = flier_def.instantiate(flier_id, p0_id);
+        flier.turn_entered_battlefield = Some(0);
+        game.cards.insert(flier_id, flier);
+        game.battlefield.add(flier_id);
+
+        // P1 has sanctuary protection.
+        if let Ok(p1) = game.get_player_mut(p1_id) {
+            p1.island_sanctuary_protected = true;
+        }
+
+        game.turn.turn_number = 3;
+        game.turn.active_player = p0_id;
+
+        let result = game.declare_attacker(p0_id, flier_id);
+        assert!(
+            result.is_ok(),
+            "Air Elemental (flying) must be able to attack a player protected by Island Sanctuary. \
+             Got: {:?}",
+            result
+        );
+        println!("✓ Island Sanctuary: flying creature can attack through sanctuary");
+    }
+
+    Ok(())
+}

@@ -125,6 +125,27 @@ impl GameState {
             }
         }
 
+        // Island Sanctuary (CR 614): if the defending player activated sanctuary
+        // this turn, only creatures with flying or islandwalk may attack them.
+        {
+            let defending_player_has_sanctuary = self
+                .players
+                .iter()
+                .find(|p| p.id == defending_player)
+                .is_some_and(|p| p.island_sanctuary_protected);
+            if defending_player_has_sanctuary {
+                let has_evasion =
+                    self.has_keyword_with_effects(card_id, Keyword::Flying) || self.has_islandwalk(card_id);
+                if !has_evasion {
+                    return Err(MtgError::InvalidAction(
+                        "Island Sanctuary: only creatures with flying or islandwalk can attack \
+                         this player"
+                            .to_string(),
+                    ));
+                }
+            }
+        }
+
         // Declare attacker in combat state (logged so it is reversible by the
         // undo log — mtg-614 hole (b)). The WASM ai_harness now blocks via
         // rewind+replay (mtg-610), so a logged DeclareAttacker is reverted on
