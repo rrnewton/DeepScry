@@ -8381,4 +8381,106 @@ mod tests {
             "is_activated_ability_prohibited must be false for a non-creature artifact"
         );
     }
+
+    /// Card compat: Overgrown Battlement — `withDefender` filter in
+    /// `count_permanents_matching` (mtg-914/mtg-915, wave3).
+    ///
+    /// Overgrown Battlement: `{T}: Add {G} for each creature with defender
+    /// you control.` — `SVar:X:Count$Valid Creature.withDefender+YouCtrl`.
+    ///
+    /// Before this fix `count_permanents_matching` silently ignored the
+    /// `withDefender` qualifier and counted ALL your creatures. The fix adds a
+    /// `filter.contains("withDefender")` guard that checks
+    /// `card.has_keyword(Keyword::Defender)`, so only creatures that actually
+    /// have Defender are counted (CR 702.6).
+    ///
+    /// Also verifies that `TargetRestriction::parse("Creature.withDefender")`
+    /// sets `requires_defender = true` and that `TargetRestriction::matches`
+    /// rejects creatures without Defender.
+    #[test]
+    fn test_withdefender_filter_count_and_target_restriction() {
+        use crate::core::effects::TargetRestriction;
+        use crate::core::{CardType, EntityId, Keyword, PlayerId};
+        use crate::game::GameState;
+
+        // --- Part 1: TargetRestriction::parse handles "withDefender" ---
+        let tr = TargetRestriction::parse("Creature.withDefender");
+        assert!(
+            tr.requires_defender,
+            "TargetRestriction::parse('Creature.withDefender') must set requires_defender=true"
+        );
+        let tr2 = TargetRestriction::parse("Creature.withDefender+YouCtrl");
+        assert!(
+            tr2.requires_defender,
+            "TargetRestriction::parse('Creature.withDefender+YouCtrl') must set requires_defender=true"
+        );
+
+        // --- Part 2: TargetRestriction::matches enforces requires_defender ---
+        let p0 = PlayerId::new(0);
+        let mut creature_with_def = crate::core::Card::new(EntityId::new(1), "Wall of Stone", p0);
+        creature_with_def.add_type(CardType::Creature);
+        creature_with_def.keywords.insert(Keyword::Defender);
+
+        let mut creature_no_def = crate::core::Card::new(EntityId::new(2), "Grizzly Bears", p0);
+        creature_no_def.add_type(CardType::Creature);
+
+        let restriction = TargetRestriction::parse("Creature.withDefender");
+        assert!(
+            restriction.matches(&creature_with_def),
+            "Creature with Defender must match 'Creature.withDefender' restriction"
+        );
+        assert!(
+            !restriction.matches(&creature_no_def),
+            "Creature without Defender must NOT match 'Creature.withDefender' restriction"
+        );
+
+        // --- Part 3: count_permanents_matching counts only defender creatures ---
+        // Create a game with p0 controlling two defenders and one non-defender.
+        let mut game = GameState::new_two_player("P0".to_string(), "P1".to_string(), 20);
+        game.turn.active_player = p0;
+
+        let cid1 = EntityId::new(10);
+        let mut c1 = crate::core::Card::new(cid1, "Wall A", p0);
+        c1.add_type(CardType::Creature);
+        c1.keywords.insert(Keyword::Defender);
+        c1.controller = p0;
+        game.cards.insert(cid1, c1);
+        game.battlefield.cards.push(cid1);
+
+        let cid2 = EntityId::new(11);
+        let mut c2 = crate::core::Card::new(cid2, "Wall B", p0);
+        c2.add_type(CardType::Creature);
+        c2.keywords.insert(Keyword::Defender);
+        c2.controller = p0;
+        game.cards.insert(cid2, c2);
+        game.battlefield.cards.push(cid2);
+
+        let cid3 = EntityId::new(12);
+        let mut c3 = crate::core::Card::new(cid3, "Bear", p0);
+        c3.add_type(CardType::Creature);
+        // No Defender keyword
+        c3.controller = p0;
+        game.cards.insert(cid3, c3);
+        game.battlefield.cards.push(cid3);
+
+        // Overgrown Battlement's SVar: Count$Valid Creature.withDefender+YouCtrl
+        let filter = "Creature.withDefender+YouCtrl";
+        let count = game
+            .evaluate_count_expression(
+                &crate::core::CountExpression::ValidPermanents {
+                    filter: filter.to_string(),
+                    modifier: crate::core::effects::CountModifier::None,
+                },
+                p0,
+            )
+            .expect("evaluate_count_expression must succeed");
+
+        assert_eq!(
+            count, 2,
+            "count_permanents_matching('Creature.withDefender+YouCtrl') must count \
+             only the 2 Defender creatures, not the Bear without Defender. \
+             Got {} (withDefender fix not applied?)",
+            count
+        );
+    }
 }

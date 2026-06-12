@@ -8774,6 +8774,13 @@ impl GameState {
                         return false;
                     }
 
+                    // Check `withDefender` qualifier (CR 702.6). The keyword
+                    // filter appears as `Creature.withDefender+YouCtrl` in SVars
+                    // like Overgrown Battlement / Axebane Guardian.
+                    if filter.contains("withDefender") && !card.has_keyword(crate::core::Keyword::Defender) {
+                        return false;
+                    }
+
                     // Check controller filter. `ActivePlayerCtrl` is evaluated
                     // against the player passed in `controller`; callers
                     // resolving an "each player's upkeep" trigger pass the active

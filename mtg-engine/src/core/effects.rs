@@ -785,6 +785,14 @@ pub struct TargetRestriction {
     /// `None` means no minimum CMC restriction.
     #[serde(default)]
     pub min_cmc: Option<u8>,
+    /// If true, target creature must have the Defender keyword (CR 702.6).
+    ///
+    /// Corresponds to the `withDefender` qualifier in `ValidTgts$` /
+    /// `ValidCards$` (e.g. `Creature.withDefender+YouCtrl` for Overgrown
+    /// Battlement's mana ability, `Creature.withDefender` for Clear a Path).
+    /// Checked via `card.has_keyword(Keyword::Defender)`.
+    #[serde(default)]
+    pub requires_defender: bool,
 }
 
 impl TargetRestriction {
@@ -806,6 +814,7 @@ impl TargetRestriction {
             power_le_source: false,
             requires_noncreature: false,
             min_cmc: None,
+            requires_defender: false,
         }
     }
 
@@ -827,6 +836,7 @@ impl TargetRestriction {
             power_le_source: false,
             requires_noncreature: false,
             min_cmc: None,
+            requires_defender: false,
         }
     }
 
@@ -973,6 +983,12 @@ impl TargetRestriction {
             }
         }
 
+        // Check `withDefender` — target must have the Defender keyword (CR 702.6).
+        // Overgrown Battlement, Axebane Guardian, Clear a Path, etc.
+        if self.requires_defender && !card.has_keyword(crate::core::Keyword::Defender) {
+            return false;
+        }
+
         // Check type restriction
         if self.types.is_empty() {
             return true; // No type restriction
@@ -1081,6 +1097,7 @@ impl TargetRestriction {
         let mut requires_remembered = false;
         let mut requires_nonartifact = false;
         let mut requires_noncreature = false;
+        let mut requires_defender = false;
         let mut min_cmc = None;
         let mut controller = ControllerRestriction::Any;
         let mut power_ge = None;
@@ -1111,6 +1128,10 @@ impl TargetRestriction {
                         "nonArtifact" => requires_nonartifact = true,
                         "nonCreature" => requires_noncreature = true,
                         "Other" => requires_other = true,
+                        // `withDefender` — target must have the Defender keyword
+                        // (CR 702.6). Used by Overgrown Battlement's mana
+                        // ability, Clear a Path, Axebane Guardian, etc.
+                        "withDefender" => requires_defender = true,
                         m if m.starts_with("cmcGE") => {
                             // Parse cmcGE4 -> min_cmc = 4 (Disdainful Stroke)
                             if let Ok(n) = m.trim_start_matches("cmcGE").parse::<u8>() {
@@ -1190,6 +1211,7 @@ impl TargetRestriction {
             power_le_source,
             requires_noncreature,
             min_cmc,
+            requires_defender,
         }
     }
 
