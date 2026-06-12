@@ -645,6 +645,11 @@ pub enum GameAction {
     /// is set in the priority loop. Mirrors `SetKickerPaid` — same rewind semantics.
     SetOffspringPaid { card_id: CardId, prev: bool },
 
+    /// Snapshot of a card's `mode_cost_paid` value captured BEFORE it is set by
+    /// `apply_selected_modes` in the priority loop. Mirrors `SetOffspringPaid` — same
+    /// rewind semantics.
+    SetModeCostPaid { card_id: CardId, prev: u8 },
+
     /// Restore the full state snapshot of a card (e.g. when leaving battlefield
     /// the transient state is reset, and undoing it restores the snapshotted state).
     RestoreCardState {
@@ -986,6 +991,9 @@ impl fmt::Display for GameAction {
             }
             GameAction::SetOffspringPaid { card_id, prev } => {
                 write!(f, "SetOffspringPaid(card={}, prev={})", card_id, prev)
+            }
+            GameAction::SetModeCostPaid { card_id, prev } => {
+                write!(f, "SetModeCostPaid(card={}, prev={})", card_id, prev)
             }
             GameAction::SetManaPool { player_id, prev } => {
                 write!(f, "SetManaPool(P{}, prev={})", player_id.as_u32(), prev.total())
@@ -1821,6 +1829,12 @@ impl GameAction {
                 // Restore the captured offspring-paid flag. Mirrors SetKickerPaid.
                 if let Ok(card) = game.cards.get_mut(*card_id) {
                     card.offspring_paid = *prev;
+                }
+            }
+            GameAction::SetModeCostPaid { card_id, prev } => {
+                // Restore the captured mode-cost-paid value. Mirrors SetOffspringPaid.
+                if let Ok(card) = game.cards.get_mut(*card_id) {
+                    card.mode_cost_paid = *prev;
                 }
             }
             GameAction::SetCombatManaPool { player_id, prev } => {

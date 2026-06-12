@@ -1,0 +1,24 @@
+[metadata]
+Name:Fire Magic Fire-Only ModeCost Test
+Goal:Win
+Turns:5
+Difficulty:Easy
+Description:Tests tiered modal spell Fire Magic when player only has R (1 mana). Only Fire mode (ModeCost$=0) should be available; Fira (ModeCost$=2) and Firaga (ModeCost$=5) should be filtered out. Validates that affordability gating works correctly.
+
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Fire Magic
+p0battlefield=Mountain
+p0library=Mountain; Mountain; Mountain
+p0graveyard=
+p0exile=
+
+p1life=20
+p1hand=
+p1battlefield=Forest; Grizzly Bears; Grizzly Bears
+p1library=Forest; Forest; Forest
+p1graveyard=
+p1exile=

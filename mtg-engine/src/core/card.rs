@@ -998,6 +998,14 @@ pub struct Card {
     #[serde(default)]
     pub kicker_paid: bool,
 
+    /// Extra generic mana cost paid when choosing a mode for a tiered modal spell
+    /// (from `ModeCost$` in the chosen mode's SVar). Set by `apply_selected_modes`
+    /// after mode selection in the priority loop, then added to effective cost in
+    /// `compute_effective_cost`. Zero when no extra mode cost applies.
+    /// Cleared in `reset_transient_state`. Serialized for rewind/replay.
+    #[serde(default)]
+    pub mode_cost_paid: u8,
+
     /// Set to `true` when the caster pays the Offspring additional cost (CR 702.198)
     /// for this creature spell. Cleared in the cleanup step. When `true` and the
     /// creature enters the battlefield, the engine creates a 1/1 token copy of it
@@ -1158,6 +1166,8 @@ pub struct CardStateSnapshot {
     pub kicker_paid: bool,
     #[serde(default)]
     pub offspring_paid: bool,
+    #[serde(default)]
+    pub mode_cost_paid: u8,
     pub exile_if_would_die_this_turn: bool,
     pub exile_if_would_go_to_graveyard_this_turn: bool,
     pub prevent_all_combat_damage_this_turn: bool,
@@ -1238,6 +1248,7 @@ impl Card {
             bargain_paid: false,
             kicker_paid: false,
             offspring_paid: false,
+            mode_cost_paid: 0,
             exile_if_would_die_this_turn: false,
             exile_if_would_go_to_graveyard_this_turn: false,
             prevent_all_combat_damage_this_turn: false,
@@ -1295,6 +1306,7 @@ impl Card {
             bargain_paid: self.bargain_paid,
             kicker_paid: self.kicker_paid,
             offspring_paid: self.offspring_paid,
+            mode_cost_paid: self.mode_cost_paid,
             exile_if_would_die_this_turn: self.exile_if_would_die_this_turn,
             exile_if_would_go_to_graveyard_this_turn: self.exile_if_would_go_to_graveyard_this_turn,
             prevent_all_combat_damage_this_turn: self.prevent_all_combat_damage_this_turn,
@@ -1351,6 +1363,7 @@ impl Card {
         self.bargain_paid = snapshot.bargain_paid;
         self.kicker_paid = snapshot.kicker_paid;
         self.offspring_paid = snapshot.offspring_paid;
+        self.mode_cost_paid = snapshot.mode_cost_paid;
         self.exile_if_would_die_this_turn = snapshot.exile_if_would_die_this_turn;
         self.exile_if_would_go_to_graveyard_this_turn = snapshot.exile_if_would_go_to_graveyard_this_turn;
         self.prevent_all_combat_damage_this_turn = snapshot.prevent_all_combat_damage_this_turn;
@@ -1550,6 +1563,7 @@ impl Card {
         self.bargain_paid = false;
         self.kicker_paid = false;
         self.offspring_paid = false;
+        self.mode_cost_paid = 0;
         self.exile_if_would_die_this_turn = false;
         self.exile_if_would_go_to_graveyard_this_turn = false;
         self.prevent_all_combat_damage_this_turn = false;

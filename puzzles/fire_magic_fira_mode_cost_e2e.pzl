@@ -1,0 +1,24 @@
+[metadata]
+Name:Fire Magic Fira ModeCost Test
+Goal:Win
+Turns:5
+Difficulty:Easy
+Description:Tests tiered modal spell Fire Magic. P0 has 3 mana (R + 2 generic) to pay R base + {2} ModeCost for Fira mode. P1 has two Grizzly Bears (2/2). Fira deals 2 damage to each creature, killing both bears. Validates that ModeCost$ 2 is charged in addition to the base R cost.
+
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Fire Magic
+p0battlefield=Mountain; Island; Plains
+p0library=Mountain; Mountain; Mountain
+p0graveyard=
+p0exile=
+
+p1life=20
+p1hand=
+p1battlefield=Forest; Grizzly Bears; Grizzly Bears
+p1library=Forest; Forest; Forest
+p1graveyard=
+p1exile=

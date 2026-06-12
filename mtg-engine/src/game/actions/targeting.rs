@@ -1940,12 +1940,22 @@ impl GameState {
     /// # Errors
     ///
     /// Returns an error if the spell card cannot be found.
-    pub fn apply_selected_modes(&mut self, spell_card_id: CardId, selected_mode_indices: &[usize]) -> Result<bool> {
+    /// Apply selected mode indices to a modal spell, replacing the `ModalChoice` effect with
+    /// the selected mode effects. Returns `(found_modal, total_mode_cost)` where
+    /// `total_mode_cost` is the sum of `ModeCost$` values for all selected modes (used by the
+    /// caller to record via `set_mode_cost_paid_logged` for undo-safe tracking).
+    pub fn apply_selected_modes(
+        &mut self,
+        spell_card_id: CardId,
+        selected_mode_indices: &[usize],
+    ) -> Result<(bool, u8)> {
         let spell_card = self.cards.get_mut(spell_card_id)?;
 
         // Find the ModalChoice effect and get selected mode effects
         let mut new_effects = Vec::new();
         let mut found_modal = false;
+        // Sum of ModeCost$ values for all selected modes (only one mode for tiered spells)
+        let mut total_mode_cost: u8 = 0;
 
         for effect in spell_card.effects.drain(..) {
             if let Effect::ModalChoice { modes, .. } = effect {
@@ -1954,6 +1964,7 @@ impl GameState {
                 for &mode_idx in selected_mode_indices {
                     if let Some(mode) = modes.get(mode_idx) {
                         new_effects.push((*mode.effect).clone());
+                        total_mode_cost = total_mode_cost.saturating_add(mode.mode_cost);
                     }
                 }
             } else {
@@ -1963,7 +1974,7 @@ impl GameState {
         }
 
         spell_card.effects = new_effects;
-        Ok(found_modal)
+        Ok((found_modal, total_mode_cost))
     }
 }
 

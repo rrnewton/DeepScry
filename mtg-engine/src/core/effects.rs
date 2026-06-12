@@ -3194,6 +3194,10 @@ pub struct ModalMode {
     pub description: String,
     /// SVar name for this mode (e.g., "DBDestroy") - used for targeting lookup
     pub svar_name: String,
+    /// Additional generic mana cost for choosing this mode (from ModeCost$ in the SVar).
+    /// Zero means no extra cost. Used by tiered modal spells like Fire Magic where each
+    /// tier (Fire/Fira/Firaga) has a different extra cost beyond the base mana cost.
+    pub mode_cost: u8,
 }
 
 /// Which combat-damage recipient class a `DealsCombatDamage` trigger watches.

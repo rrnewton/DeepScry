@@ -2405,6 +2405,12 @@ impl GameState {
             }
         }
 
+        // Add ModeCost extra (tiered modal spells like Fire Magic: Fire={0}/Fira={2}/Firaga={5}).
+        // mode_cost_paid is set by apply_selected_modes after mode selection in the priority loop.
+        if card.mode_cost_paid > 0 {
+            effective_cost.generic = effective_cost.generic.saturating_add(card.mode_cost_paid);
+        }
+
         effective_cost
     }
 
@@ -8187,6 +8193,23 @@ impl GameState {
         );
         if let Ok(card) = self.cards.get_mut(card_id) {
             card.offspring_paid = paid;
+        }
+    }
+
+    /// Set a card's `mode_cost_paid` value (extra generic mana cost for the chosen
+    /// mode of a tiered modal spell like Fire Magic), snapshotting the prior value
+    /// for undo first. Mirrors `set_offspring_paid_logged`. No-op if the card is missing.
+    pub(crate) fn set_mode_cost_paid_logged(&mut self, card_id: CardId, cost: u8) {
+        let Some(prev) = self.cards.try_get(card_id).map(|c| c.mode_cost_paid) else {
+            return;
+        };
+        let prior_log_size = self.logger.log_count();
+        self.undo_log.log(
+            crate::undo::GameAction::SetModeCostPaid { card_id, prev },
+            prior_log_size,
+        );
+        if let Ok(card) = self.cards.get_mut(card_id) {
+            card.mode_cost_paid = cost;
         }
     }
 

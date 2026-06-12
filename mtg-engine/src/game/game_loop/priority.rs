@@ -1005,11 +1005,41 @@ impl<'a> GameLoop<'a> {
                                         .get_valid_modes_for_spell(card_id, current_priority)
                                         .unwrap_or_default();
 
-                                    // Filter to only modes with valid targets
+                                    // Compute available mana minus base spell cost to budget for ModeCost$
+                                    // (tiered modal spells like Fire Magic). Untapped sources + pool.
+                                    let base_spell_cost =
+                                        self.game.cards.try_get(card_id).map(|c| c.mana_cost.cmc()).unwrap_or(0);
+                                    self.mana_engine.update_mut(self.game, current_priority);
+                                    let untapped_for_mode = self
+                                        .mana_engine
+                                        .all_sources()
+                                        .iter()
+                                        .filter(|s| !s.is_tapped && !s.has_summoning_sickness)
+                                        .count() as u8;
+                                    let pool_for_mode = self
+                                        .game
+                                        .get_player(current_priority)
+                                        .map(|p| p.total_available_mana().total())
+                                        .unwrap_or(0);
+                                    let total_mana_for_mode = untapped_for_mode.saturating_add(pool_for_mode);
+                                    let mana_for_mode_cost = total_mana_for_mode.saturating_sub(base_spell_cost);
+
+                                    // Filter to only modes with valid targets AND affordable ModeCost$
+                                    log::debug!(
+                                        target: "priority",
+                                        "ModeCost filter: base_cost={}, untapped={}, pool={}, mana_for_mode_cost={}, modes={}",
+                                        base_spell_cost, untapped_for_mode, pool_for_mode, mana_for_mode_cost, modes.len()
+                                    );
                                     let valid_mode_indices: Vec<usize> = valid_modes
                                         .iter()
                                         .filter(|(_, has_targets)| *has_targets)
                                         .map(|(idx, _)| *idx)
+                                        .filter(|&idx| {
+                                            modes
+                                                .get(idx)
+                                                .map(|m| m.mode_cost <= mana_for_mode_cost)
+                                                .unwrap_or(false)
+                                        })
                                         .collect();
 
                                     // If no modes have valid targets, the spell can't be cast legally
@@ -1055,12 +1085,20 @@ impl<'a> GameLoop<'a> {
                                         self.log_choice_point(current_priority, Some(replay_choice), prior_log_size);
 
                                         // Apply selected modes to the spell (replaces ModalChoice with mode effects)
-                                        if let Err(e) = self.game.apply_selected_modes(card_id, &original_indices) {
-                                            log::warn!(
-                                                target: "priority",
-                                                "Failed to apply selected modes: {}",
-                                                e
-                                            );
+                                        match self.game.apply_selected_modes(card_id, &original_indices) {
+                                            Ok((_, mode_cost)) if mode_cost > 0 => {
+                                                // Record extra ModeCost$ mana via undo-safe log so
+                                                // compute_effective_cost adds it to total spell cost.
+                                                self.game.set_mode_cost_paid_logged(card_id, mode_cost);
+                                            }
+                                            Ok(_) => {}
+                                            Err(e) => {
+                                                log::warn!(
+                                                    target: "priority",
+                                                    "Failed to apply selected modes: {}",
+                                                    e
+                                                );
+                                            }
                                         }
 
                                         // Log which mode was chosen
@@ -2867,10 +2905,36 @@ impl<'a> GameLoop<'a> {
                                         .game
                                         .get_valid_modes_for_spell(card_id, current_priority)
                                         .unwrap_or_default();
+
+                                    // Filter by valid targets AND affordable ModeCost$ (from-exile path)
+                                    let base_spell_cost_exile =
+                                        self.game.cards.try_get(card_id).map(|c| c.mana_cost.cmc()).unwrap_or(0);
+                                    self.mana_engine.update_mut(self.game, current_priority);
+                                    let untapped_exile = self
+                                        .mana_engine
+                                        .all_sources()
+                                        .iter()
+                                        .filter(|s| !s.is_tapped && !s.has_summoning_sickness)
+                                        .count() as u8;
+                                    let pool_exile = self
+                                        .game
+                                        .get_player(current_priority)
+                                        .map(|p| p.total_available_mana().total())
+                                        .unwrap_or(0);
+                                    let mana_for_mode_cost_exile = untapped_exile
+                                        .saturating_add(pool_exile)
+                                        .saturating_sub(base_spell_cost_exile);
+
                                     let valid_mode_indices: Vec<usize> = valid_modes
                                         .iter()
                                         .filter(|(_, has_targets)| *has_targets)
                                         .map(|(idx, _)| *idx)
+                                        .filter(|&idx| {
+                                            modes
+                                                .get(idx)
+                                                .map(|m| m.mode_cost <= mana_for_mode_cost_exile)
+                                                .unwrap_or(false)
+                                        })
                                         .collect();
 
                                     if !valid_mode_indices.is_empty() {
@@ -2902,8 +2966,14 @@ impl<'a> GameLoop<'a> {
                                         );
                                         self.log_choice_point(current_priority, Some(replay_choice), prior_log_size);
 
-                                        if let Err(e) = self.game.apply_selected_modes(card_id, &original_indices) {
-                                            log::warn!(target: "priority", "Failed to apply modes: {}", e);
+                                        match self.game.apply_selected_modes(card_id, &original_indices) {
+                                            Ok((_, mode_cost)) if mode_cost > 0 => {
+                                                self.game.set_mode_cost_paid_logged(card_id, mode_cost);
+                                            }
+                                            Ok(_) => {}
+                                            Err(e) => {
+                                                log::warn!(target: "priority", "Failed to apply modes: {}", e);
+                                            }
                                         }
 
                                         if self.verbosity >= VerbosityLevel::Normal && !self.replaying {

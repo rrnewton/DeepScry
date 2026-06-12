@@ -1258,6 +1258,7 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
                     }), // Placeholder
                     description: format!("Mode: {}", name),
                     svar_name: name.to_string(),
+                    mode_cost: 0,
                 })
                 .collect();
 
@@ -2234,10 +2235,15 @@ pub fn params_to_charm_effect_with_svars(params: &AbilityParams, svars: &HashMap
                     .map(|s| s.to_string())
                     .unwrap_or_else(|| format!("Mode: {}", name));
 
+                // Extract ModeCost$ — extra generic mana required to choose this mode
+                // (used by tiered modal spells like Fire Magic: Fire={0}, Fira={2}, Firaga={5})
+                let mode_cost = mode_params.get_u8("ModeCost").unwrap_or(0);
+
                 modes.push(crate::core::ModalMode {
                     effect: Box::new(effect),
                     description,
                     svar_name: name.to_string(),
+                    mode_cost,
                 });
             } else {
                 log::warn!(
