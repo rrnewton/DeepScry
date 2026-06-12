@@ -21,11 +21,11 @@ pub use delayed_trigger::{
     DelayedTriggerStore, TriggerPhase, TurnOwner,
 };
 pub use effects::{
-    AbilityCache, ActivatedAbility, ActivationCondition, ActivationPhaseWindow, AffectedSelector, CombatDamageTarget,
-    CompareOp, ControllerRestriction, CostReductionCondition, CostReductionTarget, CountExpression, CountModifier,
-    DamageDivision, DigFilter, DynamicAmount, Effect, ImmediateTriggerCondition, ModalMode, PresentSelfCondition,
-    RaisedCost, RaisedCostAmount, RepeatEachIterate, SelfCounterCondition, StaticAbility, StaticCondition, TargetRef,
-    TargetRestriction, TargetType, Trigger, TriggerEvent,
+    AbilityCache, ActivatedAbility, ActivationCondition, ActivationPhaseWindow, AffectedSelector, CdaPtSource,
+    CombatDamageTarget, CompareOp, ControllerRestriction, CostReductionCondition, CostReductionTarget, CountExpression,
+    CountModifier, DamageDivision, DigFilter, DynamicAmount, Effect, ImmediateTriggerCondition, ModalMode,
+    PresentSelfCondition, RaisedCost, RaisedCostAmount, RepeatEachIterate, SelfCounterCondition, StaticAbility,
+    StaticCondition, TargetRef, TargetRestriction, TargetType, Trigger, TriggerEvent,
 };
 pub use entity::{EntityId, EntityStore, GameEntity};
 pub use keyword_set::{Keyword, KeywordArgs, KeywordSet};

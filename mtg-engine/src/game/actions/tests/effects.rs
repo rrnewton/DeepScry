@@ -3066,7 +3066,10 @@ mod tests {
                 | StaticAbility::CantAttackIfDefenderHasUntappedPowerGE { .. }
                 | StaticAbility::CantAttackOrBlockMatching { .. }
                 | StaticAbility::CantBeActivated { .. }
-                | StaticAbility::ExtraLandPlay { .. } => None,
+                | StaticAbility::ExtraLandPlay { .. }
+                | StaticAbility::LifeFloor { .. }
+                | StaticAbility::DamageToExileLibrary { .. }
+                | StaticAbility::CharacteristicDefiningPt { .. } => None,
             })
             .expect("Ironclaw Orcs must produce a CantBlockMatching static ability");
 
@@ -8481,6 +8484,183 @@ mod tests {
              only the 2 Defender creatures, not the Bear without Defender. \
              Got {} (withDefender fix not applied?)",
             count
+        );
+    }
+
+    /// Card compat: Worship (cardsfolder/w/worship.txt) — mtg-912 B10.
+    ///
+    /// Script:
+    ///   `R:Event$ LifeReduced | ValidPlayer$ You.lifeGE1 | Result$ LT1
+    ///    | IsDamage$ True | IsPresent$ Creature.YouCtrl | ReplaceWith$ ReduceLoss`
+    ///
+    /// Verifies: with Worship + a creature on the battlefield, damage that
+    /// would reduce the controller's life below 1 is capped at life - 1.
+    /// Without a creature, the floor does not apply.
+    #[test]
+    fn test_card_compat_worship_life_floor() {
+        use std::path::PathBuf;
+
+        if !PathBuf::from("../cardsfolder/w/worship.txt").exists() {
+            eprintln!("Skipping: cardsfolder not present");
+            return;
+        }
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+
+        // Put P1 at life = 3 to make the floor clearly visible.
+        game.players[0].life = 3;
+
+        // P1 controls Worship.
+        let worship_id = load_test_card(&mut game, "Worship", p1_id).expect("Worship should load");
+        game.battlefield.add(worship_id);
+
+        // P1 controls a creature (Llanowar Elves).
+        let elves_id = load_test_card(&mut game, "Llanowar Elves", p1_id).expect("Llanowar Elves should load");
+        game.battlefield.add(elves_id);
+
+        // Deal 5 damage to P1 — would take life from 3 to -2 without Worship.
+        // With Worship the floor kicks in: life stays at 1.
+        game.deal_damage(p1_id, 5).expect("deal_damage should succeed");
+        assert_eq!(
+            game.players[0].life, 1,
+            "Worship: life should be floored at 1 (dealt 5 from 3, would be -2)"
+        );
+
+        // Now deal 0 damage — life stays at 1 (no-op).
+        game.deal_damage(p1_id, 0).expect("deal_damage with 0 should succeed");
+        assert_eq!(game.players[0].life, 1, "Life must not change on 0 damage");
+
+        // Remove the creature from the battlefield — Worship's floor no longer applies.
+        game.battlefield.remove(elves_id);
+        game.deal_damage(p1_id, 2).expect("deal_damage should succeed");
+        assert_eq!(
+            game.players[0].life, -1,
+            "Without a creature, Worship's floor should NOT apply (life goes below 1)"
+        );
+    }
+
+    /// Card compat: Serra Avatar (cardsfolder/s/serra_avatar.txt) — mtg-912 B4.
+    ///
+    /// Script:
+    ///   `S:Mode$ Continuous | CharacteristicDefining$ True | SetPower$ X
+    ///    | SetToughness$ X`  with `SVar:X:Count$YourLifeTotal`
+    ///
+    /// Verifies: Serra Avatar's power/toughness equals the controller's life total,
+    /// and updates dynamically when the life total changes.
+    #[test]
+    fn test_card_compat_serra_avatar_cda_pt() {
+        use std::path::PathBuf;
+
+        if !PathBuf::from("../cardsfolder/s/serra_avatar.txt").exists() {
+            eprintln!("Skipping: cardsfolder not present");
+            return;
+        }
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+
+        // P1 starts at 20 life.
+        assert_eq!(game.players[0].life, 20);
+
+        // P1 controls Serra Avatar.
+        let avatar_id = load_test_card(&mut game, "Serra Avatar", p1_id).expect("Serra Avatar should load");
+        game.battlefield.add(avatar_id);
+
+        // At 20 life: P/T should be 20/20.
+        let power = game.get_effective_power(avatar_id).expect("get_effective_power");
+        let toughness = game
+            .get_effective_toughness(avatar_id)
+            .expect("get_effective_toughness");
+        assert_eq!(power, 20, "Serra Avatar P should be 20 (life total) at 20 life");
+        assert_eq!(toughness, 20, "Serra Avatar T should be 20 (life total) at 20 life");
+
+        // Change life to 13 — P/T must track it immediately.
+        game.players[0].life = 13;
+        let power2 = game.get_effective_power(avatar_id).expect("get_effective_power");
+        let toughness2 = game
+            .get_effective_toughness(avatar_id)
+            .expect("get_effective_toughness");
+        assert_eq!(power2, 13, "Serra Avatar P should track life total: 13");
+        assert_eq!(toughness2, 13, "Serra Avatar T should track life total: 13");
+
+        // Life at 1 — P/T must be 1/1.
+        game.players[0].life = 1;
+        let power3 = game.get_effective_power(avatar_id).expect("get_effective_power");
+        assert_eq!(power3, 1, "Serra Avatar P must be 1 at life=1");
+
+        // Life at 0 — P/T must be 0/0.
+        game.players[0].life = 0;
+        let power4 = game.get_effective_power(avatar_id).expect("get_effective_power");
+        assert_eq!(power4, 0, "Serra Avatar P must be 0 at life=0");
+    }
+
+    /// Card compat: Crumbling Sanctuary (cardsfolder/c/crumbling_sanctuary.txt) — mtg-912 B9.
+    ///
+    /// Script:
+    ///   `R:Event$ DamageDone | ValidTarget$ Player | ReplaceWith$ ExileTop`
+    ///   `SVar:ExileTop:DB$ Dig | Defined$ ReplacedTarget | DigNum$ X
+    ///          | ChangeNum$ All | DestinationZone$ Exile`
+    ///
+    /// Verifies: with Crumbling Sanctuary on the battlefield, damage to a player
+    /// exiles cards from their library instead of reducing their life total.
+    #[test]
+    fn test_card_compat_crumbling_sanctuary_damage_to_exile() {
+        use std::path::PathBuf;
+
+        if !PathBuf::from("../cardsfolder/c/crumbling_sanctuary.txt").exists() {
+            eprintln!("Skipping: cardsfolder not present");
+            return;
+        }
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        let p2_id = game.players[1].id;
+
+        // P2 controls Crumbling Sanctuary.
+        let sanctuary_id =
+            load_test_card(&mut game, "Crumbling Sanctuary", p2_id).expect("Crumbling Sanctuary should load");
+        game.battlefield.add(sanctuary_id);
+
+        // Give P1 a known library (5 Plains).
+        for _ in 0..5 {
+            let land_id = load_test_card(&mut game, "Plains", p1_id).expect("Plains should load");
+            game.get_player_zones_mut(p1_id)
+                .expect("P1 zones")
+                .library
+                .cards
+                .push(land_id);
+        }
+        let initial_life = game.players[0].life;
+        let initial_library_size = game.get_player_zones(p1_id).map(|z| z.library.cards.len()).unwrap_or(0);
+        assert_eq!(initial_library_size, 5, "Setup: P1 library should have 5 cards");
+
+        // Deal 3 damage to P1 — with Crumbling Sanctuary on the battlefield,
+        // P1 exiles 3 cards from their library instead of losing 3 life.
+        game.deal_damage(p1_id, 3).expect("deal_damage should succeed");
+
+        let life_after = game.players[0].life;
+        assert_eq!(
+            life_after, initial_life,
+            "P1 life should be unchanged — damage was redirected to exile"
+        );
+
+        let library_size_after = game.get_player_zones(p1_id).map(|z| z.library.cards.len()).unwrap_or(0);
+        assert_eq!(
+            library_size_after,
+            initial_library_size - 3,
+            "P1 library should have shrunk by 3 (cards exiled instead of life loss)"
+        );
+
+        let exile_size = game
+            .player_zones
+            .iter()
+            .find(|(id, _)| *id == p1_id)
+            .map(|(_, z)| z.exile.cards.len())
+            .unwrap_or(0);
+        assert_eq!(
+            exile_size, 3,
+            "P1's exile zone should contain 3 cards (the redirected damage)"
         );
     }
 }

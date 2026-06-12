@@ -5234,6 +5234,12 @@ impl CardDefinition {
             // per turn. Used by Exploration, Oracle of Mul Daya, Azusa, etc.
             let mut adjust_land_plays: u8 = 0;
 
+            // CharacteristicDefining-specific parameters (Serra Avatar Layer 7a CDA).
+            // Tracks `CharacteristicDefining$ True` and resolves the SVar that
+            // backs SetPower$/SetToughness$ into a `CdaPtSource`.
+            let mut is_characteristic_defining = false;
+            let mut cda_pt_source: Option<crate::core::CdaPtSource> = None;
+
             // Split by | and parse each parameter
             for param in ability.split('|') {
                 let param = param.trim();
@@ -5466,6 +5472,27 @@ impl CardDefinition {
                                 value.parse().unwrap_or(0)
                             };
                         }
+                        "CharacteristicDefining" => {
+                            // `CharacteristicDefining$ True` — marks this as a CR 613.4a
+                            // layer-7a CDA. Combined with SetPower$/SetToughness$ below.
+                            is_characteristic_defining = value.eq_ignore_ascii_case("True");
+                        }
+                        "SetPower" | "SetToughness" => {
+                            // `SetPower$ X` / `SetToughness$ X` where X is an SVar name.
+                            // Only meaningful when `CharacteristicDefining$ True` is also
+                            // present (Serra Avatar). Resolve the SVar to a CdaPtSource.
+                            //
+                            // Supported SVar bodies:
+                            //   Count$YourLifeTotal → CdaPtSource::ControllerLifeTotal
+                            if cda_pt_source.is_none() {
+                                // Value is typically "X" — look it up in SVars.
+                                if let Some(svar_body) = self.svars.get(value) {
+                                    if svar_body.trim() == "Count$YourLifeTotal" {
+                                        cda_pt_source = Some(crate::core::CdaPtSource::ControllerLifeTotal);
+                                    }
+                                }
+                            }
+                        }
                         _ => {} // Ignore other parameters (e.g., AddType$, Type$, Activator$)
                     }
                 }
@@ -5593,6 +5620,19 @@ impl CardDefinition {
                     description: description.clone(),
                 });
             }
+
+            // CharacteristicDefining P/T static (Layer 7a, CR 613.4a).
+            // Shape: S:Mode$ Continuous | CharacteristicDefining$ True | SetPower$ X
+            //        | SetToughness$ X  with SVar:X:<source>
+            // Currently only supports SVar:X:Count$YourLifeTotal (Serra Avatar).
+            if is_characteristic_defining {
+                if let Some(cda_source) = cda_pt_source {
+                    abilities.push(StaticAbility::CharacteristicDefiningPt {
+                        source: cda_source,
+                        description: description.clone(),
+                    });
+                }
+            }
         }
 
         // Replacement effects (R: lines) that act as continuous "doesn't untap"
@@ -5719,7 +5759,62 @@ impl CardDefinition {
                         abilities.push(StaticAbility::DamageIncrease { bonus: n, description });
                     }
                 }
+
+                // --- Crumbling Sanctuary shape (CR 614.1a: damage → exile top) ---
+                // Shape: Event$ DamageDone | ValidTarget$ Player | ReplaceWith$ ExileTop
+                // where SVar:ExileTop:DB$ Dig | ... | DestinationZone$ Exile
+                // Damage to any player is replaced by that player exiling that many cards
+                // from the top of their library.
+                let targets_any_player = valid_target.split(',').any(|q| q.trim() == "Player");
+                let replace_svar_exile = replace_with.split(',').any(|rw| {
+                    self.svars.get(rw.trim()).is_some_and(|body| {
+                        // Tokenized check: the SVar must have DB$ Dig AND
+                        // DestinationZone$ Exile (the mill-to-exile shape of
+                        // Crumbling Sanctuary). The Torbran shape has DB$
+                        // ReplaceEffect, not DB$ Dig, so there is no ambiguity.
+                        let mut has_db_dig = false;
+                        let mut has_exile_dest = false;
+                        for part in body.split('|') {
+                            if let Some((k, v)) = part.split_once('$') {
+                                match (k.trim(), v.trim()) {
+                                    ("DB", "Dig") => has_db_dig = true,
+                                    ("DestinationZone", "Exile") => has_exile_dest = true,
+                                    _ => {}
+                                }
+                            }
+                        }
+                        has_db_dig && has_exile_dest
+                    })
+                });
+                if targets_any_player && !targets_opponent && replace_svar_exile {
+                    let description = params.get("Description").map(|s| s.to_string()).unwrap_or_else(|| {
+                        "If damage would be dealt to a player, that player exiles that many cards \
+                         from the top of their library instead."
+                            .to_string()
+                    });
+                    abilities.push(StaticAbility::DamageToExileLibrary { description });
+                }
                 continue;
+            }
+
+            // --- Worship shape (CR 614.1e: LifeReduced → life floor at 1) ---
+            // Shape: R:Event$ LifeReduced | ValidPlayer$ You.lifeGE1 | Result$ LT1
+            //        | IsDamage$ True | IsPresent$ Creature.YouCtrl | ReplaceWith$ ReduceLoss
+            // While the controller controls a creature, damage cannot reduce their
+            // life total below 1.
+            if params.get("Event") == Some(&"LifeReduced")
+                && params.get("IsDamage") == Some(&"True")
+                && params.get("IsPresent").is_some_and(|v| {
+                    // IsPresent$ Creature.YouCtrl (or Creature.Other+YouCtrl etc.)
+                    v.trim().starts_with("Creature")
+                })
+            {
+                let description = params.get("Description").map(|s| s.to_string()).unwrap_or_else(|| {
+                    "If you control a creature, damage that would reduce your life total \
+                         to less than 1 reduces it to 1 instead."
+                        .to_string()
+                });
+                abilities.push(StaticAbility::LifeFloor { description });
             }
         }
 
@@ -8853,5 +8948,90 @@ Oracle:[-6]: You get an emblem with "At the beginning of each opponent's upkeep,
         } else {
             panic!("Expected CantBeActivated");
         }
+    }
+
+    /// Parser unit test: Worship's `R:Event$ LifeReduced | IsDamage$ True
+    /// | IsPresent$ Creature.YouCtrl | ...` must parse to a
+    /// `StaticAbility::LifeFloor` (mtg-912 B10).
+    #[cfg(feature = "native")]
+    #[test]
+    fn test_parse_worship_life_floor() {
+        use crate::core::StaticAbility;
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("../cardsfolder/w/worship.txt");
+        if !path.exists() {
+            eprintln!("Skipping: cardsfolder not present");
+            return;
+        }
+        let def = CardLoader::load_from_file(&path).expect("Worship should load");
+        let card = def.instantiate(crate::core::CardId::new(1), crate::core::PlayerId::new(0));
+
+        assert!(
+            card.static_abilities
+                .iter()
+                .any(|s| matches!(s, StaticAbility::LifeFloor { .. })),
+            "Worship must produce a LifeFloor static ability (parsed from R:Event$ LifeReduced)"
+        );
+    }
+
+    /// Parser unit test: Serra Avatar's `S:Mode$ Continuous | CharacteristicDefining$ True
+    /// | SetPower$ X | SetToughness$ X` (SVar:X:Count$YourLifeTotal) must parse to a
+    /// `StaticAbility::CharacteristicDefiningPt { source: ControllerLifeTotal }` (mtg-912 B4).
+    #[cfg(feature = "native")]
+    #[test]
+    fn test_parse_serra_avatar_cda_pt() {
+        use crate::core::{CdaPtSource, StaticAbility};
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("../cardsfolder/s/serra_avatar.txt");
+        if !path.exists() {
+            eprintln!("Skipping: cardsfolder not present");
+            return;
+        }
+        let def = CardLoader::load_from_file(&path).expect("Serra Avatar should load");
+        let card = def.instantiate(crate::core::CardId::new(1), crate::core::PlayerId::new(0));
+
+        let sa = card
+            .static_abilities
+            .iter()
+            .find(|s| matches!(s, StaticAbility::CharacteristicDefiningPt { .. }))
+            .expect("Serra Avatar must produce a CharacteristicDefiningPt static ability");
+
+        if let StaticAbility::CharacteristicDefiningPt { source, .. } = sa {
+            assert_eq!(
+                *source,
+                CdaPtSource::ControllerLifeTotal,
+                "Serra Avatar CDA source must be ControllerLifeTotal"
+            );
+        } else {
+            panic!("Expected CharacteristicDefiningPt");
+        }
+    }
+
+    /// Parser unit test: Crumbling Sanctuary's `R:Event$ DamageDone | ValidTarget$ Player
+    /// | ReplaceWith$ ExileTop` must parse to a `StaticAbility::DamageToExileLibrary`
+    /// (mtg-912 B9).
+    #[cfg(feature = "native")]
+    #[test]
+    fn test_parse_crumbling_sanctuary_damage_to_exile() {
+        use crate::core::StaticAbility;
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("../cardsfolder/c/crumbling_sanctuary.txt");
+        if !path.exists() {
+            eprintln!("Skipping: cardsfolder not present");
+            return;
+        }
+        let def = CardLoader::load_from_file(&path).expect("Crumbling Sanctuary should load");
+        let card = def.instantiate(crate::core::CardId::new(1), crate::core::PlayerId::new(0));
+
+        assert!(
+            card.static_abilities
+                .iter()
+                .any(|s| matches!(s, StaticAbility::DamageToExileLibrary { .. })),
+            "Crumbling Sanctuary must produce a DamageToExileLibrary static ability \
+             (parsed from R:Event$ DamageDone | ValidTarget$ Player | ReplaceWith$ ExileTop)"
+        );
     }
 }

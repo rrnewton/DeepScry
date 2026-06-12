@@ -190,7 +190,10 @@ impl<'a> GameLoop<'a> {
             | StaticAbility::CastWithFlash { .. }
             | StaticAbility::DamageIncrease { .. }
             | StaticAbility::PreventDamageToEnchantedByChosenColor { .. }
-            | StaticAbility::ExtraLandPlay { .. } => false,
+            | StaticAbility::ExtraLandPlay { .. }
+            | StaticAbility::LifeFloor { .. }
+            | StaticAbility::DamageToExileLibrary { .. }
+            | StaticAbility::CharacteristicDefiningPt { .. } => false,
         }
     }
 

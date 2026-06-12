@@ -228,9 +228,10 @@ impl GameState {
         // These are from pump spells like Giant Growth that set card.power_bonus/toughness_bonus
         let temp_pump = (creature.power_bonus, creature.toughness_bonus);
 
-        // Layer 7a (CR 613.4a): Characteristic-defining abilities
-        // TODO: Implement for creatures like Tarmogoyf (*/* based on card types)
-        let characteristic_value = None;
+        // Layer 7a (CR 613.4a): Characteristic-defining abilities.
+        // The creature itself carries the CDA static (e.g. Serra Avatar).
+        // Evaluated dynamically so life-total changes propagate immediately.
+        let characteristic_value = self.calculate_cda_pt(creature_id)?;
 
         // Layer 7b (CR 613.4b): Set P/T effects
         // TODO: Implement for effects like "becomes 0/1" or Lignify
@@ -710,6 +711,41 @@ impl GameState {
                 creature_id != source_id && creature.subtypes.contains(subtype)
             }
         }
+    }
+
+    /// Calculate Layer 7a: Characteristic-Defining Ability P/T (CR 613.4a).
+    ///
+    /// Returns `Some((power, toughness))` if the creature has a CDA that
+    /// defines its P/T (e.g. Serra Avatar: P/T = controller's life total),
+    /// or `None` if no CDA applies.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the creature is not found in the card store.
+    fn calculate_cda_pt(&self, creature_id: CardId) -> Result<Option<(i32, i32)>> {
+        use crate::core::{CdaPtSource, StaticAbility};
+
+        let creature = self.cards.get(creature_id)?;
+        for sa in &creature.static_abilities {
+            if let StaticAbility::CharacteristicDefiningPt { source, .. } = sa {
+                let value = match source {
+                    CdaPtSource::ControllerLifeTotal => {
+                        // Serra Avatar: P/T = controller's current life total.
+                        // Life total is public state (CR 119.1), so this is
+                        // information-independent and network-determinism-safe.
+                        let life = self
+                            .players
+                            .iter()
+                            .find(|p| p.id == creature.controller)
+                            .map(|p| p.life)
+                            .unwrap_or(0);
+                        (life, life)
+                    }
+                };
+                return Ok(Some(value));
+            }
+        }
+        Ok(None)
     }
 
     /// Calculate Layer 7c continuous effects (Equipment, anthems, etc).
@@ -1590,6 +1626,18 @@ impl GameState {
                     StaticAbility::ExtraLandPlay { .. } => {
                         // Extra land-play grant doesn't affect P/T; queried via
                         // GameState::effective_max_lands() at land-play time.
+                    }
+                    StaticAbility::LifeFloor { .. } => {
+                        // Life-floor replacement (Worship): doesn't affect P/T;
+                        // applied at damage-dealing time in apply_life_floor().
+                    }
+                    StaticAbility::DamageToExileLibrary { .. } => {
+                        // Damage-redirect replacement (Crumbling Sanctuary): doesn't
+                        // affect P/T; applied at damage-dealing time in deal_damage().
+                    }
+                    StaticAbility::CharacteristicDefiningPt { .. } => {
+                        // CDA P/T (Serra Avatar): handled in calculate_cda_pt() called
+                        // in get_pt_breakdown() layer 7a — not a ModifyPT modifier.
                     }
                 }
             }

@@ -7999,17 +7999,48 @@ impl GameState {
                 return Ok(());
             }
 
+            // --- Crumbling Sanctuary replacement (CR 614.1a) ---
+            // If any battlefield permanent carries DamageToExileLibrary, damage
+            // to the player is redirected: that player exiles that many cards from
+            // the top of their library instead of losing life.
+            if self.has_damage_to_exile_library() {
+                let player_name = self.get_player(target_id)?.name.clone();
+                self.logger.normal(&format!(
+                    "{} would take {} damage — Crumbling Sanctuary redirects: exile {} cards from library",
+                    player_name, actual_amount, actual_amount
+                ));
+                // Exile cards from the top of the player's library.
+                self.exile_top_of_library(target_id, actual_amount as usize)?;
+                // Accumulate for source-damage triggers (Spirit Link etc.) even
+                // when the damage is redirected — the damage "was dealt" (CR 119.6).
+                self.accumulate_source_damage(actual_amount);
+                return Ok(());
+            }
+
+            // --- Worship life-floor replacement (CR 614.1e) ---
+            // If the damaged player controls a creature and has a LifeFloor
+            // static on the battlefield (from Worship), damage cannot reduce
+            // their life below 1.
+            let capped_amount = self.apply_life_floor(target_id, actual_amount);
+            if capped_amount < actual_amount {
+                let player_name = self.get_player(target_id)?.name.clone();
+                self.logger.normal(&format!(
+                    "Worship: {} damage to {} capped to {} (life cannot go below 1 while you control a creature)",
+                    actual_amount, player_name, capped_amount
+                ));
+            }
+
             // Capture log size before life change
             let prior_log_size = self.logger.log_count();
 
             let player = self.get_player_mut(target_id)?;
-            player.lose_life(actual_amount);
+            player.lose_life(capped_amount);
 
             // Log the life change for undo system
             self.undo_log.log(
                 crate::undo::GameAction::ModifyLife {
                     player_id: target_id,
-                    delta: -actual_amount,
+                    delta: -capped_amount,
                 },
                 prior_log_size,
             );
@@ -8023,6 +8054,91 @@ impl GameState {
         }
 
         Err(MtgError::InvalidAction("Invalid damage target".to_string()))
+    }
+
+    /// Check whether any battlefield permanent carries a `DamageToExileLibrary`
+    /// static ability (Crumbling Sanctuary).
+    fn has_damage_to_exile_library(&self) -> bool {
+        use crate::core::StaticAbility;
+        self.battlefield.cards.iter().any(|&id| {
+            self.cards.try_get(id).is_some_and(|c| {
+                c.static_abilities
+                    .iter()
+                    .any(|sa| matches!(sa, StaticAbility::DamageToExileLibrary { .. }))
+            })
+        })
+    }
+
+    /// Exile `count` cards from the top of `player_id`'s library.
+    ///
+    /// Used by Crumbling Sanctuary's damage-redirect replacement
+    /// (CR 614.1a: damage to a player is replaced by that player exiling
+    /// that many cards from the top of their library).
+    fn exile_top_of_library(&mut self, player_id: PlayerId, count: usize) -> Result<()> {
+        use crate::zones::Zone;
+        for _ in 0..count {
+            // Top of library is at the end of the vec.
+            let card_id = self
+                .get_player_zones(player_id)
+                .and_then(|z| z.library.cards.last().copied());
+            let Some(card_id) = card_id else {
+                break; // Library exhausted — game-loss is handled by state-based actions.
+            };
+            self.move_card(card_id, Zone::Library, Zone::Exile, player_id)?;
+        }
+        Ok(())
+    }
+
+    /// Apply the Worship life-floor replacement (CR 614.1e).
+    ///
+    /// If the player has a `LifeFloor` static on the battlefield (from Worship),
+    /// they control at least one creature, and their current life >= 1, cap
+    /// `amount` so that `life - amount >= 1` (i.e., return `life - 1` if
+    /// unmodified damage would go below 1).
+    ///
+    /// Returns the (possibly capped) damage amount to deal.
+    /// Caller is responsible for logging if the returned amount differs.
+    fn apply_life_floor(&self, player_id: PlayerId, amount: i32) -> i32 {
+        use crate::core::StaticAbility;
+
+        // Check if a LifeFloor static is active (any battlefield permanent
+        // controlled by player_id carries it — Worship is enchantment so
+        // controller check matches the enchantment's owner).
+        let has_life_floor = self.battlefield.cards.iter().any(|&id| {
+            self.cards.try_get(id).is_some_and(|c| {
+                c.controller == player_id
+                    && c.static_abilities
+                        .iter()
+                        .any(|sa| matches!(sa, StaticAbility::LifeFloor { .. }))
+            })
+        });
+        if !has_life_floor {
+            return amount;
+        }
+
+        // Does the player currently control a creature?
+        let controls_creature = self.battlefield.cards.iter().any(|&id| {
+            self.cards
+                .try_get(id)
+                .is_some_and(|c| c.controller == player_id && c.is_creature())
+        });
+        if !controls_creature {
+            return amount;
+        }
+
+        // Current life must be >= 1 for the floor to apply.
+        let current_life = self
+            .players
+            .iter()
+            .find(|p| p.id == player_id)
+            .map(|p| p.life)
+            .unwrap_or(0);
+        if current_life < 1 {
+            return amount;
+        }
+
+        // Cap: life - capped_amount >= 1 ⟹ capped_amount <= life - 1.
+        amount.min(current_life - 1).max(0)
     }
 
     /// Check whether damage from `source_id` to `target_id` (a creature) is

@@ -3858,6 +3858,67 @@ pub enum StaticAbility {
         /// Description for logging.
         description: String,
     },
+
+    /// Life-floor replacement effect (CR 614.1e): while the source is on the
+    /// battlefield and the controller controls a creature, damage cannot reduce
+    /// the controller's life total below 1.
+    ///
+    /// Corresponds to Worship:
+    ///   `R:Event$ LifeReduced | ValidPlayer$ You.lifeGE1 | Result$ LT1
+    ///    | IsDamage$ True | IsPresent$ Creature.YouCtrl | ReplaceWith$ ReduceLoss`
+    ///
+    /// Applied in `GameState::deal_damage`: before dealing damage to the
+    /// controller, if they control a creature and their life is >= 1, cap
+    /// the damage so life stays at 1.
+    LifeFloor {
+        /// Description for logging.
+        description: String,
+    },
+
+    /// Damage-redirect: damage dealt to a player is replaced by that player
+    /// exiling that many cards from the top of their library instead
+    /// (CR 614.1a zone-change replacement).
+    ///
+    /// Corresponds to Crumbling Sanctuary:
+    ///   `R:Event$ DamageDone | ValidTarget$ Player | ReplaceWith$ ExileTop`
+    ///   `SVar:ExileTop:DB$ Dig | Defined$ ReplacedTarget | DigNum$ X
+    ///          | ChangeNum$ All | DestinationZone$ Exile`
+    ///
+    /// Applied in `GameState::deal_damage`: all damage to any player is
+    /// redirected — that player mills-to-exile that many cards instead.
+    /// NonStackingEffect: only the first Sanctuary's replacement fires.
+    DamageToExileLibrary {
+        /// Description for logging.
+        description: String,
+    },
+
+    /// Characteristic-defining P/T static (CR 613.4a, Layer 7a).
+    ///
+    /// Corresponds to Serra Avatar:
+    ///   `S:Mode$ Continuous | CharacteristicDefining$ True | SetPower$ X
+    ///    | SetToughness$ X`  with `SVar:X:Count$YourLifeTotal`
+    ///
+    /// The creature's power and toughness are each defined by `source`,
+    /// evaluated dynamically at the game layer (not at parse time) so life
+    /// total changes propagate immediately.
+    ///
+    /// Applied in `GameState::get_pt_breakdown`, layer 7a (characteristic_value).
+    CharacteristicDefiningPt {
+        /// What value to set power and toughness to.
+        source: CdaPtSource,
+        /// Description for logging.
+        description: String,
+    },
+}
+
+/// Source expression for a CharacteristicDefiningPt static ability.
+///
+/// Evaluated dynamically at game-state layer-7a resolution.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CdaPtSource {
+    /// P/T = controller's current life total.
+    /// Serra Avatar: `SVar:X:Count$YourLifeTotal`
+    ControllerLifeTotal,
 }
 
 /// Target selector for cost reduction abilities

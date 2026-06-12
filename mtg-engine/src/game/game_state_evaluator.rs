@@ -538,6 +538,18 @@ impl GameStateEvaluator {
                     // Extra land-play statics live on the source permanent, not
                     // an aura; no enchanted-creature value here.
                 }
+                StaticAbility::LifeFloor { .. } => {
+                    // Worship-style floor: not an aura ability; no
+                    // enchanted-creature value contribution.
+                }
+                StaticAbility::DamageToExileLibrary { .. } => {
+                    // Crumbling Sanctuary redirect: not an aura; no
+                    // enchanted-creature value contribution.
+                }
+                StaticAbility::CharacteristicDefiningPt { .. } => {
+                    // CDA P/T (Serra Avatar): lives on the creature itself, not
+                    // an aura; no enchanted-creature value contribution.
+                }
             }
         }
 
