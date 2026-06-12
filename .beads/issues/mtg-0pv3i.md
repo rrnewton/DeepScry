@@ -1,0 +1,31 @@
+---
+title: 'Card: Winter Orb — WORKING (1994 WC)'
+status: open
+priority: 3
+issue_type: task
+created_at: 2026-06-12T15:24:35.642418942+00:00
+updated_at: 2026-06-12T15:24:35.642418942+00:00
+---
+
+# Description
+
+## CARD STATUS: WORKING
+
+**Card:** Winter Orb
+**Decks:** 01_dolan_wug_stasis (4x main + 4x SB)
+**Verified:** 2026-06-12_#3139(3b5e4e6ff) — wave-6 sweep
+
+## Test methodology
+Tested with zero controller with Winter Orb on battlefield:
+  mtg tui --p1 zero --p2 zero --seed 42 --no-color-logs --verbosity 3
+
+## Result
+Winter Orb correctly limits each player to untapping at most 1 land per untap step.
+Log evidence: "Zero2 can't untap Tropical Island (untap limited to 1 land)"
+The UntapAdjust:Land:1 keyword is fully implemented.
+
+Contradicts prior B13 note in mtg-713 which claimed UntapAdjust was unimplemented — that was
+an OUTDATED annotation; the feature was already implemented before this wave.
+
+## Related
+Parent tracker: mtg-709

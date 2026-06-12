@@ -62,6 +62,19 @@ impl GameState {
             }
         }
 
+        // Emit gamelog for pump effect (B23: keyword grants were silent).
+        let card_name = self.cards.get(target)?.name.clone();
+        if power_bonus != 0 || toughness_bonus != 0 {
+            self.logger.gamelog(&format!(
+                "{} gets +{}/+{} until end of turn",
+                card_name, power_bonus, toughness_bonus
+            ));
+        }
+        if !newly_granted.is_empty() {
+            let kws: Vec<_> = newly_granted.iter().map(|k| format!("{:?}", k)).collect();
+            self.logger.gamelog(&format!("{} gains {}", card_name, kws.join(", ")));
+        }
+
         // Log the pump effect
         self.undo_log.log(
             crate::undo::GameAction::PumpCreature {

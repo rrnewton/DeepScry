@@ -39,6 +39,15 @@ impl GameState {
         if target.is_placeholder() || target.is_reuse_previous() {
             return Ok(());
         }
+        // Emit gamelog before untapping so the log is readable
+        // (B23: Ley Druid / similar untap-land effects were silent).
+        if let Some(card) = self.cards.try_get(target) {
+            if card.tapped {
+                let card_name = card.name.clone();
+                self.logger
+                    .gamelog(&format!("{} ({}) untaps", card_name, target.as_u32()));
+            }
+        }
         // Use helper that handles untap + undo log + mana version
         self.untap_permanent(target)?;
         Ok(())

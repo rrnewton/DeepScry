@@ -1,0 +1,28 @@
+---
+title: 'Card: Ley Druid — WORKING (1994 WC)'
+status: open
+priority: 3
+issue_type: task
+created_at: 2026-06-12T15:24:58.871563398+00:00
+updated_at: 2026-06-12T15:24:58.871563398+00:00
+---
+
+# Description
+
+## CARD STATUS: WORKING
+
+**Card:** Ley Druid
+**Decks:** 01_dolan_wug_stasis (2x)
+**Verified:** 2026-06-12_#3139(3b5e4e6ff) — wave-6 sweep
+
+## What works
+- 2/3 Druid for 2G — enters correctly
+- Activated ability: tap to untap target land — functions correctly
+- After wave-6 fix: UntapPermanent now emits a gamelog line (B23 log-gap closed)
+
+## Wave-6 fix
+Added gamelog emission to Effect::UntapPermanent in mtg-engine/src/game/actions/mod.rs:
+"<CardName> (<id>) untaps" — log now visible when Ley Druid ability resolves.
+
+## Related
+Parent tracker: mtg-709, mtg-713 B23

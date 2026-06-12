@@ -1,0 +1,30 @@
+---
+title: 'Card: Howling Mine — WORKING (1994 WC)'
+status: open
+priority: 3
+issue_type: task
+created_at: 2026-06-12T15:24:29.839520532+00:00
+updated_at: 2026-06-12T15:30:14.819611369+00:00
+---
+
+# Description
+
+## CARD STATUS: WORKING
+
+**Card:** Howling Mine
+**Decks:** 01_dolan_wug_stasis (4x)
+**Verified:** 2026-06-12_#3139(3b5e4e6ff) — wave-6 sweep
+
+## What works
+The two-part fix is now complete:
+1. TriggeredPlayer routing (pre-wave-6): The extra card draw goes to the ACTIVE player
+   (the player whose draw step it is), not Howling Mine's controller. This was fixed
+   earlier (commit c8a9059b).
+2. IsPresent$/tapped intervening-if (wave-6, commit 5ed10669e): "if Howling Mine is untapped"
+   is now enforced via PresentSelfCondition::Untapped on the trigger. A tapped Howling Mine
+   no longer fires its draw trigger (CR 603.4 intervening-if check at both trigger time
+   and resolution time). Puzzle reproducers added: howling_mine_tapped_no_draw.pzl.
+
+## Related
+Parent tracker: mtg-709, mtg-713 B11 (marked DONE in mtg-713 update)
+Per-card issue mtg-qkjbe also tracks the same fix from the wave-6 branch.
