@@ -3538,9 +3538,7 @@ impl<'a> GameLoop<'a> {
                                 }
                                 crate::game::controller::ChoiceResult::UndoRequest(_) => {
                                     // Undo during spell resolution: fall back to heuristic
-                                    let heuristic_cards =
-                                        self.game.pick_cards_to_put_back_heuristic(&hand, actual_count);
-                                    heuristic_cards
+                                    self.game.pick_cards_to_put_back_heuristic(&hand, actual_count)
                                 }
                             };
                             // Log as a Discard-style ChoicePoint for replay determinism
