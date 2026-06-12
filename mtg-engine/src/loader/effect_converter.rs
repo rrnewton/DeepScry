@@ -4,7 +4,9 @@
 
 use super::ability_parser::{AbilityParams, ApiType};
 use super::svar_parser::{parse_svar, ParsedSVar, StaticAbilityMode};
-use crate::core::{CardId, Effect, Keyword, KeywordArgs, PlayerId, RepeatEachIterate, TargetRef, TargetRestriction, TargetType};
+use crate::core::{
+    CardId, Effect, Keyword, KeywordArgs, PlayerId, RepeatEachIterate, TargetRef, TargetRestriction, TargetType,
+};
 use smallvec::SmallVec;
 use std::collections::HashMap;
 
@@ -373,6 +375,7 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
                     power,
                     toughness,
                     keywords_granted,
+                    keyword_args_granted: smallvec::SmallVec::new(),
                 })
             } else if power_bonus != 0 || toughness_bonus != 0 {
                 Some(Effect::PumpAllCreatures {
@@ -2552,6 +2555,7 @@ pub fn params_to_effect_with_svars(params: &AbilityParams, svars: &HashMap<Strin
                     power_count,
                     toughness_count,
                     keywords_granted,
+                    keyword_args_granted: smallvec::SmallVec::new(),
                 });
             }
         }

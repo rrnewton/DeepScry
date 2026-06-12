@@ -1931,6 +1931,7 @@ impl<'a> GameLoop<'a> {
                                                             power_bonus,
                                                             toughness_bonus,
                                                             keywords_granted,
+                                                            keyword_args_granted,
                                                         } if target.is_placeholder() && mode_target.is_some() => {
                                                             // Use the mode-specific target (either from
                                                             // needs_targeting selection above or pre-chosen).
@@ -1939,6 +1940,7 @@ impl<'a> GameLoop<'a> {
                                                                 power_bonus: *power_bonus,
                                                                 toughness_bonus: *toughness_bonus,
                                                                 keywords_granted: keywords_granted.clone(),
+                                                                keyword_args_granted: keyword_args_granted.clone(),
                                                             }
                                                         }
                                                         crate::core::Effect::PumpCreature {
@@ -1946,6 +1948,7 @@ impl<'a> GameLoop<'a> {
                                                             power_bonus,
                                                             toughness_bonus,
                                                             keywords_granted,
+                                                            keyword_args_granted,
                                                         } if target.is_placeholder() => {
                                                             // No chosen target and no targeting needed
                                                             // (Defined$ Equipped path). Use the equipped
@@ -1961,6 +1964,7 @@ impl<'a> GameLoop<'a> {
                                                                 power_bonus: *power_bonus,
                                                                 toughness_bonus: *toughness_bonus,
                                                                 keywords_granted: keywords_granted.clone(),
+                                                                keyword_args_granted: keyword_args_granted.clone(),
                                                             }
                                                         }
                                                         _ => sub.clone(),
