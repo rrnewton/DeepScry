@@ -2301,6 +2301,20 @@ impl GameState {
             }
         }
 
+        // Add Kicker cost (CR 702.32) when kicker_paid is set by Step 2c.5.
+        if card.kicker_paid {
+            if let Some(crate::core::KeywordArgs::Kicker { cost }) =
+                card.keywords.get_args(crate::core::Keyword::Kicker)
+            {
+                effective_cost.generic = effective_cost.generic.saturating_add(cost.generic);
+                effective_cost.white = effective_cost.white.saturating_add(cost.white);
+                effective_cost.blue = effective_cost.blue.saturating_add(cost.blue);
+                effective_cost.black = effective_cost.black.saturating_add(cost.black);
+                effective_cost.red = effective_cost.red.saturating_add(cost.red);
+                effective_cost.green = effective_cost.green.saturating_add(cost.green);
+            }
+        }
+
         effective_cost
     }
 
@@ -7901,6 +7915,21 @@ impl GameState {
         }
     }
 
+    /// Set a card's `kicker_paid` flag (CR 702.32 — Kicker optional additional cost),
+    /// snapshotting the prior value for undo first. Mirrors `set_bargain_paid_logged`.
+    /// No-op if the card is missing.
+    pub(crate) fn set_kicker_paid_logged(&mut self, card_id: CardId, paid: bool) {
+        let Some(prev) = self.cards.try_get(card_id).map(|c| c.kicker_paid) else {
+            return;
+        };
+        let prior_log_size = self.logger.log_count();
+        self.undo_log
+            .log(crate::undo::GameAction::SetKickerPaid { card_id, prev }, prior_log_size);
+        if let Ok(card) = self.cards.get_mut(card_id) {
+            card.kicker_paid = paid;
+        }
+    }
+
     /// Set a card's `bargain_paid` flag (CR 702.162 — Bargain optional sacrifice cost),
     /// snapshotting the prior value for undo first. Mirrors `set_times_kicked_logged`.
     /// No-op if the card is missing.
@@ -8762,13 +8791,15 @@ impl GameState {
     }
 
     /// Evaluate a [`CountExpression`](crate::core::CountExpression) with optional
-    /// source-spell context for per-cast fields (`bargain_paid`, `times_kicked`).
+    /// source-spell context for per-cast fields (`bargain_paid`, `kicker_paid`,
+    /// `times_kicked`).
     ///
-    /// Wraps `evaluate_count_expression`; the only difference is that
-    /// `CountExpression::Bargain` reads `source_card.bargain_paid` when
+    /// Wraps `evaluate_count_expression`; the difference is that
+    /// `CountExpression::Bargain` reads `source_card.bargain_paid` and
+    /// `CountExpression::Kicked` reads `source_card.kicker_paid` when
     /// `source_card_id` is `Some`, rather than conservatively returning the
-    /// unbargained value. Use this in spell-resolution paths (DealDamageDynamic)
-    /// where `card_id` (the resolving spell) is available.
+    /// unbargained/unkicked value. Use this in spell-resolution paths
+    /// (DealDamageDynamic) where `card_id` (the resolving spell) is available.
     fn evaluate_count_with_source(
         &self,
         expr: &crate::core::CountExpression,
@@ -8790,6 +8821,18 @@ impl GameState {
             } else {
                 *unbargained_value
             });
+        }
+        if let CountExpression::Kicked {
+            kicked_value,
+            unkicked_value,
+        } = expr
+        {
+            // Use the actual kicker_paid state on the resolving spell when available.
+            // Firebending Lesson: SVar:X:Count$Kicked.5.2 — deals 5 if kicked, 2 if not.
+            let is_kicked = source_card_id
+                .and_then(|id| self.cards.try_get(id))
+                .is_some_and(|c| c.kicker_paid);
+            return Ok(if is_kicked { *kicked_value } else { *unkicked_value });
         }
         self.evaluate_count_expression(expr, controller)
     }
@@ -8883,9 +8926,10 @@ impl GameState {
                 kicked_value: _,
                 unkicked_value,
             } => {
-                // Kicker state is not yet tracked at resolution time (mtg-820).
-                // Conservatively evaluate as unkicked (the lower/safer damage value).
-                // TODO: Once kicker tracking is implemented, resolve the actual state.
+                // No source card available here — conservatively return unkicked value.
+                // Call evaluate_count_with_source() when the resolving spell's card_id
+                // is available (e.g. from DealDamageDynamic resolution) to get the
+                // correct kicked_value when kicker_paid is true.
                 Ok(*unkicked_value)
             }
             CountExpression::Bargain {

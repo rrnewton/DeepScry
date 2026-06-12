@@ -1222,6 +1222,65 @@ impl<'a> GameLoop<'a> {
                                     }
                                 }
 
+                                // Step 2c.5: Kicker payment (CR 702.32)
+                                // If the spell has the Kicker keyword, the caster may
+                                // pay the kicker cost once as an optional additional cost.
+                                // Heuristic: always pay kicker when mana allows (greedy —
+                                // the kicked mode always has equal or greater effect, e.g.
+                                // Firebending Lesson deals 5 kicked vs 2 unkicked).
+                                {
+                                    let kicker_cost = self
+                                        .game
+                                        .cards
+                                        .try_get(card_id)
+                                        .and_then(|c| c.keywords.get_args(crate::core::Keyword::Kicker))
+                                        .and_then(|args| {
+                                            if let crate::core::KeywordArgs::Kicker { cost } = args {
+                                                Some(crate::core::ManaCost {
+                                                    generic: cost.generic,
+                                                    white: cost.white,
+                                                    blue: cost.blue,
+                                                    black: cost.black,
+                                                    red: cost.red,
+                                                    green: cost.green,
+                                                    colorless: cost.colorless,
+                                                    x_count: cost.x_count,
+                                                })
+                                            } else {
+                                                None
+                                            }
+                                        });
+                                    if let Some(kick_cost) = kicker_cost {
+                                        let kick_cmc = kick_cost.cmc();
+                                        if kick_cmc > 0 {
+                                            self.mana_engine.update_mut(self.game, current_priority);
+                                            let untapped_sources =
+                                                self.mana_engine
+                                                    .all_sources()
+                                                    .iter()
+                                                    .filter(|s| !s.is_tapped && !s.has_summoning_sickness)
+                                                    .count() as u8;
+                                            let pool_mana = self
+                                                .game
+                                                .get_player(current_priority)
+                                                .map(|p| p.total_available_mana().total())
+                                                .unwrap_or(0);
+                                            let total_mana = untapped_sources.saturating_add(pool_mana);
+                                            // Reserve mana for the base spell cost
+                                            let base_cost =
+                                                self.game.cards.get(card_id).map(|c| c.mana_cost.cmc()).unwrap_or(0);
+                                            let available_for_kicker = total_mana.saturating_sub(base_cost);
+                                            if available_for_kicker >= kick_cmc {
+                                                self.game.set_kicker_paid_logged(card_id, true);
+                                                if self.verbosity >= VerbosityLevel::Normal && !self.replaying {
+                                                    let msg = "  → Kicker paid".to_string();
+                                                    self.game.logger.gamelog(&msg);
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
                                 // Step 2d: Bargain payment (CR 702.162)
                                 // If the spell has the Bargain keyword, the caster
                                 // may sacrifice an artifact, enchantment, or token as

@@ -1,0 +1,24 @@
+[metadata]
+Name:Combustion Technique deals 2+N damage (graveyard count)
+Goal:Win
+Turns:3
+Difficulty:Easy
+Description:Combustion Technique (SVar:X:Count$ValidGraveyard Lesson.YouOwn/Plus.2) deals 2+N damage where N is the number of Lesson cards in your graveyard. P0 controls 2 lands, holds Combustion Technique, and has 2 Lesson cards in graveyard (Firebending Lesson + Accumulate Wisdom). P1 controls a Centaur Courser (3/3). Expected: X = 2+2 = 4, so the 3/3 takes 4 damage and dies (4 >= 3 toughness). Before the wave-5 fix, the DealDamageXPaid path would fire instead and deal 0 damage, leaving the 3/3 alive. After the fix, DealDamageDynamic evaluates ValidGraveyard correctly.
+
+[state]
+turn=2
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Combustion Technique
+p0library=Mountain; Mountain; Mountain; Mountain; Mountain
+p0graveyard=Firebending Lesson; Accumulate Wisdom
+p0battlefield=Mountain; Island
+p0exile=
+
+p1life=20
+p1hand=
+p1library=Plains; Plains; Plains; Plains; Plains
+p1graveyard=
+p1battlefield=Centaur Courser
+p1exile=

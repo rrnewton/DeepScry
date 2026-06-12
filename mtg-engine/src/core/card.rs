@@ -973,6 +973,15 @@ pub struct Card {
     #[serde(default)]
     pub bargain_paid: bool,
 
+    /// Set to `true` when the AI pays the Kicker additional cost (CR 702.32) for
+    /// this spell. Cleared in the cleanup step. Drives `CountExpression::Kicked`
+    /// evaluation (Firebending Lesson `SVar:X:Count$Kicked.5.2` — deals 5 when
+    /// kicked, 2 when not). Serialized so network-shadow + rewind reconstruct the
+    /// same decision. Distinct from `times_kicked` which tracks Multikicker
+    /// payment count; this tracks the simpler single-Kicker optional cost.
+    #[serde(default)]
+    pub kicker_paid: bool,
+
     /// If set, a zone-change replacement applies: should this creature die this
     /// turn, it is exiled instead of going to the graveyard (CR 614). Set by
     /// `Effect::ExileIfWouldDieThisTurn` (Disintegrate's
@@ -1118,6 +1127,8 @@ pub struct CardStateSnapshot {
     pub times_kicked: u8,
     #[serde(default)]
     pub bargain_paid: bool,
+    #[serde(default)]
+    pub kicker_paid: bool,
     pub exile_if_would_die_this_turn: bool,
     pub exile_if_would_go_to_graveyard_this_turn: bool,
     pub prevent_all_combat_damage_this_turn: bool,
@@ -1195,6 +1206,7 @@ impl Card {
             x_paid: 0,
             times_kicked: 0,
             bargain_paid: false,
+            kicker_paid: false,
             exile_if_would_die_this_turn: false,
             exile_if_would_go_to_graveyard_this_turn: false,
             prevent_all_combat_damage_this_turn: false,
@@ -1249,6 +1261,7 @@ impl Card {
             x_paid: self.x_paid,
             times_kicked: self.times_kicked,
             bargain_paid: self.bargain_paid,
+            kicker_paid: self.kicker_paid,
             exile_if_would_die_this_turn: self.exile_if_would_die_this_turn,
             exile_if_would_go_to_graveyard_this_turn: self.exile_if_would_go_to_graveyard_this_turn,
             prevent_all_combat_damage_this_turn: self.prevent_all_combat_damage_this_turn,
@@ -1302,6 +1315,7 @@ impl Card {
         self.x_paid = snapshot.x_paid;
         self.times_kicked = snapshot.times_kicked;
         self.bargain_paid = snapshot.bargain_paid;
+        self.kicker_paid = snapshot.kicker_paid;
         self.exile_if_would_die_this_turn = snapshot.exile_if_would_die_this_turn;
         self.exile_if_would_go_to_graveyard_this_turn = snapshot.exile_if_would_go_to_graveyard_this_turn;
         self.prevent_all_combat_damage_this_turn = snapshot.prevent_all_combat_damage_this_turn;
@@ -1494,6 +1508,7 @@ impl Card {
         self.x_paid = 0;
         self.times_kicked = 0;
         self.bargain_paid = false;
+        self.kicker_paid = false;
         self.exile_if_would_die_this_turn = false;
         self.exile_if_would_go_to_graveyard_this_turn = false;
         self.prevent_all_combat_damage_this_turn = false;
