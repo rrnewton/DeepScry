@@ -1993,6 +1993,152 @@ p1library=Plains; Plains; Plains; Plains; Plains
             expected=["Starting Game", "Main Phase 1", "Snapshot Saved"]
         )
 
+        # =====================================================================
+        # FEATURE 9: 2000 World Championship card mechanics (mtg-912/mtg-913)
+        # =====================================================================
+        # Tier 1: Brainstorm draw-3 then put-2-back (B13 fix verification)
+        self.add_test(
+            "F9_T1_1", "Brainstorm draw-3 WORKING", 1, 9,
+            pzl="""[metadata]
+Name: Brainstorm Draw3
+Goal: Win
+Turns: 3
+Difficulty: Easy
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Brainstorm;Plains
+p0library=Lightning Bolt;Mountain;Swamp;Island;Forest;Swamp
+p0battlefield=Island
+p1life=20
+p1library=Plains;Plains;Plains;Plains;Plains
+p1battlefield=
+""",
+            inputs="cast Brainstorm;*",
+            expected=["casts Brainstorm", "draws"]
+        )
+        self.add_test(
+            "F9_T1_2", "Brainstorm put-2-back reduces hand size (net +1 from Brainstorm)", 1, 9,
+            pzl="""[metadata]
+Name: Brainstorm Put2Back
+Goal: Win
+Turns: 3
+Difficulty: Easy
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Brainstorm;Plains
+p0library=Lightning Bolt;Mountain;Swamp;Island;Forest;Swamp
+p0battlefield=Island
+p1life=20
+p1library=Plains;Plains;Plains;Plains;Plains
+p1battlefield=
+""",
+            inputs="cast Brainstorm;*",
+            expected=["puts", "on top of library"]
+        )
+        # Tier 1: Metalworker reveal artifacts for mana (B1 fix verification)
+        self.add_test(
+            "F9_T1_3", "Metalworker reveals 2 artifacts from hand", 1, 9,
+            pzl="""[metadata]
+Name: Metalworker Reveal
+Goal: Win
+Turns: 3
+Difficulty: Easy
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Grim Monolith;Thran Dynamo
+p0library=Plains;Plains;Plains;Plains;Plains
+p0battlefield=Metalworker
+p1life=20
+p1library=Plains;Plains;Plains;Plains;Plains
+p1battlefield=
+""",
+            inputs="activate Metalworker;*",
+            expected=["reveals Grim Monolith", "reveals Thran Dynamo"]
+        )
+        self.add_test(
+            "F9_T1_4", "Metalworker mana lets player cast 4-cost artifact from 2-artifact reveal", 1, 9,
+            pzl="""[metadata]
+Name: Metalworker Mana Cast
+Goal: Win
+Turns: 3
+Difficulty: Easy
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Grim Monolith;Thran Dynamo
+p0library=Plains;Plains;Plains;Plains;Plains
+p0battlefield=Metalworker
+p1life=20
+p1library=Plains;Plains;Plains;Plains;Plains
+p1battlefield=
+""",
+            inputs="activate Metalworker;cast Thran Dynamo;*",
+            expected=["Metalworker activates ability", "Thran Dynamo", "resolves"]
+        )
+        # Tier 1: Worship life floor (B10 fix verification)
+        # p0 (P1, fixed controller) casts Lightning Bolts at p1 (P2, zero controller)
+        # who has Worship + Grizzly Bears. Life should be capped at 1.
+        self.add_test(
+            "F9_T1_5", "Worship keeps life at 1 while you control a creature", 1, 9,
+            pzl="""[metadata]
+Name: Worship LifeFloor
+Goal: Win
+Turns: 3
+Difficulty: Easy
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Lightning Bolt;Lightning Bolt;Lightning Bolt
+p0library=Mountain;Mountain;Mountain;Mountain;Mountain
+p0battlefield=Mountain;Mountain;Mountain
+p1life=3
+p1hand=
+p1library=Plains;Plains;Plains;Plains;Plains
+p1battlefield=Worship;Grizzly Bears
+""",
+            inputs="cast Lightning Bolt;P2;cast Lightning Bolt;P2;cast Lightning Bolt;P2;*",
+            expected=["worship", "capped", "life: 1"]
+        )
+        # Tier 1: Crumbling Sanctuary damage redirect (B9 fix verification)
+        # p0 (P1, fixed) casts Lightning Bolt at p1 (P2, zero) who has Crumbling Sanctuary.
+        # Damage should redirect to exile cards from library instead of losing life.
+        self.add_test(
+            "F9_T1_6", "Crumbling Sanctuary redirects damage to exile cards from library", 1, 9,
+            pzl="""[metadata]
+Name: Crumbling Sanctuary Redirect
+Goal: Win
+Turns: 3
+Difficulty: Easy
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Lightning Bolt
+p0library=Mountain;Mountain;Mountain;Mountain;Mountain
+p0battlefield=Mountain;Mountain;Mountain
+p1life=20
+p1hand=
+p1library=Plains;Plains;Plains;Plains;Plains;Plains;Plains;Plains;Plains;Plains
+p1battlefield=Crumbling Sanctuary
+""",
+            inputs="cast Lightning Bolt;P2;*",
+            expected=["crumbling sanctuary redirects", "exile 3 cards from library"]
+        )
+
     def run_tests(self, filter_str=None):
         tests_to_run = self.tests
         if filter_str:
