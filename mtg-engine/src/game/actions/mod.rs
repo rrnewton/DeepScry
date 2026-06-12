@@ -114,7 +114,8 @@ fn expand_all_players_effect(effect: &Effect, player_ids: &[PlayerId]) -> smallv
         | Effect::SacrificeSelf { .. }
         | Effect::UnlessCostWrapper { .. }
         | Effect::CreateTokenDynamic { .. }
-        | Effect::CreateEmblem { .. } => false,
+        | Effect::CreateEmblem { .. }
+        | Effect::PutCardsFromHandOnTopOfLibrary { .. } => false,
     };
 
     if !is_all_players {
@@ -243,7 +244,8 @@ fn expand_all_players_effect(effect: &Effect, player_ids: &[PlayerId]) -> smallv
             | Effect::SacrificeSelf { .. }
             | Effect::UnlessCostWrapper { .. }
             | Effect::CreateTokenDynamic { .. }
-            | Effect::CreateEmblem { .. } => unreachable!(),
+            | Effect::CreateEmblem { .. }
+            | Effect::PutCardsFromHandOnTopOfLibrary { .. } => unreachable!(),
         })
         .collect()
 }
@@ -3100,6 +3102,14 @@ impl GameState {
             Effect::ReturnCardsFromGraveyardToHand { player } if player.is_placeholder() => {
                 Effect::ReturnCardsFromGraveyardToHand { player: card_owner }
             }
+            // "Put N cards from your hand on top of your library" (Brainstorm sub-ability).
+            // Always targets the spell's controller. Resolve placeholder here.
+            Effect::PutCardsFromHandOnTopOfLibrary { player, count } if player.is_placeholder() => {
+                Effect::PutCardsFromHandOnTopOfLibrary {
+                    player: card_owner,
+                    count: *count,
+                }
+            }
             // "Return one matching card from your graveyard to hand" — also targets
             // the spell/trigger controller by default. Resolve placeholder.
             Effect::ReturnGraveyardCardToHand { player, type_filter } if player.is_placeholder() => {
@@ -3777,6 +3787,18 @@ impl GameState {
             } => self.execute_move_self_between_zones(*source, *origin, *destination)?,
             Effect::ReturnCardsFromGraveyardToHand { player } => {
                 self.execute_return_cards_from_graveyard_to_hand(*player)?
+            }
+            Effect::PutCardsFromHandOnTopOfLibrary { player, count } => {
+                // Non-interactive fallback: pick the lowest-CMC cards from hand.
+                // The interactive path (priority.rs) overrides this with
+                // controller-chosen cards before calling
+                // execute_put_cards_from_hand_on_top_of_library directly.
+                let hand: smallvec::SmallVec<[CardId; 8]> = self
+                    .get_player_zones(*player)
+                    .map(|z| z.hand.cards.iter().copied().collect())
+                    .unwrap_or_default();
+                let chosen = self.pick_cards_to_put_back_heuristic(&hand, *count as usize);
+                self.execute_put_cards_from_hand_on_top_of_library(*player, &chosen)?;
             }
             Effect::ReturnGraveyardCardToHand { player, type_filter } => {
                 self.execute_return_graveyard_card_to_hand(*player, type_filter)?

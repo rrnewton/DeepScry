@@ -4198,6 +4198,7 @@ impl GameState {
                     | crate::core::Effect::SelfExileFromStack { .. }
                     | crate::core::Effect::MoveSelfBetweenZones { .. }
                     | crate::core::Effect::ReturnCardsFromGraveyardToHand { .. }
+                    | crate::core::Effect::PutCardsFromHandOnTopOfLibrary { .. }
                     | crate::core::Effect::ReturnGraveyardCardToHand { .. }
                     | crate::core::Effect::ReturnGraveyardCardToZone { .. }
                     | crate::core::Effect::ReturnSelfAsEnchantment { .. }

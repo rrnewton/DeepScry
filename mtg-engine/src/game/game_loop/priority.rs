@@ -3236,6 +3236,15 @@ impl<'a> GameLoop<'a> {
                     // CardId and the client uses the server-authoritative
                     // library_search_result.
                         || matches!(e, crate::core::Effect::SearchLibrary { .. })
+                    // PutCardsFromHandOnTopOfLibrary (Brainstorm sub-ability): the
+                    // controller must choose which cards to put back.  Route through
+                    // the same discard-style protocol (choose_discard_with_hook) but
+                    // move the chosen cards to the library instead of the graveyard.
+                    // Must be interactive so the network-shadow client receives the
+                    // ChoiceRequest carrying the hand reveal before deciding (same
+                    // ordering guarantee as the DiscardCards interactive path,
+                    // mtg-768 BLOCKER-1/2 pattern).
+                        || matches!(e, crate::core::Effect::PutCardsFromHandOnTopOfLibrary { .. })
                 });
                 (balances, needs_interactive, card.svars.clone())
             } else {
@@ -3476,6 +3485,79 @@ impl<'a> GameLoop<'a> {
                                     let _ = self.game.check_card_drawn_triggers(*player, draw_num);
                                 }
                                 Err(_) => break,
+                            }
+                        }
+                    }
+                    // Brainstorm sub-ability: put N cards from hand on top of library.
+                    // The controller chooses which cards; we reuse `choose_discard_with_hook`
+                    // for the selection protocol and then move the chosen cards to the
+                    // library instead of the graveyard (CR 701.19b: put on top in any order).
+                    // The cards are put back in reverse-chosen order so the last card chosen
+                    // ends up on top (matching typical "last put = top" convention).
+                    crate::core::Effect::PutCardsFromHandOnTopOfLibrary { player, count } => {
+                        let put_count = *count as usize;
+
+                        self.push_reveals(*player);
+                        if let Some(opp) = self.game.get_other_player_id(*player) {
+                            self.push_reveals(opp);
+                        }
+
+                        let hand: SmallVec<[CardId; 8]> = self
+                            .game
+                            .get_player_zones(*player)
+                            .map(|zones| zones.hand.cards.iter().copied().collect())
+                            .unwrap_or_default();
+
+                        let actual_count = put_count.min(hand.len());
+                        if actual_count > 0 {
+                            let controller: &mut dyn PlayerController = if *player == controller1.player_id() {
+                                controller1
+                            } else {
+                                controller2
+                            };
+                            let _ = controller.prepare_for_priority_choice();
+                            self.sync_to_action();
+                            let prior_log_size = self.game.logger.log_count();
+                            // Reuse choose_discard_with_hook — the semantics are
+                            // "choose N cards from hand"; the destination differs.
+                            let choice = self.choose_discard_with_hook(controller, *player, &hand, actual_count);
+                            let cards_to_put = match choice {
+                                crate::game::controller::ChoiceResult::Ok(v) => v,
+                                crate::game::controller::ChoiceResult::NeedInput(ctx) => {
+                                    return Err(crate::MtgError::NeedInput(Box::new(ctx)));
+                                }
+                                crate::game::controller::ChoiceResult::ExitGame => {
+                                    return Err(crate::MtgError::InvalidAction(
+                                        "Game exit requested during put-back".into(),
+                                    ));
+                                }
+                                crate::game::controller::ChoiceResult::Error(e) => {
+                                    return Err(crate::MtgError::InvalidAction(format!(
+                                        "Controller error during put-back: {e}"
+                                    )));
+                                }
+                                crate::game::controller::ChoiceResult::UndoRequest(_) => {
+                                    // Undo during spell resolution: fall back to heuristic
+                                    let heuristic_cards =
+                                        self.game.pick_cards_to_put_back_heuristic(&hand, actual_count);
+                                    heuristic_cards
+                                }
+                            };
+                            // Log as a Discard-style ChoicePoint for replay determinism
+                            // (same encoding: ordered list of CardIds chosen from hand).
+                            let replay_choice = crate::game::ReplayChoice::Discard(cards_to_put.clone());
+                            self.log_choice_point(*player, Some(replay_choice), prior_log_size);
+
+                            // Move chosen cards to top of library.  Put them in order
+                            // [0..n] — last-pushed card ends up on top (the controller
+                            // chose them as "first on top" order when we asked).
+                            if let Err(e) = self
+                                .game
+                                .execute_put_cards_from_hand_on_top_of_library(*player, &cards_to_put)
+                            {
+                                if should_log {
+                                    eprintln!("    Failed to put cards back on library: {e}");
+                                }
                             }
                         }
                     }

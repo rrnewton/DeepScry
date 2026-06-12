@@ -1805,6 +1805,20 @@ pub enum Effect {
         player: PlayerId,
     },
 
+    /// Put `count` cards from a player's hand on top of their library (mandatory
+    /// self-selection).  The controller chooses which cards; in non-interactive
+    /// fallback mode the lowest-value cards are picked deterministically.
+    ///
+    /// Corresponds to `DB$ ChangeZone | Origin$ Hand | Destination$ Library |
+    /// ChangeNum$ <N> | Mandatory$ True | Reorder$ True` (Brainstorm's sub-ability
+    /// that puts two cards from your hand on top of your library in any order).
+    ///
+    /// MTG CR 701.19: when an effect says to put one or more cards from a player's
+    /// hand on top of that player's library, the player chooses which card(s) to put
+    /// back and the order.  The effect is mandatory — the controller MUST put the
+    /// specified number of cards back (if available).
+    PutCardsFromHandOnTopOfLibrary { player: PlayerId, count: u8 },
+
     /// Return exactly one card matching a type filter from a player's graveyard
     /// to their hand.  The AI picks the highest-value matching card.
     ///
@@ -2682,6 +2696,7 @@ impl Effect {
             // card (Defined$ Self) — no cast-time target collection needed.
             | Effect::MoveSelfBetweenZones { .. }
             | Effect::ReturnCardsFromGraveyardToHand { .. }
+            | Effect::PutCardsFromHandOnTopOfLibrary { .. }
             | Effect::PreventAllCombatDamageThisTurn { .. }
             | Effect::ConditionalSelfCounter { .. }
             // Clone chooses which permanent to copy at resolution time (ETB

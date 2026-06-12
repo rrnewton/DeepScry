@@ -1156,6 +1156,7 @@ impl<'a> GameLoop<'a> {
                 self.game.logger.gamelog(&message);
             }
             Effect::ReturnCardsFromGraveyardToHand { .. }
+            | Effect::PutCardsFromHandOnTopOfLibrary { .. }
             | Effect::ReturnGraveyardCardToHand { .. }
             | Effect::ReturnGraveyardCardToZone { .. }
             | Effect::ReturnSelfAsEnchantment { .. } => {

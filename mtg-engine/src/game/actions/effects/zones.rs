@@ -787,6 +787,63 @@ impl GameState {
         Ok(())
     }
 
+    /// [`Effect::PutCardsFromHandOnTopOfLibrary`]: non-interactive (fallback)
+    /// path that moves `cards_to_put` from the player's hand to the top of their
+    /// library.
+    ///
+    /// The interactive path (priority loop) asks the controller which cards to
+    /// choose and calls this function with the chosen set.  The non-interactive
+    /// fallback (e.g., execute_effect with no controller) uses a deterministic
+    /// heuristic: pick the `count` cards with the smallest CMC in hand (proxy
+    /// for "least valuable"), stable-sorted by `CardId` for server/client
+    /// determinism.
+    ///
+    /// MTG CR 701.19b: the player puts the chosen cards on top of their library
+    /// in any order they choose; we put them on top one by one (first chosen card
+    /// ends up deepest, last on top) so the caller's ordering is respected.
+    pub(crate) fn execute_put_cards_from_hand_on_top_of_library(
+        &mut self,
+        player: PlayerId,
+        cards_to_put: &[CardId],
+    ) -> Result<()> {
+        let player_name = self
+            .get_player(player)
+            .ok()
+            .map(|p| p.name.as_str())
+            .unwrap_or("?")
+            .to_string();
+        for &card_id in cards_to_put {
+            let card_name = self
+                .cards
+                .try_get(card_id)
+                .map(|c| c.name.as_str())
+                .unwrap_or("?")
+                .to_string();
+            self.move_card(card_id, crate::zones::Zone::Hand, crate::zones::Zone::Library, player)?;
+            // Log the move so replay can reconstruct which card went back.
+            self.logger
+                .gamelog(&format!("{} puts {} on top of library", player_name, card_name));
+        }
+        Ok(())
+    }
+
+    /// Fallback heuristic for [`Effect::PutCardsFromHandOnTopOfLibrary`]: pick
+    /// the `count` cards with the smallest CMC from `hand`, breaking ties by
+    /// `CardId` (smallest first = deterministic across server/clients).  Returns
+    /// up to `hand.len()` cards even if `count > hand.len()`.
+    pub(crate) fn pick_cards_to_put_back_heuristic(
+        &self,
+        hand: &[CardId],
+        count: usize,
+    ) -> smallvec::SmallVec<[CardId; 7]> {
+        let mut sorted: smallvec::SmallVec<[CardId; 16]> = hand.iter().copied().collect();
+        sorted.sort_by_key(|&id| {
+            let cmc = self.cards.try_get(id).map(|c| c.mana_cost.cmc()).unwrap_or(0);
+            (cmc, id.as_u32())
+        });
+        sorted.into_iter().take(count).collect()
+    }
+
     /// [`Effect::ReturnGraveyardCardToHand`]: return exactly one card matching
     /// `type_filter` from `player`'s graveyard to hand (Stormchaser's Talent
     /// level-2 "return target instant or sorcery"). The card is picked in stable

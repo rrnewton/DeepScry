@@ -561,6 +561,28 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
                     library_position,
                 })
             }
+            // Put N cards from the CONTROLLER's own hand on top of their library
+            // (Brainstorm / Brainstone / Cavalier of Gales sub-ability).
+            // `DB$ ChangeZone | Origin$ Hand | Destination$ Library | ChangeNum$ N |
+            //  Mandatory$ True | Reorder$ True`
+            //
+            // Guards: no Defined$ (that would be a self-move), no ValidTgts$ (cards
+            // like Agonizing Memories / Chittering Rats target an opponent's hand
+            // and are excluded here — they require a separate targeted-hand handler).
+            // MTG CR 401.4: when an effect puts two or more cards in a specific
+            // position at the same time, the owner arranges them in any order.
+            else if params.get("Origin") == Some("Hand")
+                && params.get("Destination") == Some("Library")
+                && params.contains_key("ChangeNum")
+                && params.get("Defined").is_none()
+                && params.get("ValidTgts").is_none()
+            {
+                let count = params.get_u8("ChangeNum").unwrap_or(1);
+                Some(Effect::PutCardsFromHandOnTopOfLibrary {
+                    player: PlayerId::placeholder(),
+                    count,
+                })
+            }
             // Self-return from a non-battlefield, non-stack zone to another zone.
             // E.g. A:AB$ ChangeZone | Origin$ Graveyard | Destination$ Hand
             //        | ActivationZone$ Graveyard (Earthquake Dragon)

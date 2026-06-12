@@ -686,6 +686,7 @@ impl GameState {
                             | Effect::SelfExileFromStack { .. }
                             | Effect::MoveSelfBetweenZones { .. }
                             | Effect::ReturnCardsFromGraveyardToHand { .. }
+                            | Effect::PutCardsFromHandOnTopOfLibrary { .. }
                             | Effect::ReturnGraveyardCardToHand { .. }
                             | Effect::ReturnGraveyardCardToZone { .. }
                             | Effect::ReturnSelfAsEnchantment { .. }
@@ -752,6 +753,7 @@ impl GameState {
                 | Effect::SelfExileFromStack { .. }
                 | Effect::MoveSelfBetweenZones { .. }
                 | Effect::ReturnCardsFromGraveyardToHand { .. }
+                | Effect::PutCardsFromHandOnTopOfLibrary { .. }
                 | Effect::ReturnGraveyardCardToHand { .. }
                 | Effect::ReturnGraveyardCardToZone { .. }
                 | Effect::ReturnSelfAsEnchantment { .. }
@@ -766,6 +768,7 @@ impl GameState {
                     // Proliferate: player chooses permanents/players during resolution, no targeting
                     // SelfExileFromStack: operates on the resolving spell itself, no targets
                     // ReturnCardsFromGraveyardToHand: works on the caster's graveyard, no targeting
+                    // PutCardsFromHandOnTopOfLibrary: controller picks cards during resolution, no targeting
                     // ReturnGraveyardCardToHand: AI picks matching card, no cast-time targeting
                     // ReturnGraveyardCardToZone: AI picks matching card, no cast-time targeting
                     // ReturnSelfAsEnchantment: death trigger self-return, no cast-time targeting
@@ -1365,6 +1368,7 @@ impl GameState {
                 | Effect::SelfExileFromStack { .. }
                 | Effect::MoveSelfBetweenZones { .. }
                 | Effect::ReturnCardsFromGraveyardToHand { .. }
+                | Effect::PutCardsFromHandOnTopOfLibrary { .. }
                 | Effect::ReturnGraveyardCardToHand { .. }
                 | Effect::ReturnGraveyardCardToZone { .. }
                 | Effect::ReturnSelfAsEnchantment { .. }
@@ -1382,6 +1386,7 @@ impl GameState {
                     // Proliferate: player chooses during resolution, no targeting
                     // SelfExileFromStack: operates on the resolving spell itself, no targets
                     // ReturnCardsFromGraveyardToHand: uses remembered_cards count, no targeting
+                    // PutCardsFromHandOnTopOfLibrary: controller picks cards during resolution, no targeting
                     // ReturnGraveyardCardToHand: AI picks matching card, no cast-time targeting
                     // ReturnSelfAsEnchantment: death trigger self-return, no cast-time targeting
                     // PreventAllCombatDamageThisTurn: reuses UntapPermanent's last_resolved_target
@@ -1704,6 +1709,7 @@ impl GameState {
             | Effect::SelfExileFromStack { .. }
             | Effect::MoveSelfBetweenZones { .. }
             | Effect::ReturnCardsFromGraveyardToHand { .. }
+            | Effect::PutCardsFromHandOnTopOfLibrary { .. }
             | Effect::ReturnGraveyardCardToHand { .. }
             | Effect::ReturnGraveyardCardToZone { .. }
             | Effect::ReturnSelfAsEnchantment { .. }
