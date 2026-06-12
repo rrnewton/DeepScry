@@ -794,6 +794,13 @@ pub struct TargetRestriction {
     /// `None` means no minimum CMC restriction.
     #[serde(default)]
     pub min_cmc: Option<u8>,
+    /// Maximum mana value (CMC) restriction (`cmcLE<N>` qualifier).
+    ///
+    /// Corresponds to `ValidCards$ Creature.cmcLE3` (Consume the Meek),
+    /// `ValidTgts$ Instant.YouCtrl+cmcLE3` (Past in Flames), etc.
+    /// `None` means no maximum CMC restriction.
+    #[serde(default)]
+    pub max_cmc: Option<u8>,
     /// If true, target creature must have the Defender keyword (CR 702.6).
     ///
     /// Corresponds to the `withDefender` qualifier in `ValidTgts$` /
@@ -824,6 +831,7 @@ impl TargetRestriction {
             power_le_source: false,
             requires_noncreature: false,
             min_cmc: None,
+            max_cmc: None,
             requires_defender: false,
         }
     }
@@ -847,6 +855,7 @@ impl TargetRestriction {
             power_le_source: false,
             requires_noncreature: false,
             min_cmc: None,
+            max_cmc: None,
             requires_defender: false,
         }
     }
@@ -994,6 +1003,13 @@ impl TargetRestriction {
             }
         }
 
+        // Check maximum CMC restriction (Consume the Meek: Creature.cmcLE3)
+        if let Some(max) = self.max_cmc {
+            if card.mana_cost.cmc() > max {
+                return false;
+            }
+        }
+
         // Check `withDefender` — target must have the Defender keyword (CR 702.6).
         // Overgrown Battlement, Axebane Guardian, Clear a Path, etc.
         if self.requires_defender && !card.has_keyword(crate::core::Keyword::Defender) {
@@ -1033,6 +1049,8 @@ impl TargetRestriction {
             && self.required_color.is_none()
             && self.required_set.is_none()
             && !self.requires_other
+            && self.min_cmc.is_none()
+            && self.max_cmc.is_none()
     }
 
     /// Like [`TargetRestriction::matches`] but also honors the `Other`
@@ -1129,6 +1147,7 @@ impl TargetRestriction {
         let mut requires_noncreature = false;
         let mut requires_defender = false;
         let mut min_cmc = None;
+        let mut max_cmc = None;
         let mut controller = ControllerRestriction::Any;
         let mut power_ge = None;
         let mut power_le = None;
@@ -1167,6 +1186,12 @@ impl TargetRestriction {
                             // Parse cmcGE4 -> min_cmc = 4 (Disdainful Stroke)
                             if let Ok(n) = m.trim_start_matches("cmcGE").parse::<u8>() {
                                 min_cmc = Some(n);
+                            }
+                        }
+                        m if m.starts_with("cmcLE") => {
+                            // Parse cmcLE3 -> max_cmc = 3 (Consume the Meek, Past in Flames)
+                            if let Ok(n) = m.trim_start_matches("cmcLE").parse::<u8>() {
+                                max_cmc = Some(n);
                             }
                         }
                         // Set-origin qualifier `set<CODE>` (e.g. `setARN`):
@@ -1243,6 +1268,7 @@ impl TargetRestriction {
             power_le_source,
             requires_noncreature,
             min_cmc,
+            max_cmc,
             requires_defender,
         }
     }
