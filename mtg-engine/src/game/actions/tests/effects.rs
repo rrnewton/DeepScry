@@ -8120,4 +8120,91 @@ mod tests {
              the Hand destination."
         );
     }
+
+    /// Card compat: Umezawa's Jitte — B3 fix (ModalChoice activated ability).
+    ///
+    /// Script (activated ability):
+    ///   A:AB$ Charm | Cost$ SubCounter<1/CHARGE> | Choices$ JittePump,JitteCurse,JitteLife | Defined$ You
+    ///   SVar:JittePump:DB$ Pump | Defined$ Equipped | NumAtt$ +2 | NumDef$ +2 | SpellDescription$ Equipped creature gets +2/+2 until end of turn.
+    ///   SVar:JitteCurse:DB$ Pump | ValidTgts$ Creature | NumAtt$ -1 | NumDef$ -1 | IsCurse$ True | SpellDescription$ Target creature gets -1/-1 until end of turn.
+    ///   SVar:JitteLife:DB$ GainLife | LifeAmount$ 2 | SpellDescription$ You gain 2 life.
+    ///
+    /// Before the B3 fix the Charm AB$ produced a ModalChoice effect that fell
+    /// through to `execute_effect`, which logged "ModalChoice reached
+    /// execute_effect" and no-oped — so the chosen mode was never applied.  This
+    /// test pins that the activated ability parses into a ModalChoice with all
+    /// three modes present and with real (non-placeholder DrawCards) sub-effects.
+    ///
+    /// MTG CR 701.4a: modal spells and abilities let you choose a mode as part of
+    /// casting or activating.  CR 601.2b: for a modal spell cast from hand the
+    /// mode choice is made before targeting.  For an activated ability the
+    /// analogous choice happens on activation (before the ability resolves).
+    #[test]
+    fn test_card_compat_umezawas_jitte_modal_choice_parse() {
+        use crate::core::Effect;
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("../cardsfolder/u/umezawas_jitte.txt");
+        if !path.exists() {
+            eprintln!("Skipping: cardsfolder not present at {:?}", path);
+            return;
+        }
+        let def = crate::loader::CardLoader::load_from_file(&path).expect("Umezawa's Jitte should load");
+
+        assert_eq!(def.name.as_str(), "Umezawa's Jitte");
+
+        let card = def.instantiate(CardId::new(1), PlayerId::new(0));
+
+        // Jitte must have exactly one non-Equip activated ability (the Charm).
+        // The Equip ability is always the last one; the Charm comes before it.
+        let charm_ability = card
+            .activated_abilities
+            .iter()
+            .find(|ab| ab.effects.iter().any(|e| matches!(e, Effect::ModalChoice { .. })))
+            .expect(
+                "Umezawa's Jitte must have a ModalChoice activated ability (B3 fix). \
+                 If this fails the AB$ Charm was not converted to ModalChoice.",
+            );
+
+        let modal_effect = charm_ability
+            .effects
+            .iter()
+            .find(|e| matches!(e, Effect::ModalChoice { .. }))
+            .expect("ModalChoice effect must be present in charm ability");
+
+        if let Effect::ModalChoice {
+            modes, num_to_choose, ..
+        } = modal_effect
+        {
+            assert_eq!(
+                modes.len(),
+                3,
+                "Jitte Charm must have 3 modes (JittePump, JitteCurse, JitteLife). \
+                 Got {}",
+                modes.len()
+            );
+            assert_eq!(
+                *num_to_choose, 1,
+                "Jitte Charm chooses exactly 1 mode. Got {}",
+                num_to_choose
+            );
+            // Verify mode descriptions are present and non-empty.
+            for (i, mode) in modes.iter().enumerate() {
+                assert!(!mode.description.is_empty(), "Mode {} description must not be empty", i);
+                // Sub-effects must be real effects (not placeholder DrawCards{count:0}).
+                // Placeholder DrawCards{count:0} is what params_to_charm_effect emits
+                // when it can't resolve SVars — a signal that SVar resolution failed.
+                assert!(
+                    !matches!(mode.effect.as_ref(), Effect::DrawCards { count, .. } if *count == 0),
+                    "Mode {} ('{}') has a placeholder sub-effect; SVar resolution must \
+                     have failed during load. Got: {:?}",
+                    i,
+                    mode.description,
+                    mode.effect
+                );
+            }
+        } else {
+            panic!("Expected ModalChoice effect");
+        }
+    }
 }

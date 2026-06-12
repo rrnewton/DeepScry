@@ -1575,6 +1575,124 @@ impl<'a> GameLoop<'a> {
                                         if effect_idx < effect_start_idx {
                                             continue; // Skip already-executed effects on resumption
                                         }
+
+                                        // B3 fix (mtg-910): ModalChoice activated abilities (e.g. Umezawa's
+                                        // Jitte Charm — "remove a charge counter: choose +2/+2, -1/-1, or +2
+                                        // life") were falling through to execute_effect which no-ops them.
+                                        // Handle them here by routing mode selection through the controller,
+                                        // then executing the chosen mode's sub-effect with placeholder
+                                        // resolution. MTG CR 601.2b: mode choice happens before targeting;
+                                        // for activated abilities we do it during resolution since targeting
+                                        // was collected above across all modes.
+                                        if let crate::core::Effect::ModalChoice {
+                                            modes,
+                                            num_to_choose,
+                                            min_to_choose,
+                                            can_repeat_modes,
+                                        } = effect
+                                        {
+                                            let mode_descriptions: Vec<String> =
+                                                modes.iter().map(|m| m.description.clone()).collect();
+                                            let n_choose = *num_to_choose as usize;
+                                            let n_min = *min_to_choose as usize;
+                                            let can_repeat = *can_repeat_modes;
+
+                                            let prior_log_size = self.game.logger.log_count();
+                                            let choice = self.choose_modes_with_hook(
+                                                controller,
+                                                current_priority,
+                                                card_id,
+                                                &mode_descriptions,
+                                                n_choose,
+                                                n_min,
+                                                can_repeat,
+                                            );
+                                            let selected_modes =
+                                                handle_choice_result_break!(choice, self.game, current_priority);
+
+                                            let replay_choice = crate::game::ReplayChoice::Modes(
+                                                selected_modes.iter().copied().collect(),
+                                            );
+                                            self.log_choice_point(
+                                                current_priority,
+                                                Some(replay_choice),
+                                                prior_log_size,
+                                            );
+
+                                            if self.verbosity >= VerbosityLevel::Normal && !self.replaying {
+                                                for &idx in &selected_modes {
+                                                    if let Some(mode) = modes.get(idx) {
+                                                        self.game
+                                                            .logger
+                                                            .gamelog(&format!("  Mode chosen: {}", mode.description));
+                                                    }
+                                                }
+                                            }
+
+                                            // Execute each selected mode's sub-effect with placeholder
+                                            // resolution mirroring the main dispatch below.
+                                            for &mode_idx in &selected_modes {
+                                                if let Some(mode) = modes.get(mode_idx) {
+                                                    let sub = mode.effect.as_ref();
+                                                    // Resolve the most common placeholders in mode sub-effects.
+                                                    let resolved_sub = match sub {
+                                                        crate::core::Effect::GainLife { player, amount }
+                                                            if player.is_placeholder() =>
+                                                        {
+                                                            crate::core::Effect::GainLife {
+                                                                player: current_priority,
+                                                                amount: *amount,
+                                                            }
+                                                        }
+                                                        crate::core::Effect::PumpCreature {
+                                                            target,
+                                                            power_bonus,
+                                                            toughness_bonus,
+                                                            keywords_granted,
+                                                        } if target.is_placeholder()
+                                                            && !chosen_targets_vec.is_empty() =>
+                                                        {
+                                                            crate::core::Effect::PumpCreature {
+                                                                target: chosen_targets_vec[0],
+                                                                power_bonus: *power_bonus,
+                                                                toughness_bonus: *toughness_bonus,
+                                                                keywords_granted: keywords_granted.clone(),
+                                                            }
+                                                        }
+                                                        crate::core::Effect::PumpCreature {
+                                                            target,
+                                                            power_bonus,
+                                                            toughness_bonus,
+                                                            keywords_granted,
+                                                        } if target.is_placeholder() => {
+                                                            // No chosen target — try the equipped creature
+                                                            // (Jitte JittePump: Defined$ Equipped). Fall
+                                                            // back to source card if not equipped.
+                                                            let pump_target = self
+                                                                .game
+                                                                .cards
+                                                                .try_get(card_id)
+                                                                .and_then(|c| c.attached_to)
+                                                                .unwrap_or(card_id);
+                                                            crate::core::Effect::PumpCreature {
+                                                                target: pump_target,
+                                                                power_bonus: *power_bonus,
+                                                                toughness_bonus: *toughness_bonus,
+                                                                keywords_granted: keywords_granted.clone(),
+                                                            }
+                                                        }
+                                                        _ => sub.clone(),
+                                                    };
+                                                    if let Err(e) = self.game.execute_effect(&resolved_sub) {
+                                                        if self.verbosity >= VerbosityLevel::Normal && !self.replaying {
+                                                            eprintln!("    Failed to execute modal sub-effect: {e}");
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                            continue; // skip normal execute_effect for this effect slot
+                                        }
+
                                         // Fix placeholder player IDs and targets for effects
                                         let fixed_effect = match effect {
                                             crate::core::Effect::AddMana {

@@ -3926,7 +3926,7 @@ impl CardDefinition {
 
             // Parse effects using the tokenized converter
             use super::ability_parser::ApiType;
-            use super::effect_converter::params_to_effect_with_svars;
+            use super::effect_converter::{params_to_charm_effect_with_svars, params_to_effect_with_svars};
 
             // Special handling for mana abilities (need is_mana_ability = true)
             // BUT: Planeswalker loyalty abilities that produce mana (e.g., Chandra's +1: Add {R}{R})
@@ -3942,8 +3942,17 @@ impl CardDefinition {
             let is_mana_ability =
                 matches!(params.api_type, ApiType::Mana | ApiType::ManaReflected) && !is_planeswalker_ability;
 
-            // Try to convert parameters to effects (with SVar resolution for StaticAbilities$)
-            let mut effects = if let Some(effect) = params_to_effect_with_svars(&params, &self.svars) {
+            // Try to convert parameters to effects (with SVar resolution for StaticAbilities$).
+            // AB$ Charm activated abilities (e.g. Umezawa's Jitte) require the SVar-aware
+            // charm converter so that mode SVars (JittePump, JitteCurse, JitteLife) are
+            // resolved to real effects instead of placeholder DrawCards{count:0}. Mirrors
+            // the parse_effects() + follow_sub_ability_chain() logic that already handles
+            // SP$ Charm for spells (B3 fix, mtg-910).
+            let mut effects = if params.api_type == ApiType::Charm {
+                params_to_charm_effect_with_svars(&params, &self.svars)
+                    .map(|e| vec![e])
+                    .unwrap_or_default()
+            } else if let Some(effect) = params_to_effect_with_svars(&params, &self.svars) {
                 vec![effect]
             } else {
                 // Fallback to old parsing for unsupported API types
