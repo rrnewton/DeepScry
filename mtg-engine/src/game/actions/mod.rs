@@ -25,6 +25,33 @@ struct TargetSnapshot {
     drain_cap: i32,
 }
 
+/// Consume the next target from `chosen_targets` at `target_index`, advance the
+/// index, and record the result in `last_resolved_target`.
+///
+/// Returns `Some(id)` when a target was available, `None` when `target_index`
+/// has already reached the end of `chosen_targets`.  The caller uses the
+/// returned `Option` to either build the resolved `Effect` variant
+/// (`Some(id)`) or fall back to the original unresolved effect (`None`).
+///
+/// Both `target_index` and `last_resolved_target` are always updated together
+/// so that chained SubAbility effects (which read `last_resolved_target` to
+/// find what the parent ability targeted) see the right value.
+#[inline]
+fn consume_next_target(
+    chosen_targets: &[CardId],
+    target_index: &mut usize,
+    last_resolved_target: &mut Option<CardId>,
+) -> Option<CardId> {
+    if *target_index < chosen_targets.len() {
+        let id = chosen_targets[*target_index];
+        *target_index += 1;
+        *last_resolved_target = Some(id);
+        Some(id)
+    } else {
+        None
+    }
+}
+
 /// Collect all `Effect`s from an SVar body by following `SubAbility$` chains.
 ///
 /// Used by [`GameState::fire_saga_chapter`] to convert a chapter SVar body (e.g.
@@ -3503,12 +3530,9 @@ impl GameState {
                 target: TargetRef::Permanent(card_id),
                 amount,
             } if card_id.is_placeholder() => {
-                if *target_index < chosen_targets.len() {
-                    let target = chosen_targets[*target_index];
-                    *target_index += 1;
-                    *last_resolved_target = Some(target);
+                if let Some(t) = consume_next_target(chosen_targets, target_index, last_resolved_target) {
                     Effect::PreventDamage {
-                        target: TargetRef::Permanent(target),
+                        target: TargetRef::Permanent(t),
                         amount: *amount,
                     }
                 } else {
@@ -3574,12 +3598,9 @@ impl GameState {
                 restriction,
                 no_regenerate,
             } if target.is_placeholder() => {
-                if *target_index < chosen_targets.len() {
-                    let resolved_target = chosen_targets[*target_index];
-                    *target_index += 1;
-                    *last_resolved_target = Some(resolved_target);
+                if let Some(t) = consume_next_target(chosen_targets, target_index, last_resolved_target) {
                     Effect::DestroyPermanent {
-                        target: resolved_target,
+                        target: t,
                         restriction: restriction.clone(),
                         no_regenerate: *no_regenerate,
                     }
@@ -3594,12 +3615,9 @@ impl GameState {
                 keywords_granted,
                 keyword_args_granted,
             } if target.is_placeholder() => {
-                if *target_index < chosen_targets.len() {
-                    let resolved_target = chosen_targets[*target_index];
-                    *target_index += 1;
-                    *last_resolved_target = Some(resolved_target);
+                if let Some(t) = consume_next_target(chosen_targets, target_index, last_resolved_target) {
                     Effect::PumpCreature {
-                        target: resolved_target,
+                        target: t,
                         power_bonus: *power_bonus,
                         toughness_bonus: *toughness_bonus,
                         keywords_granted: keywords_granted.clone(),
@@ -3620,12 +3638,9 @@ impl GameState {
                 keywords_granted,
                 keyword_args_granted,
             } if target.is_placeholder() => {
-                if *target_index < chosen_targets.len() {
-                    let resolved_target = chosen_targets[*target_index];
-                    *target_index += 1;
-                    *last_resolved_target = Some(resolved_target);
+                if let Some(t) = consume_next_target(chosen_targets, target_index, last_resolved_target) {
                     Effect::PumpCreatureVariable {
-                        target: resolved_target,
+                        target: t,
                         power_count: power_count.clone(),
                         toughness_count: toughness_count.clone(),
                         keywords_granted: keywords_granted.clone(),
@@ -3639,12 +3654,9 @@ impl GameState {
                 target,
                 keywords_removed,
             } if target.is_placeholder() => {
-                if *target_index < chosen_targets.len() {
-                    let resolved_target = chosen_targets[*target_index];
-                    *target_index += 1;
-                    *last_resolved_target = Some(resolved_target);
+                if let Some(t) = consume_next_target(chosen_targets, target_index, last_resolved_target) {
                     Effect::DebuffCreature {
-                        target: resolved_target,
+                        target: t,
                         keywords_removed: keywords_removed.clone(),
                     }
                 } else {
@@ -3685,13 +3697,8 @@ impl GameState {
                 }
             }
             Effect::TapPermanent { target } if target.is_placeholder() => {
-                if *target_index < chosen_targets.len() {
-                    let resolved_target = chosen_targets[*target_index];
-                    *target_index += 1;
-                    *last_resolved_target = Some(resolved_target);
-                    Effect::TapPermanent {
-                        target: resolved_target,
-                    }
+                if let Some(t) = consume_next_target(chosen_targets, target_index, last_resolved_target) {
+                    Effect::TapPermanent { target: t }
                 } else {
                     effect.clone()
                 }
@@ -3704,12 +3711,9 @@ impl GameState {
                 source,
                 ..
             } if target.is_placeholder() => {
-                if *target_index < chosen_targets.len() {
-                    let resolved_target = chosen_targets[*target_index];
-                    *target_index += 1;
-                    *last_resolved_target = Some(resolved_target);
+                if let Some(t) = consume_next_target(chosen_targets, target_index, last_resolved_target) {
                     Effect::GainControl {
-                        target: resolved_target,
+                        target: t,
                         new_controller: card_owner,
                         untap: *untap,
                         duration: *duration,
@@ -3797,25 +3801,15 @@ impl GameState {
                 }
             }
             Effect::UntapPermanent { target } if target.is_placeholder() => {
-                if *target_index < chosen_targets.len() {
-                    let resolved_target = chosen_targets[*target_index];
-                    *target_index += 1;
-                    *last_resolved_target = Some(resolved_target);
-                    Effect::UntapPermanent {
-                        target: resolved_target,
-                    }
+                if let Some(t) = consume_next_target(chosen_targets, target_index, last_resolved_target) {
+                    Effect::UntapPermanent { target: t }
                 } else {
                     effect.clone()
                 }
             }
             Effect::TapOrUntapPermanent { target } if target.is_placeholder() => {
-                if *target_index < chosen_targets.len() {
-                    let resolved_target = chosen_targets[*target_index];
-                    *target_index += 1;
-                    *last_resolved_target = Some(resolved_target);
-                    Effect::TapOrUntapPermanent {
-                        target: resolved_target,
-                    }
+                if let Some(t) = consume_next_target(chosen_targets, target_index, last_resolved_target) {
+                    Effect::TapOrUntapPermanent { target: t }
                 } else {
                     effect.clone()
                 }
@@ -3825,11 +3819,9 @@ impl GameState {
                 spell_restriction,
                 remember_mana_value,
             } if target.is_placeholder() => {
-                if *target_index < chosen_targets.len() {
-                    let resolved_target = chosen_targets[*target_index];
-                    *target_index += 1;
+                if let Some(t) = consume_next_target(chosen_targets, target_index, last_resolved_target) {
                     Effect::CounterSpell {
-                        target: resolved_target,
+                        target: t,
                         spell_restriction: spell_restriction.clone(),
                         remember_mana_value: *remember_mana_value,
                     }
@@ -3838,14 +3830,11 @@ impl GameState {
                 }
             }
             Effect::ReturnPermanentToHand { target, restriction } if target.is_placeholder() => {
-                if *target_index < chosen_targets.len() {
-                    let resolved_target = chosen_targets[*target_index];
-                    *target_index += 1;
-                    // Record bounced permanent so chained SubAbilities (e.g. Teferi's draw)
-                    // can find it via last_resolved_target / Defined$ TargetedController.
-                    *last_resolved_target = Some(resolved_target);
+                // Record bounced permanent so chained SubAbilities (e.g. Teferi's draw)
+                // can find it via last_resolved_target / Defined$ TargetedController.
+                if let Some(t) = consume_next_target(chosen_targets, target_index, last_resolved_target) {
                     Effect::ReturnPermanentToHand {
-                        target: resolved_target,
+                        target: t,
                         restriction: restriction.clone(),
                     }
                 } else {
@@ -3853,17 +3842,12 @@ impl GameState {
                 }
             }
             Effect::ExilePermanent { target } if target.is_placeholder() => {
-                if *target_index < chosen_targets.len() {
-                    let resolved_target = chosen_targets[*target_index];
-                    *target_index += 1;
-                    // Record the exiled permanent so a chained SubAbility that
-                    // refers to it (e.g. Swords to Plowshares' `Defined$
-                    // TargetedController` GainLife) can resolve against it via
-                    // last-known information.
-                    *last_resolved_target = Some(resolved_target);
-                    Effect::ExilePermanent {
-                        target: resolved_target,
-                    }
+                // Record the exiled permanent so a chained SubAbility that
+                // refers to it (e.g. Swords to Plowshares' `Defined$
+                // TargetedController` GainLife) can resolve against it via
+                // last-known information.
+                if let Some(t) = consume_next_target(chosen_targets, target_index, last_resolved_target) {
+                    Effect::ExilePermanent { target: t }
                 } else {
                     effect.clone()
                 }
@@ -3892,12 +3876,9 @@ impl GameState {
                 type_filter,
                 max_mana_value,
             } if target.is_placeholder() => {
-                if *target_index < chosen_targets.len() {
-                    let resolved_target = chosen_targets[*target_index];
-                    *target_index += 1;
-                    *last_resolved_target = Some(resolved_target);
+                if let Some(t) = consume_next_target(chosen_targets, target_index, last_resolved_target) {
                     Effect::PlayFromGraveyard {
-                        target: resolved_target,
+                        target: t,
                         exile_on_resolution: *exile_on_resolution,
                         type_filter: type_filter.clone(),
                         max_mana_value: *max_mana_value,
@@ -4181,11 +4162,9 @@ impl GameState {
             },
             // Earthbend: Target land becomes 0/0 creature with haste
             Effect::Earthbend { target, num_counters } if target.is_placeholder() => {
-                if *target_index < chosen_targets.len() {
-                    let resolved_target = chosen_targets[*target_index];
-                    *target_index += 1;
+                if let Some(t) = consume_next_target(chosen_targets, target_index, last_resolved_target) {
                     Effect::Earthbend {
-                        target: resolved_target,
+                        target: t,
                         num_counters: *num_counters,
                     }
                 } else {
@@ -4194,12 +4173,8 @@ impl GameState {
             }
             // Airbend: Exile target, owner may cast for {2}
             Effect::Airbend { target } if target.is_placeholder() => {
-                if *target_index < chosen_targets.len() {
-                    let resolved_target = chosen_targets[*target_index];
-                    *target_index += 1;
-                    Effect::Airbend {
-                        target: resolved_target,
-                    }
+                if let Some(t) = consume_next_target(chosen_targets, target_index, last_resolved_target) {
+                    Effect::Airbend { target: t }
                 } else {
                     effect.clone()
                 }
@@ -4210,11 +4185,9 @@ impl GameState {
                 counter_type,
                 amount,
             } if target.is_placeholder() => {
-                if *target_index < chosen_targets.len() {
-                    let resolved_target = chosen_targets[*target_index];
-                    *target_index += 1;
+                if let Some(t) = consume_next_target(chosen_targets, target_index, last_resolved_target) {
                     Effect::RemoveCounter {
-                        target: resolved_target,
+                        target: t,
                         counter_type: *counter_type,
                         amount: *amount,
                     }
@@ -4228,11 +4201,9 @@ impl GameState {
                 counter_type,
                 amount,
             } if target.is_placeholder() => {
-                if *target_index < chosen_targets.len() {
-                    let resolved_target = chosen_targets[*target_index];
-                    *target_index += 1;
+                if let Some(t) = consume_next_target(chosen_targets, target_index, last_resolved_target) {
                     Effect::PutCounter {
-                        target: resolved_target,
+                        target: t,
                         counter_type: *counter_type,
                         amount: *amount,
                     }
@@ -4245,11 +4216,9 @@ impl GameState {
                 counter_type,
                 multiplier,
             } if target.is_placeholder() => {
-                if *target_index < chosen_targets.len() {
-                    let resolved_target = chosen_targets[*target_index];
-                    *target_index += 1;
+                if let Some(t) = consume_next_target(chosen_targets, target_index, last_resolved_target) {
                     Effect::MultiplyCounter {
-                        target: resolved_target,
+                        target: t,
                         counter_type: *counter_type,
                         multiplier: *multiplier,
                     }
@@ -4268,11 +4237,9 @@ impl GameState {
                 num_copies,
                 restriction,
             } if target.is_placeholder() => {
-                if *target_index < chosen_targets.len() {
-                    let resolved_target = chosen_targets[*target_index];
-                    *target_index += 1;
+                if let Some(t) = consume_next_target(chosen_targets, target_index, last_resolved_target) {
                     Effect::CopyPermanent {
-                        target: resolved_target,
+                        target: t,
                         controller: if controller.is_placeholder() {
                             card_owner
                         } else {
@@ -4298,12 +4265,9 @@ impl GameState {
                 effect: delayed_effect,
                 expiry,
             } if tracked_card.is_placeholder() => {
-                if *target_index < chosen_targets.len() {
-                    let resolved_target = chosen_targets[*target_index];
-                    *target_index += 1;
-                    *last_resolved_target = Some(resolved_target);
+                if let Some(t) = consume_next_target(chosen_targets, target_index, last_resolved_target) {
                     Effect::CreateDelayedTrigger {
-                        tracked_card: resolved_target,
+                        tracked_card: t,
                         condition: condition.clone(),
                         effect: delayed_effect.clone(),
                         expiry: expiry.clone(),
