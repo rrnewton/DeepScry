@@ -2325,7 +2325,7 @@ impl GameState {
         Ok(breakdown.toughness())
     }
 
-    // TODO: Implement get_valid_targets function that filters game entities to find valid targets
+    // TODO(mtg-n36vb): Implement get_valid_targets function that filters game entities to find valid targets
     // based on effect type (damage, destroy, tap, etc.), targeting restrictions (hexproof,
     // shroud, protection), controller ownership, and zone requirements.
 
@@ -3116,7 +3116,7 @@ impl GameState {
         // Step 3: Choose targets
         let chosen_targets = choose_targets_fn(self, card_id);
         let num_targets = chosen_targets.len();
-        // TODO: Store targets on the spell for resolution
+        // TODO(mtg-n36vb): Store targets on the spell for resolution
         // For now, we'll use them to update effects immediately (simplified)
 
         // Step 4: Divide effects
@@ -6055,9 +6055,9 @@ impl GameState {
     /// - The cost cannot be paid (auto-decline)
     ///
     /// If the cost CAN be paid, the trigger fires (AI auto-accepts for now).
-    /// TODO: Add player choice for optional triggers when the cost is payable.
+    /// TODO(mtg-144): Add player choice for optional triggers when the cost is payable.
     ///
-    /// TODO: In full MTG rules, triggers should go on the stack and wait for priority,
+    /// TODO(mtg-3): In full MTG rules, triggers should go on the stack and wait for priority,
     /// but for simplicity we're executing them immediately.
     ///
     /// Note: Wildcard match is intentional - only specific effects need placeholder
@@ -6305,7 +6305,7 @@ impl GameState {
                                 }
                             }
                         }
-                        // TODO: Check other cost types (mana, life, etc.)
+                        // TODO(mtg-32f9h): Check other cost types (mana, life, etc.)
                     }
                 }
 
@@ -8582,7 +8582,7 @@ impl GameState {
                             }
                         }
                     }
-                    // TODO: Check other cost types (mana, life, etc.)
+                    // TODO(mtg-32f9h): Check other cost types (mana, life, etc.)
                 }
             }
 

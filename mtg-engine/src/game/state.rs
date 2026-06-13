@@ -3087,7 +3087,7 @@ impl GameState {
         for ((_controller, name), cards) in legendary_groups {
             if cards.len() > 1 {
                 // Keep the first one (index 0), sacrifice the rest
-                // TODO: Let player choose which one to keep
+                // TODO(mtg-144): Let player choose which one to keep (legend rule choice)
                 let kept_card = cards[0];
                 for &card_id in &cards[1..] {
                     if let Some(card) = self.cards.try_get(card_id) {
@@ -4799,7 +4799,7 @@ impl GameState {
             }
 
             DelayedEffect::CastWithoutPaying => {
-                // TODO: Implement for Suspend mechanic
+                // TODO(mtg-slric): Implement for Suspend mechanic
                 // This requires putting the spell on the stack without paying costs
                 log::warn!(target: "delayed_triggers", "CastWithoutPaying not yet implemented");
             }

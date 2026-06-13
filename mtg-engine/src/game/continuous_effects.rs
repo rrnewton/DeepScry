@@ -250,7 +250,7 @@ impl GameState {
         let modifypt_counters = self.calculate_modifypt_counters(creature_id)?;
 
         // Layer 7d (CR 613.4d): Switch P/T
-        // TODO: Implement for effects like "switch power and toughness"
+        // TODO(mtg-147): Implement for effects like "switch power and toughness"
         let is_switched = false;
 
         Ok(PTBreakdown {

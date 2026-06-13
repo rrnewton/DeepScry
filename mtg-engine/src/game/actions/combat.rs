@@ -297,7 +297,7 @@ impl GameState {
         // MTG rule: normally a creature can only block one attacker
         // (unless it has an ability that allows it to block multiple)
         if attackers.len() > 1 {
-            // TODO: Check for abilities that allow blocking multiple
+            // TODO(mtg-ta6sm): Check for abilities that allow blocking multiple
             return Err(MtgError::InvalidAction(
                 "Creature can only block one attacker".to_string(),
             ));

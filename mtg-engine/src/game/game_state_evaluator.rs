@@ -89,9 +89,9 @@ impl GameStateEvaluator {
     ///
     /// Reference: GameStateEvaluator.getScoreForGameState() (lines 86-100)
     pub fn evaluate_game_state(&self, view: &GameStateView, ai_player: PlayerId) -> Score {
-        // TODO: Check if game is over and return WIN/LOSS
+        // TODO(mtg-47): Check if game is over and return WIN/LOSS
 
-        // TODO: Simulate upcoming combat to see if it's lethal
+        // TODO(mtg-47): Simulate upcoming combat to see if it's lethal
         // For now, just evaluate the current board state
 
         self.evaluate_game_state_impl(view, ai_player)

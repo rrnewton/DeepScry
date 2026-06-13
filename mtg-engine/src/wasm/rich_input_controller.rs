@@ -466,7 +466,7 @@ impl PlayerController for WasmRichInputController {
         _can_repeat: bool,
     ) -> ChoiceResult<SmallVec<[usize; 4]>> {
         // WASM rich input controller: default to first N modes
-        // TODO: Add command syntax support for mode selection
+        // TODO(mtg-144): Add command syntax support for mode selection
         ChoiceResult::Ok((0..mode_count.min(mode_descriptions.len())).collect())
     }
 

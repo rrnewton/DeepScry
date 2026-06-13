@@ -644,7 +644,7 @@ impl PlayerController for ReplayController {
         view: &GameStateView,
         may_not_untap_permanents: &[CardId],
     ) -> ChoiceResult<SmallVec<[CardId; 8]>> {
-        // TODO: Could add ReplayChoice::NotUntap variant for replaying untap decisions
+        // TODO(mtg-144): Could add ReplayChoice::NotUntap variant for replaying untap decisions
         // For now, delegate to inner controller
         self.inner
             .choose_permanents_to_not_untap(view, may_not_untap_permanents)

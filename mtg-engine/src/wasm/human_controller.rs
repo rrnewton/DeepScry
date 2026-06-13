@@ -606,7 +606,7 @@ impl PlayerController for WasmHumanController {
         _may_not_untap_permanents: &[CardId],
     ) -> ChoiceResult<SmallVec<[CardId; 8]>> {
         // WASM human controller: auto-untap everything for now
-        // TODO: Implement interactive UI for this choice
+        // TODO(mtg-144): Implement interactive UI for this choice (untap choice)
         ChoiceResult::Ok(SmallVec::new())
     }
 

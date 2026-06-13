@@ -1880,7 +1880,7 @@ impl CardDefinition {
                         // "Trample:Planeswalker" means this creature's excess combat damage
                         // can be dealt to planeswalkers the defending player controls
                         keyword_set.insert(Keyword::Trample);
-                        // TODO: Add TramplePlaneswalker variant for runtime handling
+                        // TODO(mtg-3): Add TramplePlaneswalker variant for runtime handling
                     }
                     _ => {
                         // Unknown parameterized keyword - log warning
@@ -4436,7 +4436,7 @@ impl CardDefinition {
                 vec![effect]
             } else {
                 // Fallback to old parsing for unsupported API types
-                // TODO: Remove this once all API types are migrated
+                // TODO(mtg-3): Remove this once all API types are migrated
                 vec![]
             };
 
