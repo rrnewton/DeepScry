@@ -645,11 +645,7 @@ impl<'a> GameLoop<'a> {
         use crate::core::SpellAbility;
 
         // CR 702.88b: Epic — player can't cast spells for the rest of the game.
-        if self
-            .game
-            .try_get_player(player_id)
-            .map_or(false, |p| p.cant_cast_spells)
-        {
+        if self.game.try_get_player(player_id).is_some_and(|p| p.cant_cast_spells) {
             return;
         }
 

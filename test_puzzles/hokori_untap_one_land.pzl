@@ -1,0 +1,24 @@
+[metadata]
+Name:Hokori, Dust Drinker — each player untaps exactly one land
+Goal:Survive
+Turns:4
+Difficulty:Easy
+Description:Hokori, Dust Drinker: "Lands don't untap during their controllers' untap steps. At the beginning of each player's upkeep, that player untaps a land they control." The untap-step replacement stops ALL lands from untapping normally; the upkeep trigger gives each player back exactly one. P0 controls Hokori and 3 tapped Plains; P1 controls 2 tapped Forests. The puzzle starts at P0's upkeep (turn 2): the trigger fires for P0 (ActivePlayer = P0) and untaps exactly one land (UntapOne). On the next turn P1's upkeep fires and untaps exactly one of P1's lands. After both triggers fire, P0 still has 2 tapped Plains (not all 3 untapped), and P1 still has 1 tapped Forest.
+
+[state]
+turn=2
+activeplayer=p0
+activephase=Upkeep
+p0life=20
+p0hand=
+p0library=Plains; Plains; Plains; Plains; Plains
+p0graveyard=
+p0battlefield=Hokori, Dust Drinker; Plains|Tapped; Plains|Tapped; Plains|Tapped
+p0exile=
+
+p1life=20
+p1hand=
+p1library=Forest; Forest; Forest; Forest; Forest
+p1graveyard=
+p1battlefield=Forest|Tapped; Forest|Tapped
+p1exile=

@@ -1889,6 +1889,11 @@ impl GameState {
                                 .iter()
                                 .any(|s| self.selector_applies_to_creature(s, creature_id, source_id))
                         }
+                        // Land-wide selectors (Hokori: all lands don't untap; etc.)
+                        AffectedSelector::AllLands => creature.is_land(),
+                        AffectedSelector::LandsYouControl => {
+                            creature.is_land() && creature.controller == source.controller
+                        }
                         _ => false, // Other selectors not yet supported for keywords
                     };
 

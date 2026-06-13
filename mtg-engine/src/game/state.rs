@@ -5124,7 +5124,6 @@ impl GameState {
                     | crate::core::Effect::RemoveCounter { .. }
                     | crate::core::Effect::ExilePermanent { .. }
                     | crate::core::Effect::ExileIfWouldDieThisTurn { .. }
-                    | crate::core::Effect::SearchLibrary { .. }
                     | crate::core::Effect::AttachEquipment { .. }
                     | crate::core::Effect::CreateToken { .. }
                     | crate::core::Effect::CreateTokenWithStoredPt { .. }
