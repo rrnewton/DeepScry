@@ -305,10 +305,19 @@
             flex-direction: column;
             gap: 4px;
             grid-row: 1 / 3;
+            /* Constrain to the grid cell so internal flex math works.
+               Without min-height:0 the column can overflow the cell and
+               the graveyard pane collapses to nothing. */
+            min-height: 0;
+            overflow: hidden;
         }
-        #pane-card-details { flex: 2; }
+        #pane-card-details { flex: 2; min-height: 0; }
         #pane-hand { flex: 1; min-height: 0; }
-        #pane-graveyard { flex: 1; min-height: 0; }
+        /* Graveyard: flex weight, plus a real floor so it stays visible even
+           when applySharedLayout() hasn't explicitly sized it. The floor is
+           enough for the header + a few card rows.  Tuned via --grave-min-h. */
+        :root { --grave-min-h: 90px; }
+        #pane-graveyard { flex: 1; min-height: var(--grave-min-h); }
 
         /* Status bar */
         .status-bar {
@@ -731,36 +740,40 @@
         #pane-hand { display: flex; flex-direction: column; }
         #pane-hand #hand-body { flex: 1 1 auto; overflow-y: auto; }
 
-        /* ── Visual hand mode ─────────────────────────────────────────────────
-           Stacked/fanned card layout for #hand-body when .visual-hand is set.
-           Tunable CSS custom properties (adjust these first):
-             --hand-card-w        : width of each card image tile
-             --hand-card-h        : height of each card image tile
-             --hand-overlap-pct   : what fraction of the card width is VISIBLE
-                                    (i.e. 1 - overlap). 0.35 = 35% showing,
-                                    65% hidden under the next card.
-             --hand-lift-px       : how far a hovered card rises (translateY).
-             --hand-title-h       : height of the title strip kept visible on
-                                    each card; determines min spacing when the
-                                    pane is too narrow for the full overlap pct.
+        /* ── Visual hand mode — DIAGONAL CASCADE stack ───────────────────────
+           Each card is offset +dx RIGHT and +dy DOWN from the previous so the
+           stack looks like physical cards held in a hand.  The first card
+           (index 0) is at the bottom-left; the last card (the "top" of the
+           stack) is at the top-right and is FULLY visible.
+
+           Tunable config object in JS: HAND_CASCADE (see renderHandVisual).
+           CSS custom properties below are used for hover/transition behaviour
+           only — dx/dy are computed in JS from pane dimensions + card count.
+
+             --hand-card-w     : card width (px).  Bigger = more legible titles.
+             --hand-card-h     : card height (px).
+             --hand-lift-px    : how far the hovered card rises (translateY).
+             --hand-title-h    : visible title strip height (px); every card's
+                                 title must remain above the pane bottom edge.
+             --hand-title-fs   : title font-size (px).
         ─────────────────────────────────────────────────────────────────────── */
         :root {
-            --hand-card-w:      90px;
-            --hand-card-h:      126px;   /* ~poker-card aspect ratio */
-            --hand-overlap-pct: 0.38;    /* fraction of card width that shows */
-            --hand-lift-px:     22px;    /* hover lift amount */
-            --hand-title-h:     18px;    /* title strip height always exposed */
+            --hand-card-w:    140px;   /* wider cards → bigger, more legible titles */
+            --hand-card-h:    196px;   /* ~poker-card aspect ratio at the new size */
+            --hand-lift-px:   28px;    /* hover lift amount */
+            --hand-title-h:   22px;    /* title strip height always exposed */
+            --hand-title-fs:  11px;    /* title font-size */
         }
 
-        /* The body becomes a single horizontal strip when in visual mode */
+        /* The body is a 2-D cascade container in visual mode.
+           overflow: hidden clips cards to the pane; individual selected/hovered
+           cards use z-index to rise above siblings but not outside the pane. */
         #hand-body.visual-hand {
-            overflow: visible;   /* let raised cards show above the pane edge */
-            overflow-x: hidden;
-            padding: 6px 4px 4px;
-            /* We position each card absolutely; the container height is the
-               card height + a little room for the lift */
+            overflow: hidden;
+            padding: 4px;
             position: relative;
-            min-height: calc(var(--hand-card-h) + var(--hand-lift-px) + 8px);
+            /* Height is driven by the pane flex; min-height is just a safety floor. */
+            min-height: calc(var(--hand-card-h) + 16px);
         }
 
         /* Each card tile in visual mode */
@@ -768,35 +781,33 @@
             position: absolute;
             width: var(--hand-card-w);
             height: var(--hand-card-h);
-            border-radius: 5px;
+            border-radius: 6px;
             border: 1px solid #2a3a60;
             background: #161e30;
             cursor: pointer;
             overflow: hidden;
-            /* card renders top↗ of its container, title strip at the top */
             display: flex;
             flex-direction: column;
             transition: transform 0.15s ease, box-shadow 0.15s ease, z-index 0s;
-            /* default z-index comes from the inline style (index order) */
+            /* default z-index comes from the inline style (slot index) */
         }
         .hand-card-visual:hover {
             transform: translateY(calc(-1 * var(--hand-lift-px)));
-            box-shadow: 0 8px 20px rgba(0, 0, 0, 0.6);
+            box-shadow: 0 10px 24px rgba(0, 0, 0, 0.7);
             z-index: 200 !important;
         }
         .hand-card-visual.selected-hand {
             border-color: #ffd700;
-            box-shadow: 0 0 8px rgba(255, 215, 0, 0.4);
+            box-shadow: 0 0 10px rgba(255, 215, 0, 0.5);
         }
         .hand-card-visual.valid-choice {
             border-color: #50fa7b;
-            box-shadow: 0 0 6px rgba(80, 250, 123, 0.35);
+            box-shadow: 0 0 8px rgba(80, 250, 123, 0.40);
         }
         .hand-card-visual.selected-hand:hover,
         .hand-card-visual.valid-choice:hover {
-            /* keep existing selection/valid glow on hover, add lift shadow */
-            box-shadow: 0 8px 20px rgba(0, 0, 0, 0.6),
-                        0 0 8px rgba(255, 215, 0, 0.3);
+            box-shadow: 0 10px 24px rgba(0, 0, 0, 0.7),
+                        0 0 10px rgba(255, 215, 0, 0.35);
             z-index: 200 !important;
         }
 
@@ -805,31 +816,33 @@
             width: 100%;
             height: 100%;
             object-fit: cover;
-            border-radius: 4px;
+            border-radius: 5px;
             display: block;
             position: absolute;
             top: 0; left: 0;
         }
 
-        /* Title overlay strip — always visible at the top of the card tile.
-           Semi-transparent so the card art shows through a little. */
+        /* Title overlay strip — always at the TOP of every card tile so that
+           even deeply buried cards have their title peeking out.
+           Selected card gets yellow; top-of-stack card is fully visible anyway. */
         .hand-card-visual .hcv-title {
-            position: relative;   /* above the absolutely-placed img */
+            position: relative;    /* above the absolutely-placed img */
             z-index: 1;
             width: 100%;
-            background: rgba(16, 20, 40, 0.82);
-            color: #e0e0e0;
-            font-size: 9px;
-            line-height: 1.2;
-            padding: 2px 4px;
+            background: rgba(14, 18, 36, 0.88);
+            color: #d8d8d8;
+            font-size: var(--hand-title-fs);
+            font-weight: 600;
+            line-height: 1.25;
+            padding: 3px 5px;
             white-space: nowrap;
             overflow: hidden;
             text-overflow: ellipsis;
             height: var(--hand-title-h);
             flex-shrink: 0;
         }
-        .hand-card-visual .hcv-title.valid-text { color: #50fa7b; }
-        .hand-card-visual .hcv-title.selected-text { color: #ffd700; }
+        .hand-card-visual .hcv-title.valid-text   { color: #50fa7b; }
+        .hand-card-visual .hcv-title.selected-text { color: #ffd700; font-weight: 700; }
 
         /* No-image fallback: show card name centered in a colored tile */
         .hand-card-visual.no-image {
@@ -843,11 +856,11 @@
             background: none;
             text-align: center;
             color: #c0c0c0;
-            font-size: 10px;
+            font-size: calc(var(--hand-title-fs) + 1px);
             white-space: normal;
             overflow: visible;
             height: auto;
-            padding: 4px;
+            padding: 6px;
         }
 
         /* Toggle button in the hand pane header */
@@ -2395,11 +2408,30 @@
             if (logPane) logPane.style.flex = `${logPct} 0 0`;
             if (actionsPane) actionsPane.style.flex = `${actionsPct} 0 0`;
 
-            // Right column: card details + hand (50/50)
-            const detailsPane = document.getElementById('pane-card-details');
-            const handPane = document.getElementById('pane-hand');
-            if (detailsPane && panes.card_details) detailsPane.style.flex = `${panes.card_details.h_pct} 0 0`;
-            if (handPane && panes.hand) handPane.style.flex = `${panes.hand.h_pct} 0 0`;
+            // Right column: card details + hand + graveyard.
+            // Rust only knows about card_details and hand; graveyard is a new JS
+            // pane that Rust hasn't assigned a slice to yet.  We share the Rust
+            // h_pct values but scale them down so the graveyard always gets at
+            // least GRAVE_RESERVE_PCT of the column height.
+            const GRAVE_RESERVE_PCT = 20; // % of right column always reserved for graveyard
+            const rawDetails = (panes.card_details ? panes.card_details.h_pct : 50);
+            const rawHand    = (panes.hand          ? panes.hand.h_pct          : 50);
+            const rustTotal  = rawDetails + rawHand;
+            // Scale Rust percentages so they fit in (100 - GRAVE_RESERVE_PCT)%.
+            const scale = (rustTotal > 0) ? (100 - GRAVE_RESERVE_PCT) / rustTotal : 1;
+            const scaledDetails = rawDetails * scale;
+            const scaledHand    = rawHand    * scale;
+            const scaledGrave   = 100 - scaledDetails - scaledHand;
+
+            const detailsPane  = document.getElementById('pane-card-details');
+            const handPane     = document.getElementById('pane-hand');
+            const graveyardPane = document.getElementById('pane-graveyard');
+            if (detailsPane)   detailsPane.style.flex  = `${scaledDetails} 0 0`;
+            if (handPane)      handPane.style.flex      = `${scaledHand} 0 0`;
+            if (graveyardPane) graveyardPane.style.flex = `${scaledGrave} 1 0`;
+            // Remove the CSS min-height floor once Rust has sized it properly —
+            // the flex value does the job; the CSS var is a fallback for the
+            // window-load period before the first applySharedLayout() call.
         }
 
         // Re-apply layout on window resize
@@ -2888,14 +2920,27 @@
         // NODE REUSE: card tiles are kept in a per-container pool keyed by
         // card_id (same pattern as renderBattlefield), so unchanged cards do not
         // recreate their <img> and Safari does not re-decode/flicker them.
+        // ── Diagonal-cascade hand config ───────────────────────────────────
+        // Tune dx/dy here; they are also recomputed adaptively in
+        // renderHandVisual() to keep all titles visible.
+        const HAND_CASCADE = {
+            // Maximum dx/dy before the adaptive clamp kicks in (px).
+            // Raise these to spread cards further apart; lower to compact them.
+            maxDx: 36,   // rightward step per card
+            maxDy: 28,   // downward step per card
+            padX:   6,   // left/right padding inside the pane
+            padY:   4,   // top/bottom padding inside the pane
+        };
+        // ───────────────────────────────────────────────────────────────────
+
         function renderHandVisual(cards, container) {
             container.classList.add('visual-hand');
 
             // Read the CSS custom properties (hand-tuning knobs).
             const cs = getComputedStyle(document.documentElement);
-            const cardW  = parseFloat(cs.getPropertyValue('--hand-card-w'))  || 90;
-            const cardH  = parseFloat(cs.getPropertyValue('--hand-card-h'))  || 126;
-            const titleH = parseFloat(cs.getPropertyValue('--hand-title-h')) || 18;
+            const cardW  = parseFloat(cs.getPropertyValue('--hand-card-w'))  || 140;
+            const cardH  = parseFloat(cs.getPropertyValue('--hand-card-h'))  || 196;
+            const titleH = parseFloat(cs.getPropertyValue('--hand-title-h')) || 22;
 
             // Image height to request from the cascade (~card height in px).
             const imgH = Math.round(cardH);
@@ -2909,22 +2954,47 @@
                 for (const el of pool.values()) el.remove();
                 pool.clear();
                 // Remove any lingering visual-hand content and show placeholder.
-                container.innerHTML = '<div style="color:#444; font-size:12px;">(empty)</div>';
+                container.innerHTML = '<div style="color:#444; font-size:12px; padding:8px;">(empty hand)</div>';
                 return;
             }
 
-            // Compute adaptive step between card left edges.
-            // Available width for the fan (container minus one card width
-            // so the rightmost card fits without clipping).
-            const paneW = container.clientWidth || (cardW * 2);
-            const fanWidth = Math.max(paneW - cardW - 8, cardW * 0.3);
-            const maxStep = fanWidth / Math.max(cards.length - 1, 1);
-            // Each step must expose at least the title strip width.
-            const minStep = Math.min(titleH + 2, cardW * 0.15);
-            const step = Math.max(minStep, Math.min(maxStep, cardW));
+            const n = cards.length;
+
+            // ── Adaptive dx/dy ───────────────────────────────────────────────
+            // Measure the container.  Fall back to estimated size on first call
+            // before the browser has laid out (clientWidth/Height may be 0).
+            const paneW = container.clientWidth  || (cardW + (n - 1) * HAND_CASCADE.maxDx + HAND_CASCADE.padX * 2);
+            const paneH = container.clientHeight || (cardH + (n - 1) * HAND_CASCADE.maxDy + HAND_CASCADE.padY * 2);
+
+            const innerW = Math.max(paneW - HAND_CASCADE.padX * 2, cardW);
+            const innerH = Math.max(paneH - HAND_CASCADE.padY * 2, cardH);
+
+            // dx: the top card's right edge must not cross the pane right boundary.
+            // cascade occupies: cardW + (n-1)*dx ≤ innerW
+            const maxDxFit = (n > 1) ? (innerW - cardW) / (n - 1) : HAND_CASCADE.maxDx;
+            const dx = Math.max(2, Math.min(maxDxFit, HAND_CASCADE.maxDx));
+
+            // dy: every card's TITLE strip must remain visible (title at each
+            // card's top must be above pane bottom).
+            // The bottom-most card (index 0) is at top=0; the top card (index n-1)
+            // is at top=(n-1)*dy.  The title of the bottom-most card (index 0)
+            // is at top=0 — always fine.  We need:
+            //   (n-1)*dy + titleH ≤ innerH   (title of the last card stays inside)
+            // AND
+            //   (n-1)*dy + cardH  ≤ innerH   (entire top card fits inside)
+            //   → binding: (n-1)*dy ≤ innerH - cardH
+            const maxDyFit = (n > 1) ? (innerH - cardH) / (n - 1) : HAND_CASCADE.maxDy;
+            const dy = Math.max(2, Math.min(maxDyFit, HAND_CASCADE.maxDy));
+
+            // Stack origin: we want the BOTTOM-LEFT card to start at the top-left
+            // of the pane, and the stack to grow right+down, so the TOP card
+            // (fully visible) lands at bottom-right.
+            // Layout: card i is at left = padX + i*dx,  top = padY + i*dy.
+            // (card 0 = bottom of stack at top-left; card n-1 = top of stack,
+            // fully visible at bottom-right and rendered at highest z-index.)
 
             // Reconcile pool: create/update tiles, then position them.
-            for (let i = 0; i < cards.length; i++) {
+            for (let i = 0; i < n; i++) {
                 const card = cards[i];
                 const id = card.card_id;
                 seen.add(id);
@@ -2970,7 +3040,7 @@
                     }
                 }
 
-                // Title strip — always at top.
+                // Title strip — always at top of the tile.
                 const titleCls = card.is_selected ? 'selected-text'
                     : card.is_valid_choice ? 'valid-text' : '';
                 const desiredTitle = `<div class="hcv-title${titleCls ? ' ' + titleCls : ''}" title="${escapeAttr(card.name)}">${escapeHtml(card.name)}</div>`;
@@ -2985,12 +3055,16 @@
                     else el.appendChild(newTitle);
                 }
 
-                // Absolute positioning: left edge + z-index by slot.
-                const left = Math.round(4 + i * step);
-                if (el.style.left !== left + 'px') el.style.left = left + 'px';
-                if (el.style.top  !== '0px')       el.style.top  = '0px';
-                const zIdx = String(10 + i);
-                if (el.style.zIndex !== zIdx) el.style.zIndex = zIdx;
+                // Diagonal cascade position: lower cards (index 0) at top-left,
+                // higher-index cards step right+down, so the top card is at
+                // bottom-right and fully visible.
+                const left = Math.round(HAND_CASCADE.padX + i * dx);
+                const top  = Math.round(HAND_CASCADE.padY + i * dy);
+                const zIdx = String(10 + i);  // top card has highest z-index
+
+                if (el.style.left   !== left  + 'px') el.style.left   = left  + 'px';
+                if (el.style.top    !== top   + 'px') el.style.top    = top   + 'px';
+                if (el.style.zIndex !== zIdx)          el.style.zIndex = zIdx;
 
                 // Width/height in case CSS vars changed.
                 if (el.style.width  !== cardW + 'px') el.style.width  = cardW + 'px';
