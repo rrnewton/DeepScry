@@ -169,6 +169,7 @@ jobs:
       matrix:
         include:
           - { name: unit,          args: "--group unit",      nextest: true, bin: true, arch: true }
+          - { name: puzzle,        args: "--group puzzle",    nextest: true, bin: true, arch: true }
           - { name: agentplay,     args: "--group agentplay", python: true, bin: true }
           - { name: determ,        args: "--group determ",    bin: true }
           - { name: wasm,          args: "--group wasm",      browser: true, bin: true, wasm: true, pyequiv: true }

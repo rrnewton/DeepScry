@@ -1,7 +1,7 @@
 # MTG Forge Rust - Development Makefile
 #
 # Quick reference for common development tasks
-.PHONY: help build test validate validate-desync-canary fuzz-determinism fuzz-equivalence fuzz-network fuzz-native-wasm fuzz-snapshot fuzz-expedition clean run check fmt fmt-check clippy clippy-wasm doc docs examples full-benchmark bench-snapshot bench-logging coverage coverage-full validate-coverage-step profile callgrindprofile perfprofile heapprofile dhatprofile count setup-claude claude-github claude-beads happy code-dups beads-check bench wasm wasm-export wasm-serve wasm-dev play-web-local-dev wasm-test wasm-test-fancy wasm-test-fancy-dev wasm-test-human wasm-test-game-gui-rebuild wasm-test-game-gui-playtest wasm-e2e wasm-e2e-dev wasm-e2e-network wasm-e2e-network-human play-web play-web-pvp play-web-local build-network
+.PHONY: help build test puzzle-bulk-check validate validate-desync-canary fuzz-determinism fuzz-equivalence fuzz-network fuzz-native-wasm fuzz-snapshot fuzz-expedition clean run check fmt fmt-check clippy clippy-wasm doc docs examples full-benchmark bench-snapshot bench-logging coverage coverage-full validate-coverage-step profile callgrindprofile perfprofile heapprofile dhatprofile count setup-claude claude-github claude-beads happy code-dups beads-check bench wasm wasm-export wasm-serve wasm-dev play-web-local-dev wasm-test wasm-test-fancy wasm-test-fancy-dev wasm-test-human wasm-test-game-gui-rebuild wasm-test-game-gui-playtest wasm-e2e wasm-e2e-dev wasm-e2e-network wasm-e2e-network-human play-web play-web-pvp play-web-local build-network
 
 # Configuration variables
 # NODE: Node.js binary (Playwright requires Node 18+)
@@ -95,9 +95,27 @@ test:
 	@echo "=== Running unit tests ==="
 	@if [ -n "$(NEXTEST_ARCHIVE)" ]; then \
 		echo "=== Reusing prebuilt nextest archive: $(NEXTEST_ARCHIVE) ==="; \
-		cargo nextest run --archive-file "$(NEXTEST_ARCHIVE)" --workspace-remap .; \
+		cargo nextest run --archive-file "$(NEXTEST_ARCHIVE)" --workspace-remap . \
+			--filter-expr 'not test(bulk_puzzle_check)'; \
 	else \
-		cargo nextest run --features network; \
+		cargo nextest run --features network \
+			--filter-expr 'not test(bulk_puzzle_check)'; \
+	fi
+
+# Bulk puzzle runner: run ALL .pzl files N-way parallel, evaluate [assertions],
+# write JUnit XML to validate_logs/puzzle_bulk_runner.xml.
+# Behind puzzle-assert feature (included by network).  Runs as its own
+# validate step (puzzle.bulk-check) so it is visible in the summary and can
+# be sharded independently in CI.  Tracking issue: mtg-0oopj
+puzzle-bulk-check:
+	@echo "=== Running bulk puzzle check (all .pzl files) ==="
+	@if [ -n "$(NEXTEST_ARCHIVE)" ]; then \
+		echo "=== Reusing prebuilt nextest archive: $(NEXTEST_ARCHIVE) ==="; \
+		cargo nextest run --archive-file "$(NEXTEST_ARCHIVE)" --workspace-remap . \
+			--test puzzle_bulk_runner --test-threads 1; \
+	else \
+		cargo nextest run --features network \
+			--test puzzle_bulk_runner --test-threads 1; \
 	fi
 
 # Fast compilation check (no codegen)
