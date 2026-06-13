@@ -797,7 +797,7 @@ pub fn resolve_effect_placeholder(effect: &Effect, ctx: &TriggerContext) -> Effe
             spell_restriction,
             remember_mana_value,
         } if target.is_triggered_spell() => Effect::CounterSpell {
-            target: ctx.cast_spell_id.unwrap_or(CardId::new(0)),
+            target: ctx.cast_spell_id.unwrap_or_else(|| CardId::new(0)),
             spell_restriction: spell_restriction.clone(),
             remember_mana_value: *remember_mana_value,
         },
