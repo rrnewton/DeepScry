@@ -1,0 +1,29 @@
+
+  >>> Turn 3 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Forest (13)
+<Choice> Player 2 chose 'p' (pass priority from 2 available actions)
+<Choice> Player 2 chose 0 - play Forest
+Forest (10) enters the battlefield tapped
+Player 2 plays Forest (10)
+
+  >>> Turn 4 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Plains (8)
+<Choice> Player 1 chose 0 - play Plains
+Player 1 plays Plains (8)
+
+  >>> Turn 5 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Forest (12)
+<Choice> Player 2 chose 'p' (pass priority from 2 available actions)
+<Choice> Player 2 chose 0 - play Forest
+Forest (12) enters the battlefield tapped
+Player 2 plays Forest (12)
+
+  >>> Turn 6 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Plains (7)
+<Choice> Player 1 chose 0 - play Plains
+Player 1 plays Plains (7)
+
+  >>> Turn 7 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Forest (11)
+<Choice> Player 2 chose 'p' (pass priority from 2 available actions)
+Player 2 has lost the game (decked). Player 1 wins!

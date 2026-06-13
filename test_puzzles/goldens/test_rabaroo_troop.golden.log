@@ -1,0 +1,28 @@
+<Choice> Player 1 chose 0 - play Plains
+Rabaroo Troop gains Flying
+Player 1 gains 1 life (life: 21)
+Player 1 plays Plains (3)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Rabaroo Troop (4) (3/5) as attacker
+Rabaroo Troop (4) deals 3 damage to Player 2 (life: 17)
+
+  >>> Turn 4 - Player 2 17 (Player 1 21) <<<<
+Player 2 draws Forest (13)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (13)
+
+  >>> Turn 5 - Player 1 21 (Player 2 17) <<<<
+Player 1 draws Island (9)
+<Choice> Player 1 chose 0 - play Island
+Rabaroo Troop gains Flying
+Player 1 gains 1 life (life: 22)
+Player 1 plays Island (9)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Rabaroo Troop (4) (3/5) as attacker
+Rabaroo Troop (4) deals 3 damage to Player 2 (life: 14)
+
+  >>> Turn 6 - Player 2 14 (Player 1 22) <<<<
+Player 2 draws Forest (12)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (12)
+Player 2 has lost the game (decked). Player 1 wins!

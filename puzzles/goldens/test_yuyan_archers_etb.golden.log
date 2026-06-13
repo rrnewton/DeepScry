@@ -1,0 +1,63 @@
+  >>> Turn 1 - Player 1 20 (Player 2 20) <<<<
+<Choice> Player 1 chose 0 - cast Yuyan Archers
+Player 1 casts Yuyan Archers (3) (putting on stack)
+Tap Mountain for {R}
+Tap Mountain for {R}
+Yuyan Archers (3) resolves
+Player 1 draws Mountain (10)
+Yuyan Archers (3) enters the battlefield as a 3/1 creature
+<Choice> Player 1 chose 0 - play Mountain
+Player 1 plays Mountain (4)
+
+  >>> Turn 2 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Forest (16)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (16)
+
+  >>> Turn 3 - Player 1 20 (Player 2 20) <<<<
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+Player 1 draws Mountain (9)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 1 - play Mountain
+Player 1 plays Mountain (9)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Yuyan Archers (3) (3/1) as attacker
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+Yuyan Archers (3) deals 3 damage to Player 2 (life: 17)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+
+  >>> Turn 4 - Player 2 17 (Player 1 20) <<<<
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+Player 2 draws Forest (15)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (15)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+
+  >>> Turn 5 - Player 1 20 (Player 2 17) <<<<
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+Player 1 draws Mountain (8)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 1 - play Mountain
+Player 1 plays Mountain (8)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Yuyan Archers (3) (3/1) as attacker
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+Yuyan Archers (3) deals 3 damage to Player 2 (life: 14)
+Player 1 has lost the game (decked). Player 2 wins!

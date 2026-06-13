@@ -1,0 +1,40 @@
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=1)
+Player 1 declares Serra Angel (8) (4/4) as attacker
+<Choice> chose 1 blockers for 1 attackers
+Player 2 declares Giant Spider (16) as blocker for Serra Angel (8)
+Serra Angel (8) deals 4 damage to Giant Spider (16)
+Giant Spider (16) deals 2 damage to Serra Angel (8)
+Giant Spider (16) goes to graveyard
+Giant Spider (16) dies from combat damage
+
+  >>> Turn 6 - Player 2 16 (Player 1 20) <<<<
+Player 2 draws Forest (19)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (19)
+
+  >>> Turn 7 - Player 1 20 (Player 2 16) <<<<
+Player 1 draws Plains (11)
+<Choice> Player 1 chose 0 - play Plains
+Player 1 plays Plains (11)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Serra Angel (8) (4/4) as attacker
+Serra Angel (8) deals 4 damage to Player 2 (life: 12)
+
+  >>> Turn 8 - Player 2 12 (Player 1 20) <<<<
+Player 2 draws Forest (18)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (18)
+
+  >>> Turn 9 - Player 1 20 (Player 2 12) <<<<
+Player 1 draws Plains (10)
+<Choice> Player 1 chose 0 - play Plains
+Player 1 plays Plains (10)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Serra Angel (8) (4/4) as attacker
+Serra Angel (8) deals 4 damage to Player 2 (life: 8)
+
+  >>> Turn 10 - Player 2 8 (Player 1 20) <<<<
+Player 2 draws Forest (17)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (17)
+Player 2 has lost the game (decked). Player 1 wins!

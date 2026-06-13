@@ -1,0 +1,38 @@
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+
+  >>> Turn 3 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Plains (10)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (10)
+
+  >>> Turn 4 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Swamp (8)
+<Choice> Player 1 chose 0 - cast Icy Manipulator
+Player 1 casts Icy Manipulator (3) (putting on stack)
+Tap Swamp for {B}
+Tap Swamp for {B}
+Tap Sol Ring for mana
+Icy Manipulator (3) resolves
+<Choice> Player 1 chose 0 - play Swamp
+Player 1 plays Swamp (8)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+
+  >>> Turn 5 - Player 2 20 (Player 1 20) <<<<
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+Player 2 draws Plains (9)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (9)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+Player 2 has lost the game (decked). Player 1 wins!

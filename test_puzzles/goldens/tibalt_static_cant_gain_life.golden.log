@@ -1,0 +1,32 @@
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+
+  >>> Turn 3 - Player 2 5 (Player 1 20) <<<<
+Player 2 draws Plains (16)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (16)
+
+  >>> Turn 4 - Player 1 20 (Player 2 5) <<<<
+Player 1 draws Mountain (10)
+<Choice> Player 1 chose 1 - play Mountain
+Player 1 plays Mountain (10)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+
+  >>> Turn 5 - Player 2 5 (Player 1 20) <<<<
+Player 2 draws Plains (15)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (15)
+
+  >>> Turn 6 - Player 1 20 (Player 2 5) <<<<
+Player 1 draws Mountain (9)
+<Choice> Player 1 chose 1 - play Mountain
+Player 1 plays Mountain (9)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+
+  >>> Turn 7 - Player 2 5 (Player 1 20) <<<<
+Player 2 draws Plains (14)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (14)
+Player 2 has lost the game (decked). Player 1 wins!

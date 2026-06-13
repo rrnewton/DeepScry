@@ -1,0 +1,59 @@
+<Choice> Player 1 chose 1 - cast Llanowar Elves
+Player 1 casts Llanowar Elves (4) (putting on stack)
+Tap Forest for {G}
+Llanowar Elves (4) resolves
+Llanowar Elves (4) enters the battlefield as a 1/1 creature
+<Choice> Player 1 chose 0 - cast Grizzly Bears
+Player 1 casts Grizzly Bears (3) (putting on stack)
+Tap Forest for {G}
+Tap Forest for {G}
+Grizzly Bears (3) resolves
+Grizzly Bears (3) enters the battlefield as a 2/2 creature
+
+  >>> Turn 4 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Plains (21)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (21)
+
+  >>> Turn 5 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Forest (14)
+<Choice> Player 1 chose 0 - cast Craw Wurm
+Player 1 casts Craw Wurm (5) (putting on stack)
+Tap Forest for {G}
+Tap Forest for {G}
+Tap Forest for {G}
+Tap Forest for {G}
+Tap Forest for {G}
+Tap Forest for {G}
+Craw Wurm (5) resolves
+Craw Wurm (5) enters the battlefield as a 6/4 creature
+<Choice> Player 1 chose 0 - play Forest
+Player 1 plays Forest (14)
+<Choice> chose 2 attackers from 2 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Grizzly Bears (3) (2/2) as attacker
+Player 1 declares Llanowar Elves (4) (1/1) as attacker
+Grizzly Bears (3) deals 2 damage to Player 2 (life: 18)
+Llanowar Elves (4) deals 1 damage to Player 2 (life: 17)
+
+  >>> Turn 6 - Player 2 17 (Player 1 20) <<<<
+Player 2 draws Plains (20)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (20)
+
+  >>> Turn 7 - Player 1 20 (Player 2 17) <<<<
+Player 1 draws Forest (13)
+<Choice> Player 1 chose 0 - play Forest
+Player 1 plays Forest (13)
+<Choice> chose 3 attackers from 3 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Grizzly Bears (3) (2/2) as attacker
+Player 1 declares Llanowar Elves (4) (1/1) as attacker
+Player 1 declares Craw Wurm (5) (6/4) as attacker
+Grizzly Bears (3) deals 2 damage to Player 2 (life: 15)
+Llanowar Elves (4) deals 1 damage to Player 2 (life: 14)
+Craw Wurm (5) deals 6 damage to Player 2 (life: 8)
+
+  >>> Turn 8 - Player 2 8 (Player 1 20) <<<<
+Player 2 draws Plains (19)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (19)
+Player 2 has lost the game (decked). Player 1 wins!

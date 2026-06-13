@@ -1,0 +1,45 @@
+  >>> Turn 1 - Player 1 20 (Player 2 20) <<<<
+<Choice> Player 1 chose 0 - cast Swords to Plowshares
+Player 1 casts Swords to Plowshares (3) (putting on stack)
+  → targeting Hill Giant (9)
+Tap Plains for {W}
+Swords to Plowshares (3) resolves
+Hill Giant (9) is exiled
+Player 2 gains 3 life (life: 23)
+Swords to Plowshares (3) exiles Hill Giant (9)
+
+  >>> Turn 2 - Player 2 23 (Player 1 20) <<<<
+Player 2 draws Plains (13)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (13)
+
+  >>> Turn 3 - Player 1 20 (Player 2 23) <<<<
+Player 1 draws Plains (8)
+<Choice> Player 1 chose 0 - play Plains
+Player 1 plays Plains (8)
+
+  >>> Turn 4 - Player 2 23 (Player 1 20) <<<<
+Player 2 draws Plains (12)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (12)
+
+  >>> Turn 5 - Player 1 20 (Player 2 23) <<<<
+Player 1 draws Plains (7)
+<Choice> Player 1 chose 0 - play Plains
+Player 1 plays Plains (7)
+
+  >>> Turn 6 - Player 2 23 (Player 1 20) <<<<
+Player 2 draws Plains (11)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (11)
+
+  >>> Turn 7 - Player 1 20 (Player 2 23) <<<<
+Player 1 draws Plains (6)
+<Choice> Player 1 chose 0 - play Plains
+Player 1 plays Plains (6)
+
+  >>> Turn 8 - Player 2 23 (Player 1 20) <<<<
+Player 2 draws Plains (10)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (10)
+Player 2 has lost the game (decked). Player 1 wins!

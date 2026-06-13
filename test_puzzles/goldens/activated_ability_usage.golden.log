@@ -1,0 +1,48 @@
+<Choice> Player 1 chose 0 - activate Prodigal Sorcerer
+Prodigal Sorcerer activates ability: Prodigal Sorcerer deals 1 damage to any target.
+  -> targeting Llanowar Elves (15)
+Llanowar Elves (15) takes 1 damage (total: 1)
+Llanowar Elves (15) goes to graveyard
+Llanowar Elves (15) dies from lethal damage
+
+  >>> Turn 6 - Player 2 20 (Player 1 15) <<<<
+Player 2 draws Forest (18)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (18)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 2 declares Llanowar Elves (14) (1/1) as attacker
+Llanowar Elves (14) deals 1 damage to Player 1 (life: 14)
+
+  >>> Turn 7 - Player 1 14 (Player 2 20) <<<<
+<Choice> Player 1 chose 0 - activate Prodigal Sorcerer
+Prodigal Sorcerer activates ability: Prodigal Sorcerer deals 1 damage to any target.
+  -> targeting Llanowar Elves (14)
+Llanowar Elves (14) takes 1 damage (total: 1)
+Llanowar Elves (14) goes to graveyard
+Llanowar Elves (14) dies from lethal damage
+Player 1 draws Island (10)
+<Choice> Player 1 chose 0 - play Island
+Player 1 plays Island (10)
+
+  >>> Turn 8 - Player 2 20 (Player 1 14) <<<<
+Player 2 draws Forest (17)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (17)
+
+  >>> Turn 9 - Player 1 14 (Player 2 20) <<<<
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+Player 1 draws Island (9)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 1 - play Island
+Player 1 plays Island (9)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Prodigal Sorcerer (7) (1/1) as attacker
+Prodigal Sorcerer (7) deals 1 damage to Player 2 (life: 19)
+
+  >>> Turn 10 - Player 2 19 (Player 1 14) <<<<
+Player 2 draws Forest (16)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (16)
+Player 2 has lost the game (decked). Player 1 wins!

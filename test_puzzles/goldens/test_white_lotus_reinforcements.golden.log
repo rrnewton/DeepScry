@@ -1,0 +1,31 @@
+<Choice> chose 2 attackers from 2 available creatures (aggression=3, opponent blockers=1)
+Player 1 declares White Lotus Reinforcements (3) (2/3) as attacker
+Player 1 declares Walltop Sentries (4) (3/4) as attacker
+<Choice> chose 1 blockers for 2 attackers
+Player 2 declares Grizzly Bears (10) as blocker for Walltop Sentries (4)
+White Lotus Reinforcements (3) deals 2 damage to Player 2 (life: 18)
+Walltop Sentries (4) deals 3 damage to Grizzly Bears (10)
+Grizzly Bears (10) deals 2 damage to Walltop Sentries (4)
+Grizzly Bears (10) goes to graveyard
+Grizzly Bears (10) dies from combat damage
+
+  >>> Turn 4 - Player 2 18 (Player 1 20) <<<<
+Player 2 draws Forest (12)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (12)
+
+  >>> Turn 5 - Player 1 20 (Player 2 18) <<<<
+Player 1 draws Island (9)
+<Choice> Player 1 chose 0 - play Island
+Player 1 plays Island (9)
+<Choice> chose 2 attackers from 2 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares White Lotus Reinforcements (3) (2/3) as attacker
+Player 1 declares Walltop Sentries (4) (3/4) as attacker
+White Lotus Reinforcements (3) deals 2 damage to Player 2 (life: 16)
+Walltop Sentries (4) deals 3 damage to Player 2 (life: 13)
+
+  >>> Turn 6 - Player 2 13 (Player 1 20) <<<<
+Player 2 draws Forest (11)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (11)
+Player 2 has lost the game (decked). Player 1 wins!

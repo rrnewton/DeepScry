@@ -1,0 +1,101 @@
+<Choice> Player 1 chose 0 - activate Strip Mine
+Strip Mine activates ability: Destroy target land.
+  -> targeting Mountain (16)
+Strip Mine (3) goes to graveyard
+Mountain (16) goes to graveyard
+
+  >>> Turn 3 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Mountain (26)
+<Choice> Player 2 chose 0 - play Mountain
+Player 2 plays Mountain (26)
+
+  >>> Turn 4 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Plains (13)
+<Choice> Player 1 chose 0 - play Plains
+Player 1 plays Plains (13)
+
+  >>> Turn 5 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Mountain (25)
+<Choice> Player 2 chose 0 - play Mountain
+Player 2 plays Mountain (25)
+
+  >>> Turn 6 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Plains (12)
+<Choice> Player 1 chose 0 - play Plains
+Player 1 plays Plains (12)
+
+  >>> Turn 7 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Mountain (24)
+<Choice> Player 2 chose 0 - play Mountain
+Player 2 plays Mountain (24)
+
+  >>> Turn 8 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Plains (11)
+<Choice> Player 1 chose 0 - play Plains
+Player 1 plays Plains (11)
+
+  >>> Turn 9 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Mountain (23)
+<Choice> Player 2 chose 0 - play Mountain
+Player 2 plays Mountain (23)
+
+  >>> Turn 10 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Plains (10)
+<Choice> Player 1 chose 0 - play Plains
+Player 1 plays Plains (10)
+
+  >>> Turn 11 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Mountain (22)
+<Choice> Player 2 chose 0 - play Mountain
+Player 2 plays Mountain (22)
+
+  >>> Turn 12 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Plains (9)
+<Choice> Player 1 chose 0 - play Plains
+Player 1 plays Plains (9)
+
+  >>> Turn 13 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Mountain (21)
+<Choice> Player 2 chose 0 - play Mountain
+Player 2 plays Mountain (21)
+
+  >>> Turn 14 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Plains (8)
+<Choice> Player 1 chose 0 - play Plains
+Player 1 plays Plains (8)
+
+  >>> Turn 15 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Mountain (20)
+<Choice> Player 2 chose 0 - play Mountain
+Player 2 plays Mountain (20)
+
+  >>> Turn 16 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Plains (7)
+<Choice> Player 1 chose 0 - play Plains
+Player 1 plays Plains (7)
+
+  >>> Turn 17 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Mountain (19)
+<Choice> Player 2 chose 0 - play Mountain
+Player 2 plays Mountain (19)
+
+  >>> Turn 18 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Plains (6)
+<Choice> Player 1 chose 0 - play Plains
+Player 1 plays Plains (6)
+
+  >>> Turn 19 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Mountain (18)
+<Choice> Player 2 chose 0 - play Mountain
+Player 2 plays Mountain (18)
+
+  >>> Turn 20 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Plains (5)
+<Choice> Player 1 chose 0 - play Plains
+Player 1 plays Plains (5)
+
+  >>> Turn 21 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Mountain (17)
+<Choice> Player 2 chose 0 - play Mountain
+Player 2 plays Mountain (17)
+Player 2 has lost the game (decked). Player 1 wins!

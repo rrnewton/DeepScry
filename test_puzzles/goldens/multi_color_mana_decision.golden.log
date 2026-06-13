@@ -1,0 +1,47 @@
+<Choice> Player 1 chose 1 - cast Llanowar Elves
+Player 1 casts Llanowar Elves (4) (putting on stack)
+Tap Forest for {G}
+Llanowar Elves (4) resolves
+Llanowar Elves (4) enters the battlefield as a 1/1 creature
+<Choice> Player 1 chose 0 - cast Grizzly Bears
+Player 1 casts Grizzly Bears (3) (putting on stack)
+Tap Forest for {G}
+Tap Plains for {W}
+Grizzly Bears (3) resolves
+Grizzly Bears (3) enters the battlefield as a 2/2 creature
+
+  >>> Turn 4 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Mountain (17)
+<Choice> Player 2 chose 0 - play Mountain
+Player 2 plays Mountain (17)
+
+  >>> Turn 5 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Forest (11)
+<Choice> Player 1 chose 0 - play Forest
+Player 1 plays Forest (11)
+<Choice> chose 2 attackers from 2 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Grizzly Bears (3) (2/2) as attacker
+Player 1 declares Llanowar Elves (4) (1/1) as attacker
+Grizzly Bears (3) deals 2 damage to Player 2 (life: 18)
+Llanowar Elves (4) deals 1 damage to Player 2 (life: 17)
+
+  >>> Turn 6 - Player 2 17 (Player 1 20) <<<<
+Player 2 draws Mountain (16)
+<Choice> Player 2 chose 0 - play Mountain
+Player 2 plays Mountain (16)
+
+  >>> Turn 7 - Player 1 20 (Player 2 17) <<<<
+Player 1 draws Plains (10)
+<Choice> Player 1 chose 0 - play Plains
+Player 1 plays Plains (10)
+<Choice> chose 2 attackers from 2 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Grizzly Bears (3) (2/2) as attacker
+Player 1 declares Llanowar Elves (4) (1/1) as attacker
+Grizzly Bears (3) deals 2 damage to Player 2 (life: 15)
+Llanowar Elves (4) deals 1 damage to Player 2 (life: 14)
+
+  >>> Turn 8 - Player 2 14 (Player 1 20) <<<<
+Player 2 draws Mountain (15)
+<Choice> Player 2 chose 0 - play Mountain
+Player 2 plays Mountain (15)
+Player 2 has lost the game (decked). Player 1 wins!

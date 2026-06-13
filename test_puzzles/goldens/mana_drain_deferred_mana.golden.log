@@ -1,0 +1,54 @@
+  >>> Turn 1 - Player 1 20 (Player 2 20) <<<<
+<Choice> Player 1 chose 0 - cast Hill Giant
+Player 1 casts Hill Giant (3) (putting on stack)
+Tap Mountain for {R}
+Tap Mountain for {R}
+Tap Mountain for {R}
+Tap Mountain for {R}
+<Choice> Player 2 chose 0 - cast Mana Drain
+Player 2 casts Mana Drain (12) (putting on stack)
+  → targeting Hill Giant (3)
+Tap Island for {U}
+Tap Island for {U}
+Mana Drain (12) resolves
+Delayed trigger 1 created: from Mana Drain
+Mana Drain (12) counters Hill Giant (3)
+Mana Drain (12) creates delayed trigger on Unknown (effect: AddMana { player: 0, mana: ManaCost { generic: 0, white: 0, blue: 0, black: 0, red: 0, green: 0, colorless: 1, x_count: 0 }, produces_chosen_color: false, amount_var: Some("X") })
+Mana Drain (12) clears remembered cards
+
+  >>> Turn 2 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Plains (18)
+Player 2 adds {C}×4 to mana pool (delayed trigger)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (18)
+
+  >>> Turn 3 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Plains (11)
+<Choice> Player 1 chose 0 - play Plains
+Player 1 plays Plains (11)
+
+  >>> Turn 4 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Plains (17)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (17)
+
+  >>> Turn 5 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Plains (10)
+<Choice> Player 1 chose 0 - play Plains
+Player 1 plays Plains (10)
+
+  >>> Turn 6 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Plains (16)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (16)
+
+  >>> Turn 7 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Plains (9)
+<Choice> Player 1 chose 0 - play Plains
+Player 1 plays Plains (9)
+
+  >>> Turn 8 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Plains (15)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (15)
+Player 2 has lost the game (decked). Player 1 wins!

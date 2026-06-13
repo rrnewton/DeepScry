@@ -1,0 +1,38 @@
+<Choice> chose 4 attackers from 4 available creatures (aggression=3, opponent blockers=2)
+Player 1 declares Grizzly Bears (7) (2/2) as attacker
+Player 1 declares Grizzly Bears (8) (2/2) as attacker
+Player 1 declares Grizzly Bears (9) (2/2) as attacker
+Player 1 declares Grizzly Bears (10) (2/2) as attacker
+<Choice> chose 2 blockers for 4 attackers
+Player 2 declares Grizzly Bears (16) as blocker for Grizzly Bears (7)
+Player 2 declares Grizzly Bears (17) as blocker for Grizzly Bears (8)
+Grizzly Bears (7) deals 2 damage to Grizzly Bears (16)
+Grizzly Bears (16) deals 2 damage to Grizzly Bears (7)
+Grizzly Bears (8) deals 2 damage to Grizzly Bears (17)
+Grizzly Bears (17) deals 2 damage to Grizzly Bears (8)
+Grizzly Bears (9) deals 2 damage to Player 2 (life: 3)
+Grizzly Bears (10) deals 2 damage to Player 2 (life: 1)
+Grizzly Bears (7) goes to graveyard
+Grizzly Bears (7) dies from combat damage
+Grizzly Bears (8) goes to graveyard
+Grizzly Bears (8) dies from combat damage
+Grizzly Bears (16) goes to graveyard
+Grizzly Bears (16) dies from combat damage
+Grizzly Bears (17) goes to graveyard
+Grizzly Bears (17) dies from combat damage
+
+  >>> Turn 6 - Player 2 1 (Player 1 20) <<<<
+Player 2 draws Forest (20)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (20)
+
+  >>> Turn 7 - Player 1 20 (Player 2 1) <<<<
+Player 1 draws Forest (13)
+<Choice> Player 1 chose 0 - play Forest
+Player 1 plays Forest (13)
+<Choice> chose 2 attackers from 2 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Grizzly Bears (9) (2/2) as attacker
+Player 1 declares Grizzly Bears (10) (2/2) as attacker
+Grizzly Bears (9) deals 2 damage to Player 2 (life: -1)
+Grizzly Bears (10) deals 2 damage to Player 2 (life: -3)
+Player 2 has lost the game (life: -3). Player 1 wins!

@@ -1,0 +1,28 @@
+<Choice> Player 1 chose 0 - activate Barrels of Blasting Jelly
+Barrels of Blasting Jelly activates ability: It deals 5 damage to target creature.
+  -> targeting Grizzly Bears (11)
+Tap Plains for {W}
+Tap Plains for {W}
+Tap Plains for {W}
+Tap Plains for {W}
+Tap Plains for {W}
+Barrels of Blasting Jelly (3) goes to graveyard
+Grizzly Bears (11) takes 5 damage (total: 5)
+Grizzly Bears (11) goes to graveyard
+Grizzly Bears (11) dies from lethal damage
+
+  >>> Turn 6 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Forest (15)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (15)
+
+  >>> Turn 7 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Plains (10)
+<Choice> Player 1 chose 0 - play Plains
+Player 1 plays Plains (10)
+
+  >>> Turn 8 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Forest (14)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (14)
+Player 2 has lost the game (decked). Player 1 wins!

@@ -1,0 +1,37 @@
+  >>> Turn 1 - Player 1 20 (Player 2 20) <<<<
+<Choice> Player 1 chose 0 - play Mountain
+Player 1 plays Mountain (3)
+Avatar Kyoshi, Earthbender trigger effect
+Forest is earthbent! (0/0 creature with haste, 8 +1/+1 counters, returns when dies/exiled)
+  -> Delayed trigger 1 registered: return Forest to battlefield tapped when it leaves
+Avatar Kyoshi, Earthbender trigger effect
+<Choice> chose 2 attackers from 2 available creatures (aggression=3, opponent blockers=1)
+Player 1 declares Avatar Kyoshi, Earthbender (4) (6/6) as attacker
+Player 1 declares Forest (5) (8/8) as attacker
+<Choice> chose 1 blockers for 2 attackers
+Player 2 declares Grizzly Bears (14) as blocker for Forest (5)
+Avatar Kyoshi, Earthbender (4) deals 6 damage to Player 2 (life: 14)
+Forest (5) deals 8 damage to Grizzly Bears (14)
+Grizzly Bears (14) deals 2 damage to Forest (5)
+Grizzly Bears (14) goes to graveyard
+Grizzly Bears (14) dies from combat damage
+
+  >>> Turn 2 - Player 2 14 (Player 1 20) <<<<
+Player 2 draws Island (21)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (13)
+
+  >>> Turn 3 - Player 1 20 (Player 2 14) <<<<
+Player 1 draws Mountain (12)
+<Choice> Player 1 chose 0 - play Mountain
+Player 1 plays Mountain (12)
+Avatar Kyoshi, Earthbender trigger effect
+Forest is earthbent! (0/0 creature with haste, 8 +1/+1 counters, returns when dies/exiled)
+  -> Delayed trigger 2 registered: return Forest to battlefield tapped when it leaves
+Avatar Kyoshi, Earthbender trigger effect
+<Choice> chose 2 attackers from 2 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Avatar Kyoshi, Earthbender (4) (6/6) as attacker
+Player 1 declares Forest (5) (16/16) as attacker
+Avatar Kyoshi, Earthbender (4) deals 6 damage to Player 2 (life: 8)
+Forest (5) deals 16 damage to Player 2 (life: -8)
+Player 2 has lost the game (life: -8). Player 1 wins!

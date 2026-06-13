@@ -1,0 +1,16 @@
+<Choice> Player 1 chose 0 - cast Divination
+Player 1 casts Divination (3) (putting on stack)
+Tap Island for {U}
+Tap Island for {U}
+Tap Island for {U}
+Divination (3) resolves
+Player 1 draws Mountain (11)
+Player 1 draws Mountain (10)
+Trigger: Knowledge Seeker - Whenever you draw your second card each turn, put a +1/+1 counter on this creature.
+Divination (3) causes Player 1 to draw 2 card(s)
+<Choice> Player 1 chose 0 - play Mountain
+Player 1 plays Mountain (10)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Knowledge Seeker (7) (3/2) as attacker
+Knowledge Seeker (7) deals 3 damage to Player 2 (life: 0)
+Player 2 has lost the game (life: 0). Player 1 wins!

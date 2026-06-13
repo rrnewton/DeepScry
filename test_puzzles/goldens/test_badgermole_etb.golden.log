@@ -1,0 +1,30 @@
+<Choice> Player 1 chose 0 - cast Badgermole
+Player 1 casts Badgermole (3) (putting on stack)
+Tap Forest for {G}
+Tap Forest for {G}
+Tap Forest for {G}
+Tap Forest for {G}
+Tap Forest for {G}
+Badgermole (3) resolves
+Forest is earthbent! (0/0 creature with haste, 2 +1/+1 counters, returns when dies/exiled)
+  -> Delayed trigger 1 registered: return Forest to battlefield tapped when it leaves
+Badgermole (3) enters the battlefield as a 4/4 creature
+
+  >>> Turn 6 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Forest (15)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (15)
+
+  >>> Turn 7 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Plains (11)
+<Choice> Player 1 chose 0 - play Plains
+Player 1 plays Plains (11)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Badgermole (3) (4/4) as attacker
+Badgermole (3) deals 4 damage to Player 2 (life: 16)
+
+  >>> Turn 8 - Player 2 16 (Player 1 20) <<<<
+Player 2 draws Forest (14)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (14)
+Player 2 has lost the game (decked). Player 1 wins!

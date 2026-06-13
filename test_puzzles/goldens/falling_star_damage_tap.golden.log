@@ -1,0 +1,74 @@
+<Choice> Player 1 chose 0 - cast Falling Star
+Player 1 casts Falling Star (3) (putting on stack)
+  → targeting Grizzly Bears (17)
+Tap Mountain for {R}
+Tap Mountain for {R}
+Tap Mountain for {R}
+Falling Star (3) resolves
+Grizzly Bears (17) takes 3 damage (total: 3)
+Grizzly Bears (17) goes to graveyard
+Grizzly Bears (17) dies from lethal damage
+Falling Star (3) deals 3 damage to Grizzly Bears (17)
+Falling Star (3) deals 3 damage to each matching creature
+Falling Star (3) clears remembered cards
+
+  >>> Turn 3 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Forest (28)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (28)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 2 declares Sengir Vampire (18) (4/4) as attacker
+Sengir Vampire (18) deals 4 damage to Player 1 (life: 16)
+
+  >>> Turn 4 - Player 1 16 (Player 2 20) <<<<
+Player 1 draws Mountain (16)
+<Choice> Player 1 chose 0 - play Mountain
+Player 1 plays Mountain (16)
+
+  >>> Turn 5 - Player 2 20 (Player 1 16) <<<<
+Player 2 draws Forest (27)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (27)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 2 declares Sengir Vampire (18) (4/4) as attacker
+Sengir Vampire (18) deals 4 damage to Player 1 (life: 12)
+
+  >>> Turn 6 - Player 1 12 (Player 2 20) <<<<
+Player 1 draws Mountain (15)
+<Choice> Player 1 chose 0 - play Mountain
+Player 1 plays Mountain (15)
+
+  >>> Turn 7 - Player 2 20 (Player 1 12) <<<<
+Player 2 draws Forest (26)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (26)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 2 declares Sengir Vampire (18) (4/4) as attacker
+Sengir Vampire (18) deals 4 damage to Player 1 (life: 8)
+
+  >>> Turn 8 - Player 1 8 (Player 2 20) <<<<
+Player 1 draws Mountain (14)
+<Choice> Player 1 chose 0 - play Mountain
+Player 1 plays Mountain (14)
+
+  >>> Turn 9 - Player 2 20 (Player 1 8) <<<<
+Player 2 draws Forest (25)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (25)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 2 declares Sengir Vampire (18) (4/4) as attacker
+Sengir Vampire (18) deals 4 damage to Player 1 (life: 4)
+
+  >>> Turn 10 - Player 1 4 (Player 2 20) <<<<
+Player 1 draws Mountain (13)
+<Choice> Player 1 chose 0 - play Mountain
+Player 1 plays Mountain (13)
+
+  >>> Turn 11 - Player 2 20 (Player 1 4) <<<<
+Player 2 draws Forest (24)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (24)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 2 declares Sengir Vampire (18) (4/4) as attacker
+Sengir Vampire (18) deals 4 damage to Player 1 (life: 0)
+Player 1 has lost the game (life: 0). Player 2 wins!

@@ -1,0 +1,45 @@
+  >>> Turn 1 - Player 1 20 (Player 2 20) <<<<
+<Choice> Player 1 chose 0 - cast Terror
+Player 1 casts Terror (3) (putting on stack)
+  → targeting Grizzly Bears (10)
+Tap Swamp for {B}
+Tap Swamp for {B}
+Terror (3) resolves
+Grizzly Bears (10) goes to graveyard
+Terror (3) destroys Grizzly Bears (10)
+
+  >>> Turn 2 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Forest (14)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (14)
+
+  >>> Turn 3 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Swamp (9)
+<Choice> Player 1 chose 0 - play Swamp
+Player 1 plays Swamp (9)
+
+  >>> Turn 4 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Forest (13)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (13)
+
+  >>> Turn 5 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Swamp (8)
+<Choice> Player 1 chose 0 - play Swamp
+Player 1 plays Swamp (8)
+
+  >>> Turn 6 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Forest (12)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (12)
+
+  >>> Turn 7 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Swamp (7)
+<Choice> Player 1 chose 0 - play Swamp
+Player 1 plays Swamp (7)
+
+  >>> Turn 8 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Forest (11)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (11)
+Player 2 has lost the game (decked). Player 1 wins!

@@ -1,0 +1,19 @@
+  >>> Turn 1 - Player 1 20 (Player 2 3) <<<<
+<Choice> Player 1 chose 0 - cast Divination
+Player 1 casts Divination (3) (putting on stack)
+Tap Island for {U}
+Tap Island for {U}
+Tap Island for {U}
+Trigger: Ty Lee, Chi Blocker - [noncreature] Prowess (+1/+1 until end of turn)
+Ty Lee, Chi Blocker gets +1/+1 until end of turn
+Ty Lee, Chi Blocker gets +1/+1 until end of turn
+Divination (3) resolves
+Player 1 draws Mountain (12)
+Player 1 draws Mountain (11)
+Divination (3) causes Player 1 to draw 2 card(s)
+<Choice> Player 1 chose 0 - play Mountain
+Player 1 plays Mountain (11)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Ty Lee, Chi Blocker (7) (3/2) as attacker
+Ty Lee, Chi Blocker (7) deals 3 damage to Player 2 (life: 0)
+Player 2 has lost the game (life: 0). Player 1 wins!

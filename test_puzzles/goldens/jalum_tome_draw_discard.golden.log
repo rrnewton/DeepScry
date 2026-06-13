@@ -1,0 +1,56 @@
+  >>> Turn 1 - Player 1 20 (Player 2 20) <<<<
+<Choice> Player 1 chose 0 - play Mountain
+Player 1 plays Mountain (3)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 0 - activate Jalum Tome
+Jalum Tome activates ability: Draw a card, then discard a card.
+Tap Plains for {W}
+Tap Plains for {W}
+Player 1 draws Swamp (10)
+Swamp is discarded
+Player 1 discards Swamp
+
+  >>> Turn 2 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Plains (14)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (14)
+
+  >>> Turn 3 - Player 1 20 (Player 2 20) <<<<
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+Player 1 draws Swamp (9)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 1 - play Swamp
+Player 1 plays Swamp (9)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 0 - activate Jalum Tome
+Jalum Tome activates ability: Draw a card, then discard a card.
+Tap Plains for {W}
+Tap Plains for {W}
+Player 1 draws Swamp (8)
+Swamp is discarded
+Player 1 discards Swamp
+
+  >>> Turn 4 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Plains (13)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (13)
+
+  >>> Turn 5 - Player 1 20 (Player 2 20) <<<<
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+Player 1 draws Lightning Bolt (7)
+<Choice> Player 1 chose 'p' (pass priority from 2 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 2 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 2 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 2 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 2 available actions)
+Player 1 has lost the game (decked). Player 2 wins!

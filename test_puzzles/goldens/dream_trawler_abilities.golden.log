@@ -1,0 +1,40 @@
+<Choice> Player 1 chose 0 - cast Teferi, Time Raveler
+Player 1 casts Teferi, Time Raveler (3) (putting on stack)
+Tap Plains for {W}
+Tap Island for {U}
+Tap Plains for {W}
+Teferi, Time Raveler (3) resolves
+Teferi, Time Raveler (3) enters with 4 loyalty
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 1 draws Plains (14)
+Trigger: Dream Trawler - Whenever you draw a card, CARDNAME gets +1/+0 until end of turn.
+Dream Trawler gets +1/+0 until end of turn
+Player 1 declares Dream Trawler (9) (4/5) as attacker
+Dream Trawler (9) deals 4 damage to Player 2 (life: 1)
+<Choice> Player 1 chose 0 - activate Teferi, Time Raveler
+Teferi, Time Raveler activates ability: Until your next turn, you may cast sorcery spells as though they had flash.
+Teferi, Time Raveler gains 1 loyalty (now 9)
+Player 1 may cast spells as though they had flash until end of turn.
+<Choice> Player 1 chose 0 - play Plains
+Player 1 plays Plains (14)
+
+  >>> Turn 3 - Player 2 1 (Player 1 24) <<<<
+Player 2 draws Plains (20)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (20)
+
+  >>> Turn 4 - Player 1 24 (Player 2 1) <<<<
+Player 1 draws Island (13)
+Trigger: Dream Trawler - Whenever you draw a card, CARDNAME gets +1/+0 until end of turn.
+Dream Trawler gets +1/+0 until end of turn
+<Choice> Player 1 chose 1 - play Island
+Player 1 plays Island (13)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 1 draws Plains (12)
+Trigger: Dream Trawler - Whenever you draw a card, CARDNAME gets +1/+0 until end of turn.
+Dream Trawler gets +1/+0 until end of turn
+Player 1 declares Dream Trawler (9) (5/5) as attacker
+Dream Trawler (9) deals 5 damage to Player 2 (life: -4)
+Player 2 has lost the game (life: -4). Player 1 wins!

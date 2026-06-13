@@ -1,0 +1,70 @@
+  >>> Turn 1 - Player 1 20 (Player 2 20) <<<<
+<Choice> Player 1 chose 0 - play Mountain
+Player 1 plays Mountain (3)
+<Choice> chose 2 attackers from 2 available creatures (aggression=3, opponent blockers=0)
+Zhao, Ruthless Admiral triggers Firebending 2 (adding 2 {R} to combat mana)
+Player 1 adds 2 {R} (combat mana, lasts until end of combat)
+Player 1 declares Zhao, Ruthless Admiral (4) (3/4) as attacker
+Boiling Rock Rioter triggers Firebending 1 (adding 1 {R} to combat mana)
+Player 1 adds 1 {R} (combat mana, lasts until end of combat)
+Player 1 declares Boiling Rock Rioter (5) (3/3) as attacker
+Zhao, Ruthless Admiral (4) deals 3 damage to Player 2 (life: 17)
+Boiling Rock Rioter (5) deals 3 damage to Player 2 (life: 14)
+
+  >>> Turn 2 - Player 2 14 (Player 1 20) <<<<
+Player 2 draws Island (22)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (15)
+
+  >>> Turn 3 - Player 1 20 (Player 2 14) <<<<
+Player 1 draws Mountain (14)
+<Choice> Player 1 chose 0 - play Mountain
+Player 1 plays Mountain (14)
+<Choice> chose 2 attackers from 2 available creatures (aggression=3, opponent blockers=0)
+Zhao, Ruthless Admiral triggers Firebending 2 (adding 2 {R} to combat mana)
+Player 1 adds 2 {R} (combat mana, lasts until end of combat)
+Player 1 declares Zhao, Ruthless Admiral (4) (3/4) as attacker
+Boiling Rock Rioter triggers Firebending 1 (adding 1 {R} to combat mana)
+Player 1 adds 1 {R} (combat mana, lasts until end of combat)
+Player 1 declares Boiling Rock Rioter (5) (3/3) as attacker
+Zhao, Ruthless Admiral (4) deals 3 damage to Player 2 (life: 11)
+Boiling Rock Rioter (5) deals 3 damage to Player 2 (life: 8)
+
+  >>> Turn 4 - Player 2 8 (Player 1 20) <<<<
+Player 2 draws Island (21)
+<Choice> Player 2 chose 0 - play Island
+Player 2 plays Island (21)
+
+  >>> Turn 5 - Player 1 20 (Player 2 8) <<<<
+Player 1 draws Island (13)
+<Choice> Player 1 chose 0 - play Island
+Player 1 plays Island (13)
+<Choice> chose 2 attackers from 2 available creatures (aggression=3, opponent blockers=0)
+Zhao, Ruthless Admiral triggers Firebending 2 (adding 2 {R} to combat mana)
+Player 1 adds 2 {R} (combat mana, lasts until end of combat)
+Player 1 declares Zhao, Ruthless Admiral (4) (3/4) as attacker
+Boiling Rock Rioter triggers Firebending 1 (adding 1 {R} to combat mana)
+Player 1 adds 1 {R} (combat mana, lasts until end of combat)
+Player 1 declares Boiling Rock Rioter (5) (3/3) as attacker
+Zhao, Ruthless Admiral (4) deals 3 damage to Player 2 (life: 5)
+Boiling Rock Rioter (5) deals 3 damage to Player 2 (life: 2)
+
+  >>> Turn 6 - Player 2 2 (Player 1 20) <<<<
+Player 2 draws Island (20)
+<Choice> Player 2 chose 0 - play Island
+Player 2 plays Island (20)
+
+  >>> Turn 7 - Player 1 20 (Player 2 2) <<<<
+Player 1 draws Swamp (12)
+<Choice> Player 1 chose 0 - play Swamp
+Player 1 plays Swamp (12)
+<Choice> chose 2 attackers from 2 available creatures (aggression=3, opponent blockers=0)
+Zhao, Ruthless Admiral triggers Firebending 2 (adding 2 {R} to combat mana)
+Player 1 adds 2 {R} (combat mana, lasts until end of combat)
+Player 1 declares Zhao, Ruthless Admiral (4) (3/4) as attacker
+Boiling Rock Rioter triggers Firebending 1 (adding 1 {R} to combat mana)
+Player 1 adds 1 {R} (combat mana, lasts until end of combat)
+Player 1 declares Boiling Rock Rioter (5) (3/3) as attacker
+Zhao, Ruthless Admiral (4) deals 3 damage to Player 2 (life: -1)
+Boiling Rock Rioter (5) deals 3 damage to Player 2 (life: -4)
+Player 2 has lost the game (life: -4). Player 1 wins!

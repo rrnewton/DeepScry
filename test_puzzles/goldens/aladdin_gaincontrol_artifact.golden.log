@@ -1,0 +1,45 @@
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Aladdin (3) (1/1) as attacker
+Aladdin (3) deals 1 damage to Player 2 (life: 19)
+
+  >>> Turn 3 - Player 2 19 (Player 1 20) <<<<
+Player 2 draws Forest (13)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (13)
+
+  >>> Turn 4 - Player 1 20 (Player 2 19) <<<<
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+Player 1 draws Mountain (9)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 1 - play Mountain
+Player 1 plays Mountain (9)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Aladdin (3) (1/1) as attacker
+Aladdin (3) deals 1 damage to Player 2 (life: 18)
+
+  >>> Turn 5 - Player 2 18 (Player 1 20) <<<<
+Player 2 draws Forest (12)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (12)
+
+  >>> Turn 6 - Player 1 20 (Player 2 18) <<<<
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+Player 1 draws Mountain (8)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 1 - play Mountain
+Player 1 plays Mountain (8)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Aladdin (3) (1/1) as attacker
+Aladdin (3) deals 1 damage to Player 2 (life: 17)
+
+  >>> Turn 7 - Player 2 17 (Player 1 20) <<<<
+Player 2 draws Forest (11)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (11)
+Player 2 has lost the game (decked). Player 1 wins!

@@ -1,0 +1,69 @@
+  >>> Turn 1 - Player 1 20 (Player 2 20) <<<<
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+
+  >>> Turn 2 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Forest (15)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (15)
+
+  >>> Turn 3 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Mountain (10)
+<Choice> Player 1 chose 1 - play Mountain
+Player 1 plays Mountain (10)
+<Choice> Player 1 chose 0 - cast Phyrexian Processor
+Player 1 casts Phyrexian Processor (3) (putting on stack)
+Tap Swamp for {B}
+Tap Swamp for {B}
+Tap Swamp for {B}
+Tap Swamp for {B}
+Phyrexian Processor (3) resolves
+Player 1 pays 7 life as Phyrexian Processor enters the battlefield (life: 13)
+Phyrexian Processor (3) — stored 7 life paid on ETB
+
+  >>> Turn 4 - Player 2 20 (Player 1 13) <<<<
+Player 2 draws Forest (14)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (14)
+
+  >>> Turn 5 - Player 1 13 (Player 2 20) <<<<
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+Player 1 draws Mountain (9)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 1 - play Mountain
+Player 1 plays Mountain (9)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+
+  >>> Turn 6 - Player 2 20 (Player 1 13) <<<<
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+Player 2 draws Forest (13)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (13)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+
+  >>> Turn 7 - Player 1 13 (Player 2 20) <<<<
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+Player 1 draws Mountain (8)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 1 - play Mountain
+Player 1 plays Mountain (8)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+Player 1 has lost the game (decked). Player 2 wins!

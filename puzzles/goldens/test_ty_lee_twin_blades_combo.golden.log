@@ -1,0 +1,51 @@
+  >>> Turn 1 - Player 1 20 (Player 2 8) <<<<
+<Choice> Player 1 chose 0 - cast Twin Blades
+Player 1 casts Twin Blades (3) (putting on stack)
+Tap Mountain for {R}
+Tap Mountain for {R}
+Tap Mountain for {R}
+Trigger: Ty Lee, Chi Blocker - [noncreature] Prowess (+1/+1 until end of turn)
+Ty Lee, Chi Blocker gets +1/+1 until end of turn
+Ty Lee, Chi Blocker gets +1/+1 until end of turn
+Twin Blades (3) resolves
+Twin Blades attaches to Ty Lee, Chi Blocker
+
+  >>> Turn 2 - Player 2 8 (Player 1 20) <<<<
+Player 2 draws Forest (19)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (19)
+
+  >>> Turn 3 - Player 1 20 (Player 2 8) <<<<
+Player 1 draws Mountain (12)
+<Choice> Player 1 chose 0 - play Mountain
+Player 1 plays Mountain (12)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Ty Lee, Chi Blocker (7) (3/2) as attacker
+Ty Lee, Chi Blocker (7) deals 3 damage to Player 2 (life: 5)
+
+  >>> Turn 4 - Player 2 5 (Player 1 20) <<<<
+Player 2 draws Forest (18)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (18)
+
+  >>> Turn 5 - Player 1 20 (Player 2 5) <<<<
+Player 1 draws Mountain (11)
+<Choice> Player 1 chose 0 - play Mountain
+Player 1 plays Mountain (11)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Ty Lee, Chi Blocker (7) (3/2) as attacker
+Ty Lee, Chi Blocker (7) deals 3 damage to Player 2 (life: 2)
+
+  >>> Turn 6 - Player 2 2 (Player 1 20) <<<<
+Player 2 draws Forest (17)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (17)
+
+  >>> Turn 7 - Player 1 20 (Player 2 2) <<<<
+Player 1 draws Mountain (10)
+<Choice> Player 1 chose 0 - play Mountain
+Player 1 plays Mountain (10)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Ty Lee, Chi Blocker (7) (3/2) as attacker
+Ty Lee, Chi Blocker (7) deals 3 damage to Player 2 (life: -1)
+Player 2 has lost the game (life: -1). Player 1 wins!

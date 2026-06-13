@@ -1,0 +1,104 @@
+<Choice> Player 1 chose 0 - cast Terror
+Player 1 casts Terror (3) (putting on stack)
+  → targeting Grizzly Bears (17)
+Tap Swamp for {B}
+Tap Swamp for {B}
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+Terror (3) resolves
+Grizzly Bears (17) goes to graveyard
+Terror (3) destroys Grizzly Bears (17)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+
+  >>> Turn 5 - Player 2 20 (Player 1 20) <<<<
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+Player 2 draws Plains (20)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (20)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+
+  >>> Turn 6 - Player 1 20 (Player 2 20) <<<<
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+Player 1 draws Terror (12)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+
+  >>> Turn 7 - Player 2 20 (Player 1 20) <<<<
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+Player 2 draws Serra Angel (19)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 0 - cast Serra Angel
+Player 2 casts Serra Angel (19) (putting on stack)
+Tap Plains for {W}
+Tap Plains for {W}
+Tap Plains for {W}
+Tap Plains for {W}
+Tap Plains for {W}
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+Serra Angel (19) resolves
+Serra Angel (19) enters the battlefield as a 4/4 creature
+<Choice> Player 1 chose 1 - cast Terror
+Player 1 casts Terror (12) (putting on stack)
+  → targeting Serra Angel (19)
+Tap Swamp for {B}
+Tap Swamp for {B}
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+Terror (12) resolves
+Serra Angel (19) goes to graveyard
+Terror (12) destroys Serra Angel (19)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+
+  >>> Turn 8 - Player 1 20 (Player 2 20) <<<<
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+Player 1 draws Swamp (11)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 1 - play Swamp
+Player 1 plays Swamp (11)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+
+  >>> Turn 9 - Player 2 20 (Player 1 20) <<<<
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+Player 2 draws Plains (18)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (18)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+Player 2 has lost the game (decked). Player 1 wins!

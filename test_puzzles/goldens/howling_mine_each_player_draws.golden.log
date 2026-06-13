@@ -1,0 +1,33 @@
+Player 2 draws Island (13)
+Howling Mine trigger effect
+Player 2 draws Island (12)
+<Choice> Player 2 chose 0 - play Island
+Player 2 plays Island (12)
+
+  >>> Turn 3 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Plains (8)
+Howling Mine trigger effect
+Player 1 draws Plains (7)
+<Choice> Player 1 chose 0 - play Plains
+Player 1 plays Plains (7)
+
+  >>> Turn 4 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Island (11)
+Howling Mine trigger effect
+Player 2 draws Island (10)
+<Choice> Player 2 chose 0 - play Island
+Player 2 plays Island (10)
+
+  >>> Turn 5 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Plains (6)
+Howling Mine trigger effect
+Player 1 draws Plains (5)
+<Choice> Player 1 chose 0 - play Plains
+Player 1 plays Plains (5)
+
+  >>> Turn 6 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Island (9)
+Howling Mine trigger effect
+<Choice> Player 2 chose 0 - play Island
+Player 2 plays Island (9)
+Player 2 has lost the game (decked). Player 1 wins!

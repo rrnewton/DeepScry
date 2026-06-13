@@ -1,0 +1,116 @@
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+
+  >>> Turn 3 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Plains (27)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (27)
+
+  >>> Turn 4 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Swamp (17)
+<Choice> Player 1 chose 1 - play Swamp
+Player 1 plays Swamp (17)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+
+  >>> Turn 5 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Plains (26)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (26)
+
+  >>> Turn 6 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Swamp (16)
+<Choice> Player 1 chose 1 - play Swamp
+Player 1 plays Swamp (16)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+
+  >>> Turn 7 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Plains (25)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (25)
+
+  >>> Turn 8 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Swamp (15)
+<Choice> Player 1 chose 1 - play Swamp
+Player 1 plays Swamp (15)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+
+  >>> Turn 9 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Plains (24)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (24)
+
+  >>> Turn 10 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Swamp (14)
+<Choice> Player 1 chose 1 - play Swamp
+Player 1 plays Swamp (14)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+
+  >>> Turn 11 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Plains (23)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (23)
+
+  >>> Turn 12 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Swamp (13)
+<Choice> Player 1 chose 1 - play Swamp
+Player 1 plays Swamp (13)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+
+  >>> Turn 13 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Plains (22)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (22)
+
+  >>> Turn 14 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Swamp (12)
+<Choice> Player 1 chose 1 - play Swamp
+Player 1 plays Swamp (12)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+
+  >>> Turn 15 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Plains (21)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (21)
+
+  >>> Turn 16 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Swamp (11)
+<Choice> Player 1 chose 1 - play Swamp
+Player 1 plays Swamp (11)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+
+  >>> Turn 17 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Plains (20)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (20)
+
+  >>> Turn 18 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Swamp (10)
+<Choice> Player 1 chose 1 - play Swamp
+Player 1 plays Swamp (10)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+
+  >>> Turn 19 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Plains (19)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (19)
+
+  >>> Turn 20 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Swamp (9)
+<Choice> Player 1 chose 1 - play Swamp
+Player 1 plays Swamp (9)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+
+  >>> Turn 21 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Plains (18)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (18)
+Player 2 has lost the game (decked). Player 1 wins!

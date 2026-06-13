@@ -1,0 +1,43 @@
+  >>> Turn 1 - Player 1 20 (Player 2 20) <<<<
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=1)
+Player 1 declares Canyon Crawler (10) (6/6) as attacker
+<Choice> chose 1 blockers for 1 attackers
+Player 2 declares Rough Rhino Cavalry (17) as blocker for Canyon Crawler (10)
+Canyon Crawler (10) deals 6 damage to Rough Rhino Cavalry (17)
+Rough Rhino Cavalry (17) deals 5 damage to Canyon Crawler (10)
+Rough Rhino Cavalry (17) goes to graveyard
+Rough Rhino Cavalry (17) dies from combat damage
+<Choice> Player 1 chose 0 - play Swamp
+Player 1 plays Swamp (3)
+
+  >>> Turn 2 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Forest (20)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (20)
+
+  >>> Turn 3 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Swamp (13)
+<Choice> Player 1 chose 0 - play Swamp
+Player 1 plays Swamp (13)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Canyon Crawler (10) (6/6) as attacker
+Canyon Crawler (10) deals 6 damage to Player 2 (life: 14)
+
+  >>> Turn 4 - Player 2 14 (Player 1 20) <<<<
+Player 2 draws Forest (19)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (19)
+
+  >>> Turn 5 - Player 1 20 (Player 2 14) <<<<
+Player 1 draws Swamp (12)
+<Choice> Player 1 chose 0 - play Swamp
+Player 1 plays Swamp (12)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Canyon Crawler (10) (6/6) as attacker
+Canyon Crawler (10) deals 6 damage to Player 2 (life: 8)
+
+  >>> Turn 6 - Player 2 8 (Player 1 20) <<<<
+Player 2 draws Forest (18)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (18)
+Player 2 has lost the game (decked). Player 1 wins!

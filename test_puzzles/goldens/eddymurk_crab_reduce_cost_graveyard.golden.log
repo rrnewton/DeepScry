@@ -1,0 +1,38 @@
+<Choice> Player 1 chose 0 - cast Eddymurk Crab
+Player 1 casts Eddymurk Crab (3) (putting on stack)
+Tap Island for {U}
+Tap Island for {U}
+Eddymurk Crab (3) resolves
+Eddymurk Crab (3) enters the battlefield as a 5/5 creature
+
+  >>> Turn 3 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Forest (19)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (19)
+
+  >>> Turn 4 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Plains (13)
+<Choice> Player 1 chose 0 - play Plains
+Player 1 plays Plains (13)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Eddymurk Crab (3) (5/5) as attacker
+Eddymurk Crab (3) deals 5 damage to Player 2 (life: 15)
+
+  >>> Turn 5 - Player 2 15 (Player 1 20) <<<<
+Player 2 draws Forest (18)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (18)
+
+  >>> Turn 6 - Player 1 20 (Player 2 15) <<<<
+Player 1 draws Plains (12)
+<Choice> Player 1 chose 0 - play Plains
+Player 1 plays Plains (12)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Eddymurk Crab (3) (5/5) as attacker
+Eddymurk Crab (3) deals 5 damage to Player 2 (life: 10)
+
+  >>> Turn 7 - Player 2 10 (Player 1 20) <<<<
+Player 2 draws Forest (17)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (17)
+Player 2 has lost the game (decked). Player 1 wins!

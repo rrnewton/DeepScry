@@ -1,0 +1,44 @@
+  >>> Turn 1 - Player 2 20 (Player 1 20) <<<<
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=1)
+Player 2 declares Serra Angel (14) (4/4) as attacker
+Serra Angel (14) deals 4 damage to Player 1 (life: 16)
+
+  >>> Turn 2 - Player 1 16 (Player 2 20) <<<<
+Player 1 draws Swamp (9)
+<Choice> Player 1 chose 0 - play Swamp
+Player 1 plays Swamp (9)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=1)
+Player 1 declares Canyon Crawler (6) (6/6) as attacker
+<Choice> chose 1 blockers for 1 attackers
+Player 2 declares Serra Angel (14) as blocker for Canyon Crawler (6)
+Canyon Crawler (6) deals 6 damage to Serra Angel (14)
+Serra Angel (14) deals 4 damage to Canyon Crawler (6)
+Serra Angel (14) goes to graveyard
+Serra Angel (14) dies from combat damage
+
+  >>> Turn 3 - Player 2 20 (Player 1 16) <<<<
+Player 2 draws Plains (17)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (17)
+
+  >>> Turn 4 - Player 1 16 (Player 2 20) <<<<
+Player 1 draws Swamp (8)
+<Choice> Player 1 chose 0 - play Swamp
+Player 1 plays Swamp (8)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Canyon Crawler (6) (6/6) as attacker
+Canyon Crawler (6) deals 6 damage to Player 2 (life: 14)
+
+  >>> Turn 5 - Player 2 14 (Player 1 16) <<<<
+Player 2 draws Plains (16)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (16)
+
+  >>> Turn 6 - Player 1 16 (Player 2 14) <<<<
+Player 1 draws Swamp (7)
+<Choice> Player 1 chose 0 - play Swamp
+Player 1 plays Swamp (7)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Canyon Crawler (6) (6/6) as attacker
+Canyon Crawler (6) deals 6 damage to Player 2 (life: 8)
+Player 1 has lost the game (decked). Player 2 wins!

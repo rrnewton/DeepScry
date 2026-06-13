@@ -1,0 +1,37 @@
+<Choice> Player 1 chose 0 - cast Seismic Sense
+Player 1 casts Seismic Sense (3) (putting on stack)
+Tap Forest for {G}
+Seismic Sense (3) resolves
+Player 1 looks at the top 1 card of their library
+<Choice> Library search: found Ostrich-Horse (score: 135)
+Player 1 puts Ostrich-Horse into Hand
+Seismic Sense (3) digs 1 card(s) from opponent's library to hand
+
+  >>> Turn 3 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Plains (14)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (14)
+
+  >>> Turn 4 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Forest (8)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 0 - play Forest
+Player 1 plays Forest (8)
+
+  >>> Turn 5 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Plains (13)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (13)
+
+  >>> Turn 6 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Forest (7)
+<Choice> Player 1 chose 0 - play Forest
+Player 1 plays Forest (7)
+<Choice> Player 1 chose 0 - cast Ostrich-Horse
+Player 1 casts Ostrich-Horse (9) (putting on stack)
+Tap Forest for {G}
+Tap Forest for {G}
+Tap Forest for {G}
+Ostrich-Horse (9) resolves
+Ostrich-Horse (9) enters the battlefield as a 4/2 creature
+Player 1 has lost the game (decked). Player 2 wins!

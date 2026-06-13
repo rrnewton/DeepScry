@@ -1,0 +1,60 @@
+<Choice> Player 1 chose 1 - play Island
+Player 1 plays Island (4)
+<Choice> Player 1 chose 0 - cast Timetwister
+Player 1 casts Timetwister (3) (putting on stack)
+Tap Island for {U}
+Tap Island for {U}
+Tap Island for {U}
+Timetwister (3) resolves
+Player 1 draws Mountain (12)
+Player 1 draws Mountain (17)
+Player 1 draws Mountain (20)
+Player 1 draws Plains (9)
+Player 1 draws Mountain (11)
+Player 1 draws Mountain (14)
+Player 1 draws Mountain (13)
+Player 2 draws Swamp (29)
+Player 2 draws Swamp (31)
+Player 2 draws Swamp (25)
+Player 2 draws Swamp (30)
+Player 2 draws Swamp (27)
+Player 2 draws Forest (21)
+Player 2 draws Forest (22)
+Timetwister (3) moves all cards from Hand+Graveyard to Library
+Timetwister (3) causes each player to draw 7 card(s)
+
+  >>> Turn 3 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Swamp (24)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (21)
+
+  >>> Turn 4 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Mountain (15)
+<Choice> Player 1 chose 0 - play Plains
+Player 1 plays Plains (9)
+
+  >>> Turn 5 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Swamp (28)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (22)
+
+  >>> Turn 6 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Mountain (16)
+<Choice> Player 1 chose 0 - play Mountain
+Player 1 plays Mountain (11)
+
+  >>> Turn 7 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Plains (23)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (23)
+
+  >>> Turn 8 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Mountain (19)
+<Choice> Player 1 chose 0 - play Mountain
+Player 1 plays Mountain (12)
+
+  >>> Turn 9 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Swamp (26)
+<Choice> Player 2 chose 0 - play Swamp
+Player 2 plays Swamp (24)
+Player 2 has lost the game (decked). Player 1 wins!

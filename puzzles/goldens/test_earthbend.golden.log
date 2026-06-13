@@ -1,0 +1,32 @@
+  >>> Turn 1 - Player 1 20 (Player 2 20) <<<<
+<Choice> Player 1 chose 0 - play Forest
+Player 1 plays Forest (3)
+Avatar Kyoshi, Earthbender trigger effect
+Forest is earthbent! (0/0 creature with haste, 8 +1/+1 counters, returns when dies/exiled)
+  -> Delayed trigger 1 registered: return Forest to battlefield tapped when it leaves
+Avatar Kyoshi, Earthbender trigger effect
+<Choice> chose 2 attackers from 2 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Avatar Kyoshi, Earthbender (4) (6/6) as attacker
+Player 1 declares Forest (5) (8/8) as attacker
+Avatar Kyoshi, Earthbender (4) deals 6 damage to Player 2 (life: 14)
+Forest (5) deals 8 damage to Player 2 (life: 6)
+
+  >>> Turn 2 - Player 2 6 (Player 1 20) <<<<
+Player 2 draws Island (22)
+<Choice> Player 2 chose 0 - play Island
+Player 2 plays Island (15)
+
+  >>> Turn 3 - Player 1 20 (Player 2 6) <<<<
+Player 1 draws Mountain (14)
+<Choice> Player 1 chose 0 - play Mountain
+Player 1 plays Mountain (14)
+Avatar Kyoshi, Earthbender trigger effect
+Forest is earthbent! (0/0 creature with haste, 8 +1/+1 counters, returns when dies/exiled)
+  -> Delayed trigger 2 registered: return Forest to battlefield tapped when it leaves
+Avatar Kyoshi, Earthbender trigger effect
+<Choice> chose 2 attackers from 2 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Avatar Kyoshi, Earthbender (4) (6/6) as attacker
+Player 1 declares Forest (5) (16/16) as attacker
+Avatar Kyoshi, Earthbender (4) deals 6 damage to Player 2 (life: 0)
+Forest (5) deals 16 damage to Player 2 (life: -16)
+Player 2 has lost the game (life: -16). Player 1 wins!

@@ -1,0 +1,78 @@
+<Choice> Player 1 chose 0 - cast Lightning Bolt
+Player 1 casts Lightning Bolt (3) (putting on stack)
+  → targeting Grizzly Bears (14)
+Tap Mountain for {R}
+Trigger: Valley Floodcaller - Whenever you cast a noncreature spell, Birds, Frogs, Otters, and Rats you control get +1/+1 until end of turn. Untap them.
+Valley Floodcaller gets +1/+1 until end of turn
+Otter-Penguin gets +1/+1 until end of turn
+Lightning Bolt (3) resolves
+Grizzly Bears (14) takes 3 damage (total: 3)
+Lightning Bolt (3) deals 3 damage to Grizzly Bears (14)
+Grizzly Bears (14) goes to graveyard
+Grizzly Bears (14) dies from lethal damage
+
+  >>> Turn 3 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Plains (19)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (19)
+
+  >>> Turn 4 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Island (13)
+<Choice> Player 1 chose 0 - play Island
+Player 1 plays Island (13)
+<Choice> chose 2 attackers from 2 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Valley Floodcaller (4) (2/2) as attacker
+Player 1 declares Otter-Penguin (5) (2/1) as attacker
+Valley Floodcaller (4) deals 2 damage to Player 2 (life: 18)
+Otter-Penguin (5) deals 2 damage to Player 2 (life: 16)
+
+  >>> Turn 5 - Player 2 16 (Player 1 20) <<<<
+Player 2 draws Plains (18)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (18)
+
+  >>> Turn 6 - Player 1 20 (Player 2 16) <<<<
+Player 1 draws Island (12)
+<Choice> Player 1 chose 0 - play Island
+Player 1 plays Island (12)
+<Choice> chose 2 attackers from 2 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Valley Floodcaller (4) (2/2) as attacker
+Player 1 declares Otter-Penguin (5) (2/1) as attacker
+Valley Floodcaller (4) deals 2 damage to Player 2 (life: 14)
+Otter-Penguin (5) deals 2 damage to Player 2 (life: 12)
+
+  >>> Turn 7 - Player 2 12 (Player 1 20) <<<<
+Player 2 draws Plains (17)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (17)
+
+  >>> Turn 8 - Player 1 20 (Player 2 12) <<<<
+Player 1 draws Island (11)
+<Choice> Player 1 chose 0 - play Island
+Player 1 plays Island (11)
+<Choice> chose 2 attackers from 2 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Valley Floodcaller (4) (2/2) as attacker
+Player 1 declares Otter-Penguin (5) (2/1) as attacker
+Valley Floodcaller (4) deals 2 damage to Player 2 (life: 10)
+Otter-Penguin (5) deals 2 damage to Player 2 (life: 8)
+
+  >>> Turn 9 - Player 2 8 (Player 1 20) <<<<
+Player 2 draws Plains (16)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (16)
+
+  >>> Turn 10 - Player 1 20 (Player 2 8) <<<<
+Player 1 draws Island (10)
+<Choice> Player 1 chose 0 - play Island
+Player 1 plays Island (10)
+<Choice> chose 2 attackers from 2 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Valley Floodcaller (4) (2/2) as attacker
+Player 1 declares Otter-Penguin (5) (2/1) as attacker
+Valley Floodcaller (4) deals 2 damage to Player 2 (life: 6)
+Otter-Penguin (5) deals 2 damage to Player 2 (life: 4)
+
+  >>> Turn 11 - Player 2 4 (Player 1 20) <<<<
+Player 2 draws Plains (15)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (15)
+Player 2 has lost the game (decked). Player 1 wins!

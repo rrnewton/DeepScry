@@ -1,0 +1,168 @@
+<Choice> Player 1 chose 2 - activate Prodigal Sorcerer
+Prodigal Sorcerer activates ability: Prodigal Sorcerer deals 1 damage to any target.
+  -> targeting Royal Assassin (33)
+Royal Assassin (33) takes 1 damage (total: 1)
+<Choice> Player 2 chose 1 - activate Chaos Orb
+Chaos Orb activates ability: If Chaos Orb is on the battlefield, flip Chaos Orb onto the battlefield from a height of at least one foot. If Chaos Orb turns over completely at least once during the flip, destroy all nontoken permanents it touches. Then destroy Chaos Orb.
+  -> targeting Serra Angel (14)
+Tap Mox Ruby for mana
+Serra Angel (14) goes to graveyard
+Chaos Orb (28) goes to graveyard
+<Choice> Player 1 chose 0 - cast Lightning Bolt
+Player 1 casts Lightning Bolt (3) (putting on stack)
+  → targeting Hypnotic Specter (31)
+Tap Mountain for {R}
+<Choice> Player 2 chose 1 - cast Counterspell
+Player 2 casts Counterspell (23) (putting on stack)
+  → targeting Lightning Bolt (3)
+Tap Tundra for {U}
+Tap Tropical Island for {U}
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 'p' (pass priority from 3 available actions)
+Counterspell (23) resolves
+Counterspell (23) counters Lightning Bolt (3)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 'p' (pass priority from 3 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 'p' (pass priority from 3 available actions)
+<Choice> chose not to attack with 2 available creatures (aggression=3, opponent blockers=3)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 0 - cast Terror
+Player 2 casts Terror (22) (putting on stack)
+  → targeting Grizzly Bears (12)
+Tap Badlands for {B}
+Tap Underground Sea for {U}
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 'p' (pass priority from 2 available actions)
+Terror (22) resolves
+Grizzly Bears (12) goes to graveyard
+Terror (22) destroys Grizzly Bears (12)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 'p' (pass priority from 2 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 'p' (pass priority from 2 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 'p' (pass priority from 2 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 'p' (pass priority from 2 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 'p' (pass priority from 2 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 'p' (pass priority from 2 available actions)
+
+  >>> Turn 6 - Player 2 20 (Player 1 20) <<<<
+Juzám Djinn deals 1 damage to Player 2
+<Choice> Player 2 chose 'p' (pass priority from 2 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+Player 2 draws Mountain (38)
+<Choice> Player 2 chose 'p' (pass priority from 2 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 2 - play Mountain
+Player 2 plays Mountain (38)
+<Choice> Player 2 chose 'p' (pass priority from 2 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 'p' (pass priority from 2 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> chose 3 attackers from 3 available creatures (aggression=3, opponent blockers=1)
+Player 2 declares Hypnotic Specter (31) (3/3) as attacker
+Player 2 declares Juzám Djinn (32) (6/6) as attacker
+Player 2 declares Royal Assassin (33) (2/2) as attacker
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> chose 1 blockers for 3 attackers
+Player 1 declares Llanowar Elves (11) as blocker for Juzám Djinn (32)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+Hypnotic Specter (31) deals 3 damage to Player 1 (life: 17)
+Juzám Djinn (32) deals 6 damage to Llanowar Elves (11)
+Llanowar Elves (11) deals 1 damage to Juzám Djinn (32)
+Royal Assassin (33) deals 2 damage to Player 1 (life: 15)
+Giant Growth is discarded
+Player 1 discards Giant Growth
+Llanowar Elves (11) goes to graveyard
+Llanowar Elves (11) dies from combat damage
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+
+  >>> Turn 7 - Player 1 15 (Player 2 19) <<<<
+<Choice> Player 1 chose 0 - activate Prodigal Sorcerer
+Prodigal Sorcerer activates ability: Prodigal Sorcerer deals 1 damage to any target.
+  -> targeting Royal Assassin (33)
+Royal Assassin (33) takes 1 damage (total: 1)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+Player 1 draws Mountain (21)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 0 - play Mountain
+Player 1 plays Mountain (21)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+
+  >>> Turn 8 - Player 2 19 (Player 1 15) <<<<
+Juzám Djinn deals 1 damage to Player 2
+<Choice> Player 2 chose 'p' (pass priority from 2 available actions)
+Player 2 draws Island (37)
+<Choice> Player 2 chose 'p' (pass priority from 2 available actions)
+<Choice> Player 2 chose 2 - play Island
+Player 2 plays Island (37)
+<Choice> Player 2 chose 'p' (pass priority from 2 available actions)
+<Choice> Player 2 chose 'p' (pass priority from 2 available actions)
+<Choice> chose 3 attackers from 3 available creatures (aggression=3, opponent blockers=0)
+Player 2 declares Hypnotic Specter (31) (3/3) as attacker
+Player 2 declares Juzám Djinn (32) (6/6) as attacker
+Player 2 declares Royal Assassin (33) (2/2) as attacker
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+Hypnotic Specter (31) deals 3 damage to Player 1 (life: 12)
+Juzám Djinn (32) deals 6 damage to Player 1 (life: 6)
+Royal Assassin (33) deals 2 damage to Player 1 (life: 4)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+
+  >>> Turn 9 - Player 1 4 (Player 2 18) <<<<
+<Choice> Player 1 chose 0 - activate Prodigal Sorcerer
+Prodigal Sorcerer activates ability: Prodigal Sorcerer deals 1 damage to any target.
+  -> targeting Royal Assassin (33)
+Royal Assassin (33) takes 1 damage (total: 1)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+Player 1 draws Forest (20)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 0 - play Forest
+Player 1 plays Forest (20)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+
+  >>> Turn 10 - Player 2 18 (Player 1 4) <<<<
+Juzám Djinn deals 1 damage to Player 2
+<Choice> Player 2 chose 'p' (pass priority from 2 available actions)
+Player 2 draws Swamp (36)
+<Choice> Player 2 chose 'p' (pass priority from 2 available actions)
+<Choice> Player 2 chose 2 - play Swamp
+Player 2 plays Swamp (36)
+<Choice> Player 2 chose 'p' (pass priority from 2 available actions)
+<Choice> Player 2 chose 'p' (pass priority from 2 available actions)
+<Choice> chose 3 attackers from 3 available creatures (aggression=3, opponent blockers=0)
+Player 2 declares Hypnotic Specter (31) (3/3) as attacker
+Player 2 declares Juzám Djinn (32) (6/6) as attacker
+Player 2 declares Royal Assassin (33) (2/2) as attacker
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+Hypnotic Specter (31) deals 3 damage to Player 1 (life: 1)
+Juzám Djinn (32) deals 6 damage to Player 1 (life: -5)
+Royal Assassin (33) deals 2 damage to Player 1 (life: -7)
+Player 1 has lost the game (life: -7). Player 2 wins!

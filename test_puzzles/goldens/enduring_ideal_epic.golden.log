@@ -1,0 +1,48 @@
+
+  >>> Turn 3 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Forest (21)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (21)
+
+  >>> Turn 4 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Plains (14)
+<Choice> Player 1 chose 0 - play Plains
+Player 1 plays Plains (14)
+<Choice> Player 1 chose 0 - cast Enduring Ideal
+Player 1 casts Enduring Ideal (3) (putting on stack)
+Tap Plains for {W}
+Tap Plains for {W}
+Tap Plains for {W}
+Tap Plains for {W}
+Tap Plains for {W}
+Tap Plains for {W}
+Tap Island for {U}
+Enduring Ideal (3) resolves
+<Choice> Library search: found Honden of Cleansing Fire (score: 170)
+Enduring Ideal (3) searches Player 1's library for a Enchantment card and puts it into Battlefield
+
+  >>> Turn 5 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Forest (20)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (20)
+
+  >>> Turn 6 - Player 1 20 (Player 2 20) <<<<
+Honden of Cleansing Fire trigger effect
+Player 1 gains 2 life (life: 22)
+Player 1 copies Epic effect (search library → Battlefield)
+Player 1 draws Plains (13)
+<Choice> Player 1 chose 0 - play Plains
+Player 1 plays Plains (13)
+
+  >>> Turn 7 - Player 2 20 (Player 1 22) <<<<
+Player 2 draws Forest (19)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (19)
+
+  >>> Turn 8 - Player 1 22 (Player 2 20) <<<<
+Honden of Cleansing Fire trigger effect
+Player 1 gains 2 life (life: 24)
+Solitary Confinement trigger effect
+Solitary Confinement (12) goes to graveyard
+Player 1 copies Epic effect (search library → Battlefield)
+Player 1 has lost the game (decked). Player 2 wins!

@@ -1,0 +1,39 @@
+Player 1 draws Plains (9)
+<Choice> Player 1 chose 0 - play Plains
+Player 1 plays Plains (9)
+<Choice> chose 2 attackers from 2 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Serra Angel (3) (4/4) as attacker
+Player 1 declares Grizzly Bears (4) (2/2) as attacker
+Serra Angel (3) deals 4 damage to Player 2 (life: 16)
+Grizzly Bears (4) deals 2 damage to Player 2 (life: 14)
+
+  >>> Turn 3 - Player 2 14 (Player 1 20) <<<<
+Player 2 draws Forest (12)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (12)
+
+  >>> Turn 4 - Player 1 20 (Player 2 14) <<<<
+Player 1 draws Plains (8)
+<Choice> Player 1 chose 0 - play Plains
+Player 1 plays Plains (8)
+<Choice> chose 2 attackers from 2 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Serra Angel (3) (4/4) as attacker
+Player 1 declares Grizzly Bears (4) (2/2) as attacker
+Serra Angel (3) deals 4 damage to Player 2 (life: 10)
+Grizzly Bears (4) deals 2 damage to Player 2 (life: 8)
+
+  >>> Turn 5 - Player 2 8 (Player 1 20) <<<<
+Player 2 draws Forest (11)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (11)
+
+  >>> Turn 6 - Player 1 20 (Player 2 8) <<<<
+Player 1 draws Plains (7)
+<Choice> Player 1 chose 0 - play Plains
+Player 1 plays Plains (7)
+<Choice> chose 2 attackers from 2 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Serra Angel (3) (4/4) as attacker
+Player 1 declares Grizzly Bears (4) (2/2) as attacker
+Serra Angel (3) deals 4 damage to Player 2 (life: 4)
+Grizzly Bears (4) deals 2 damage to Player 2 (life: 2)
+Player 1 has lost the game (decked). Player 2 wins!

@@ -1,0 +1,76 @@
+  >>> Turn 1 - Player 1 20 (Player 2 20) <<<<
+<Choice> Player 1 chose 0 - cast Yuyan Archers
+Player 1 casts Yuyan Archers (3) (putting on stack)
+Tap Mountain for {R}
+Tap Mountain for {R}
+Yuyan Archers (3) resolves
+Player 1 draws Forest (13)
+Yuyan Archers (3) enters the battlefield as a 3/1 creature
+<Choice> Player 1 chose 0 - play Mountain
+Player 1 plays Mountain (4)
+
+  >>> Turn 2 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Forest (21)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (21)
+
+  >>> Turn 3 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Forest (12)
+<Choice> Player 1 chose 0 - play Swamp
+Player 1 plays Swamp (5)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Yuyan Archers (3) (3/1) as attacker
+Yuyan Archers (3) deals 3 damage to Player 2 (life: 17)
+
+  >>> Turn 4 - Player 2 17 (Player 1 20) <<<<
+Player 2 draws Forest (20)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (20)
+
+  >>> Turn 5 - Player 1 20 (Player 2 17) <<<<
+Player 1 draws Forest (11)
+<Choice> Player 1 chose 0 - play Forest
+Player 1 plays Forest (11)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Yuyan Archers (3) (3/1) as attacker
+Yuyan Archers (3) deals 3 damage to Player 2 (life: 14)
+
+  >>> Turn 6 - Player 2 14 (Player 1 20) <<<<
+Player 2 draws Forest (19)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (19)
+
+  >>> Turn 7 - Player 1 20 (Player 2 14) <<<<
+Player 1 draws Forest (10)
+<Choice> Player 1 chose 0 - play Forest
+Player 1 plays Forest (10)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Yuyan Archers (3) (3/1) as attacker
+Yuyan Archers (3) deals 3 damage to Player 2 (life: 11)
+
+  >>> Turn 8 - Player 2 11 (Player 1 20) <<<<
+Player 2 draws Forest (18)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (18)
+
+  >>> Turn 9 - Player 1 20 (Player 2 11) <<<<
+Player 1 draws Forest (9)
+<Choice> Player 1 chose 0 - play Forest
+Player 1 plays Forest (9)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Yuyan Archers (3) (3/1) as attacker
+Yuyan Archers (3) deals 3 damage to Player 2 (life: 8)
+
+  >>> Turn 10 - Player 2 8 (Player 1 20) <<<<
+Player 2 draws Forest (17)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (17)
+
+  >>> Turn 11 - Player 1 20 (Player 2 8) <<<<
+Player 1 draws Forest (8)
+<Choice> Player 1 chose 0 - play Forest
+Player 1 plays Forest (8)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Yuyan Archers (3) (3/1) as attacker
+Yuyan Archers (3) deals 3 damage to Player 2 (life: 5)
+Player 1 has lost the game (decked). Player 2 wins!

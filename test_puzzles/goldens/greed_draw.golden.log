@@ -1,0 +1,37 @@
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 0 - activate Greed
+Greed activates ability: Draw a card.
+Tap Swamp for {B}
+Player 1 draws Swamp (9)
+<Choice> Player 1 chose 0 - activate Greed
+Greed activates ability: Draw a card.
+Tap Swamp for {B}
+Player 1 draws Swamp (8)
+<Choice> Player 1 chose 0 - play Swamp
+Player 1 plays Swamp (8)
+<Choice> Player 1 chose 0 - activate Greed
+Greed activates ability: Draw a card.
+Tap Swamp for {B}
+Player 1 draws Swamp (7)
+
+  >>> Turn 3 - Player 2 20 (Player 1 14) <<<<
+Player 2 draws Plains (11)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (11)
+
+  >>> Turn 4 - Player 1 14 (Player 2 20) <<<<
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+Player 1 draws Swamp (6)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 1 - play Swamp
+Player 1 plays Swamp (6)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+Player 1 has lost the game (decked). Player 2 wins!

@@ -1,0 +1,45 @@
+  >>> Turn 1 - Player 1 20 (Player 2 10) <<<<
+<Choice> Player 1 chose 0 - cast Fire Lord Ozai
+Player 1 casts Fire Lord Ozai (3) (putting on stack)
+Tap Swamp for {B}
+Tap Swamp for {B}
+Tap Swamp for {B}
+Tap Swamp for {B}
+Fire Lord Ozai (3) resolves
+Fire Lord Ozai (3) enters the battlefield as a 4/4 creature
+Fire Lord Ozai (3) goes to graveyard
+Fire Lord Ozai (3) sacrificed due to legendary rule (duplicate of Fire Lord Ozai (8))
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Fire Lord Ozai (8) (4/4) as attacker
+Fire Lord Ozai (8) deals 4 damage to Player 2 (life: 6)
+
+  >>> Turn 2 - Player 2 6 (Player 1 20) <<<<
+Player 2 draws Forest (16)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (16)
+
+  >>> Turn 3 - Player 1 20 (Player 2 6) <<<<
+Player 1 draws Swamp (11)
+<Choice> Player 1 chose 0 - play Swamp
+Player 1 plays Swamp (11)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Fire Lord Ozai (8) (4/4) as attacker
+Fire Lord Ozai (8) deals 4 damage to Player 2 (life: 2)
+
+  >>> Turn 4 - Player 2 2 (Player 1 20) <<<<
+Player 2 draws Forest (15)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (15)
+
+  >>> Turn 5 - Player 1 20 (Player 2 2) <<<<
+Player 1 draws Swamp (10)
+<Choice> Player 1 chose 0 - play Swamp
+Player 1 plays Swamp (10)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Fire Lord Ozai (8) (4/4) as attacker
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+Fire Lord Ozai (8) deals 4 damage to Player 2 (life: -2)
+Player 2 has lost the game (life: -2). Player 1 wins!

@@ -1,0 +1,35 @@
+  >>> Turn 1 - Player 1 20 (Player 2 20) <<<<
+<Choice> chose 2 attackers from 2 available creatures (aggression=3, opponent blockers=0)
+Canyon Crawler (10) goes to graveyard
+Player 1 draws Swamp (13)
+Player 1 declares Beetle-Headed Merchants (9) (6/5) as attacker
+Beetle-Headed Merchants (9) deals 6 damage to Player 2 (life: 14)
+<Choice> Player 1 chose 0 - play Swamp
+Player 1 plays Swamp (3)
+
+  >>> Turn 2 - Player 2 14 (Player 1 20) <<<<
+Player 2 draws Forest (19)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (19)
+
+  >>> Turn 3 - Player 1 20 (Player 2 14) <<<<
+Player 1 draws Swamp (12)
+<Choice> Player 1 chose 0 - play Swamp
+Player 1 plays Swamp (12)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Beetle-Headed Merchants (9) (6/5) as attacker
+Beetle-Headed Merchants (9) deals 6 damage to Player 2 (life: 8)
+
+  >>> Turn 4 - Player 2 8 (Player 1 20) <<<<
+Player 2 draws Forest (18)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (18)
+
+  >>> Turn 5 - Player 1 20 (Player 2 8) <<<<
+Player 1 draws Swamp (11)
+<Choice> Player 1 chose 0 - play Swamp
+Player 1 plays Swamp (11)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Beetle-Headed Merchants (9) (6/5) as attacker
+Beetle-Headed Merchants (9) deals 6 damage to Player 2 (life: 2)
+Player 1 has lost the game (decked). Player 2 wins!

@@ -1,0 +1,42 @@
+<Choice> Player 1 chose 0 - play Forest
+Forest (3) enters the battlefield tapped
+Player 1 plays Forest (3)
+
+  >>> Turn 4 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Plains (13)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (13)
+
+  >>> Turn 5 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Forest (7)
+<Choice> Player 1 chose 0 - play Forest
+Forest (7) enters the battlefield tapped
+Player 1 plays Forest (7)
+
+  >>> Turn 6 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Plains (12)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (12)
+
+  >>> Turn 7 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Forest (6)
+<Choice> Player 1 chose 0 - play Forest
+Forest (6) enters the battlefield tapped
+Player 1 plays Forest (6)
+
+  >>> Turn 8 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Plains (11)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (11)
+
+  >>> Turn 9 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Forest (5)
+<Choice> Player 1 chose 0 - play Forest
+Forest (5) enters the battlefield tapped
+Player 1 plays Forest (5)
+
+  >>> Turn 10 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Plains (10)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (10)
+Player 2 has lost the game (decked). Player 1 wins!

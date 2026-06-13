@@ -1,0 +1,136 @@
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Sedge Troll (3) (3/3) as attacker
+<Choice> Player 1 chose 0 - activate Sedge Troll
+Sedge Troll activates ability: Regenerate Sedge Troll.
+Tap Swamp for {B}
+Sedge Troll (3) gains a regeneration shield
+Sedge Troll (3) deals 3 damage to Player 2 (life: 17)
+
+  >>> Turn 3 - Player 2 17 (Player 1 20) <<<<
+Player 2 draws Plains (25)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (25)
+
+  >>> Turn 4 - Player 1 20 (Player 2 17) <<<<
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+Player 1 draws Mountain (15)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 1 - play Mountain
+Player 1 plays Mountain (15)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Sedge Troll (3) (3/3) as attacker
+<Choice> Player 1 chose 0 - activate Sedge Troll
+Sedge Troll activates ability: Regenerate Sedge Troll.
+Tap Swamp for {B}
+Sedge Troll (3) gains a regeneration shield
+Sedge Troll (3) deals 3 damage to Player 2 (life: 14)
+
+  >>> Turn 5 - Player 2 14 (Player 1 20) <<<<
+Player 2 draws Plains (24)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (24)
+
+  >>> Turn 6 - Player 1 20 (Player 2 14) <<<<
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+Player 1 draws Mountain (14)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 1 - play Mountain
+Player 1 plays Mountain (14)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Sedge Troll (3) (3/3) as attacker
+<Choice> Player 1 chose 0 - activate Sedge Troll
+Sedge Troll activates ability: Regenerate Sedge Troll.
+Tap Swamp for {B}
+Sedge Troll (3) gains a regeneration shield
+Sedge Troll (3) deals 3 damage to Player 2 (life: 11)
+
+  >>> Turn 7 - Player 2 11 (Player 1 20) <<<<
+Player 2 draws Plains (23)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (23)
+
+  >>> Turn 8 - Player 1 20 (Player 2 11) <<<<
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+Player 1 draws Mountain (13)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 1 - play Mountain
+Player 1 plays Mountain (13)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Sedge Troll (3) (3/3) as attacker
+<Choice> Player 1 chose 0 - activate Sedge Troll
+Sedge Troll activates ability: Regenerate Sedge Troll.
+Tap Swamp for {B}
+Sedge Troll (3) gains a regeneration shield
+Sedge Troll (3) deals 3 damage to Player 2 (life: 8)
+
+  >>> Turn 9 - Player 2 8 (Player 1 20) <<<<
+Player 2 draws Plains (22)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (22)
+
+  >>> Turn 10 - Player 1 20 (Player 2 8) <<<<
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+Player 1 draws Mountain (12)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 1 - play Mountain
+Player 1 plays Mountain (12)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Sedge Troll (3) (3/3) as attacker
+<Choice> Player 1 chose 0 - activate Sedge Troll
+Sedge Troll activates ability: Regenerate Sedge Troll.
+Tap Swamp for {B}
+Sedge Troll (3) gains a regeneration shield
+Sedge Troll (3) deals 3 damage to Player 2 (life: 5)
+
+  >>> Turn 11 - Player 2 5 (Player 1 20) <<<<
+Player 2 draws Plains (21)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (21)
+
+  >>> Turn 12 - Player 1 20 (Player 2 5) <<<<
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+Player 1 draws Mountain (11)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 1 - play Mountain
+Player 1 plays Mountain (11)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Sedge Troll (3) (3/3) as attacker
+<Choice> Player 1 chose 0 - activate Sedge Troll
+Sedge Troll activates ability: Regenerate Sedge Troll.
+Tap Swamp for {B}
+Sedge Troll (3) gains a regeneration shield
+Sedge Troll (3) deals 3 damage to Player 2 (life: 2)
+
+  >>> Turn 13 - Player 2 2 (Player 1 20) <<<<
+Player 2 draws Plains (20)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (20)
+
+  >>> Turn 14 - Player 1 20 (Player 2 2) <<<<
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+Player 1 draws Mountain (10)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 1 - play Mountain
+Player 1 plays Mountain (10)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Sedge Troll (3) (3/3) as attacker
+<Choice> Player 1 chose 0 - activate Sedge Troll
+Sedge Troll activates ability: Regenerate Sedge Troll.
+Tap Swamp for {B}
+Sedge Troll (3) gains a regeneration shield
+Sedge Troll (3) deals 3 damage to Player 2 (life: -1)
+Player 2 has lost the game (life: -1). Player 1 wins!

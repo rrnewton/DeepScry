@@ -1,0 +1,85 @@
+<Choice> Player 1 chose 0 - activate Experimental Frenzy
+Experimental Frenzy activates ability: Destroy Experimental Frenzy.
+Tap Mountain for {R}
+Tap Mountain for {R}
+Tap Mountain for {R}
+Tap Mountain for {R}
+Experimental Frenzy (9) goes to graveyard
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+
+  >>> Turn 3 - Player 2 20 (Player 1 20) <<<<
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+Player 2 draws Plains (18)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (18)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+
+  >>> Turn 4 - Player 1 20 (Player 2 20) <<<<
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+Player 1 draws Lightning Bolt (13)
+<Choice> Player 1 chose 'p' (pass priority from 2 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 2 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 2 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 2 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 2 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 2 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 2 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 2 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 2 available actions)
+
+  >>> Turn 5 - Player 2 20 (Player 1 20) <<<<
+<Choice> Player 1 chose 'p' (pass priority from 2 available actions)
+Player 2 draws Plains (17)
+<Choice> Player 1 chose 'p' (pass priority from 2 available actions)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (17)
+<Choice> Player 1 chose 'p' (pass priority from 2 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 2 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 2 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 2 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 2 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 2 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 2 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 2 available actions)
+
+  >>> Turn 6 - Player 1 20 (Player 2 20) <<<<
+<Choice> Player 1 chose 'p' (pass priority from 2 available actions)
+Player 1 draws Mountain (12)
+<Choice> Player 1 chose 'p' (pass priority from 2 available actions)
+<Choice> Player 1 chose 1 - play Mountain
+Player 1 plays Mountain (12)
+<Choice> Player 1 chose 'p' (pass priority from 2 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 2 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 2 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 2 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 2 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 2 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 2 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 2 available actions)
+
+  >>> Turn 7 - Player 2 20 (Player 1 20) <<<<
+<Choice> Player 1 chose 'p' (pass priority from 2 available actions)
+Player 2 draws Plains (16)
+<Choice> Player 1 chose 'p' (pass priority from 2 available actions)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (16)
+<Choice> Player 1 chose 'p' (pass priority from 2 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 2 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 2 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 2 available actions)
+Player 2 has lost the game (decked). Player 1 wins!

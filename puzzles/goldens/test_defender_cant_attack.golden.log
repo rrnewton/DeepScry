@@ -1,0 +1,47 @@
+  >>> Turn 1 - Player 1 20 (Player 2 1) <<<<
+
+  >>> Turn 2 - Player 2 1 (Player 1 20) <<<<
+Player 2 draws Forest (18)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (18)
+
+  >>> Turn 3 - Player 1 20 (Player 2 1) <<<<
+Player 1 draws Island (11)
+<Choice> Player 1 chose 0 - play Island
+Player 1 plays Island (11)
+
+  >>> Turn 4 - Player 2 1 (Player 1 20) <<<<
+Player 2 draws Forest (17)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (17)
+
+  >>> Turn 5 - Player 1 20 (Player 2 1) <<<<
+Player 1 draws Island (10)
+<Choice> Player 1 chose 0 - play Island
+Player 1 plays Island (10)
+
+  >>> Turn 6 - Player 2 1 (Player 1 20) <<<<
+Player 2 draws Forest (16)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (16)
+
+  >>> Turn 7 - Player 1 20 (Player 2 1) <<<<
+Player 1 draws Island (9)
+<Choice> Player 1 chose 0 - play Island
+Player 1 plays Island (9)
+
+  >>> Turn 8 - Player 2 1 (Player 1 20) <<<<
+Player 2 draws Forest (15)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (15)
+
+  >>> Turn 9 - Player 1 20 (Player 2 1) <<<<
+Player 1 draws Island (8)
+<Choice> Player 1 chose 0 - play Island
+Player 1 plays Island (8)
+
+  >>> Turn 10 - Player 2 1 (Player 1 20) <<<<
+Player 2 draws Forest (14)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (14)
+Player 2 has lost the game (decked). Player 1 wins!

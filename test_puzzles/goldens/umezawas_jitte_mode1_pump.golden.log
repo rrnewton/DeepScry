@@ -1,0 +1,70 @@
+<Choice> Player 1 chose 0 - activate Umezawa's Jitte
+Umezawa's Jitte activates ability: Activated ability
+Umezawa's Jitte loses 1 Charge counter(s) (now 1)
+<Choice> Chose modes [2] (scores: [(2, 20)]) from 3 available
+  Mode chosen: You gain 2 life.
+Player 1 gains 2 life (life: 7)
+<Choice> Player 1 chose 0 - activate Umezawa's Jitte
+Umezawa's Jitte activates ability: Activated ability
+Umezawa's Jitte loses 1 Charge counter(s) (now 0)
+<Choice> Chose modes [2] (scores: [(2, 20)]) from 3 available
+  Mode chosen: You gain 2 life.
+Player 1 gains 2 life (life: 9)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Isamaru, Hound of Konda (6) (2/2) as attacker
+Isamaru, Hound of Konda (6) deals 2 damage to Player 2 (life: 3)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 0 - activate Umezawa's Jitte
+Umezawa's Jitte activates ability: Activated ability
+Umezawa's Jitte loses 1 Charge counter(s) (now 1)
+<Choice> Chose modes [2] (scores: [(2, 20)]) from 3 available
+  Mode chosen: You gain 2 life.
+Player 1 gains 2 life (life: 11)
+<Choice> Player 1 chose 0 - activate Umezawa's Jitte
+Umezawa's Jitte activates ability: Activated ability
+Umezawa's Jitte loses 1 Charge counter(s) (now 0)
+<Choice> Chose modes [2] (scores: [(2, 20)]) from 3 available
+  Mode chosen: You gain 2 life.
+Player 1 gains 2 life (life: 13)
+
+  >>> Turn 4 - Player 2 3 (Player 1 13) <<<<
+Player 2 draws Plains (14)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (14)
+
+  >>> Turn 5 - Player 1 13 (Player 2 3) <<<<
+Player 1 draws Plains (10)
+<Choice> Player 1 chose 0 - play Plains
+Player 1 plays Plains (10)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Isamaru, Hound of Konda (6) (2/2) as attacker
+Isamaru, Hound of Konda (6) deals 2 damage to Player 2 (life: 1)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 0 - activate Umezawa's Jitte
+Umezawa's Jitte activates ability: Activated ability
+Umezawa's Jitte loses 1 Charge counter(s) (now 1)
+<Choice> Chose modes [2] (scores: [(2, 20)]) from 3 available
+  Mode chosen: You gain 2 life.
+Player 1 gains 2 life (life: 15)
+<Choice> Player 1 chose 0 - activate Umezawa's Jitte
+Umezawa's Jitte activates ability: Activated ability
+Umezawa's Jitte loses 1 Charge counter(s) (now 0)
+<Choice> Chose modes [2] (scores: [(2, 20)]) from 3 available
+  Mode chosen: You gain 2 life.
+Player 1 gains 2 life (life: 17)
+
+  >>> Turn 6 - Player 2 1 (Player 1 17) <<<<
+Player 2 draws Plains (13)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (13)
+
+  >>> Turn 7 - Player 1 17 (Player 2 1) <<<<
+Player 1 draws Plains (9)
+<Choice> Player 1 chose 0 - play Plains
+Player 1 plays Plains (9)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Isamaru, Hound of Konda (6) (2/2) as attacker
+Isamaru, Hound of Konda (6) deals 2 damage to Player 2 (life: -1)
+Player 2 has lost the game (life: -1). Player 1 wins!

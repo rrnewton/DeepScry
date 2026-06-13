@@ -1,0 +1,69 @@
+  >>> Turn 1 - Player 1 20 (Player 2 20) <<<<
+<Choice> Player 1 chose 1 - play Mountain
+Player 1 plays Mountain (4)
+<Choice> Player 1 chose 0 - cast Lightning Strike
+Player 1 casts Lightning Strike (3) (putting on stack)
+  → targeting Grizzly Bears (17)
+Tap Mountain for {R}
+Tap Swamp for {B}
+Lightning Strike (3) resolves
+Grizzly Bears (17) takes 3 damage (total: 3)
+Lightning Strike (3) deals 3 damage to Grizzly Bears (17)
+Grizzly Bears (17) goes to graveyard
+Grizzly Bears (17) dies from lethal damage
+
+  >>> Turn 2 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Forest (23)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (23)
+
+  >>> Turn 3 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Swamp (14)
+<Choice> Player 1 chose 0 - play Swamp
+Player 1 plays Swamp (14)
+
+  >>> Turn 4 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Forest (22)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (22)
+
+  >>> Turn 5 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Swamp (13)
+<Choice> Player 1 chose 0 - play Swamp
+Player 1 plays Swamp (13)
+
+  >>> Turn 6 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Forest (21)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (21)
+
+  >>> Turn 7 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Swamp (12)
+<Choice> Player 1 chose 0 - play Swamp
+Player 1 plays Swamp (12)
+
+  >>> Turn 8 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Forest (20)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (20)
+
+  >>> Turn 9 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Mountain (11)
+<Choice> Player 1 chose 0 - play Mountain
+Player 1 plays Mountain (11)
+
+  >>> Turn 10 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Forest (19)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (19)
+
+  >>> Turn 11 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Mountain (10)
+<Choice> Player 1 chose 0 - play Mountain
+Player 1 plays Mountain (10)
+
+  >>> Turn 12 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Forest (18)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (18)
+Player 2 has lost the game (decked). Player 1 wins!

@@ -1,0 +1,64 @@
+<Choice> Player 1 chose 4 - cast Ponder
+Player 1 casts Ponder (5) (putting on stack)
+Tap Island for {U}
+<Choice> Player 1 chose 'p' (pass priority from 3 available actions)
+Ponder (5) resolves
+P1 looks at the top 3 cards of their library, puts them back in the same order
+Player 1 draws Plains (17)
+Ponder (5) causes Player 1 to draw 1 card(s)
+<Choice> Player 1 chose 3 - play Plains
+Player 1 plays Plains (17)
+<Choice> Player 1 chose 'p' (pass priority from 3 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 3 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 3 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 3 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 3 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 3 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 3 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 3 available actions)
+
+  >>> Turn 3 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Plains (22)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (22)
+
+  >>> Turn 4 - Player 1 20 (Player 2 20) <<<<
+<Choice> Player 1 chose 'p' (pass priority from 4 available actions)
+Player 1 draws Island (16)
+<Choice> Player 1 chose 'p' (pass priority from 4 available actions)
+<Choice> Player 1 chose 4 - play Island
+Player 1 plays Island (16)
+<Choice> Player 1 chose 'p' (pass priority from 4 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 4 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 4 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 4 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 4 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 4 available actions)
+<Choice> Player 1 chose 2 - cast Ancestral Recall
+Player 1 casts Ancestral Recall (4) (putting on stack)
+Tap Island for {U}
+<Choice> Player 1 chose 'p' (pass priority from 2 available actions)
+Ancestral Recall (4) resolves
+Player 1 draws Plains (15)
+Player 1 draws Island (14)
+Player 1 draws Plains (13)
+Ancestral Recall (4) causes Player 1 to draw 3 card(s)
+<Choice> Player 1 chose 'p' (pass priority from 2 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 2 available actions)
+
+  >>> Turn 5 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Plains (21)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (21)
+
+  >>> Turn 6 - Player 1 20 (Player 2 20) <<<<
+<Choice> Player 1 chose 'p' (pass priority from 2 available actions)
+Player 1 draws Island (12)
+<Choice> Player 1 chose 'p' (pass priority from 2 available actions)
+<Choice> Player 1 chose 2 - play Island
+Player 1 plays Island (12)
+<Choice> Player 1 chose 'p' (pass priority from 2 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 2 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 2 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 2 available actions)
+Player 1 has lost the game (decked). Player 2 wins!

@@ -1,0 +1,33 @@
+Player 1 draws Island (10)
+<Choice> Player 1 chose 0 - play Island
+Player 1 plays Island (10)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Grizzly Bears (6) (2/2) as attacker
+Grizzly Bears (6) deals 2 damage to Player 2 (life: 18)
+
+  >>> Turn 3 - Player 2 18 (Player 1 20) <<<<
+Player 2 draws Forest (13)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (13)
+
+  >>> Turn 4 - Player 1 20 (Player 2 18) <<<<
+Player 1 draws Island (9)
+<Choice> Player 1 chose 0 - play Island
+Player 1 plays Island (9)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Grizzly Bears (6) (2/2) as attacker
+Grizzly Bears (6) deals 2 damage to Player 2 (life: 16)
+
+  >>> Turn 5 - Player 2 16 (Player 1 20) <<<<
+Player 2 draws Forest (12)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (12)
+
+  >>> Turn 6 - Player 1 20 (Player 2 16) <<<<
+Player 1 draws Island (8)
+<Choice> Player 1 chose 0 - play Island
+Player 1 plays Island (8)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Grizzly Bears (6) (2/2) as attacker
+Grizzly Bears (6) deals 2 damage to Player 2 (life: 14)
+Player 1 has lost the game (decked). Player 2 wins!

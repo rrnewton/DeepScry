@@ -1,0 +1,80 @@
+  >>> Turn 1 - Player 1 20 (Player 2 20) <<<<
+<Choice> Player 1 chose 1 - cast Grizzly Bears
+Player 1 casts Grizzly Bears (4) (putting on stack)
+Tap Forest for {G}
+Tap Forest for {G}
+<Choice> Player 2 chose 0 - cast Cancel
+Player 2 casts Cancel (18) (putting on stack)
+  → targeting Grizzly Bears (4)
+Tap Island for {U}
+Tap Island for {U}
+Tap Island for {U}
+Cancel (18) resolves
+Cancel (18) counters Grizzly Bears (4)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+
+  >>> Turn 2 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Island (25)
+<Choice> Player 2 chose 0 - play Island
+Player 2 plays Island (25)
+
+  >>> Turn 3 - Player 1 20 (Player 2 20) <<<<
+<Choice> Player 1 chose 0 - cast Summoning Trap
+Player 1 casts Summoning Trap (3) (putting on stack)
+Tap Forest for {G}
+Tap Forest for {G}
+Tap Forest for {G}
+Tap Forest for {G}
+Tap Forest for {G}
+Tap Forest for {G}
+Summoning Trap (3) resolves
+Player 1 looks at the top 7 cards of their library
+<Choice> Library search: found Llanowar Elves (score: 105)
+Player 1 puts Llanowar Elves into Battlefield
+Player 1 puts 6 cards on the bottom of their library
+Summoning Trap (3) digs 7 card(s) from opponent's library to exile
+Player 1 draws Forest (17)
+<Choice> Player 1 chose 0 - play Forest
+Player 1 plays Forest (17)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Llanowar Elves (11) (1/1) as attacker
+Llanowar Elves (11) deals 1 damage to Player 2 (life: 19)
+
+  >>> Turn 4 - Player 2 19 (Player 1 20) <<<<
+Player 2 draws Island (24)
+<Choice> Player 2 chose 0 - play Island
+Player 2 plays Island (24)
+
+  >>> Turn 5 - Player 1 20 (Player 2 19) <<<<
+Player 1 draws Forest (16)
+<Choice> Player 1 chose 0 - play Forest
+Player 1 plays Forest (16)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Llanowar Elves (11) (1/1) as attacker
+Llanowar Elves (11) deals 1 damage to Player 2 (life: 18)
+
+  >>> Turn 6 - Player 2 18 (Player 1 20) <<<<
+Player 2 draws Island (23)
+<Choice> Player 2 chose 0 - play Island
+Player 2 plays Island (23)
+
+  >>> Turn 7 - Player 1 20 (Player 2 18) <<<<
+Player 1 draws Forest (15)
+<Choice> Player 1 chose 0 - play Forest
+Player 1 plays Forest (15)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Llanowar Elves (11) (1/1) as attacker
+Llanowar Elves (11) deals 1 damage to Player 2 (life: 17)
+
+  >>> Turn 8 - Player 2 17 (Player 1 20) <<<<
+Player 2 draws Island (22)
+<Choice> Player 2 chose 0 - play Island
+Player 2 plays Island (22)
+Player 2 has lost the game (decked). Player 1 wins!

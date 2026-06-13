@@ -1,0 +1,38 @@
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=3)
+Trigger: Emrakul, the Aeons Torn — Annihilator 6 (defending player sacrifices 6 permanents)
+Plains (22) goes to graveyard
+Player 2 sacrifices Plains (22)
+Plains (23) goes to graveyard
+Player 2 sacrifices Plains (23)
+Plains (24) goes to graveyard
+Player 2 sacrifices Plains (24)
+Plains (25) goes to graveyard
+Player 2 sacrifices Plains (25)
+Llanowar Elves (27) goes to graveyard
+Player 2 sacrifices Llanowar Elves (27)
+Grizzly Bears (26) goes to graveyard
+Player 2 sacrifices Grizzly Bears (26)
+Player 1 declares Emrakul, the Aeons Torn (18) (15/15) as attacker
+Emrakul, the Aeons Torn (18) deals 15 damage to Player 2 (life: 5)
+
+  >>> Turn 4 - Player 2 5 (Player 1 20) <<<<
+Player 2 draws Plains (31)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (31)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 2 declares Hill Giant (28) (3/3) as attacker
+Hill Giant (28) deals 3 damage to Player 1 (life: 17)
+
+  >>> Turn 5 - Player 1 17 (Player 2 5) <<<<
+Player 1 draws Forest (21)
+<Choice> Player 1 chose 0 - play Forest
+Player 1 plays Forest (21)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Trigger: Emrakul, the Aeons Torn — Annihilator 6 (defending player sacrifices 6 permanents)
+Plains (31) goes to graveyard
+Player 2 sacrifices Plains (31)
+Hill Giant (28) goes to graveyard
+Player 2 sacrifices Hill Giant (28)
+Player 1 declares Emrakul, the Aeons Torn (18) (15/15) as attacker
+Emrakul, the Aeons Torn (18) deals 15 damage to Player 2 (life: -10)
+Player 2 has lost the game (life: -10). Player 1 wins!

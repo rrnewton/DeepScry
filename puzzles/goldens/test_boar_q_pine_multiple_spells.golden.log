@@ -1,0 +1,38 @@
+  >>> Turn 1 - Player 1 20 (Player 2 6) <<<<
+<Choice> Player 1 chose 0 - cast Lightning Strike
+Player 1 casts Lightning Strike (3) (putting on stack)
+  → targeting Grizzly Bears (14)
+Tap Mountain for {R}
+Tap Mountain for {R}
+Trigger: Boar-q-pine - Whenever you cast a noncreature spell, put a +1/+1 counter on this creature.
+Boar-q-pine gets a +1/+1 counter (now 1 counters)
+<Choice> Player 1 chose 0 - cast Shock
+Player 1 casts Shock (4) (putting on stack)
+  → targeting Grizzly Bears (14)
+Tap Mountain for {R}
+Trigger: Boar-q-pine - Whenever you cast a noncreature spell, put a +1/+1 counter on this creature.
+Boar-q-pine gets a +1/+1 counter (now 2 counters)
+Shock (4) resolves
+Grizzly Bears (14) takes 2 damage (total: 2)
+Shock (4) deals 2 damage to Grizzly Bears (14)
+Grizzly Bears (14) goes to graveyard
+Grizzly Bears (14) dies from lethal damage
+Lightning Strike (3) resolves
+Lightning Strike (3) deals 3 damage to Grizzly Bears (14)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Boar-q-pine (9) (4/4) as attacker
+Boar-q-pine (9) deals 4 damage to Player 2 (life: 2)
+
+  >>> Turn 2 - Player 2 2 (Player 1 20) <<<<
+Player 2 draws Forest (17)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (17)
+
+  >>> Turn 3 - Player 1 20 (Player 2 2) <<<<
+Player 1 draws Mountain (12)
+<Choice> Player 1 chose 0 - play Mountain
+Player 1 plays Mountain (12)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Boar-q-pine (9) (4/4) as attacker
+Boar-q-pine (9) deals 4 damage to Player 2 (life: -2)
+Player 2 has lost the game (life: -2). Player 1 wins!

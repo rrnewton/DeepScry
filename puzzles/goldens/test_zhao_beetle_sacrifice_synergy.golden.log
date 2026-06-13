@@ -1,0 +1,46 @@
+  >>> Turn 1 - Player 1 20 (Player 2 20) <<<<
+<Choice> Player 1 chose 0 - play Swamp
+Player 1 plays Swamp (3)
+<Choice> chose 3 attackers from 3 available creatures (aggression=3, opponent blockers=0)
+Zhao, Ruthless Admiral triggers Firebending 2 (adding 2 {R} to combat mana)
+Player 1 adds 2 {R} (combat mana, lasts until end of combat)
+Player 1 declares Zhao, Ruthless Admiral (4) (3/4) as attacker
+Typhoid Rats (6) goes to graveyard
+Zhao, Ruthless Admiral gets +1/+0 until end of turn
+Beetle-Headed Merchants gets +1/+0 until end of turn
+Player 1 draws Mountain (15)
+Player 1 declares Beetle-Headed Merchants (5) (7/5) as attacker
+Zhao, Ruthless Admiral (4) deals 4 damage to Player 2 (life: 16)
+Beetle-Headed Merchants (5) deals 7 damage to Player 2 (life: 9)
+
+  >>> Turn 2 - Player 2 9 (Player 1 20) <<<<
+Player 2 draws Island (23)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (16)
+
+  >>> Turn 3 - Player 1 20 (Player 2 9) <<<<
+Player 1 draws Island (14)
+<Choice> Player 1 chose 0 - play Island
+Player 1 plays Island (14)
+<Choice> chose 2 attackers from 2 available creatures (aggression=3, opponent blockers=0)
+Zhao, Ruthless Admiral triggers Firebending 2 (adding 2 {R} to combat mana)
+Player 1 adds 2 {R} (combat mana, lasts until end of combat)
+Player 1 declares Zhao, Ruthless Admiral (4) (3/4) as attacker
+Zhao, Ruthless Admiral (4) goes to graveyard
+Player 1 draws Swamp (13)
+Player 1 declares Beetle-Headed Merchants (5) (7/6) as attacker
+Beetle-Headed Merchants (5) deals 7 damage to Player 2 (life: 2)
+
+  >>> Turn 4 - Player 2 2 (Player 1 20) <<<<
+Player 2 draws Island (22)
+<Choice> Player 2 chose 0 - play Island
+Player 2 plays Island (22)
+
+  >>> Turn 5 - Player 1 20 (Player 2 2) <<<<
+Player 1 draws Forest (12)
+<Choice> Player 1 chose 0 - play Forest
+Player 1 plays Forest (12)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Beetle-Headed Merchants (5) (7/6) as attacker
+Beetle-Headed Merchants (5) deals 7 damage to Player 2 (life: -5)
+Player 2 has lost the game (life: -5). Player 1 wins!

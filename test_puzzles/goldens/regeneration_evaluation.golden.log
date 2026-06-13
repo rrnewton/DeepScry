@@ -1,0 +1,69 @@
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> chose not to attack with 1 available creatures (aggression=3, opponent blockers=2)
+<Choice> Player 1 chose 0 - activate Drudge Skeletons
+Drudge Skeletons activates ability: Regenerate Drudge Skeletons.
+Tap Swamp for {B}
+Drudge Skeletons (8) gains a regeneration shield
+<Choice> Player 1 chose 0 - activate Drudge Skeletons
+Drudge Skeletons activates ability: Regenerate Drudge Skeletons.
+Tap Swamp for {B}
+Drudge Skeletons (8) gains a regeneration shield
+<Choice> Player 1 chose 0 - activate Drudge Skeletons
+Drudge Skeletons activates ability: Regenerate Drudge Skeletons.
+Tap Swamp for {B}
+Drudge Skeletons (8) gains a regeneration shield
+<Choice> Player 1 chose 0 - activate Drudge Skeletons
+Drudge Skeletons activates ability: Regenerate Drudge Skeletons.
+Tap Swamp for {B}
+Drudge Skeletons (8) gains a regeneration shield
+<Choice> Player 1 chose 0 - activate Drudge Skeletons
+Drudge Skeletons activates ability: Regenerate Drudge Skeletons.
+Tap Swamp for {B}
+Drudge Skeletons (8) gains a regeneration shield
+
+  >>> Turn 5 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Plains (20)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (20)
+<Choice> chose 2 attackers from 2 available creatures (aggression=3, opponent blockers=1)
+Player 2 declares Grizzly Bears (16) (2/2) as attacker
+Player 2 declares Grizzly Bears (17) (2/2) as attacker
+<Choice> chose 1 blockers for 2 attackers
+Player 1 declares Drudge Skeletons (8) as blocker for Grizzly Bears (16)
+Grizzly Bears (16) deals 2 damage to Drudge Skeletons (8)
+Drudge Skeletons (8) deals 1 damage to Grizzly Bears (16)
+Grizzly Bears (17) deals 2 damage to Player 1 (life: 18)
+Drudge Skeletons (8) goes to graveyard
+Drudge Skeletons (8) dies from combat damage
+
+  >>> Turn 6 - Player 1 18 (Player 2 20) <<<<
+Player 1 draws Swamp (11)
+<Choice> Player 1 chose 0 - play Swamp
+Player 1 plays Swamp (11)
+
+  >>> Turn 7 - Player 2 20 (Player 1 18) <<<<
+Player 2 draws Plains (19)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (19)
+<Choice> chose 2 attackers from 2 available creatures (aggression=3, opponent blockers=0)
+Player 2 declares Grizzly Bears (16) (2/2) as attacker
+Player 2 declares Grizzly Bears (17) (2/2) as attacker
+Grizzly Bears (16) deals 2 damage to Player 1 (life: 16)
+Grizzly Bears (17) deals 2 damage to Player 1 (life: 14)
+
+  >>> Turn 8 - Player 1 14 (Player 2 20) <<<<
+Player 1 draws Swamp (10)
+<Choice> Player 1 chose 0 - play Swamp
+Player 1 plays Swamp (10)
+
+  >>> Turn 9 - Player 2 20 (Player 1 14) <<<<
+Player 2 draws Plains (18)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (18)
+<Choice> chose 2 attackers from 2 available creatures (aggression=3, opponent blockers=0)
+Player 2 declares Grizzly Bears (16) (2/2) as attacker
+Player 2 declares Grizzly Bears (17) (2/2) as attacker
+Grizzly Bears (16) deals 2 damage to Player 1 (life: 12)
+Grizzly Bears (17) deals 2 damage to Player 1 (life: 10)
+Player 2 has lost the game (decked). Player 1 wins!

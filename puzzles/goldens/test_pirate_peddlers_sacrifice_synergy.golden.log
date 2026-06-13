@@ -1,0 +1,26 @@
+  >>> Turn 1 - Player 1 20 (Player 2 10) <<<<
+<Choice> chose 3 attackers from 3 available creatures (aggression=3, opponent blockers=0)
+Typhoid Rats (7) goes to graveyard
+Player 1 draws Mountain (12)
+Player 1 declares Beetle-Headed Merchants (5) (6/5) as attacker
+Player 1 declares Pirate Peddlers (6) (3/3) as attacker
+Beetle-Headed Merchants (5) deals 6 damage to Player 2 (life: 4)
+Pirate Peddlers (6) deals 3 damage to Player 2 (life: 1)
+<Choice> Player 1 chose 0 - play Mountain
+Player 1 plays Mountain (12)
+
+  >>> Turn 2 - Player 2 1 (Player 1 20) <<<<
+Player 2 draws Forest (19)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (19)
+
+  >>> Turn 3 - Player 1 20 (Player 2 1) <<<<
+Player 1 draws Mountain (11)
+<Choice> Player 1 chose 0 - play Mountain
+Player 1 plays Mountain (11)
+<Choice> chose 2 attackers from 2 available creatures (aggression=3, opponent blockers=0)
+Pirate Peddlers (6) goes to graveyard
+Player 1 draws Mountain (10)
+Player 1 declares Beetle-Headed Merchants (5) (7/6) as attacker
+Beetle-Headed Merchants (5) deals 7 damage to Player 2 (life: -6)
+Player 2 has lost the game (life: -6). Player 1 wins!

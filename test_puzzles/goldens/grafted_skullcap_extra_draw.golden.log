@@ -1,0 +1,54 @@
+Player 1 draws Swamp (14)
+Grafted Skullcap trigger effect
+Player 1 draws Plains (13)
+<Choice> Player 1 chose 0 - play Plains
+Player 1 plays Plains (13)
+
+  >>> Turn 3 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Mountain (25)
+<Choice> Player 2 chose 0 - play Mountain
+Player 2 plays Mountain (25)
+
+  >>> Turn 4 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Island (12)
+Grafted Skullcap trigger effect
+Player 1 draws Mountain (11)
+<Choice> Player 1 chose 0 - play Mountain
+Player 1 plays Mountain (11)
+
+  >>> Turn 5 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Mountain (24)
+<Choice> Player 2 chose 0 - play Mountain
+Player 2 plays Mountain (24)
+
+  >>> Turn 6 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Forest (10)
+Grafted Skullcap trigger effect
+Player 1 draws Swamp (9)
+<Choice> Player 1 chose 0 - play Swamp
+Player 1 plays Swamp (9)
+
+  >>> Turn 7 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Mountain (23)
+<Choice> Player 2 chose 0 - play Mountain
+Player 2 plays Mountain (23)
+
+  >>> Turn 8 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Plains (8)
+Grafted Skullcap trigger effect
+Player 1 draws Island (7)
+<Choice> Player 1 chose 0 - play Island
+Player 1 plays Island (7)
+
+  >>> Turn 9 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Mountain (22)
+<Choice> Player 2 chose 0 - play Mountain
+Player 2 plays Mountain (22)
+
+  >>> Turn 10 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Mountain (6)
+Grafted Skullcap trigger effect
+Player 1 draws Forest (5)
+<Choice> Player 1 chose 0 - play Forest
+Player 1 plays Forest (5)
+Player 1 has lost the game (decked). Player 2 wins!

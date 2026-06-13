@@ -1,0 +1,26 @@
+
+  >>> Turn 6 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Plains (16)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (16)
+
+  >>> Turn 7 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Plains (10)
+<Choice> Player 1 chose 0 - play Plains
+Player 1 plays Plains (10)
+
+  >>> Turn 8 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Plains (15)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (15)
+
+  >>> Turn 9 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Plains (9)
+<Choice> Player 1 chose 0 - play Plains
+Player 1 plays Plains (9)
+
+  >>> Turn 10 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Plains (14)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (14)
+Player 2 has lost the game (decked). Player 1 wins!

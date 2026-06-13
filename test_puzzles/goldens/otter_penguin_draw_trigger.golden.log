@@ -1,0 +1,18 @@
+<Choice> Player 1 chose 0 - cast Divination
+Player 1 casts Divination (3) (putting on stack)
+Tap Island for {U}
+Tap Island for {U}
+Tap Island for {U}
+Divination (3) resolves
+Player 1 draws Mountain (11)
+Player 1 draws Mountain (10)
+Trigger: Otter-Penguin - Whenever you draw your second card each turn, this creature gets +1/+2 until end of turn and can't be blocked this turn.
+Otter-Penguin gets +1/+2 until end of turn
+Otter-Penguin can't be blocked this turn
+Divination (3) causes Player 1 to draw 2 card(s)
+<Choice> Player 1 chose 0 - play Mountain
+Player 1 plays Mountain (10)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=1)
+Player 1 declares Otter-Penguin (7) (3/3) as attacker
+Otter-Penguin (7) deals 3 damage to Player 2 (life: 0)
+Player 2 has lost the game (life: 0). Player 1 wins!

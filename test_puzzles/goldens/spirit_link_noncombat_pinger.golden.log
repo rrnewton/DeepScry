@@ -1,0 +1,58 @@
+  >>> Turn 1 - Player 1 10 (Player 2 20) <<<<
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Prodigal Sorcerer (3) (1/1) as attacker
+Prodigal Sorcerer (3) deals 1 damage to Player 2 (life: 19)
+
+  >>> Turn 2 - Player 2 19 (Player 1 10) <<<<
+Player 2 draws Forest (12)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (12)
+
+  >>> Turn 3 - Player 1 10 (Player 2 19) <<<<
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+Player 1 draws Mountain (7)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 1 - play Mountain
+Player 1 plays Mountain (7)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Prodigal Sorcerer (3) (1/1) as attacker
+Prodigal Sorcerer (3) deals 1 damage to Player 2 (life: 18)
+
+  >>> Turn 4 - Player 2 18 (Player 1 10) <<<<
+Player 2 draws Forest (11)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (11)
+
+  >>> Turn 5 - Player 1 10 (Player 2 18) <<<<
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+Player 1 draws Mountain (6)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 1 - play Mountain
+Player 1 plays Mountain (6)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Prodigal Sorcerer (3) (1/1) as attacker
+Prodigal Sorcerer (3) deals 1 damage to Player 2 (life: 17)
+
+  >>> Turn 6 - Player 2 17 (Player 1 10) <<<<
+Player 2 draws Forest (10)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (10)
+
+  >>> Turn 7 - Player 1 10 (Player 2 17) <<<<
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+Player 1 draws Mountain (5)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 1 - play Mountain
+Player 1 plays Mountain (5)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Prodigal Sorcerer (3) (1/1) as attacker
+Prodigal Sorcerer (3) deals 1 damage to Player 2 (life: 16)
+Player 1 has lost the game (decked). Player 2 wins!

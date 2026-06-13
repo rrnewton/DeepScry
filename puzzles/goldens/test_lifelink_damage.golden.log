@@ -1,0 +1,57 @@
+  >>> Turn 1 - Player 1 10 (Player 2 10) <<<<
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Vampire Nighthawk (6) (2/3) as attacker
+Vampire Nighthawk (6) deals 2 damage to Player 2 (life: 8)
+
+  >>> Turn 2 - Player 2 8 (Player 1 12) <<<<
+Player 2 draws Forest (18)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (18)
+
+  >>> Turn 3 - Player 1 12 (Player 2 8) <<<<
+Player 1 draws Swamp (11)
+<Choice> Player 1 chose 0 - play Swamp
+Player 1 plays Swamp (11)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Vampire Nighthawk (6) (2/3) as attacker
+Vampire Nighthawk (6) deals 2 damage to Player 2 (life: 6)
+
+  >>> Turn 4 - Player 2 6 (Player 1 14) <<<<
+Player 2 draws Forest (17)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (17)
+
+  >>> Turn 5 - Player 1 14 (Player 2 6) <<<<
+Player 1 draws Swamp (10)
+<Choice> Player 1 chose 0 - play Swamp
+Player 1 plays Swamp (10)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Vampire Nighthawk (6) (2/3) as attacker
+Vampire Nighthawk (6) deals 2 damage to Player 2 (life: 4)
+
+  >>> Turn 6 - Player 2 4 (Player 1 16) <<<<
+Player 2 draws Forest (16)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (16)
+
+  >>> Turn 7 - Player 1 16 (Player 2 4) <<<<
+Player 1 draws Swamp (9)
+<Choice> Player 1 chose 0 - play Swamp
+Player 1 plays Swamp (9)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Vampire Nighthawk (6) (2/3) as attacker
+Vampire Nighthawk (6) deals 2 damage to Player 2 (life: 2)
+
+  >>> Turn 8 - Player 2 2 (Player 1 18) <<<<
+Player 2 draws Forest (15)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (15)
+
+  >>> Turn 9 - Player 1 18 (Player 2 2) <<<<
+Player 1 draws Swamp (8)
+<Choice> Player 1 chose 0 - play Swamp
+Player 1 plays Swamp (8)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Vampire Nighthawk (6) (2/3) as attacker
+Vampire Nighthawk (6) deals 2 damage to Player 2 (life: 0)
+Player 2 has lost the game (life: 0). Player 1 wins!

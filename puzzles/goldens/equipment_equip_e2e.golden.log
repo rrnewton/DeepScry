@@ -1,0 +1,38 @@
+  >>> Turn 1 - Player 1 20 (Player 2 5) <<<<
+<Choice> Player 1 chose 0 - equip Accorder's Shield
+Accorder's Shield activates ability: Equip 3
+  -> targeting Grizzly Bears (8)
+Tap Forest for {G}
+Tap Forest for {G}
+Tap Forest for {G}
+Accorder's Shield attaches to Grizzly Bears
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Grizzly Bears (8) (2/5) as attacker
+Grizzly Bears (8) deals 2 damage to Player 2 (life: 3)
+
+  >>> Turn 2 - Player 2 3 (Player 1 20) <<<<
+Player 2 draws Forest (16)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (16)
+
+  >>> Turn 3 - Player 1 20 (Player 2 3) <<<<
+Player 1 draws Mountain (11)
+<Choice> Player 1 chose 0 - play Mountain
+Player 1 plays Mountain (11)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Grizzly Bears (8) (2/5) as attacker
+Grizzly Bears (8) deals 2 damage to Player 2 (life: 1)
+
+  >>> Turn 4 - Player 2 1 (Player 1 20) <<<<
+Player 2 draws Forest (15)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (15)
+
+  >>> Turn 5 - Player 1 20 (Player 2 1) <<<<
+Player 1 draws Mountain (10)
+<Choice> Player 1 chose 0 - play Mountain
+Player 1 plays Mountain (10)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Grizzly Bears (8) (2/5) as attacker
+Grizzly Bears (8) deals 2 damage to Player 2 (life: -1)
+Player 2 has lost the game (life: -1). Player 1 wins!

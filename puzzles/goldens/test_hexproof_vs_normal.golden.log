@@ -1,0 +1,32 @@
+  >>> Turn 1 - Player 2 10 (Player 1 20) <<<<
+<Choice> Player 2 chose 0 - cast Lightning Bolt
+Player 2 casts Lightning Bolt (16) (putting on stack)
+  → targeting Grizzly Bears (10)
+Tap Mountain for {R}
+Lightning Bolt (16) resolves
+Grizzly Bears (10) takes 3 damage (total: 3)
+Lightning Bolt (16) deals 3 damage to Grizzly Bears (10)
+Grizzly Bears (10) goes to graveyard
+Grizzly Bears (10) dies from lethal damage
+
+  >>> Turn 2 - Player 1 20 (Player 2 10) <<<<
+Player 1 draws Forest (15)
+<Choice> Player 1 chose 0 - play Forest
+Player 1 plays Forest (15)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Carnage Tyrant (9) (7/6) as attacker
+Carnage Tyrant (9) deals 7 damage to Player 2 (life: 3)
+
+  >>> Turn 3 - Player 2 3 (Player 1 20) <<<<
+Player 2 draws Mountain (22)
+<Choice> Player 2 chose 0 - play Mountain
+Player 2 plays Mountain (22)
+
+  >>> Turn 4 - Player 1 20 (Player 2 3) <<<<
+Player 1 draws Forest (14)
+<Choice> Player 1 chose 0 - play Forest
+Player 1 plays Forest (14)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Carnage Tyrant (9) (7/6) as attacker
+Carnage Tyrant (9) deals 7 damage to Player 2 (life: -4)
+Player 2 has lost the game (life: -4). Player 1 wins!

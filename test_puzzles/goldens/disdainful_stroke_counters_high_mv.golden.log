@@ -1,0 +1,61 @@
+<Choice> Player 2 chose 0 - cast Craw Wurm
+Player 2 casts Craw Wurm (11) (putting on stack)
+Tap Forest for {G}
+Tap Forest for {G}
+Tap Forest for {G}
+Tap Forest for {G}
+Tap Forest for {G}
+Tap Forest for {G}
+<Choice> Player 1 chose 0 - cast Disdainful Stroke
+Player 1 casts Disdainful Stroke (3) (putting on stack)
+  → targeting Craw Wurm (11)
+Tap Island for {U}
+Tap Island for {U}
+Disdainful Stroke (3) resolves
+Disdainful Stroke (3) counters Craw Wurm (11)
+
+  >>> Turn 3 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Island (10)
+<Choice> Player 1 chose 0 - play Island
+Player 1 plays Island (10)
+
+  >>> Turn 4 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Forest (22)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (22)
+
+  >>> Turn 5 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Island (9)
+<Choice> Player 1 chose 0 - play Island
+Player 1 plays Island (9)
+
+  >>> Turn 6 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Forest (21)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (21)
+
+  >>> Turn 7 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Island (8)
+<Choice> Player 1 chose 0 - play Island
+Player 1 plays Island (8)
+
+  >>> Turn 8 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Forest (20)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (20)
+
+  >>> Turn 9 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Island (7)
+<Choice> Player 1 chose 0 - play Island
+Player 1 plays Island (7)
+
+  >>> Turn 10 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Forest (19)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (19)
+
+  >>> Turn 11 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Island (6)
+<Choice> Player 1 chose 0 - play Island
+Player 1 plays Island (6)
+Player 1 has lost the game (decked). Player 2 wins!

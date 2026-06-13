@@ -1,0 +1,42 @@
+  >>> Turn 1 - Player 1 20 (Player 2 10) <<<<
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Carnage Tyrant (9) (7/6) as attacker
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+Carnage Tyrant (9) deals 7 damage to Player 2 (life: 3)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+
+  >>> Turn 2 - Player 2 3 (Player 1 20) <<<<
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+Player 2 draws Mountain (21)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 1 - play Mountain
+Player 2 plays Mountain (21)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+
+  >>> Turn 3 - Player 1 20 (Player 2 3) <<<<
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+Player 1 draws Forest (14)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 0 - play Forest
+Player 1 plays Forest (14)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Carnage Tyrant (9) (7/6) as attacker
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+Carnage Tyrant (9) deals 7 damage to Player 2 (life: -4)
+Player 2 has lost the game (life: -4). Player 1 wins!

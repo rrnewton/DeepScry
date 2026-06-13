@@ -1,0 +1,55 @@
+<Choice> Player 1 chose 0 - cast Torch the Tower
+Player 1 casts Torch the Tower (3) (putting on stack)
+  → targeting Grizzly Bears (11)
+Tap Mountain for {R}
+Torch the Tower (3) resolves
+Grizzly Bears (11) takes 2 damage (total: 2)
+Torch the Tower (3) clears remembered cards
+Grizzly Bears (11) is exiled
+Grizzly Bears (11) exiled instead of dying
+
+  >>> Turn 3 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Plains (16)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (16)
+
+  >>> Turn 4 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Mountain (10)
+<Choice> Player 1 chose 0 - play Mountain
+Player 1 plays Mountain (10)
+
+  >>> Turn 5 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Plains (15)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (15)
+
+  >>> Turn 6 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Mountain (9)
+<Choice> Player 1 chose 0 - play Mountain
+Player 1 plays Mountain (9)
+
+  >>> Turn 7 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Plains (14)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (14)
+
+  >>> Turn 8 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Mountain (8)
+<Choice> Player 1 chose 0 - play Mountain
+Player 1 plays Mountain (8)
+
+  >>> Turn 9 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Plains (13)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (13)
+
+  >>> Turn 10 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Mountain (7)
+<Choice> Player 1 chose 0 - play Mountain
+Player 1 plays Mountain (7)
+
+  >>> Turn 11 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Plains (12)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (12)
+Player 2 has lost the game (decked). Player 1 wins!

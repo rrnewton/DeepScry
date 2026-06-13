@@ -1,0 +1,43 @@
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Juggernaut (7) (5/3) as attacker
+Juggernaut (7) deals 5 damage to Player 2 (life: 15)
+
+  >>> Turn 6 - Player 2 15 (Player 1 20) <<<<
+Player 2 draws Plains (17)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (17)
+
+  >>> Turn 7 - Player 1 20 (Player 2 15) <<<<
+Player 1 draws Swamp (12)
+<Choice> Player 1 chose 0 - play Swamp
+Player 1 plays Swamp (12)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Juggernaut (7) (5/3) as attacker
+Juggernaut (7) deals 5 damage to Player 2 (life: 10)
+
+  >>> Turn 8 - Player 2 10 (Player 1 20) <<<<
+Player 2 draws Plains (16)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (16)
+
+  >>> Turn 9 - Player 1 20 (Player 2 10) <<<<
+Player 1 draws Swamp (11)
+<Choice> Player 1 chose 0 - play Swamp
+Player 1 plays Swamp (11)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Juggernaut (7) (5/3) as attacker
+Juggernaut (7) deals 5 damage to Player 2 (life: 5)
+
+  >>> Turn 10 - Player 2 5 (Player 1 20) <<<<
+Player 2 draws Plains (15)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (15)
+
+  >>> Turn 11 - Player 1 20 (Player 2 5) <<<<
+Player 1 draws Swamp (10)
+<Choice> Player 1 chose 0 - play Swamp
+Player 1 plays Swamp (10)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Juggernaut (7) (5/3) as attacker
+Juggernaut (7) deals 5 damage to Player 2 (life: 0)
+Player 2 has lost the game (life: 0). Player 1 wins!

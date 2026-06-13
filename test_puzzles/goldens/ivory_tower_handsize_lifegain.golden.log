@@ -1,0 +1,47 @@
+  >>> Turn 1 - Player 1 20 (Player 2 20) <<<<
+Ivory Tower trigger effect
+Player 1 gains 2 life (life: 22)
+<Choice> Player 1 chose 0 - play Plains
+Player 1 plays Plains (3)
+
+  >>> Turn 2 - Player 2 20 (Player 1 22) <<<<
+Player 2 draws Plains (17)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (17)
+
+  >>> Turn 3 - Player 1 22 (Player 2 20) <<<<
+Ivory Tower trigger effect
+Player 1 gains 1 life (life: 23)
+Player 1 draws Plains (13)
+<Choice> Player 1 chose 0 - play Plains
+Player 1 plays Plains (4)
+
+  >>> Turn 4 - Player 2 20 (Player 1 23) <<<<
+Player 2 draws Plains (16)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (16)
+
+  >>> Turn 5 - Player 1 23 (Player 2 20) <<<<
+Ivory Tower trigger effect
+Player 1 gains 1 life (life: 24)
+Player 1 draws Plains (12)
+<Choice> Player 1 chose 0 - play Plains
+Player 1 plays Plains (5)
+
+  >>> Turn 6 - Player 2 20 (Player 1 24) <<<<
+Player 2 draws Plains (15)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (15)
+
+  >>> Turn 7 - Player 1 24 (Player 2 20) <<<<
+Ivory Tower trigger effect
+Player 1 gains 1 life (life: 25)
+Player 1 draws Plains (11)
+<Choice> Player 1 chose 0 - play Plains
+Player 1 plays Plains (6)
+
+  >>> Turn 8 - Player 2 20 (Player 1 25) <<<<
+Player 2 draws Plains (14)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (14)
+Player 2 has lost the game (decked). Player 1 wins!

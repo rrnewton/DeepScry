@@ -1,0 +1,51 @@
+<Choice> Player 1 chose 0 - cast Banishing Light
+Player 1 casts Banishing Light (3) (putting on stack)
+Tap Plains for {W}
+Tap Plains for {W}
+Tap Plains for {W}
+Banishing Light (3) resolves
+Created Pegasus Token under Player 1's control
+Bonecrusher Giant (18) is exiled
+<Choice> chose 2 attackers from 2 available creatures (aggression=3, opponent blockers=1)
+Player 1 declares Archon of Sun's Grace (8) (3/4) as attacker
+Player 1 declares Pegasus Token (23) (2/2) as attacker
+Archon of Sun's Grace (8) deals 3 damage to Player 2 (life: 5)
+Pegasus Token (23) deals 2 damage to Player 2 (life: 3)
+
+  >>> Turn 3 - Player 2 3 (Player 1 18) <<<<
+Player 2 draws Plains (22)
+<Choice> Player 2 chose 0 - play Plains
+Created Pegasus Token under Player 1's control
+Player 2 plays Plains (22)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=1)
+Player 2 declares Bonecrusher Giant (19) (4/3) as attacker
+<Choice> chose 1 blockers for 1 attackers
+Player 1 declares Pegasus Token (24) as blocker for Bonecrusher Giant (19)
+Bonecrusher Giant (19) deals 4 damage to Pegasus Token (24)
+Pegasus Token (24) deals 2 damage to Bonecrusher Giant (19)
+Pegasus Token (24) goes to graveyard
+Pegasus Token (24) dies from combat damage
+
+  >>> Turn 4 - Player 1 18 (Player 2 3) <<<<
+Player 1 draws Plains (13)
+<Choice> Player 1 chose 1 - play Plains
+Created Pegasus Token under Player 1's control
+Player 1 plays Plains (13)
+<Choice> Player 1 chose 0 - cast Banishing Light
+Player 1 casts Banishing Light (4) (putting on stack)
+Tap Plains for {W}
+Tap Plains for {W}
+Tap Plains for {W}
+Banishing Light (4) resolves
+Created Pegasus Token under Player 1's control
+Bonecrusher Giant (19) is exiled
+<Choice> chose 4 attackers from 4 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Archon of Sun's Grace (8) (3/4) as attacker
+Player 1 declares Pegasus Token (23) (2/2) as attacker
+Player 1 declares Pegasus Token (25) (2/2) as attacker
+Player 1 declares Pegasus Token (26) (2/2) as attacker
+Archon of Sun's Grace (8) deals 3 damage to Player 2 (life: 0)
+Pegasus Token (23) deals 2 damage to Player 2 (life: -2)
+Pegasus Token (25) deals 2 damage to Player 2 (life: -4)
+Pegasus Token (26) deals 2 damage to Player 2 (life: -6)
+Player 2 has lost the game (life: -6). Player 1 wins!

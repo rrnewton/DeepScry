@@ -1,0 +1,48 @@
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+
+  >>> Turn 4 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Mountain (18)
+<Choice> Player 2 chose 0 - play Mountain
+Player 2 plays Mountain (18)
+
+  >>> Turn 5 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Mountain (11)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+
+  >>> Turn 6 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Mountain (17)
+<Choice> Player 2 chose 0 - play Mountain
+Player 2 plays Mountain (17)
+
+  >>> Turn 7 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Mountain (10)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+
+  >>> Turn 8 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Mountain (16)
+<Choice> Player 2 chose 0 - play Mountain
+Player 2 plays Mountain (16)
+
+  >>> Turn 9 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Mountain (9)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+
+  >>> Turn 10 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Mountain (15)
+<Choice> Player 2 chose 0 - play Mountain
+Player 2 plays Mountain (15)
+
+  >>> Turn 11 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Bonecrusher Giant (8)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+
+  >>> Turn 12 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Mountain (14)
+<Choice> Player 2 chose 0 - play Mountain
+Player 2 plays Mountain (14)
+Player 2 has lost the game (decked). Player 1 wins!

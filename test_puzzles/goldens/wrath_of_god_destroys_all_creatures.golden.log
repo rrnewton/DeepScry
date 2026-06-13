@@ -1,0 +1,51 @@
+  >>> Turn 1 - Player 1 20 (Player 2 20) <<<<
+<Choice> Player 1 chose 0 - cast Wrath of God
+Player 1 casts Wrath of God (3) (putting on stack)
+Tap Plains for {W}
+Tap Plains for {W}
+Tap Plains for {W}
+Tap Plains for {W}
+Wrath of God (3) resolves
+Grizzly Bears (12) goes to graveyard
+Grizzly Bears (12) is destroyed
+Savannah Lions (13) goes to graveyard
+Savannah Lions (13) is destroyed
+Black Knight (14) goes to graveyard
+Black Knight (14) is destroyed
+Wrath of God (3) destroys all matching permanents (can't be regenerated)
+
+  >>> Turn 2 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Plains (18)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (18)
+
+  >>> Turn 3 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Plains (11)
+<Choice> Player 1 chose 0 - play Plains
+Player 1 plays Plains (11)
+
+  >>> Turn 4 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Plains (17)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (17)
+
+  >>> Turn 5 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Plains (10)
+<Choice> Player 1 chose 0 - play Plains
+Player 1 plays Plains (10)
+
+  >>> Turn 6 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Plains (16)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (16)
+
+  >>> Turn 7 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Plains (9)
+<Choice> Player 1 chose 0 - play Plains
+Player 1 plays Plains (9)
+
+  >>> Turn 8 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Plains (15)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (15)
+Player 2 has lost the game (decked). Player 1 wins!

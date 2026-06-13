@@ -1,0 +1,140 @@
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=1)
+Player 2 declares Grizzly Bears (17) (2/2) as attacker
+<Choice> Player 1 chose 0 - activate Royal Assassin
+Royal Assassin activates ability: Destroy target tapped creature.
+  -> targeting Grizzly Bears (17)
+Grizzly Bears (17) goes to graveyard
+
+  >>> Turn 4 - Player 1 20 (Player 2 18) <<<<
+Player 1 draws Swamp (16)
+<Choice> Player 1 chose 0 - play Swamp
+Player 1 plays Swamp (16)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Royal Assassin (3) (1/1) as attacker
+Royal Assassin (3) deals 1 damage to Player 2 (life: 17)
+
+  >>> Turn 5 - Player 2 17 (Player 1 20) <<<<
+Player 2 draws Forest (30)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (30)
+
+  >>> Turn 6 - Player 1 20 (Player 2 17) <<<<
+Player 1 draws Swamp (15)
+<Choice> Player 1 chose 0 - play Swamp
+Player 1 plays Swamp (15)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Royal Assassin (3) (1/1) as attacker
+Royal Assassin (3) deals 1 damage to Player 2 (life: 16)
+
+  >>> Turn 7 - Player 2 16 (Player 1 20) <<<<
+Player 2 draws Forest (29)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (29)
+
+  >>> Turn 8 - Player 1 20 (Player 2 16) <<<<
+Player 1 draws Swamp (14)
+<Choice> Player 1 chose 0 - play Swamp
+Player 1 plays Swamp (14)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Royal Assassin (3) (1/1) as attacker
+Royal Assassin (3) deals 1 damage to Player 2 (life: 15)
+
+  >>> Turn 9 - Player 2 15 (Player 1 20) <<<<
+Player 2 draws Forest (28)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (28)
+
+  >>> Turn 10 - Player 1 20 (Player 2 15) <<<<
+Player 1 draws Swamp (13)
+<Choice> Player 1 chose 0 - play Swamp
+Player 1 plays Swamp (13)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Royal Assassin (3) (1/1) as attacker
+Royal Assassin (3) deals 1 damage to Player 2 (life: 14)
+
+  >>> Turn 11 - Player 2 14 (Player 1 20) <<<<
+Player 2 draws Forest (27)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (27)
+
+  >>> Turn 12 - Player 1 20 (Player 2 14) <<<<
+Player 1 draws Swamp (12)
+<Choice> Player 1 chose 0 - play Swamp
+Player 1 plays Swamp (12)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Royal Assassin (3) (1/1) as attacker
+Royal Assassin (3) deals 1 damage to Player 2 (life: 13)
+
+  >>> Turn 13 - Player 2 13 (Player 1 20) <<<<
+Player 2 draws Grizzly Bears (26)
+<Choice> Player 2 chose 0 - cast Grizzly Bears
+Player 2 casts Grizzly Bears (26) (putting on stack)
+Tap Forest for {G}
+Tap Forest for {G}
+Grizzly Bears (26) resolves
+Grizzly Bears (26) enters the battlefield as a 2/2 creature
+
+  >>> Turn 14 - Player 1 20 (Player 2 13) <<<<
+Player 1 draws Swamp (11)
+<Choice> Player 1 chose 0 - play Swamp
+Player 1 plays Swamp (11)
+<Choice> chose not to attack with 1 available creatures (aggression=3, opponent blockers=1)
+
+  >>> Turn 15 - Player 2 13 (Player 1 20) <<<<
+Player 2 draws Forest (25)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (25)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=1)
+Player 2 declares Grizzly Bears (26) (2/2) as attacker
+<Choice> Player 1 chose 0 - activate Royal Assassin
+Royal Assassin activates ability: Destroy target tapped creature.
+  -> targeting Grizzly Bears (26)
+Grizzly Bears (26) goes to graveyard
+
+  >>> Turn 16 - Player 1 20 (Player 2 13) <<<<
+Player 1 draws Swamp (10)
+<Choice> Player 1 chose 0 - play Swamp
+Player 1 plays Swamp (10)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Royal Assassin (3) (1/1) as attacker
+Royal Assassin (3) deals 1 damage to Player 2 (life: 12)
+
+  >>> Turn 17 - Player 2 12 (Player 1 20) <<<<
+Player 2 draws Forest (24)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (24)
+
+  >>> Turn 18 - Player 1 20 (Player 2 12) <<<<
+Player 1 draws Swamp (9)
+<Choice> Player 1 chose 0 - play Swamp
+Player 1 plays Swamp (9)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Royal Assassin (3) (1/1) as attacker
+Royal Assassin (3) deals 1 damage to Player 2 (life: 11)
+
+  >>> Turn 19 - Player 2 11 (Player 1 20) <<<<
+Player 2 draws Forest (23)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (23)
+
+  >>> Turn 20 - Player 1 20 (Player 2 11) <<<<
+Player 1 draws Swamp (8)
+<Choice> Player 1 chose 0 - play Swamp
+Player 1 plays Swamp (8)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Royal Assassin (3) (1/1) as attacker
+Royal Assassin (3) deals 1 damage to Player 2 (life: 10)
+
+  >>> Turn 21 - Player 2 10 (Player 1 20) <<<<
+Player 2 draws Forest (22)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (22)
+
+  >>> Turn 22 - Player 1 20 (Player 2 10) <<<<
+Player 1 draws Swamp (7)
+<Choice> Player 1 chose 0 - play Swamp
+Player 1 plays Swamp (7)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Royal Assassin (3) (1/1) as attacker
+Royal Assassin (3) deals 1 damage to Player 2 (life: 9)
+Player 1 has lost the game (decked). Player 2 wins!

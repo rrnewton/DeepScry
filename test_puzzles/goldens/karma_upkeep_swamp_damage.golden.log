@@ -1,0 +1,80 @@
+  >>> Turn 1 - Player 1 20 (Player 2 20) <<<<
+
+  >>> Turn 2 - Player 2 20 (Player 1 20) <<<<
+Karma deals 3 damage to Player 2
+Player 2 draws Plains (28)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (28)
+
+  >>> Turn 3 - Player 1 20 (Player 2 17) <<<<
+Karma deals 2 damage to Player 1
+Player 1 draws Plains (14)
+<Choice> Player 1 chose 0 - play Plains
+Player 1 plays Plains (14)
+
+  >>> Turn 4 - Player 2 17 (Player 1 18) <<<<
+Karma deals 3 damage to Player 2
+Player 2 draws Plains (27)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (27)
+
+  >>> Turn 5 - Player 1 18 (Player 2 14) <<<<
+Karma deals 2 damage to Player 1
+Player 1 draws Plains (13)
+<Choice> Player 1 chose 0 - play Plains
+Player 1 plays Plains (13)
+
+  >>> Turn 6 - Player 2 14 (Player 1 16) <<<<
+Karma deals 3 damage to Player 2
+Player 2 draws Plains (26)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (26)
+
+  >>> Turn 7 - Player 1 16 (Player 2 11) <<<<
+Karma deals 2 damage to Player 1
+Player 1 draws Plains (12)
+<Choice> Player 1 chose 0 - play Plains
+Player 1 plays Plains (12)
+
+  >>> Turn 8 - Player 2 11 (Player 1 14) <<<<
+Karma deals 3 damage to Player 2
+Player 2 draws Plains (25)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (25)
+
+  >>> Turn 9 - Player 1 14 (Player 2 8) <<<<
+Karma deals 2 damage to Player 1
+Player 1 draws Plains (11)
+<Choice> Player 1 chose 0 - play Plains
+Player 1 plays Plains (11)
+
+  >>> Turn 10 - Player 2 8 (Player 1 12) <<<<
+Karma deals 3 damage to Player 2
+Player 2 draws Plains (24)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (24)
+
+  >>> Turn 11 - Player 1 12 (Player 2 5) <<<<
+Karma deals 2 damage to Player 1
+Player 1 draws Plains (10)
+<Choice> Player 1 chose 0 - play Plains
+Player 1 plays Plains (10)
+
+  >>> Turn 12 - Player 2 5 (Player 1 10) <<<<
+Karma deals 3 damage to Player 2
+Player 2 draws Plains (23)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (23)
+
+  >>> Turn 13 - Player 1 10 (Player 2 2) <<<<
+Karma deals 2 damage to Player 1
+Player 1 draws Plains (9)
+<Choice> Player 1 chose 0 - play Plains
+Player 1 plays Plains (9)
+
+  >>> Turn 14 - Player 2 2 (Player 1 8) <<<<
+Karma deals 3 damage to Player 2
+Player 2 draws Plains (22)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (22)
+Player 2 has lost the game (life: -1). Player 1 wins!

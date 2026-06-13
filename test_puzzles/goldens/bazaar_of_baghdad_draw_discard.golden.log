@@ -1,0 +1,102 @@
+<Choice> Player 1 chose 0 - play Plains
+Player 1 plays Plains (3)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 0 - activate Bazaar of Baghdad
+Bazaar of Baghdad activates ability: Draw two cards, then discard three cards.
+Player 1 draws Plains (18)
+Player 1 draws Plains (17)
+Plains is discarded
+Player 1 discards Plains
+Plains is discarded
+Player 1 discards Plains
+Plains is discarded
+Player 1 discards Plains
+
+  >>> Turn 3 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Mountain (31)
+<Choice> Player 2 chose 0 - play Mountain
+Player 2 plays Mountain (31)
+
+  >>> Turn 4 - Player 1 20 (Player 2 20) <<<<
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+Player 1 draws Plains (16)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 0 - play Plains
+Player 1 plays Plains (7)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 0 - activate Bazaar of Baghdad
+Bazaar of Baghdad activates ability: Draw two cards, then discard three cards.
+Player 1 draws Plains (15)
+Player 1 draws Plains (14)
+Plains is discarded
+Player 1 discards Plains
+Plains is discarded
+Player 1 discards Plains
+Plains is discarded
+Player 1 discards Plains
+
+  >>> Turn 5 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Mountain (30)
+<Choice> Player 2 chose 0 - play Mountain
+Player 2 plays Mountain (30)
+
+  >>> Turn 6 - Player 1 20 (Player 2 20) <<<<
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+Player 1 draws Plains (13)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 1 - play Plains
+Player 1 plays Plains (13)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 0 - activate Bazaar of Baghdad
+Bazaar of Baghdad activates ability: Draw two cards, then discard three cards.
+Player 1 draws Plains (12)
+Player 1 draws Plains (11)
+Plains is discarded
+Player 1 discards Plains
+Plains is discarded
+Player 1 discards Plains
+Plains is discarded
+Player 1 discards Plains
+
+  >>> Turn 7 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Mountain (29)
+<Choice> Player 2 chose 0 - play Mountain
+Player 2 plays Mountain (29)
+
+  >>> Turn 8 - Player 1 20 (Player 2 20) <<<<
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+Player 1 draws Plains (10)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 1 - play Plains
+Player 1 plays Plains (10)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 0 - activate Bazaar of Baghdad
+Bazaar of Baghdad activates ability: Draw two cards, then discard three cards.
+Player 1 draws Plains (9)
+Plains is discarded
+Player 1 discards Plains
+Plains is discarded
+Player 1 discards Plains
+
+  >>> Turn 9 - Player 2 20 (Player 1 20) <<<<
+Player 1 has lost the game (decked). Player 2 wins!

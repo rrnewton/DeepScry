@@ -1,0 +1,47 @@
+<Choice> chose 2 attackers from 3 available creatures (aggression=3, opponent blockers=2)
+Player 1 declares Craw Wurm (10) (6/4) as attacker
+Player 1 declares Grizzly Bears (11) (2/2) as attacker
+<Choice> chose 2 blockers for 2 attackers
+Player 2 declares Grizzly Bears (20) as blocker for Craw Wurm (10)
+Player 2 declares Grizzly Bears (21) as blocker for Grizzly Bears (11)
+Craw Wurm (10) deals 6 damage to Grizzly Bears (20)
+Grizzly Bears (20) deals 2 damage to Craw Wurm (10)
+Grizzly Bears (11) deals 2 damage to Grizzly Bears (21)
+Grizzly Bears (21) deals 2 damage to Grizzly Bears (11)
+Grizzly Bears (11) goes to graveyard
+Grizzly Bears (11) dies from combat damage
+Grizzly Bears (20) goes to graveyard
+Grizzly Bears (20) dies from combat damage
+Grizzly Bears (21) goes to graveyard
+Grizzly Bears (21) dies from combat damage
+
+  >>> Turn 5 - Player 2 14 (Player 1 20) <<<<
+Player 2 draws Plains (24)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (24)
+
+  >>> Turn 6 - Player 1 20 (Player 2 14) <<<<
+Player 1 draws Forest (15)
+<Choice> Player 1 chose 0 - play Forest
+Player 1 plays Forest (15)
+<Choice> chose 2 attackers from 2 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Craw Wurm (10) (6/4) as attacker
+Player 1 declares Llanowar Elves (12) (1/1) as attacker
+Craw Wurm (10) deals 6 damage to Player 2 (life: 8)
+Llanowar Elves (12) deals 1 damage to Player 2 (life: 7)
+
+  >>> Turn 7 - Player 2 7 (Player 1 20) <<<<
+Player 2 draws Plains (23)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (23)
+
+  >>> Turn 8 - Player 1 20 (Player 2 7) <<<<
+Player 1 draws Forest (14)
+<Choice> Player 1 chose 0 - play Forest
+Player 1 plays Forest (14)
+<Choice> chose 2 attackers from 2 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Craw Wurm (10) (6/4) as attacker
+Player 1 declares Llanowar Elves (12) (1/1) as attacker
+Craw Wurm (10) deals 6 damage to Player 2 (life: 1)
+Llanowar Elves (12) deals 1 damage to Player 2 (life: 0)
+Player 2 has lost the game (life: 0). Player 1 wins!

@@ -1,0 +1,62 @@
+<Choice> Player 1 chose 0 - cast Thundertrap Trainer
+Player 1 casts Thundertrap Trainer (3) (putting on stack)
+  → Offspring paid
+Tap Island for {U}
+Tap Plains for {W}
+Thundertrap Trainer (3) resolves
+Player 1 looks at the top 4 cards of their library
+Player 1 puts Island into Hand
+Player 1 puts 3 cards on the bottom of their library
+Created a token copy of Thundertrap Trainer (as 1/1 copy) under Player 1's control
+Thundertrap Trainer (3) enters the battlefield as a 1/2 creature
+<Choice> Player 1 chose 0 - play Island
+Player 1 plays Island (14)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Thundertrap Trainer (20) (1/1) as attacker
+Thundertrap Trainer (20) deals 1 damage to Player 2 (life: 5)
+
+  >>> Turn 3 - Player 2 5 (Player 1 20) <<<<
+Player 2 draws Plains (19)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (19)
+
+  >>> Turn 4 - Player 1 20 (Player 2 5) <<<<
+Player 1 draws Island (10)
+<Choice> Player 1 chose 0 - play Island
+Player 1 plays Island (10)
+<Choice> chose 2 attackers from 2 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Thundertrap Trainer (3) (1/2) as attacker
+Player 1 declares Thundertrap Trainer (20) (1/1) as attacker
+Thundertrap Trainer (3) deals 1 damage to Player 2 (life: 4)
+Thundertrap Trainer (20) deals 1 damage to Player 2 (life: 3)
+
+  >>> Turn 5 - Player 2 3 (Player 1 20) <<<<
+Player 2 draws Plains (18)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (18)
+
+  >>> Turn 6 - Player 1 20 (Player 2 3) <<<<
+Player 1 draws Island (11)
+<Choice> Player 1 chose 0 - play Island
+Player 1 plays Island (11)
+<Choice> chose 2 attackers from 2 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Thundertrap Trainer (3) (1/2) as attacker
+Player 1 declares Thundertrap Trainer (20) (1/1) as attacker
+Thundertrap Trainer (3) deals 1 damage to Player 2 (life: 2)
+Thundertrap Trainer (20) deals 1 damage to Player 2 (life: 1)
+
+  >>> Turn 7 - Player 2 1 (Player 1 20) <<<<
+Player 2 draws Plains (17)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (17)
+
+  >>> Turn 8 - Player 1 20 (Player 2 1) <<<<
+Player 1 draws Island (13)
+<Choice> Player 1 chose 0 - play Island
+Player 1 plays Island (13)
+<Choice> chose 2 attackers from 2 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Thundertrap Trainer (3) (1/2) as attacker
+Player 1 declares Thundertrap Trainer (20) (1/1) as attacker
+Thundertrap Trainer (3) deals 1 damage to Player 2 (life: 0)
+Thundertrap Trainer (20) deals 1 damage to Player 2 (life: -1)
+Player 2 has lost the game (life: -1). Player 1 wins!

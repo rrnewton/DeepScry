@@ -1,0 +1,81 @@
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Kenrith, the Returned King (13) (5/5) as attacker
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+Kenrith, the Returned King (13) deals 5 damage to Player 2 (life: 15)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 0 - activate Kenrith, the Returned King
+Kenrith, the Returned King activates ability: All creatures gain trample and haste until end of turn.
+Tap Mountain for {R}
+Kenrith, the Returned King gains Trample, Haste
+<Choice> Player 1 chose 0 - activate Kenrith, the Returned King
+Kenrith, the Returned King activates ability: All creatures gain trample and haste until end of turn.
+Tap Mountain for {R}
+Kenrith, the Returned King gains Trample, Haste
+
+  >>> Turn 9 - Player 2 15 (Player 1 5) <<<<
+Player 2 draws Plains (27)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (27)
+
+  >>> Turn 10 - Player 1 5 (Player 2 15) <<<<
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+Player 1 draws Island (19)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 1 - play Island
+Player 1 plays Island (19)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Kenrith, the Returned King (13) (5/5) as attacker
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+Kenrith, the Returned King (13) deals 5 damage to Player 2 (life: 10)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 0 - activate Kenrith, the Returned King
+Kenrith, the Returned King activates ability: All creatures gain trample and haste until end of turn.
+Tap Mountain for {R}
+Kenrith, the Returned King gains Trample, Haste
+<Choice> Player 1 chose 0 - activate Kenrith, the Returned King
+Kenrith, the Returned King activates ability: All creatures gain trample and haste until end of turn.
+Tap Mountain for {R}
+Kenrith, the Returned King gains Trample, Haste
+
+  >>> Turn 11 - Player 2 10 (Player 1 5) <<<<
+Player 2 draws Plains (26)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (26)
+
+  >>> Turn 12 - Player 1 5 (Player 2 10) <<<<
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+Player 1 draws Plains (18)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 1 - play Plains
+Player 1 plays Plains (18)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Kenrith, the Returned King (13) (5/5) as attacker
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+Kenrith, the Returned King (13) deals 5 damage to Player 2 (life: 5)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 0 - activate Kenrith, the Returned King
+Kenrith, the Returned King activates ability: All creatures gain trample and haste until end of turn.
+Tap Mountain for {R}
+Kenrith, the Returned King gains Trample, Haste
+<Choice> Player 1 chose 0 - activate Kenrith, the Returned King
+Kenrith, the Returned King activates ability: All creatures gain trample and haste until end of turn.
+Tap Mountain for {R}
+Kenrith, the Returned King gains Trample, Haste
+
+  >>> Turn 13 - Player 2 5 (Player 1 5) <<<<
+Player 2 draws Plains (25)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (25)
+Player 2 has lost the game (decked). Player 1 wins!

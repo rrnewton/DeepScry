@@ -1,0 +1,25 @@
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Grizzly Bears (9) untaps
+Player 1 declares Cat-Owl (3) (3/3) as attacker
+Cat-Owl (3) deals 3 damage to Player 2 (life: 17)
+
+  >>> Turn 6 - Player 2 17 (Player 1 20) <<<<
+Player 2 draws Forest (16)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (16)
+
+  >>> Turn 7 - Player 1 20 (Player 2 17) <<<<
+Player 1 draws Plains (11)
+<Choice> Player 1 chose 0 - play Plains
+Player 1 plays Plains (11)
+<Choice> chose 2 attackers from 2 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Cat-Owl (3) (3/3) as attacker
+Player 1 declares Grizzly Bears (9) (2/2) as attacker
+Cat-Owl (3) deals 3 damage to Player 2 (life: 14)
+Grizzly Bears (9) deals 2 damage to Player 2 (life: 12)
+
+  >>> Turn 8 - Player 2 12 (Player 1 20) <<<<
+Player 2 draws Forest (15)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (15)
+Player 2 has lost the game (decked). Player 1 wins!

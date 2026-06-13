@@ -1,0 +1,24 @@
+  >>> Turn 1 - Player 2 20 (Player 1 5) <<<<
+<Choice> chose not to attack with 1 available creatures (aggression=3, opponent blockers=1)
+
+  >>> Turn 2 - Player 1 5 (Player 2 20) <<<<
+Player 1 draws Forest (7)
+<Choice> Player 1 chose 0 - play Forest
+Player 1 plays Forest (7)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=1)
+Player 1 declares Radioactive Spider (4) (1/1) as attacker
+<Choice> chose not to block (no favorable blocks among 1 blockers vs 1 attackers)
+Radioactive Spider (4) deals 1 damage to Player 2 (life: 19)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+
+  >>> Turn 3 - Player 2 19 (Player 1 5) <<<<
+Player 2 draws Mountain (16)
+<Choice> Player 2 chose 0 - play Mountain
+Player 2 plays Mountain (16)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Rough Rhino Cavalry triggers Firebending 2 (adding 2 {R} to combat mana)
+Player 2 adds 2 {R} (combat mana, lasts until end of combat)
+Player 2 declares Rough Rhino Cavalry (13) (5/5) as attacker
+Rough Rhino Cavalry (13) deals 5 damage to Player 1 (life: 0)
+Player 1 has lost the game (life: 0). Player 2 wins!

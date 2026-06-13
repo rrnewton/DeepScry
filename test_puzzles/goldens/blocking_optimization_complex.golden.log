@@ -1,0 +1,38 @@
+<Choice> chose not to attack with 3 available creatures (aggression=3, opponent blockers=3)
+
+  >>> Turn 6 - Player 2 15 (Player 1 20) <<<<
+Player 2 draws Mountain (22)
+<Choice> Player 2 chose 0 - play Mountain
+Player 2 plays Mountain (22)
+<Choice> chose 1 attackers from 3 available creatures (aggression=3, opponent blockers=3)
+Player 2 declares Serra Angel (17) (4/4) as attacker
+Serra Angel (17) deals 4 damage to Player 1 (life: 16)
+
+  >>> Turn 7 - Player 1 16 (Player 2 15) <<<<
+Player 1 draws Plains (12)
+<Choice> Player 1 chose 0 - play Plains
+Player 1 plays Plains (12)
+<Choice> chose not to attack with 3 available creatures (aggression=3, opponent blockers=3)
+
+  >>> Turn 8 - Player 2 15 (Player 1 16) <<<<
+Player 2 draws Mountain (21)
+<Choice> Player 2 chose 0 - play Mountain
+Player 2 plays Mountain (21)
+<Choice> chose 1 attackers from 3 available creatures (aggression=3, opponent blockers=3)
+Player 2 declares Serra Angel (17) (4/4) as attacker
+Serra Angel (17) deals 4 damage to Player 1 (life: 12)
+
+  >>> Turn 9 - Player 1 12 (Player 2 15) <<<<
+Player 1 draws Plains (11)
+<Choice> Player 1 chose 0 - play Plains
+Player 1 plays Plains (11)
+<Choice> chose not to attack with 3 available creatures (aggression=3, opponent blockers=3)
+
+  >>> Turn 10 - Player 2 15 (Player 1 12) <<<<
+Player 2 draws Mountain (20)
+<Choice> Player 2 chose 0 - play Mountain
+Player 2 plays Mountain (20)
+<Choice> chose 1 attackers from 3 available creatures (aggression=3, opponent blockers=3)
+Player 2 declares Serra Angel (17) (4/4) as attacker
+Serra Angel (17) deals 4 damage to Player 1 (life: 8)
+Player 2 has lost the game (decked). Player 1 wins!

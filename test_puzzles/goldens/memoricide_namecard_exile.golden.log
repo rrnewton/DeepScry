@@ -1,0 +1,50 @@
+<Choice> Player 1 chose 0 - cast Memoricide
+Player 1 casts Memoricide (3) (putting on stack)
+Tap Swamp for {B}
+Tap Swamp for {B}
+Tap Swamp for {B}
+Tap Swamp for {B}
+<Choice> Player 2 chose 'p' (pass priority from 2 available actions)
+Memoricide (3) resolves
+Player 1 names a card: "Lightning Bolt"
+Memoricide (3) Player 1 chooses a card name
+Memoricide (3) moves all cards from Hand to Exile
+
+  >>> Turn 3 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Mountain (21)
+<Choice> Player 2 chose 0 - play Mountain
+Player 2 plays Mountain (21)
+
+  >>> Turn 4 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Swamp (12)
+<Choice> Player 1 chose 0 - play Swamp
+Player 1 plays Swamp (12)
+
+  >>> Turn 5 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Mountain (20)
+<Choice> Player 2 chose 0 - play Mountain
+Player 2 plays Mountain (20)
+
+  >>> Turn 6 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Swamp (11)
+<Choice> Player 1 chose 0 - play Swamp
+Player 1 plays Swamp (11)
+
+  >>> Turn 7 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Mountain (19)
+<Choice> Player 2 chose 0 - play Mountain
+Player 2 plays Mountain (19)
+
+  >>> Turn 8 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Swamp (10)
+<Choice> Player 1 chose 0 - play Swamp
+Player 1 plays Swamp (10)
+
+  >>> Turn 9 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Lightning Bolt (18)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+Player 2 has lost the game (decked). Player 1 wins!

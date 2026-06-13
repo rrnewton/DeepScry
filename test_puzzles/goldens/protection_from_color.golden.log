@@ -1,0 +1,165 @@
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> chose 2 attackers from 2 available creatures (aggression=3, opponent blockers=2)
+Player 1 declares White Knight (7) (2/2) as attacker
+Player 1 declares Elite Vanguard (8) (2/1) as attacker
+<Choice> Player 2 chose 0 - activate Drudge Skeletons
+Drudge Skeletons activates ability: Regenerate Drudge Skeletons.
+Tap Swamp for {B}
+Drudge Skeletons (16) gains a regeneration shield
+<Choice> Player 2 chose 0 - activate Drudge Skeletons
+Drudge Skeletons activates ability: Regenerate Drudge Skeletons.
+Tap Swamp for {B}
+Drudge Skeletons (16) gains a regeneration shield
+<Choice> Player 2 chose 0 - activate Drudge Skeletons
+Drudge Skeletons activates ability: Regenerate Drudge Skeletons.
+Tap Swamp for {B}
+Drudge Skeletons (16) gains a regeneration shield
+<Choice> Player 2 chose 0 - activate Drudge Skeletons
+Drudge Skeletons activates ability: Regenerate Drudge Skeletons.
+Tap Swamp for {B}
+Drudge Skeletons (16) gains a regeneration shield
+<Choice> chose 1 blockers for 2 attackers
+--- First Strike Combat Damage ---
+White Knight (7) deals 2 damage to Player 2 (life: 18)
+--- Normal Combat Damage ---
+Elite Vanguard (8) deals 2 damage to Player 2 (life: 16)
+
+  >>> Turn 5 - Player 2 16 (Player 1 20) <<<<
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+Player 2 draws Swamp (20)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 1 - play Swamp
+Player 2 plays Swamp (20)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> chose 2 attackers from 2 available creatures (aggression=3, opponent blockers=0)
+Player 2 declares Drudge Skeletons (16) (1/1) as attacker
+Player 2 declares Scathe Zombies (17) (2/2) as attacker
+<Choice> Player 2 chose 0 - activate Drudge Skeletons
+Drudge Skeletons activates ability: Regenerate Drudge Skeletons.
+Tap Swamp for {B}
+Drudge Skeletons (16) gains a regeneration shield
+<Choice> Player 2 chose 0 - activate Drudge Skeletons
+Drudge Skeletons activates ability: Regenerate Drudge Skeletons.
+Tap Swamp for {B}
+Drudge Skeletons (16) gains a regeneration shield
+<Choice> Player 2 chose 0 - activate Drudge Skeletons
+Drudge Skeletons activates ability: Regenerate Drudge Skeletons.
+Tap Swamp for {B}
+Drudge Skeletons (16) gains a regeneration shield
+<Choice> Player 2 chose 0 - activate Drudge Skeletons
+Drudge Skeletons activates ability: Regenerate Drudge Skeletons.
+Tap Swamp for {B}
+Drudge Skeletons (16) gains a regeneration shield
+<Choice> Player 2 chose 0 - activate Drudge Skeletons
+Drudge Skeletons activates ability: Regenerate Drudge Skeletons.
+Tap Swamp for {B}
+Drudge Skeletons (16) gains a regeneration shield
+Drudge Skeletons (16) deals 1 damage to Player 1 (life: 19)
+Scathe Zombies (17) deals 2 damage to Player 1 (life: 17)
+
+  >>> Turn 6 - Player 1 17 (Player 2 16) <<<<
+Player 1 draws Plains (11)
+<Choice> Player 1 chose 0 - play Plains
+Player 1 plays Plains (11)
+<Choice> chose 2 attackers from 2 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares White Knight (7) (2/2) as attacker
+Player 1 declares Elite Vanguard (8) (2/1) as attacker
+--- First Strike Combat Damage ---
+White Knight (7) deals 2 damage to Player 2 (life: 14)
+--- Normal Combat Damage ---
+Elite Vanguard (8) deals 2 damage to Player 2 (life: 12)
+
+  >>> Turn 7 - Player 2 12 (Player 1 17) <<<<
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+Player 2 draws Swamp (19)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 1 - play Swamp
+Player 2 plays Swamp (19)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> chose 2 attackers from 2 available creatures (aggression=3, opponent blockers=0)
+Player 2 declares Drudge Skeletons (16) (1/1) as attacker
+Player 2 declares Scathe Zombies (17) (2/2) as attacker
+<Choice> Player 2 chose 0 - activate Drudge Skeletons
+Drudge Skeletons activates ability: Regenerate Drudge Skeletons.
+Tap Swamp for {B}
+Drudge Skeletons (16) gains a regeneration shield
+<Choice> Player 2 chose 0 - activate Drudge Skeletons
+Drudge Skeletons activates ability: Regenerate Drudge Skeletons.
+Tap Swamp for {B}
+Drudge Skeletons (16) gains a regeneration shield
+<Choice> Player 2 chose 0 - activate Drudge Skeletons
+Drudge Skeletons activates ability: Regenerate Drudge Skeletons.
+Tap Swamp for {B}
+Drudge Skeletons (16) gains a regeneration shield
+<Choice> Player 2 chose 0 - activate Drudge Skeletons
+Drudge Skeletons activates ability: Regenerate Drudge Skeletons.
+Tap Swamp for {B}
+Drudge Skeletons (16) gains a regeneration shield
+<Choice> Player 2 chose 0 - activate Drudge Skeletons
+Drudge Skeletons activates ability: Regenerate Drudge Skeletons.
+Tap Swamp for {B}
+Drudge Skeletons (16) gains a regeneration shield
+<Choice> Player 2 chose 0 - activate Drudge Skeletons
+Drudge Skeletons activates ability: Regenerate Drudge Skeletons.
+Tap Swamp for {B}
+Drudge Skeletons (16) gains a regeneration shield
+Drudge Skeletons (16) deals 1 damage to Player 1 (life: 16)
+Scathe Zombies (17) deals 2 damage to Player 1 (life: 14)
+
+  >>> Turn 8 - Player 1 14 (Player 2 12) <<<<
+Player 1 draws Plains (10)
+<Choice> Player 1 chose 0 - play Plains
+Player 1 plays Plains (10)
+<Choice> chose 2 attackers from 2 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares White Knight (7) (2/2) as attacker
+Player 1 declares Elite Vanguard (8) (2/1) as attacker
+--- First Strike Combat Damage ---
+White Knight (7) deals 2 damage to Player 2 (life: 10)
+--- Normal Combat Damage ---
+Elite Vanguard (8) deals 2 damage to Player 2 (life: 8)
+
+  >>> Turn 9 - Player 2 8 (Player 1 14) <<<<
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+Player 2 draws Swamp (18)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 1 - play Swamp
+Player 2 plays Swamp (18)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> chose 2 attackers from 2 available creatures (aggression=3, opponent blockers=0)
+Player 2 declares Drudge Skeletons (16) (1/1) as attacker
+Player 2 declares Scathe Zombies (17) (2/2) as attacker
+<Choice> Player 2 chose 0 - activate Drudge Skeletons
+Drudge Skeletons activates ability: Regenerate Drudge Skeletons.
+Tap Swamp for {B}
+Drudge Skeletons (16) gains a regeneration shield
+<Choice> Player 2 chose 0 - activate Drudge Skeletons
+Drudge Skeletons activates ability: Regenerate Drudge Skeletons.
+Tap Swamp for {B}
+Drudge Skeletons (16) gains a regeneration shield
+<Choice> Player 2 chose 0 - activate Drudge Skeletons
+Drudge Skeletons activates ability: Regenerate Drudge Skeletons.
+Tap Swamp for {B}
+Drudge Skeletons (16) gains a regeneration shield
+<Choice> Player 2 chose 0 - activate Drudge Skeletons
+Drudge Skeletons activates ability: Regenerate Drudge Skeletons.
+Tap Swamp for {B}
+Drudge Skeletons (16) gains a regeneration shield
+<Choice> Player 2 chose 0 - activate Drudge Skeletons
+Drudge Skeletons activates ability: Regenerate Drudge Skeletons.
+Tap Swamp for {B}
+Drudge Skeletons (16) gains a regeneration shield
+<Choice> Player 2 chose 0 - activate Drudge Skeletons
+Drudge Skeletons activates ability: Regenerate Drudge Skeletons.
+Tap Swamp for {B}
+Drudge Skeletons (16) gains a regeneration shield
+<Choice> Player 2 chose 0 - activate Drudge Skeletons
+Drudge Skeletons activates ability: Regenerate Drudge Skeletons.
+Tap Swamp for {B}
+Drudge Skeletons (16) gains a regeneration shield
+Drudge Skeletons (16) deals 1 damage to Player 1 (life: 13)
+Scathe Zombies (17) deals 2 damage to Player 1 (life: 11)
+Player 2 has lost the game (decked). Player 1 wins!

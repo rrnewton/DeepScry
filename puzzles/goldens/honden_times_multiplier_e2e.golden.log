@@ -1,0 +1,41 @@
+Honden of Cleansing Fire trigger effect
+Player 1 gains 0 life (life: 1)
+Honden of Cleansing Fire trigger effect
+Player 1 gains 0 life (life: 1)
+Honden of Seeing Winds trigger effect
+Player 2 draws Forest (18)
+Player 2 draws Forest (17)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (10)
+
+  >>> Turn 3 - Player 1 1 (Player 2 20) <<<<
+Player 1 draws Forest (9)
+<Choice> Player 1 chose 0 - play Forest
+Player 1 plays Forest (3)
+
+  >>> Turn 4 - Player 2 20 (Player 1 1) <<<<
+Honden of Cleansing Fire trigger effect
+Player 1 gains 0 life (life: 1)
+Honden of Cleansing Fire trigger effect
+Player 1 gains 0 life (life: 1)
+Honden of Seeing Winds trigger effect
+Player 2 draws Forest (16)
+Player 2 draws Forest (15)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (15)
+
+  >>> Turn 5 - Player 1 1 (Player 2 20) <<<<
+Player 1 draws Forest (8)
+<Choice> Player 1 chose 0 - play Forest
+Player 1 plays Forest (8)
+
+  >>> Turn 6 - Player 2 20 (Player 1 1) <<<<
+Honden of Cleansing Fire trigger effect
+Player 1 gains 0 life (life: 1)
+Honden of Cleansing Fire trigger effect
+Player 1 gains 0 life (life: 1)
+Honden of Seeing Winds trigger effect
+Player 2 draws Forest (14)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (14)
+Player 2 has lost the game (decked). Player 1 wins!

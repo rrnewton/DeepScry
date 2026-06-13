@@ -1,0 +1,21 @@
+  >>> Turn 1 - Player 1 20 (Player 2 2) <<<<
+<Choice> Player 1 chose 0 - cast Grizzly Bears
+Player 1 casts Grizzly Bears (3) (putting on stack)
+Tap Forest for {G}
+Tap Forest for {G}
+Grizzly Bears (3) resolves
+Grizzly Bears (3) enters the battlefield as a 2/2 creature
+
+  >>> Turn 2 - Player 2 2 (Player 1 20) <<<<
+Player 2 draws Plains (17)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (17)
+
+  >>> Turn 3 - Player 1 20 (Player 2 2) <<<<
+Player 1 draws Forest (10)
+<Choice> Player 1 chose 0 - play Forest
+Player 1 plays Forest (10)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Grizzly Bears (3) (2/2) as attacker
+Grizzly Bears (3) deals 2 damage to Player 2 (life: 0)
+Player 2 has lost the game (life: 0). Player 1 wins!

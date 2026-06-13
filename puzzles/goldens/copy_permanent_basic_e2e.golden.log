@@ -1,0 +1,51 @@
+  >>> Turn 1 - Player 1 20 (Player 2 20) <<<<
+<Choice> Player 1 chose 0 - cast Cackling Counterpart
+Player 1 casts Cackling Counterpart (3) (putting on stack)
+  → targeting Grizzly Bears (7)
+Tap Island for {U}
+Tap Island for {U}
+Tap Island for {U}
+Cackling Counterpart (3) resolves
+Created a token copy of Grizzly Bears under Player 1's control
+Cackling Counterpart (3) creates a token copy of unknown for Player 1
+<Choice> chose 2 attackers from 2 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Grizzly Bears (7) (2/2) as attacker
+Player 1 declares Grizzly Bears (16) (2/2) as attacker
+Grizzly Bears (7) deals 2 damage to Player 2 (life: 18)
+Grizzly Bears (16) deals 2 damage to Player 2 (life: 16)
+
+  >>> Turn 2 - Player 2 16 (Player 1 20) <<<<
+Player 2 draws Forest (15)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (15)
+
+  >>> Turn 3 - Player 1 20 (Player 2 16) <<<<
+Player 1 draws Island (10)
+<Choice> Player 1 chose 0 - play Island
+Player 1 plays Island (10)
+<Choice> chose 2 attackers from 2 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Grizzly Bears (7) (2/2) as attacker
+Player 1 declares Grizzly Bears (16) (2/2) as attacker
+Grizzly Bears (7) deals 2 damage to Player 2 (life: 14)
+Grizzly Bears (16) deals 2 damage to Player 2 (life: 12)
+
+  >>> Turn 4 - Player 2 12 (Player 1 20) <<<<
+Player 2 draws Forest (14)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (14)
+
+  >>> Turn 5 - Player 1 20 (Player 2 12) <<<<
+Player 1 draws Island (9)
+<Choice> Player 1 chose 0 - play Island
+Player 1 plays Island (9)
+<Choice> chose 2 attackers from 2 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Grizzly Bears (7) (2/2) as attacker
+Player 1 declares Grizzly Bears (16) (2/2) as attacker
+Grizzly Bears (7) deals 2 damage to Player 2 (life: 10)
+Grizzly Bears (16) deals 2 damage to Player 2 (life: 8)
+
+  >>> Turn 6 - Player 2 8 (Player 1 20) <<<<
+Player 2 draws Forest (13)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (13)
+Player 2 has lost the game (decked). Player 1 wins!

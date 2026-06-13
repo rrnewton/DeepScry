@@ -1,0 +1,20 @@
+<Choice> Player 1 chose 0 - play Thriving Grove
+Thriving Grove (3) enters the battlefield tapped
+Thriving Grove (3) - chose White
+Player 1 plays Thriving Grove (3)
+
+  >>> Turn 4 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Forest (11)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (11)
+
+  >>> Turn 5 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Island (7)
+<Choice> Player 1 chose 0 - play Island
+Player 1 plays Island (7)
+
+  >>> Turn 6 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Forest (10)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (10)
+Player 2 has lost the game (decked). Player 1 wins!

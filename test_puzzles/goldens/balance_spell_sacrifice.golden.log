@@ -1,0 +1,55 @@
+  >>> Turn 1 - Player 1 20 (Player 2 20) <<<<
+<Choice> Player 1 chose 0 - cast Balance
+Player 1 casts Balance (3) (putting on stack)
+Tap Plains for {W}
+Tap Plains for {W}
+<Choice> Player 2 chose 'p' (pass priority from 3 available actions)
+Balance (3) resolves
+Balance (3) balances Land across all players' battlefields
+Balance: Land equalize to 0
+<Choice> Sacrifice 2 Land: [Plains, Plains]
+Player 1 sacrifices Plains to Balance
+Plains (4) goes to graveyard
+Player 1 sacrifices Plains to Balance
+Plains (5) goes to graveyard
+Balance: Hand sizes equalize to 0
+Giant Growth is discarded
+Player 2 discards Giant Growth to Balance
+Giant Growth is discarded
+Player 2 discards Giant Growth to Balance
+Giant Growth is discarded
+Player 2 discards Giant Growth to Balance
+Balance: Creature equalize to 0
+<Choice> Sacrifice 3 Creature: [Llanowar Elves, Grizzly Bears, Hill Giant]
+Player 2 sacrifices Llanowar Elves to Balance
+Llanowar Elves (13) goes to graveyard
+Player 2 sacrifices Grizzly Bears to Balance
+Grizzly Bears (12) goes to graveyard
+Player 2 sacrifices Hill Giant to Balance
+Hill Giant (14) goes to graveyard
+
+  >>> Turn 2 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Forest (17)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (17)
+
+  >>> Turn 3 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Plains (8)
+<Choice> Player 1 chose 0 - play Plains
+Player 1 plays Plains (8)
+
+  >>> Turn 4 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Forest (16)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (16)
+
+  >>> Turn 5 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Plains (7)
+<Choice> Player 1 chose 0 - play Plains
+Player 1 plays Plains (7)
+
+  >>> Turn 6 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Forest (15)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (15)
+Player 2 has lost the game (decked). Player 1 wins!

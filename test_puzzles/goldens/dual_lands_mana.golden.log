@@ -1,0 +1,77 @@
+  >>> Turn 1 - Player 1 20 (Player 2 20) <<<<
+<Choice> Player 1 chose 0 - cast Lightning Bolt
+Player 1 casts Lightning Bolt (3) (putting on stack)
+  → targeting Grizzly Bears (15)
+Tap Badlands for {R}
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+Lightning Bolt (3) resolves
+Grizzly Bears (15) takes 3 damage (total: 3)
+Lightning Bolt (3) deals 3 damage to Grizzly Bears (15)
+Grizzly Bears (15) goes to graveyard
+Grizzly Bears (15) dies from lethal damage
+
+  >>> Turn 2 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Swamp (22)
+<Choice> Player 2 chose 0 - play Swamp
+Player 2 plays Swamp (22)
+
+  >>> Turn 3 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Swamp (14)
+<Choice> Player 1 chose 0 - play Swamp
+Player 1 plays Swamp (14)
+
+  >>> Turn 4 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Swamp (21)
+<Choice> Player 2 chose 0 - play Swamp
+Player 2 plays Swamp (21)
+
+  >>> Turn 5 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Swamp (13)
+<Choice> Player 1 chose 0 - play Swamp
+Player 1 plays Swamp (13)
+
+  >>> Turn 6 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Swamp (20)
+<Choice> Player 2 chose 0 - play Swamp
+Player 2 plays Swamp (20)
+
+  >>> Turn 7 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Swamp (12)
+<Choice> Player 1 chose 0 - play Swamp
+Player 1 plays Swamp (12)
+
+  >>> Turn 8 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Swamp (19)
+<Choice> Player 2 chose 0 - play Swamp
+Player 2 plays Swamp (19)
+
+  >>> Turn 9 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Swamp (11)
+<Choice> Player 1 chose 0 - play Swamp
+Player 1 plays Swamp (11)
+
+  >>> Turn 10 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Swamp (18)
+<Choice> Player 2 chose 0 - play Swamp
+Player 2 plays Swamp (18)
+
+  >>> Turn 11 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Swamp (10)
+<Choice> Player 1 chose 0 - play Swamp
+Player 1 plays Swamp (10)
+
+  >>> Turn 12 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Swamp (17)
+<Choice> Player 2 chose 0 - play Swamp
+Player 2 plays Swamp (17)
+
+  >>> Turn 13 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Swamp (9)
+<Choice> Player 1 chose 0 - play Swamp
+Player 1 plays Swamp (9)
+
+  >>> Turn 14 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Swamp (16)
+<Choice> Player 2 chose 0 - play Swamp
+Player 2 plays Swamp (16)
+Player 2 has lost the game (decked). Player 1 wins!

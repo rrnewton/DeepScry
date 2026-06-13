@@ -1,0 +1,50 @@
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=1)
+Player 1 declares White Knight (6) (2/2) as attacker
+--- First Strike Combat Damage ---
+White Knight (6) deals 2 damage to Player 2 (life: 18)
+--- Normal Combat Damage ---
+
+  >>> Turn 5 - Player 2 18 (Player 1 20) <<<<
+Player 2 draws Swamp (16)
+<Choice> Player 2 chose 0 - play Swamp
+Player 2 plays Swamp (16)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 2 declares Scathe Zombies (13) (2/2) as attacker
+Scathe Zombies (13) deals 2 damage to Player 1 (life: 18)
+
+  >>> Turn 6 - Player 1 18 (Player 2 18) <<<<
+Player 1 draws Plains (9)
+<Choice> Player 1 chose 0 - play Plains
+Player 1 plays Plains (9)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares White Knight (6) (2/2) as attacker
+--- First Strike Combat Damage ---
+White Knight (6) deals 2 damage to Player 2 (life: 16)
+--- Normal Combat Damage ---
+
+  >>> Turn 7 - Player 2 16 (Player 1 18) <<<<
+Player 2 draws Swamp (15)
+<Choice> Player 2 chose 0 - play Swamp
+Player 2 plays Swamp (15)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 2 declares Scathe Zombies (13) (2/2) as attacker
+Scathe Zombies (13) deals 2 damage to Player 1 (life: 16)
+
+  >>> Turn 8 - Player 1 16 (Player 2 16) <<<<
+Player 1 draws Plains (8)
+<Choice> Player 1 chose 0 - play Plains
+Player 1 plays Plains (8)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares White Knight (6) (2/2) as attacker
+--- First Strike Combat Damage ---
+White Knight (6) deals 2 damage to Player 2 (life: 14)
+--- Normal Combat Damage ---
+
+  >>> Turn 9 - Player 2 14 (Player 1 16) <<<<
+Player 2 draws Swamp (14)
+<Choice> Player 2 chose 0 - play Swamp
+Player 2 plays Swamp (14)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 2 declares Scathe Zombies (13) (2/2) as attacker
+Scathe Zombies (13) deals 2 damage to Player 1 (life: 14)
+Player 2 has lost the game (decked). Player 1 wins!

@@ -1,0 +1,34 @@
+  >>> Turn 1 - Player 1 20 (Player 2 20) <<<<
+<Choice> Player 1 chose 0 - play Mountain
+Player 1 plays Mountain (3)
+Avatar Kyoshi, Earthbender trigger effect
+Forest is earthbent! (0/0 creature with haste, 8 +1/+1 counters, returns when dies/exiled)
+  -> Delayed trigger 1 registered: return Forest to battlefield tapped when it leaves
+Avatar Kyoshi, Earthbender trigger effect
+<Choice> chose not to attack with 2 available creatures (aggression=3, opponent blockers=2)
+
+  >>> Turn 2 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Island (24)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (14)
+<Choice> chose 2 attackers from 2 available creatures (aggression=3, opponent blockers=1)
+Player 2 declares Typhoid Rats (15) (1/1) as attacker
+Player 2 declares Typhoid Rats (16) (1/1) as attacker
+<Choice> chose not to block (no favorable blocks among 1 blockers vs 2 attackers)
+Typhoid Rats (15) deals 1 damage to Player 1 (life: 19)
+Typhoid Rats (16) deals 1 damage to Player 1 (life: 18)
+
+  >>> Turn 3 - Player 1 18 (Player 2 20) <<<<
+Player 1 draws Mountain (13)
+<Choice> Player 1 chose 0 - play Mountain
+Player 1 plays Mountain (13)
+Avatar Kyoshi, Earthbender trigger effect
+Forest is earthbent! (0/0 creature with haste, 8 +1/+1 counters, returns when dies/exiled)
+  -> Delayed trigger 2 registered: return Forest to battlefield tapped when it leaves
+Avatar Kyoshi, Earthbender trigger effect
+<Choice> chose 2 attackers from 2 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Avatar Kyoshi, Earthbender (4) (6/6) as attacker
+Player 1 declares Forest (5) (16/16) as attacker
+Avatar Kyoshi, Earthbender (4) deals 6 damage to Player 2 (life: 14)
+Forest (5) deals 16 damage to Player 2 (life: -2)
+Player 2 has lost the game (life: -2). Player 1 wins!

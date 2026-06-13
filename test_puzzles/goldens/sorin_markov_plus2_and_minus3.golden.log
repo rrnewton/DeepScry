@@ -1,0 +1,62 @@
+<Choice> Player 1 chose 0 - activate Sorin Markov
+Sorin Markov activates ability: Sorin Markov deals 2 damage to any target and you gain 2 life.
+  -> targeting Grizzly Bears (17)
+Sorin Markov gains 2 loyalty (now 6)
+Grizzly Bears (17) takes 2 damage (total: 2)
+Player 1 gains 2 life (life: 22)
+Grizzly Bears (17) goes to graveyard
+Grizzly Bears (17) dies from lethal damage
+
+  >>> Turn 3 - Player 2 20 (Player 1 22) <<<<
+Player 2 draws Plains (22)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (22)
+
+  >>> Turn 4 - Player 1 22 (Player 2 20) <<<<
+Player 1 draws Swamp (14)
+<Choice> Player 1 chose 1 - play Swamp
+Player 1 plays Swamp (14)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+
+  >>> Turn 5 - Player 2 20 (Player 1 22) <<<<
+Player 2 draws Plains (21)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (21)
+
+  >>> Turn 6 - Player 1 22 (Player 2 20) <<<<
+Player 1 draws Swamp (13)
+<Choice> Player 1 chose 1 - play Swamp
+Player 1 plays Swamp (13)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+
+  >>> Turn 7 - Player 2 20 (Player 1 22) <<<<
+Player 2 draws Plains (20)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (20)
+
+  >>> Turn 8 - Player 1 22 (Player 2 20) <<<<
+Player 1 draws Swamp (12)
+<Choice> Player 1 chose 1 - play Swamp
+Player 1 plays Swamp (12)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+
+  >>> Turn 9 - Player 2 20 (Player 1 22) <<<<
+Player 2 draws Plains (19)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (19)
+
+  >>> Turn 10 - Player 1 22 (Player 2 20) <<<<
+Player 1 draws Swamp (11)
+<Choice> Player 1 chose 1 - play Swamp
+Player 1 plays Swamp (11)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+
+  >>> Turn 11 - Player 2 20 (Player 1 22) <<<<
+Player 2 draws Plains (18)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (18)
+Player 2 has lost the game (decked). Player 1 wins!

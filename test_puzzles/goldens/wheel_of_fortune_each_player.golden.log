@@ -1,0 +1,76 @@
+<Choice> Player 1 chose 1 - play Plains
+Player 1 plays Plains (4)
+<Choice> Player 1 chose 0 - cast Wheel of Fortune
+Player 1 casts Wheel of Fortune (3) (putting on stack)
+Tap Mountain for {R}
+Tap Plains for {W}
+Tap Mountain for {R}
+Wheel of Fortune (3) resolves
+Plains is discarded
+Player 1 discards Plains
+Forest is discarded
+Player 2 discards Forest
+Forest is discarded
+Player 2 discards Forest
+Player 1 draws Plains (20)
+Player 1 draws Plains (19)
+Player 1 draws Plains (18)
+Player 1 draws Plains (17)
+Player 1 draws Plains (16)
+Player 1 draws Plains (15)
+Player 1 draws Plains (14)
+Player 2 draws Forest (35)
+Player 2 draws Forest (34)
+Player 2 draws Forest (33)
+Player 2 draws Forest (32)
+Player 2 draws Forest (31)
+Player 2 draws Forest (30)
+Player 2 draws Forest (29)
+Wheel of Fortune (3) causes each player to discard their hand
+Wheel of Fortune (3) causes each player to draw 7 card(s)
+
+  >>> Turn 3 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Forest (28)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (28)
+
+  >>> Turn 4 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Plains (13)
+<Choice> Player 1 chose 0 - play Plains
+Player 1 plays Plains (13)
+
+  >>> Turn 5 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Forest (27)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (27)
+
+  >>> Turn 6 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Plains (12)
+<Choice> Player 1 chose 0 - play Plains
+Player 1 plays Plains (12)
+
+  >>> Turn 7 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Forest (26)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (26)
+
+  >>> Turn 8 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Plains (11)
+<Choice> Player 1 chose 0 - play Plains
+Player 1 plays Plains (11)
+
+  >>> Turn 9 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Forest (25)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (25)
+
+  >>> Turn 10 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Plains (10)
+<Choice> Player 1 chose 0 - play Plains
+Player 1 plays Plains (10)
+
+  >>> Turn 11 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Forest (24)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (24)
+Player 2 has lost the game (decked). Player 1 wins!

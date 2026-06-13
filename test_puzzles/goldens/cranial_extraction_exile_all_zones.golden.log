@@ -1,0 +1,38 @@
+<Choice> Player 1 chose 0 - cast Cranial Extraction
+Player 1 casts Cranial Extraction (3) (putting on stack)
+Tap Swamp for {B}
+Tap Swamp for {B}
+Tap Swamp for {B}
+Tap Swamp for {B}
+Cranial Extraction (3) resolves
+Player 1 names a card: "Grizzly Bears"
+Cranial Extraction (3) Player 1 chooses a card name
+Cranial Extraction (3) moves all cards from Graveyard to Exile
+Cranial Extraction (3) moves all cards from Hand to Exile
+Cranial Extraction (3) moves all cards from Library to Exile
+
+  >>> Turn 3 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Plains (16)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (16)
+
+  >>> Turn 4 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Swamp (11)
+<Choice> Player 1 chose 0 - play Swamp
+Player 1 plays Swamp (11)
+
+  >>> Turn 5 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Plains (17)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (17)
+
+  >>> Turn 6 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Swamp (10)
+<Choice> Player 1 chose 0 - play Swamp
+Player 1 plays Swamp (10)
+
+  >>> Turn 7 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Plains (18)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (18)
+Player 2 has lost the game (decked). Player 1 wins!

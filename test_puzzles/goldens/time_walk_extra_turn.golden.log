@@ -1,0 +1,55 @@
+  >>> Turn 1 - Player 1 20 (Player 2 20) <<<<
+<Choice> Player 1 chose 0 - cast Time Walk
+Player 1 casts Time Walk (3) (putting on stack)
+Tap Island for {U}
+Tap Island for {U}
+Time Walk (3) resolves
+Player 1 takes 1 extra turn(s) after this one
+Time Walk (3) grants Player 1 1 extra turn(s)
+Extra turn for Player 1!
+
+  >>> Turn 2 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Island (10)
+<Choice> Player 1 chose 0 - play Island
+Player 1 plays Island (10)
+
+  >>> Turn 3 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Forest (15)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (15)
+
+  >>> Turn 4 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Island (9)
+<Choice> Player 1 chose 0 - play Island
+Player 1 plays Island (9)
+
+  >>> Turn 5 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Forest (14)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (14)
+
+  >>> Turn 6 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Island (8)
+<Choice> Player 1 chose 0 - play Island
+Player 1 plays Island (8)
+
+  >>> Turn 7 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Forest (13)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (13)
+
+  >>> Turn 8 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Island (7)
+<Choice> Player 1 chose 0 - play Island
+Player 1 plays Island (7)
+
+  >>> Turn 9 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Forest (12)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (12)
+
+  >>> Turn 10 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Island (6)
+<Choice> Player 1 chose 0 - play Island
+Player 1 plays Island (6)
+Player 1 has lost the game (decked). Player 2 wins!

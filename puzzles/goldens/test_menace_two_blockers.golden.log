@@ -1,0 +1,46 @@
+  >>> Turn 1 - Player 1 20 (Player 2 20) <<<<
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=2)
+Player 1 declares Mongoose Lizard (6) (5/6) as attacker
+<Choice> chose 2 blockers for 1 attackers
+Player 2 declares Llanowar Elves (13) as blocker for Mongoose Lizard (6)
+Player 2 declares Grizzly Bears (12) as blocker for Mongoose Lizard (6)
+Mongoose Lizard (6) deals 1 damage to Llanowar Elves (13)
+Mongoose Lizard (6) deals 4 damage to Grizzly Bears (12)
+Llanowar Elves (13) deals 1 damage to Mongoose Lizard (6)
+Grizzly Bears (12) deals 2 damage to Mongoose Lizard (6)
+Grizzly Bears (12) goes to graveyard
+Grizzly Bears (12) dies from combat damage
+Llanowar Elves (13) goes to graveyard
+Llanowar Elves (13) dies from combat damage
+
+  >>> Turn 2 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Forest (16)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (16)
+
+  >>> Turn 3 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Mountain (9)
+<Choice> Player 1 chose 0 - play Mountain
+Player 1 plays Mountain (9)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Mongoose Lizard (6) (5/6) as attacker
+Mongoose Lizard (6) deals 5 damage to Player 2 (life: 15)
+
+  >>> Turn 4 - Player 2 15 (Player 1 20) <<<<
+Player 2 draws Forest (15)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (15)
+
+  >>> Turn 5 - Player 1 20 (Player 2 15) <<<<
+Player 1 draws Mountain (8)
+<Choice> Player 1 chose 0 - play Mountain
+Player 1 plays Mountain (8)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Mongoose Lizard (6) (5/6) as attacker
+Mongoose Lizard (6) deals 5 damage to Player 2 (life: 10)
+
+  >>> Turn 6 - Player 2 10 (Player 1 20) <<<<
+Player 2 draws Forest (14)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (14)
+Player 2 has lost the game (decked). Player 1 wins!

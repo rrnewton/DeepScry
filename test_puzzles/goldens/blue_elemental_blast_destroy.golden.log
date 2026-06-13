@@ -1,0 +1,122 @@
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+
+  >>> Turn 3 - Player 1 20 (Player 2 20) <<<<
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+Player 1 draws Plains (7)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 0 - play Plains
+Player 1 plays Plains (7)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Mons's Goblin Raiders (3) (1/1) as attacker
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+Mons's Goblin Raiders (3) deals 1 damage to Player 2 (life: 19)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+
+  >>> Turn 4 - Player 2 19 (Player 1 20) <<<<
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+Player 2 draws Plains (13)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 1 - play Plains
+Player 2 plays Plains (13)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+
+  >>> Turn 5 - Player 1 20 (Player 2 19) <<<<
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+Player 1 draws Plains (6)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 0 - play Plains
+Player 1 plays Plains (6)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Mons's Goblin Raiders (3) (1/1) as attacker
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+Mons's Goblin Raiders (3) deals 1 damage to Player 2 (life: 18)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+
+  >>> Turn 6 - Player 2 18 (Player 1 20) <<<<
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+Player 2 draws Plains (12)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 1 - play Plains
+Player 2 plays Plains (12)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+
+  >>> Turn 7 - Player 1 20 (Player 2 18) <<<<
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+Player 1 draws Plains (5)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 0 - play Plains
+Player 1 plays Plains (5)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Mons's Goblin Raiders (3) (1/1) as attacker
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+Mons's Goblin Raiders (3) deals 1 damage to Player 2 (life: 17)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+
+  >>> Turn 8 - Player 2 17 (Player 1 20) <<<<
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+Player 2 draws Plains (11)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 1 - play Plains
+Player 2 plays Plains (11)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+
+  >>> Turn 9 - Player 1 20 (Player 2 17) <<<<
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+Player 1 draws Plains (4)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 0 - play Plains
+Player 1 plays Plains (4)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Mons's Goblin Raiders (3) (1/1) as attacker
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+Mons's Goblin Raiders (3) deals 1 damage to Player 2 (life: 16)
+Player 1 has lost the game (decked). Player 2 wins!

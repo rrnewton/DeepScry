@@ -1,0 +1,41 @@
+  >>> Turn 1 - Player 1 10 (Player 2 20) <<<<
+<Choice> Player 1 chose 0 - play Mountain
+Player 1 plays Mountain (3)
+Avatar Kyoshi, Earthbender trigger effect
+Forest is earthbent! (0/0 creature with haste, 8 +1/+1 counters, returns when dies/exiled)
+  -> Delayed trigger 1 registered: return Forest to battlefield tapped when it leaves
+Avatar Kyoshi, Earthbender trigger effect
+<Choice> chose 2 attackers from 2 available creatures (aggression=3, opponent blockers=2)
+Player 1 declares Avatar Kyoshi, Earthbender (4) (6/6) as attacker
+Player 1 declares Forest (5) (8/8) as attacker
+<Choice> chose 2 blockers for 2 attackers
+Player 2 declares Grizzly Bears (15) as blocker for Forest (5)
+Player 2 declares Hill Giant (16) as blocker for Avatar Kyoshi, Earthbender (4)
+Avatar Kyoshi, Earthbender (4) deals 6 damage to Hill Giant (16)
+Hill Giant (16) deals 3 damage to Avatar Kyoshi, Earthbender (4)
+Forest (5) deals 8 damage to Grizzly Bears (15)
+Grizzly Bears (15) deals 2 damage to Forest (5)
+Grizzly Bears (15) goes to graveyard
+Grizzly Bears (15) dies from combat damage
+Hill Giant (16) goes to graveyard
+Hill Giant (16) dies from combat damage
+
+  >>> Turn 2 - Player 2 20 (Player 1 10) <<<<
+Player 2 draws Island (23)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (14)
+
+  >>> Turn 3 - Player 1 10 (Player 2 20) <<<<
+Player 1 draws Mountain (13)
+<Choice> Player 1 chose 0 - play Mountain
+Player 1 plays Mountain (13)
+Avatar Kyoshi, Earthbender trigger effect
+Forest is earthbent! (0/0 creature with haste, 8 +1/+1 counters, returns when dies/exiled)
+  -> Delayed trigger 2 registered: return Forest to battlefield tapped when it leaves
+Avatar Kyoshi, Earthbender trigger effect
+<Choice> chose 2 attackers from 2 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Avatar Kyoshi, Earthbender (4) (6/6) as attacker
+Player 1 declares Forest (5) (16/16) as attacker
+Avatar Kyoshi, Earthbender (4) deals 6 damage to Player 2 (life: 14)
+Forest (5) deals 16 damage to Player 2 (life: -2)
+Player 2 has lost the game (life: -2). Player 1 wins!

@@ -1,0 +1,36 @@
+  >>> Turn 1 - Player 1 20 (Player 2 10) <<<<
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> chose 3 attackers from 3 available creatures (aggression=3, opponent blockers=1)
+Player 1 declares Deserter's Disciple (4) (2/2) as attacker
+Player 1 declares Typhoid Rats (5) (1/1) as attacker
+Player 1 declares Mongoose Lizard (6) (5/6) as attacker
+<Choice> chose 1 blockers for 3 attackers
+Deserter's Disciple (4) deals 2 damage to Player 2 (life: 8)
+Typhoid Rats (5) deals 1 damage to Player 2 (life: 7)
+Mongoose Lizard (6) deals 5 damage to Player 2 (life: 2)
+
+  >>> Turn 2 - Player 2 2 (Player 1 20) <<<<
+Player 2 draws Forest (19)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (19)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 2 declares Grizzly Bears (14) (2/2) as attacker
+Grizzly Bears (14) deals 2 damage to Player 1 (life: 18)
+
+  >>> Turn 3 - Player 1 18 (Player 2 2) <<<<
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+Player 1 draws Mountain (11)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 1 - play Mountain
+Player 1 plays Mountain (11)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> chose 3 attackers from 3 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Deserter's Disciple (4) (2/2) as attacker
+Player 1 declares Typhoid Rats (5) (1/1) as attacker
+Player 1 declares Mongoose Lizard (6) (5/6) as attacker
+Deserter's Disciple (4) deals 2 damage to Player 2 (life: 0)
+Typhoid Rats (5) deals 1 damage to Player 2 (life: -1)
+Mongoose Lizard (6) deals 5 damage to Player 2 (life: -6)
+Player 2 has lost the game (life: -6). Player 1 wins!

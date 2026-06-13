@@ -1,0 +1,80 @@
+  >>> Turn 1 - Player 1 20 (Player 2 20) <<<<
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Grizzly Bears (5) (2/2) as attacker
+<Choice> Player 2 chose 0 - activate Circle of Protection: Red
+Circle of Protection: Red activates ability: The next time a red source of your choice would deal damage to you this turn, prevent that damage.
+Tap Plains for {W}
+Grizzly Bears (5) deals 2 damage to Player 2 (life: 18)
+
+  >>> Turn 2 - Player 2 18 (Player 1 20) <<<<
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+Player 2 draws Plains (13)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 1 - play Plains
+Player 2 plays Plains (13)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 0 - activate Circle of Protection: Red
+Circle of Protection: Red activates ability: The next time a red source of your choice would deal damage to you this turn, prevent that damage.
+Tap Plains for {W}
+<Choice> Player 2 chose 0 - activate Circle of Protection: Red
+Circle of Protection: Red activates ability: The next time a red source of your choice would deal damage to you this turn, prevent that damage.
+Tap Plains for {W}
+
+  >>> Turn 3 - Player 1 20 (Player 2 18) <<<<
+Player 1 draws Forest (8)
+<Choice> Player 1 chose 0 - play Forest
+Player 1 plays Forest (8)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Grizzly Bears (5) (2/2) as attacker
+Grizzly Bears (5) deals 2 damage to Player 2 (life: 16)
+
+  >>> Turn 4 - Player 2 16 (Player 1 20) <<<<
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+Player 2 draws Plains (12)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 1 - play Plains
+Player 2 plays Plains (12)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 0 - activate Circle of Protection: Red
+Circle of Protection: Red activates ability: The next time a red source of your choice would deal damage to you this turn, prevent that damage.
+Tap Plains for {W}
+<Choice> Player 2 chose 0 - activate Circle of Protection: Red
+Circle of Protection: Red activates ability: The next time a red source of your choice would deal damage to you this turn, prevent that damage.
+Tap Plains for {W}
+<Choice> Player 2 chose 0 - activate Circle of Protection: Red
+Circle of Protection: Red activates ability: The next time a red source of your choice would deal damage to you this turn, prevent that damage.
+Tap Plains for {W}
+
+  >>> Turn 5 - Player 1 20 (Player 2 16) <<<<
+Player 1 draws Forest (7)
+<Choice> Player 1 chose 0 - play Forest
+Player 1 plays Forest (7)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Grizzly Bears (5) (2/2) as attacker
+Grizzly Bears (5) deals 2 damage to Player 2 (life: 14)
+
+  >>> Turn 6 - Player 2 14 (Player 1 20) <<<<
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+Player 2 draws Plains (11)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 1 - play Plains
+Player 2 plays Plains (11)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 0 - activate Circle of Protection: Red
+Circle of Protection: Red activates ability: The next time a red source of your choice would deal damage to you this turn, prevent that damage.
+Tap Plains for {W}
+<Choice> Player 2 chose 0 - activate Circle of Protection: Red
+Circle of Protection: Red activates ability: The next time a red source of your choice would deal damage to you this turn, prevent that damage.
+Tap Plains for {W}
+<Choice> Player 2 chose 0 - activate Circle of Protection: Red
+Circle of Protection: Red activates ability: The next time a red source of your choice would deal damage to you this turn, prevent that damage.
+Tap Plains for {W}
+<Choice> Player 2 chose 0 - activate Circle of Protection: Red
+Circle of Protection: Red activates ability: The next time a red source of your choice would deal damage to you this turn, prevent that damage.
+Tap Plains for {W}
+Player 2 has lost the game (decked). Player 1 wins!

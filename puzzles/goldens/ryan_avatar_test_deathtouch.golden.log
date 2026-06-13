@@ -1,0 +1,46 @@
+  >>> Turn 1 - Player 1 20 (Player 2 20) <<<<
+<Choice> Player 1 chose 0 - play Mountain
+Player 1 plays Mountain (3)
+<Choice> chose not to attack with 1 available creatures (aggression=3, opponent blockers=1)
+
+  >>> Turn 2 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Forest (21)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (21)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=1)
+Player 2 declares Craw Wurm (18) (6/4) as attacker
+<Choice> chose not to block (no favorable blocks among 1 blockers vs 1 attackers)
+Craw Wurm (18) deals 6 damage to Player 1 (life: 14)
+
+  >>> Turn 3 - Player 1 14 (Player 2 20) <<<<
+Player 1 draws Swamp (13)
+<Choice> Player 1 chose 0 - play Swamp
+Player 1 plays Swamp (13)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Canyon Crawler (10) (6/6) as attacker
+Canyon Crawler (10) deals 6 damage to Player 2 (life: 14)
+
+  >>> Turn 4 - Player 2 14 (Player 1 14) <<<<
+Player 2 draws Forest (20)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (20)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 2 declares Craw Wurm (18) (6/4) as attacker
+Craw Wurm (18) deals 6 damage to Player 1 (life: 8)
+
+  >>> Turn 5 - Player 1 8 (Player 2 14) <<<<
+Player 1 draws Swamp (12)
+<Choice> Player 1 chose 0 - play Swamp
+Player 1 plays Swamp (12)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Canyon Crawler (10) (6/6) as attacker
+Canyon Crawler (10) deals 6 damage to Player 2 (life: 8)
+
+  >>> Turn 6 - Player 2 8 (Player 1 8) <<<<
+Player 2 draws Forest (19)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (19)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 2 declares Craw Wurm (18) (6/4) as attacker
+Craw Wurm (18) deals 6 damage to Player 1 (life: 2)
+Player 2 has lost the game (decked). Player 1 wins!

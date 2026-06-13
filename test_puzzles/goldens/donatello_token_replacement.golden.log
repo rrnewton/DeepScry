@@ -1,0 +1,57 @@
+<Choice> Player 1 chose 0 - cast Raise the Alarm
+Player 1 casts Raise the Alarm (3) (putting on stack)
+Tap Plains for {W}
+Tap Island for {U}
+Raise the Alarm (3) resolves
+Created Soldier Token under Player 1's control
+Created Soldier Token under Player 1's control
+Created Mutagen Token under Player 1's control
+Raise the Alarm (3) creates 2 w_1_1_soldier token(s) under Player 1's control
+<Choice> chose 1 attackers from 3 available creatures (aggression=3, opponent blockers=1)
+Player 1 declares Donatello, the Brains (7) (2/4) as attacker
+<Choice> chose 1 blockers for 1 attackers
+Player 2 declares Grizzly Bears (11) as blocker for Donatello, the Brains (7)
+Donatello, the Brains (7) deals 2 damage to Grizzly Bears (11)
+Grizzly Bears (11) deals 2 damage to Donatello, the Brains (7)
+Grizzly Bears (11) goes to graveyard
+Grizzly Bears (11) dies from combat damage
+
+  >>> Turn 4 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Plains (14)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (14)
+
+  >>> Turn 5 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Island (10)
+<Choice> Player 1 chose 0 - play Island
+Player 1 plays Island (10)
+<Choice> chose 3 attackers from 3 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Donatello, the Brains (7) (2/4) as attacker
+Player 1 declares Soldier Token (15) (1/1) as attacker
+Player 1 declares Soldier Token (16) (1/1) as attacker
+Donatello, the Brains (7) deals 2 damage to Player 2 (life: 18)
+Soldier Token (15) deals 1 damage to Player 2 (life: 17)
+Soldier Token (16) deals 1 damage to Player 2 (life: 16)
+
+  >>> Turn 6 - Player 2 16 (Player 1 20) <<<<
+Player 2 draws Plains (13)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (13)
+
+  >>> Turn 7 - Player 1 20 (Player 2 16) <<<<
+Player 1 draws Island (9)
+<Choice> Player 1 chose 0 - play Island
+Player 1 plays Island (9)
+<Choice> chose 3 attackers from 3 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Donatello, the Brains (7) (2/4) as attacker
+Player 1 declares Soldier Token (15) (1/1) as attacker
+Player 1 declares Soldier Token (16) (1/1) as attacker
+Donatello, the Brains (7) deals 2 damage to Player 2 (life: 14)
+Soldier Token (15) deals 1 damage to Player 2 (life: 13)
+Soldier Token (16) deals 1 damage to Player 2 (life: 12)
+
+  >>> Turn 8 - Player 2 12 (Player 1 20) <<<<
+Player 2 draws Plains (12)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (12)
+Player 2 has lost the game (decked). Player 1 wins!

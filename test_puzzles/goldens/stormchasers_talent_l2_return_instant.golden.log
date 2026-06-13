@@ -1,0 +1,71 @@
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+
+  >>> Turn 3 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Plains (20)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (20)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 2 declares Grizzly Bears (15) (2/2) as attacker
+Grizzly Bears (15) deals 2 damage to Player 1 (life: 18)
+
+  >>> Turn 4 - Player 1 18 (Player 2 20) <<<<
+Player 1 draws Island (14)
+<Choice> Player 1 chose 1 - play Island
+Player 1 plays Island (14)
+<Choice> Player 1 chose 'p' (pass priority from 2 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 2 available actions)
+
+  >>> Turn 5 - Player 2 20 (Player 1 18) <<<<
+Player 2 draws Plains (19)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (19)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 2 declares Grizzly Bears (15) (2/2) as attacker
+Grizzly Bears (15) deals 2 damage to Player 1 (life: 16)
+
+  >>> Turn 6 - Player 1 16 (Player 2 20) <<<<
+Player 1 draws Island (13)
+<Choice> Player 1 chose 2 - play Island
+Player 1 plays Island (13)
+<Choice> Player 1 chose 'p' (pass priority from 2 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 2 available actions)
+
+  >>> Turn 7 - Player 2 20 (Player 1 16) <<<<
+Player 2 draws Plains (18)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (18)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 2 declares Grizzly Bears (15) (2/2) as attacker
+Grizzly Bears (15) deals 2 damage to Player 1 (life: 14)
+
+  >>> Turn 8 - Player 1 14 (Player 2 20) <<<<
+Player 1 draws Island (12)
+<Choice> Player 1 chose 2 - play Island
+Player 1 plays Island (12)
+<Choice> Player 1 chose 'p' (pass priority from 2 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 2 available actions)
+
+  >>> Turn 9 - Player 2 20 (Player 1 14) <<<<
+Player 2 draws Plains (17)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (17)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 2 declares Grizzly Bears (15) (2/2) as attacker
+Grizzly Bears (15) deals 2 damage to Player 1 (life: 12)
+
+  >>> Turn 10 - Player 1 12 (Player 2 20) <<<<
+Player 1 draws Island (11)
+<Choice> Player 1 chose 2 - play Island
+Player 1 plays Island (11)
+<Choice> Player 1 chose 'p' (pass priority from 2 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 2 available actions)
+
+  >>> Turn 11 - Player 2 20 (Player 1 12) <<<<
+Player 2 draws Plains (16)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (16)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 2 declares Grizzly Bears (15) (2/2) as attacker
+Grizzly Bears (15) deals 2 damage to Player 1 (life: 10)
+Player 2 has lost the game (decked). Player 1 wins!

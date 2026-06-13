@@ -1,0 +1,36 @@
+<Choice> Player 1 chose 0 - cast Demonic Tutor
+Player 1 casts Demonic Tutor (3) (putting on stack)
+Tap Swamp for {B}
+Tap Swamp for {B}
+Demonic Tutor (3) resolves
+<Choice> Library search: found Swamp (score: 100)
+Demonic Tutor (3) searches Player 1's library for a Card card and puts it into Hand
+<Choice> Player 1 chose 0 - play Swamp
+Player 1 plays Swamp (7)
+
+  >>> Turn 3 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Plains (12)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (12)
+
+  >>> Turn 4 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Black Lotus (6)
+<Choice> Player 1 chose 0 - cast Black Lotus
+Player 1 casts Black Lotus (6) (putting on stack)
+Black Lotus (6) resolves
+
+  >>> Turn 5 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Plains (11)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (11)
+
+  >>> Turn 6 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Swamp (8)
+<Choice> Player 1 chose 0 - play Swamp
+Player 1 plays Swamp (8)
+
+  >>> Turn 7 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Plains (10)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (10)
+Player 2 has lost the game (decked). Player 1 wins!

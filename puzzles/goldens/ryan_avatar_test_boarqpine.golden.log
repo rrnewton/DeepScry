@@ -1,0 +1,87 @@
+  >>> Turn 1 - Player 1 20 (Player 2 20) <<<<
+<Choice> Player 1 chose 0 - cast Lightning Strike
+Player 1 casts Lightning Strike (3) (putting on stack)
+  → targeting Grizzly Bears (16)
+Tap Mountain for {R}
+Tap Swamp for {B}
+Trigger: Boar-q-pine - Whenever you cast a noncreature spell, put a +1/+1 counter on this creature.
+Boar-q-pine gets a +1/+1 counter (now 1 counters)
+Lightning Strike (3) resolves
+Grizzly Bears (16) takes 3 damage (total: 3)
+Lightning Strike (3) deals 3 damage to Grizzly Bears (16)
+Grizzly Bears (16) goes to graveyard
+Grizzly Bears (16) dies from lethal damage
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Boar-q-pine (7) (3/3) as attacker
+Boar-q-pine (7) deals 3 damage to Player 2 (life: 17)
+
+  >>> Turn 2 - Player 2 17 (Player 1 20) <<<<
+Player 2 draws Forest (22)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (22)
+
+  >>> Turn 3 - Player 1 20 (Player 2 17) <<<<
+Player 1 draws Swamp (13)
+<Choice> Player 1 chose 0 - play Swamp
+Player 1 plays Swamp (13)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Boar-q-pine (7) (3/3) as attacker
+Boar-q-pine (7) deals 3 damage to Player 2 (life: 14)
+
+  >>> Turn 4 - Player 2 14 (Player 1 20) <<<<
+Player 2 draws Forest (21)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (21)
+
+  >>> Turn 5 - Player 1 20 (Player 2 14) <<<<
+Player 1 draws Swamp (12)
+<Choice> Player 1 chose 0 - play Swamp
+Player 1 plays Swamp (12)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Boar-q-pine (7) (3/3) as attacker
+Boar-q-pine (7) deals 3 damage to Player 2 (life: 11)
+
+  >>> Turn 6 - Player 2 11 (Player 1 20) <<<<
+Player 2 draws Forest (20)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (20)
+
+  >>> Turn 7 - Player 1 20 (Player 2 11) <<<<
+Player 1 draws Swamp (11)
+<Choice> Player 1 chose 0 - play Swamp
+Player 1 plays Swamp (11)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Boar-q-pine (7) (3/3) as attacker
+Boar-q-pine (7) deals 3 damage to Player 2 (life: 8)
+
+  >>> Turn 8 - Player 2 8 (Player 1 20) <<<<
+Player 2 draws Forest (19)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (19)
+
+  >>> Turn 9 - Player 1 20 (Player 2 8) <<<<
+Player 1 draws Mountain (10)
+<Choice> Player 1 chose 0 - play Mountain
+Player 1 plays Mountain (10)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Boar-q-pine (7) (3/3) as attacker
+Boar-q-pine (7) deals 3 damage to Player 2 (life: 5)
+
+  >>> Turn 10 - Player 2 5 (Player 1 20) <<<<
+Player 2 draws Forest (18)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (18)
+
+  >>> Turn 11 - Player 1 20 (Player 2 5) <<<<
+Player 1 draws Mountain (9)
+<Choice> Player 1 chose 0 - play Mountain
+Player 1 plays Mountain (9)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Boar-q-pine (7) (3/3) as attacker
+Boar-q-pine (7) deals 3 damage to Player 2 (life: 2)
+
+  >>> Turn 12 - Player 2 2 (Player 1 20) <<<<
+Player 2 draws Forest (17)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (17)
+Player 2 has lost the game (decked). Player 1 wins!

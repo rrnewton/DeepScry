@@ -1,0 +1,23 @@
+  >>> Turn 1 - Player 2 20 (Player 1 3) <<<<
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=1)
+Player 2 declares Watcher in the Mist (12) (3/4) as attacker
+<Choice> chose 1 blockers for 1 attackers
+Player 1 declares Yuyan Archers (5) as blocker for Watcher in the Mist (12)
+Watcher in the Mist (12) deals 3 damage to Yuyan Archers (5)
+Yuyan Archers (5) deals 3 damage to Watcher in the Mist (12)
+Yuyan Archers (5) goes to graveyard
+Yuyan Archers (5) dies from combat damage
+
+  >>> Turn 2 - Player 1 3 (Player 2 20) <<<<
+Player 1 draws Mountain (8)
+<Choice> Player 1 chose 0 - play Mountain
+Player 1 plays Mountain (8)
+
+  >>> Turn 3 - Player 2 20 (Player 1 3) <<<<
+Player 2 draws Forest (15)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (15)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 2 declares Watcher in the Mist (12) (3/4) as attacker
+Watcher in the Mist (12) deals 3 damage to Player 1 (life: 0)
+Player 1 has lost the game (life: 0). Player 2 wins!

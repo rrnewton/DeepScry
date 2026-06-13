@@ -1,0 +1,102 @@
+<Choice> Player 1 chose 0 - activate Chaos Orb
+Chaos Orb activates ability: If Chaos Orb is on the battlefield, flip Chaos Orb onto the battlefield from a height of at least one foot. If Chaos Orb turns over completely at least once during the flip, destroy all nontoken permanents it touches. Then destroy Chaos Orb.
+  -> targeting Grizzly Bears (17)
+Tap Plains for {W}
+Grizzly Bears (17) goes to graveyard
+Chaos Orb (3) goes to graveyard
+
+  >>> Turn 3 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Mountain (27)
+<Choice> Player 2 chose 0 - play Mountain
+Player 2 plays Mountain (27)
+
+  >>> Turn 4 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Plains (15)
+<Choice> Player 1 chose 0 - play Plains
+Player 1 plays Plains (15)
+
+  >>> Turn 5 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Mountain (26)
+<Choice> Player 2 chose 0 - play Mountain
+Player 2 plays Mountain (26)
+
+  >>> Turn 6 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Plains (14)
+<Choice> Player 1 chose 0 - play Plains
+Player 1 plays Plains (14)
+
+  >>> Turn 7 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Mountain (25)
+<Choice> Player 2 chose 0 - play Mountain
+Player 2 plays Mountain (25)
+
+  >>> Turn 8 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Plains (13)
+<Choice> Player 1 chose 0 - play Plains
+Player 1 plays Plains (13)
+
+  >>> Turn 9 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Mountain (24)
+<Choice> Player 2 chose 0 - play Mountain
+Player 2 plays Mountain (24)
+
+  >>> Turn 10 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Plains (12)
+<Choice> Player 1 chose 0 - play Plains
+Player 1 plays Plains (12)
+
+  >>> Turn 11 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Mountain (23)
+<Choice> Player 2 chose 0 - play Mountain
+Player 2 plays Mountain (23)
+
+  >>> Turn 12 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Plains (11)
+<Choice> Player 1 chose 0 - play Plains
+Player 1 plays Plains (11)
+
+  >>> Turn 13 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Mountain (22)
+<Choice> Player 2 chose 0 - play Mountain
+Player 2 plays Mountain (22)
+
+  >>> Turn 14 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Plains (10)
+<Choice> Player 1 chose 0 - play Plains
+Player 1 plays Plains (10)
+
+  >>> Turn 15 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Mountain (21)
+<Choice> Player 2 chose 0 - play Mountain
+Player 2 plays Mountain (21)
+
+  >>> Turn 16 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Plains (9)
+<Choice> Player 1 chose 0 - play Plains
+Player 1 plays Plains (9)
+
+  >>> Turn 17 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Mountain (20)
+<Choice> Player 2 chose 0 - play Mountain
+Player 2 plays Mountain (20)
+
+  >>> Turn 18 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Plains (8)
+<Choice> Player 1 chose 0 - play Plains
+Player 1 plays Plains (8)
+
+  >>> Turn 19 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Mountain (19)
+<Choice> Player 2 chose 0 - play Mountain
+Player 2 plays Mountain (19)
+
+  >>> Turn 20 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Plains (7)
+<Choice> Player 1 chose 0 - play Plains
+Player 1 plays Plains (7)
+
+  >>> Turn 21 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Mountain (18)
+<Choice> Player 2 chose 0 - play Mountain
+Player 2 plays Mountain (18)
+Player 2 has lost the game (decked). Player 1 wins!

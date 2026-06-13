@@ -1,0 +1,126 @@
+<Choice> Player 1 chose 0 - cast Mind Twist
+Player 1 casts Mind Twist (3) (putting on stack)
+  → X = 8
+Tap Swamp for {B}
+Tap Swamp for {B}
+Tap Swamp for {B}
+Tap Swamp for {B}
+Tap Swamp for {B}
+Tap Swamp for {B}
+Tap Swamp for {B}
+Tap Swamp for {B}
+Tap Swamp for {B}
+Mind Twist (3) resolves
+Plains is discarded
+Player 2 discards Plains
+Plains is discarded
+Player 2 discards Plains
+Plains is discarded
+Player 2 discards Plains
+Plains is discarded
+Player 2 discards Plains
+Plains is discarded
+Player 2 discards Plains
+Plains is discarded
+Player 2 discards Plains
+Plains is discarded
+Player 2 discards Plains
+Plains is discarded
+Player 2 discards Plains
+Mind Twist (3) causes Player 2 to discard 8 card(s)
+
+  >>> Turn 3 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Plains (40)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (40)
+
+  >>> Turn 4 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Swamp (22)
+<Choice> Player 1 chose 0 - play Swamp
+Player 1 plays Swamp (22)
+
+  >>> Turn 5 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Plains (39)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (39)
+
+  >>> Turn 6 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Swamp (21)
+<Choice> Player 1 chose 0 - play Swamp
+Player 1 plays Swamp (21)
+
+  >>> Turn 7 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Plains (38)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (38)
+
+  >>> Turn 8 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Swamp (20)
+<Choice> Player 1 chose 0 - play Swamp
+Player 1 plays Swamp (20)
+
+  >>> Turn 9 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Plains (37)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (37)
+
+  >>> Turn 10 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Swamp (19)
+<Choice> Player 1 chose 0 - play Swamp
+Player 1 plays Swamp (19)
+
+  >>> Turn 11 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Plains (36)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (36)
+
+  >>> Turn 12 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Swamp (18)
+<Choice> Player 1 chose 0 - play Swamp
+Player 1 plays Swamp (18)
+
+  >>> Turn 13 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Plains (35)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (35)
+
+  >>> Turn 14 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Swamp (17)
+<Choice> Player 1 chose 0 - play Swamp
+Player 1 plays Swamp (17)
+
+  >>> Turn 15 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Plains (34)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (34)
+
+  >>> Turn 16 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Swamp (16)
+<Choice> Player 1 chose 0 - play Swamp
+Player 1 plays Swamp (16)
+
+  >>> Turn 17 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Plains (33)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (33)
+
+  >>> Turn 18 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Swamp (15)
+<Choice> Player 1 chose 0 - play Swamp
+Player 1 plays Swamp (15)
+
+  >>> Turn 19 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Plains (32)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (32)
+
+  >>> Turn 20 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Swamp (14)
+<Choice> Player 1 chose 0 - play Swamp
+Player 1 plays Swamp (14)
+
+  >>> Turn 21 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Plains (31)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (31)
+Player 2 has lost the game (decked). Player 1 wins!

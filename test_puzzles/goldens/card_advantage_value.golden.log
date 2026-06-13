@@ -1,0 +1,65 @@
+<Choice> Player 1 chose 1 - cast Grizzly Bears
+Player 1 casts Grizzly Bears (4) (putting on stack)
+Tap Forest for {G}
+Tap Forest for {G}
+Grizzly Bears (4) resolves
+Grizzly Bears (4) enters the battlefield as a 2/2 creature
+<Choice> Player 1 chose 1 - cast Grizzly Bears
+Player 1 casts Grizzly Bears (5) (putting on stack)
+Tap Forest for {G}
+Tap Forest for {G}
+Grizzly Bears (5) resolves
+Grizzly Bears (5) enters the battlefield as a 2/2 creature
+
+  >>> Turn 5 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Plains (20)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (20)
+<Choice> chose not to attack with 1 available creatures (aggression=3, opponent blockers=2)
+
+  >>> Turn 6 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Llanowar Elves (13)
+<Choice> Player 1 chose 0 - cast Elvish Visionary
+Player 1 casts Elvish Visionary (3) (putting on stack)
+Tap Forest for {G}
+Tap Forest for {G}
+Elvish Visionary (3) resolves
+Player 1 draws Forest (12)
+Elvish Visionary (3) enters the battlefield as a 1/1 creature
+<Choice> Player 1 chose 1 - cast Llanowar Elves
+Player 1 casts Llanowar Elves (13) (putting on stack)
+Tap Forest for {G}
+Llanowar Elves (13) resolves
+Llanowar Elves (13) enters the battlefield as a 1/1 creature
+<Choice> Player 1 chose 0 - play Forest
+Player 1 plays Forest (12)
+<Choice> chose 2 attackers from 2 available creatures (aggression=3, opponent blockers=1)
+Player 1 declares Grizzly Bears (4) (2/2) as attacker
+Player 1 declares Grizzly Bears (5) (2/2) as attacker
+<Choice> chose 1 blockers for 2 attackers
+Player 2 declares Grizzly Bears (17) as blocker for Grizzly Bears (4)
+Grizzly Bears (4) deals 2 damage to Grizzly Bears (17)
+Grizzly Bears (17) deals 2 damage to Grizzly Bears (4)
+Grizzly Bears (5) deals 2 damage to Player 2 (life: 18)
+Grizzly Bears (4) goes to graveyard
+Grizzly Bears (4) dies from combat damage
+Grizzly Bears (17) goes to graveyard
+Grizzly Bears (17) dies from combat damage
+
+  >>> Turn 7 - Player 2 18 (Player 1 20) <<<<
+Player 2 draws Plains (19)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (19)
+
+  >>> Turn 8 - Player 1 20 (Player 2 18) <<<<
+Player 1 draws Forest (11)
+<Choice> Player 1 chose 0 - play Forest
+Player 1 plays Forest (11)
+<Choice> chose 3 attackers from 3 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Elvish Visionary (3) (1/1) as attacker
+Player 1 declares Grizzly Bears (5) (2/2) as attacker
+Player 1 declares Llanowar Elves (13) (1/1) as attacker
+Elvish Visionary (3) deals 1 damage to Player 2 (life: 17)
+Grizzly Bears (5) deals 2 damage to Player 2 (life: 15)
+Llanowar Elves (13) deals 1 damage to Player 2 (life: 14)
+Player 1 has lost the game (decked). Player 2 wins!

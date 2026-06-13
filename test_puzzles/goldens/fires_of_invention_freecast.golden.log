@@ -1,0 +1,49 @@
+<Choice> Player 1 chose 3 - cast Bonecrusher Giant
+Player 1 casts Bonecrusher Giant (4) (putting on stack)
+Tap Mountain for {R}
+Tap Plains for {W}
+Tap Island for {U}
+Bonecrusher Giant (4) resolves
+Bonecrusher Giant (4) enters the battlefield as a 4/3 creature
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+
+  >>> Turn 3 - Player 2 5 (Player 1 20) <<<<
+Player 2 draws Plains (21)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (21)
+
+  >>> Turn 4 - Player 1 20 (Player 2 5) <<<<
+Player 1 draws Plains (16)
+<Choice> Player 1 chose 2 - play Plains
+Player 1 plays Plains (16)
+<Choice> Player 1 chose 0 - cast Teferi, Time Raveler
+Player 1 casts Teferi, Time Raveler (3) (putting on stack)
+Tap Plains for {W}
+Tap Island for {U}
+Tap Plains for {W}
+Teferi, Time Raveler (3) resolves
+Teferi, Time Raveler (3) enters with 4 loyalty
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Bonecrusher Giant (4) (4/3) as attacker
+Bonecrusher Giant (4) deals 4 damage to Player 2 (life: 1)
+<Choice> Player 1 chose 0 - activate Teferi, Time Raveler
+Teferi, Time Raveler activates ability: Until your next turn, you may cast sorcery spells as though they had flash.
+Teferi, Time Raveler gains 1 loyalty (now 9)
+Player 1 may cast spells as though they had flash until end of turn.
+
+  >>> Turn 5 - Player 2 1 (Player 1 20) <<<<
+Player 2 draws Plains (20)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (20)
+
+  >>> Turn 6 - Player 1 20 (Player 2 1) <<<<
+Player 1 draws Island (15)
+<Choice> Player 1 chose 1 - play Island
+Player 1 plays Island (15)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Bonecrusher Giant (4) (4/3) as attacker
+Bonecrusher Giant (4) deals 4 damage to Player 2 (life: -3)
+Player 2 has lost the game (life: -3). Player 1 wins!

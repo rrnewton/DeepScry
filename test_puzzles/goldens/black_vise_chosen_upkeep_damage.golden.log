@@ -1,0 +1,107 @@
+  >>> Turn 1 - Player 2 20 (Player 1 20) <<<<
+
+  >>> Turn 2 - Player 1 20 (Player 2 20) <<<<
+Black Vise deals 2 damage to Player 1
+Player 1 draws Plains (20)
+<Choice> Player 1 chose 0 - play Plains
+Player 1 plays Plains (3)
+
+  >>> Turn 3 - Player 2 20 (Player 1 18) <<<<
+Player 2 draws Island (33)
+<Choice> Player 2 chose 0 - play Island
+Player 2 plays Island (33)
+
+  >>> Turn 4 - Player 1 18 (Player 2 20) <<<<
+Black Vise deals 2 damage to Player 1
+Player 1 draws Plains (19)
+<Choice> Player 1 chose 0 - play Plains
+Player 1 plays Plains (4)
+
+  >>> Turn 5 - Player 2 20 (Player 1 16) <<<<
+Player 2 draws Island (32)
+<Choice> Player 2 chose 0 - play Island
+Player 2 plays Island (32)
+
+  >>> Turn 6 - Player 1 16 (Player 2 20) <<<<
+Black Vise deals 2 damage to Player 1
+Player 1 draws Plains (18)
+<Choice> Player 1 chose 0 - play Plains
+Player 1 plays Plains (5)
+
+  >>> Turn 7 - Player 2 20 (Player 1 14) <<<<
+Player 2 draws Island (31)
+<Choice> Player 2 chose 0 - play Island
+Player 2 plays Island (31)
+
+  >>> Turn 8 - Player 1 14 (Player 2 20) <<<<
+Black Vise deals 2 damage to Player 1
+Player 1 draws Plains (17)
+<Choice> Player 1 chose 0 - play Plains
+Player 1 plays Plains (6)
+
+  >>> Turn 9 - Player 2 20 (Player 1 12) <<<<
+Player 2 draws Island (30)
+<Choice> Player 2 chose 0 - play Island
+Player 2 plays Island (30)
+
+  >>> Turn 10 - Player 1 12 (Player 2 20) <<<<
+Black Vise deals 2 damage to Player 1
+Player 1 draws Plains (16)
+<Choice> Player 1 chose 0 - play Plains
+Player 1 plays Plains (7)
+
+  >>> Turn 11 - Player 2 20 (Player 1 10) <<<<
+Player 2 draws Island (29)
+<Choice> Player 2 chose 0 - play Island
+Player 2 plays Island (29)
+
+  >>> Turn 12 - Player 1 10 (Player 2 20) <<<<
+Black Vise deals 2 damage to Player 1
+Player 1 draws Plains (15)
+<Choice> Player 1 chose 0 - play Plains
+Player 1 plays Plains (8)
+
+  >>> Turn 13 - Player 2 20 (Player 1 8) <<<<
+Player 2 draws Island (28)
+<Choice> Player 2 chose 0 - play Island
+Player 2 plays Island (28)
+
+  >>> Turn 14 - Player 1 8 (Player 2 20) <<<<
+Black Vise deals 2 damage to Player 1
+Player 1 draws Plains (14)
+<Choice> Player 1 chose 0 - play Plains
+Player 1 plays Plains (14)
+
+  >>> Turn 15 - Player 2 20 (Player 1 6) <<<<
+Player 2 draws Island (27)
+<Choice> Player 2 chose 0 - play Island
+Player 2 plays Island (27)
+
+  >>> Turn 16 - Player 1 6 (Player 2 20) <<<<
+Black Vise deals 2 damage to Player 1
+Player 1 draws Plains (13)
+<Choice> Player 1 chose 0 - play Plains
+Player 1 plays Plains (13)
+
+  >>> Turn 17 - Player 2 20 (Player 1 4) <<<<
+Player 2 draws Island (26)
+<Choice> Player 2 chose 0 - play Island
+Player 2 plays Island (26)
+
+  >>> Turn 18 - Player 1 4 (Player 2 20) <<<<
+Black Vise deals 2 damage to Player 1
+Player 1 draws Plains (12)
+<Choice> Player 1 chose 0 - play Plains
+Player 1 plays Plains (12)
+
+  >>> Turn 19 - Player 2 20 (Player 1 2) <<<<
+Player 2 draws Island (25)
+<Choice> Player 2 chose 0 - play Island
+Player 2 plays Island (25)
+
+  >>> Turn 20 - Player 1 2 (Player 2 20) <<<<
+Black Vise deals 2 damage to Player 1
+Player 1 draws Plains (11)
+<Choice> Player 1 chose 0 - play Plains
+Player 1 plays Plains (11)
+Player 1 has lost the game (life: 0). Player 2 wins!

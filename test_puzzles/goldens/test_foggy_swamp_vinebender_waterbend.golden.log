@@ -1,0 +1,48 @@
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> chose 3 attackers from 3 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Foggy Swamp Vinebender (3) (4/3) as attacker
+Player 1 declares Grizzly Bears (4) (2/2) as attacker
+Player 1 declares Grizzly Bears (5) (2/2) as attacker
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+Foggy Swamp Vinebender (3) deals 4 damage to Player 2 (life: 16)
+Grizzly Bears (4) deals 2 damage to Player 2 (life: 14)
+Grizzly Bears (5) deals 2 damage to Player 2 (life: 12)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+
+  >>> Turn 5 - Player 2 12 (Player 1 20) <<<<
+Player 2 draws Forest (16)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (16)
+
+  >>> Turn 6 - Player 1 20 (Player 2 12) <<<<
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+Player 1 draws Island (12)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 1 - play Island
+Player 1 plays Island (12)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> chose 3 attackers from 3 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Foggy Swamp Vinebender (3) (4/3) as attacker
+Player 1 declares Grizzly Bears (4) (2/2) as attacker
+Player 1 declares Grizzly Bears (5) (2/2) as attacker
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+Foggy Swamp Vinebender (3) deals 4 damage to Player 2 (life: 8)
+Grizzly Bears (4) deals 2 damage to Player 2 (life: 6)
+Grizzly Bears (5) deals 2 damage to Player 2 (life: 4)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+
+  >>> Turn 7 - Player 2 4 (Player 1 20) <<<<
+Player 2 draws Forest (15)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (15)
+Player 2 has lost the game (decked). Player 1 wins!

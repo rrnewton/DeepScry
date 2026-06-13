@@ -1,0 +1,176 @@
+  >>> Turn 1 - Player 1 20 (Player 2 20) <<<<
+<Choice> Player 1 chose 0 - cast All Hallow's Eve
+Player 1 casts All Hallow's Eve (3) (putting on stack)
+Tap Swamp for {B}
+Tap Swamp for {B}
+Tap Swamp for {B}
+Tap Swamp for {B}
+All Hallow's Eve (3) resolves
+All Hallow's Eve (3) is exiled (remembered)
+All Hallow's Eve (3) puts 2 Scream counter(s) on All Hallow's Eve (3)
+All Hallow's Eve (3) clears remembered cards
+
+  >>> Turn 2 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Mountain (32)
+<Choice> Player 2 chose 0 - play Mountain
+Player 2 plays Mountain (32)
+
+  >>> Turn 3 - Player 1 20 (Player 2 20) <<<<
+All Hallow's Eve trigger effect
+All Hallow's Eve trigger effect
+All Hallow's Eve trigger effect
+Player 1 draws Swamp (19)
+<Choice> Player 1 chose 0 - play Swamp
+Player 1 plays Swamp (19)
+
+  >>> Turn 4 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Mountain (31)
+<Choice> Player 2 chose 0 - play Mountain
+Player 2 plays Mountain (31)
+
+  >>> Turn 5 - Player 1 20 (Player 2 20) <<<<
+All Hallow's Eve trigger effect
+All Hallow's Eve trigger effect
+All Hallow's Eve trigger effect
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+Player 1 draws Swamp (18)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 1 - play Swamp
+Player 1 plays Swamp (18)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> chose 2 attackers from 2 available creatures (aggression=3, opponent blockers=1)
+Player 1 declares Sengir Vampire (8) (4/4) as attacker
+Player 1 declares Sedge Troll (9) (3/3) as attacker
+<Choice> Player 1 chose 0 - activate Sedge Troll
+Sedge Troll activates ability: Regenerate Sedge Troll.
+Tap Swamp for {B}
+Sedge Troll (9) gains a regeneration shield
+<Choice> Player 1 chose 0 - activate Sedge Troll
+Sedge Troll activates ability: Regenerate Sedge Troll.
+Tap Swamp for {B}
+Sedge Troll (9) gains a regeneration shield
+<Choice> Player 1 chose 0 - activate Sedge Troll
+Sedge Troll activates ability: Regenerate Sedge Troll.
+Tap Swamp for {B}
+Sedge Troll (9) gains a regeneration shield
+<Choice> Player 1 chose 0 - activate Sedge Troll
+Sedge Troll activates ability: Regenerate Sedge Troll.
+Tap Swamp for {B}
+Sedge Troll (9) gains a regeneration shield
+<Choice> Player 1 chose 0 - activate Sedge Troll
+Sedge Troll activates ability: Regenerate Sedge Troll.
+Tap Swamp for {B}
+Sedge Troll (9) gains a regeneration shield
+<Choice> Player 1 chose 0 - activate Sedge Troll
+Sedge Troll activates ability: Regenerate Sedge Troll.
+Tap Swamp for {B}
+Sedge Troll (9) gains a regeneration shield
+<Choice> chose 1 blockers for 2 attackers
+Sengir Vampire (8) deals 4 damage to Player 2 (life: 16)
+Sedge Troll (9) deals 3 damage to Player 2 (life: 13)
+
+  >>> Turn 6 - Player 2 13 (Player 1 20) <<<<
+Player 2 draws Mountain (30)
+<Choice> Player 2 chose 0 - play Mountain
+Player 2 plays Mountain (30)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 2 declares Grizzly Bears (21) (2/2) as attacker
+Grizzly Bears (21) deals 2 damage to Player 1 (life: 18)
+
+  >>> Turn 7 - Player 1 18 (Player 2 13) <<<<
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+Player 1 draws Swamp (17)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 1 - play Swamp
+Player 1 plays Swamp (17)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> chose 2 attackers from 2 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Sengir Vampire (8) (4/4) as attacker
+Player 1 declares Sedge Troll (9) (3/3) as attacker
+<Choice> Player 1 chose 0 - activate Sedge Troll
+Sedge Troll activates ability: Regenerate Sedge Troll.
+Tap Swamp for {B}
+Sedge Troll (9) gains a regeneration shield
+<Choice> Player 1 chose 0 - activate Sedge Troll
+Sedge Troll activates ability: Regenerate Sedge Troll.
+Tap Swamp for {B}
+Sedge Troll (9) gains a regeneration shield
+<Choice> Player 1 chose 0 - activate Sedge Troll
+Sedge Troll activates ability: Regenerate Sedge Troll.
+Tap Swamp for {B}
+Sedge Troll (9) gains a regeneration shield
+<Choice> Player 1 chose 0 - activate Sedge Troll
+Sedge Troll activates ability: Regenerate Sedge Troll.
+Tap Swamp for {B}
+Sedge Troll (9) gains a regeneration shield
+<Choice> Player 1 chose 0 - activate Sedge Troll
+Sedge Troll activates ability: Regenerate Sedge Troll.
+Tap Swamp for {B}
+Sedge Troll (9) gains a regeneration shield
+<Choice> Player 1 chose 0 - activate Sedge Troll
+Sedge Troll activates ability: Regenerate Sedge Troll.
+Tap Swamp for {B}
+Sedge Troll (9) gains a regeneration shield
+<Choice> Player 1 chose 0 - activate Sedge Troll
+Sedge Troll activates ability: Regenerate Sedge Troll.
+Tap Swamp for {B}
+Sedge Troll (9) gains a regeneration shield
+Sengir Vampire (8) deals 4 damage to Player 2 (life: 9)
+Sedge Troll (9) deals 3 damage to Player 2 (life: 6)
+
+  >>> Turn 8 - Player 2 6 (Player 1 18) <<<<
+Player 2 draws Mountain (29)
+<Choice> Player 2 chose 0 - play Mountain
+Player 2 plays Mountain (29)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 2 declares Grizzly Bears (21) (2/2) as attacker
+Grizzly Bears (21) deals 2 damage to Player 1 (life: 16)
+
+  >>> Turn 9 - Player 1 16 (Player 2 6) <<<<
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+Player 1 draws Swamp (16)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 1 - play Swamp
+Player 1 plays Swamp (16)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> chose 2 attackers from 2 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Sengir Vampire (8) (4/4) as attacker
+Player 1 declares Sedge Troll (9) (3/3) as attacker
+<Choice> Player 1 chose 0 - activate Sedge Troll
+Sedge Troll activates ability: Regenerate Sedge Troll.
+Tap Swamp for {B}
+Sedge Troll (9) gains a regeneration shield
+<Choice> Player 1 chose 0 - activate Sedge Troll
+Sedge Troll activates ability: Regenerate Sedge Troll.
+Tap Swamp for {B}
+Sedge Troll (9) gains a regeneration shield
+<Choice> Player 1 chose 0 - activate Sedge Troll
+Sedge Troll activates ability: Regenerate Sedge Troll.
+Tap Swamp for {B}
+Sedge Troll (9) gains a regeneration shield
+<Choice> Player 1 chose 0 - activate Sedge Troll
+Sedge Troll activates ability: Regenerate Sedge Troll.
+Tap Swamp for {B}
+Sedge Troll (9) gains a regeneration shield
+<Choice> Player 1 chose 0 - activate Sedge Troll
+Sedge Troll activates ability: Regenerate Sedge Troll.
+Tap Swamp for {B}
+Sedge Troll (9) gains a regeneration shield
+<Choice> Player 1 chose 0 - activate Sedge Troll
+Sedge Troll activates ability: Regenerate Sedge Troll.
+Tap Swamp for {B}
+Sedge Troll (9) gains a regeneration shield
+<Choice> Player 1 chose 0 - activate Sedge Troll
+Sedge Troll activates ability: Regenerate Sedge Troll.
+Tap Swamp for {B}
+Sedge Troll (9) gains a regeneration shield
+<Choice> Player 1 chose 0 - activate Sedge Troll
+Sedge Troll activates ability: Regenerate Sedge Troll.
+Tap Swamp for {B}
+Sedge Troll (9) gains a regeneration shield
+Sengir Vampire (8) deals 4 damage to Player 2 (life: 2)
+Sedge Troll (9) deals 3 damage to Player 2 (life: -1)
+Player 2 has lost the game (life: -1). Player 1 wins!

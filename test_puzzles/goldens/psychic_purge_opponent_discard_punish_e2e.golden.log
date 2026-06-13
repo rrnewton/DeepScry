@@ -1,0 +1,59 @@
+  >>> Turn 1 - Player 1 20 (Player 2 20) <<<<
+<Choice> Player 1 chose 0 - cast Mind Rot
+Player 1 casts Mind Rot (3) (putting on stack)
+Tap Swamp for {B}
+Tap Swamp for {B}
+Tap Swamp for {B}
+Mind Rot (3) resolves
+Mountain is discarded
+Player 2 discards Mountain
+Psychic Purge is discarded
+Player 2 discards Psychic Purge
+Player 1 loses 5 life (life: 15)
+Mind Rot (3) causes target opponent to discard 2 card(s)
+
+  >>> Turn 2 - Player 2 20 (Player 1 15) <<<<
+Player 2 draws Mountain (18)
+<Choice> Player 2 chose 0 - play Mountain
+Player 2 plays Mountain (18)
+
+  >>> Turn 3 - Player 1 15 (Player 2 20) <<<<
+Player 1 draws Swamp (11)
+<Choice> Player 1 chose 0 - play Swamp
+Player 1 plays Swamp (11)
+
+  >>> Turn 4 - Player 2 20 (Player 1 15) <<<<
+Player 2 draws Mountain (17)
+<Choice> Player 2 chose 0 - play Mountain
+Player 2 plays Mountain (17)
+
+  >>> Turn 5 - Player 1 15 (Player 2 20) <<<<
+Player 1 draws Swamp (10)
+<Choice> Player 1 chose 0 - play Swamp
+Player 1 plays Swamp (10)
+
+  >>> Turn 6 - Player 2 20 (Player 1 15) <<<<
+Player 2 draws Mountain (16)
+<Choice> Player 2 chose 0 - play Mountain
+Player 2 plays Mountain (16)
+
+  >>> Turn 7 - Player 1 15 (Player 2 20) <<<<
+Player 1 draws Swamp (9)
+<Choice> Player 1 chose 0 - play Swamp
+Player 1 plays Swamp (9)
+
+  >>> Turn 8 - Player 2 20 (Player 1 15) <<<<
+Player 2 draws Mountain (15)
+<Choice> Player 2 chose 0 - play Mountain
+Player 2 plays Mountain (15)
+
+  >>> Turn 9 - Player 1 15 (Player 2 20) <<<<
+Player 1 draws Swamp (8)
+<Choice> Player 1 chose 0 - play Swamp
+Player 1 plays Swamp (8)
+
+  >>> Turn 10 - Player 2 20 (Player 1 15) <<<<
+Player 2 draws Mountain (14)
+<Choice> Player 2 chose 0 - play Mountain
+Player 2 plays Mountain (14)
+Player 2 has lost the game (decked). Player 1 wins!

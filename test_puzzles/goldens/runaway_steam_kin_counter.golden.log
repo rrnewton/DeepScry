@@ -1,0 +1,46 @@
+<Choice> Player 1 chose 1 - cast Bonecrusher Giant
+Player 1 casts Bonecrusher Giant (3) (putting on stack)
+Tap Mountain for {R}
+Tap Mountain for {R}
+Tap Mountain for {R}
+Trigger: Runaway Steam-Kin - Whenever you cast a red spell, if CARDNAME has fewer than three +1/+1 counters on it, put a +1/+1 counter on CARDNAME.
+Runaway Steam-Kin gets a +1/+1 counter (now 1 counters)
+<Choice> Player 1 chose 'p' (pass priority from 2 available actions)
+Bonecrusher Giant (3) resolves
+Bonecrusher Giant (3) enters the battlefield as a 4/3 creature
+<Choice> Player 1 chose 1 - cast Bonecrusher Giant
+Player 1 casts Bonecrusher Giant (4) (putting on stack)
+Tap Runaway Steam-Kin for mana
+Trigger: Runaway Steam-Kin - Whenever you cast a red spell, if CARDNAME has fewer than three +1/+1 counters on it, put a +1/+1 counter on CARDNAME.
+Runaway Steam-Kin gets a +1/+1 counter (now 2 counters)
+Bonecrusher Giant (4) resolves
+Bonecrusher Giant (4) enters the battlefield as a 4/3 creature
+
+  >>> Turn 5 - Player 2 5 (Player 1 20) <<<<
+Player 2 draws Plains (19)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (19)
+
+  >>> Turn 6 - Player 1 20 (Player 2 5) <<<<
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+Player 1 draws Mountain (13)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 1 - cast Bonecrusher Giant
+Player 1 casts Bonecrusher Giant (5) (putting on stack)
+Tap Mountain for {R}
+Tap Mountain for {R}
+Tap Mountain for {R}
+Trigger: Runaway Steam-Kin - Whenever you cast a red spell, if CARDNAME has fewer than three +1/+1 counters on it, put a +1/+1 counter on CARDNAME.
+Runaway Steam-Kin gets a +1/+1 counter (now 3 counters)
+Bonecrusher Giant (5) resolves
+Bonecrusher Giant (5) enters the battlefield as a 4/3 creature
+<Choice> Player 1 chose 0 - play Mountain
+Player 1 plays Mountain (13)
+<Choice> chose 3 attackers from 3 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Bonecrusher Giant (3) (4/3) as attacker
+Player 1 declares Bonecrusher Giant (4) (4/3) as attacker
+Player 1 declares Runaway Steam-Kin (9) (4/4) as attacker
+Bonecrusher Giant (3) deals 4 damage to Player 2 (life: 1)
+Bonecrusher Giant (4) deals 4 damage to Player 2 (life: -3)
+Runaway Steam-Kin (9) deals 4 damage to Player 2 (life: -7)
+Player 2 has lost the game (life: -7). Player 1 wins!

@@ -1,0 +1,9 @@
+  >>> Turn 1 - Player 1 20 (Player 2 2) <<<<
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Boar-q-pine (6) (2/2) as attacker
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+Boar-q-pine (6) deals 2 damage to Player 2 (life: 0)
+Player 2 has lost the game (life: 0). Player 1 wins!

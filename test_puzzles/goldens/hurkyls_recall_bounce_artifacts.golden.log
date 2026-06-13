@@ -1,0 +1,32 @@
+<Choice> Player 1 chose 0 - cast Hurkyl's Recall
+Player 1 casts Hurkyl's Recall (3) (putting on stack)
+Tap Island for {U}
+Tap Island for {U}
+Hurkyl's Recall (3) resolves
+Sol Ring (8) is returned to hand
+Mox Pearl (9) is returned to hand
+Triskelion (10) is returned to hand
+Hurkyl's Recall (3) moves all artifacts from Battlefield to Hand
+
+  >>> Turn 3 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Plains (12)
+<Choice> Player 2 chose 0 - cast Mox Pearl
+Player 2 casts Mox Pearl (9) (putting on stack)
+Mox Pearl (9) resolves
+<Choice> Player 2 chose 0 - cast Sol Ring
+Player 2 casts Sol Ring (8) (putting on stack)
+Tap Mox Pearl for mana
+Sol Ring (8) resolves
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 2 chose 0 - play Plains
+Player 2 plays Plains (12)
+
+  >>> Turn 4 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Island (7)
+<Choice> Player 1 chose 0 - play Island
+Player 1 plays Island (7)
+
+  >>> Turn 5 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Plains (11)
+<Choice> Player 2 chose 'p' (pass priority from 1 available actions)
+Player 2 has lost the game (decked). Player 1 wins!
