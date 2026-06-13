@@ -369,6 +369,15 @@ impl CardLoader {
             })
             .unwrap_or((false, None, Vec::new()));
 
+        // Resolve the ETB NameCard replacement: same K-line detection, but check
+        // for api_type == NameCard (Pithing Needle's `DBNameCard` SVar).
+        // `set_card_zone` will prompt the controller to name a card and store the
+        // result in `Card::chosen_name` so `CantBeActivatedByName` can read it.
+        let etb_choose_name = etb_choose_mode_svar
+            .as_deref()
+            .and_then(|svar_name| parsed_svars.get(svar_name))
+            .is_some_and(|p| p.api_type == super::ability_parser::ApiType::NameCard);
+
         // Parse the Adventure (instant/sorcery) face from the ALTERNATE block,
         // when the front face declared `AlternateMode:Adventure` (CR 715). The
         // block after the `ALTERNATE` separator is itself a complete card script,
@@ -418,6 +427,7 @@ impl CardLoader {
             etb_mode_ai_logic,
             etb_mode_choices,
             etb_pay_life,
+            etb_choose_name,
             script_name: None, // Set by token loader
             is_legendary,
             loyalty,
@@ -733,6 +743,11 @@ pub struct CardDefinition {
     /// `Card::stored_int`.
     #[serde(default)]
     pub etb_pay_life: bool,
+    /// Does this card require choosing a card name on ETB?
+    /// Derived from `K:ETBReplacement:Other:<SVar>` where the SVar body is
+    /// `DB$ NameCard | ...` (Pithing Needle).
+    #[serde(default)]
+    pub etb_choose_name: bool,
     /// Script name (for tokens only). Used to look up token definitions.
     /// For tokens loaded from tokenscripts/, this is the filename without extension
     /// (e.g., "c_a_food_sac" for tokenscripts/c_a_food_sac.txt).
@@ -817,6 +832,7 @@ impl Default for CardDefinition {
             etb_mode_ai_logic: None,
             etb_mode_choices: Vec::new(),
             etb_pay_life: false,
+            etb_choose_name: false,
             script_name: None,
             is_legendary: false,
             loyalty: None,
@@ -930,6 +946,7 @@ impl CardDefinition {
         card.definition.cache.etb_mode_ai_logic = self.etb_mode_ai_logic.clone();
         card.definition.cache.etb_mode_choices = self.etb_mode_choices.clone();
         card.definition.cache.etb_pay_life = self.etb_pay_life;
+        card.definition.cache.etb_choose_name = self.etb_choose_name;
         // Fireball's `{1}`-per-extra-target relative cost (CR 601.2f).
         card.definition.cache.spell_relative_target_cost = self.has_relative_self_target_cost();
         // Island Sanctuary: skip-draw-for-protection replacement (CR 614).
@@ -5618,16 +5635,32 @@ impl CardDefinition {
                     }
                 }
                 "CantBeActivated" => {
-                    // Activated-ability lock (Cursed Totem):
+                    // Activated-ability lock.  Two shapes:
+                    //
+                    // Creature-filter (Cursed Totem):
                     //   S:Mode$ CantBeActivated | ValidCard$ Creature | ValidSA$ Activated
-                    // Suppress all activated abilities on creatures matching `ValidCard$`.
+                    //
+                    // Name-filter (Pithing Needle):
+                    //   S:Mode$ CantBeActivated | ValidCard$ Card.NamedCard | ValidSA$ Activated.!ManaAbility
+                    //
+                    // Distinguish by the `ValidCard$` value: `Card.NamedCard` routes
+                    // to `CantBeActivatedByName` (reads the source's `chosen_name` at
+                    // runtime); everything else is the creature-filter form.
                     if let Some(valid_card) = params.get("ValidCard") {
-                        let creature_filter = crate::core::TargetRestriction::parse(valid_card.trim());
                         let description = params.get("Description").cloned().unwrap_or_default();
-                        abilities.push(StaticAbility::CantBeActivated {
-                            creature_filter,
-                            description,
-                        });
+                        let filter = valid_card.trim();
+                        // Tokenize on '.' to check qualifiers (no substring match).
+                        let parts: Vec<&str> = filter.split('.').collect();
+                        let is_name_filter = parts.contains(&"NamedCard");
+                        if is_name_filter {
+                            abilities.push(StaticAbility::CantBeActivatedByName { description });
+                        } else {
+                            let creature_filter = crate::core::TargetRestriction::parse(filter);
+                            abilities.push(StaticAbility::CantBeActivated {
+                                creature_filter,
+                                description,
+                            });
+                        }
                     }
                 }
                 "DisableTriggers" => {
@@ -9669,6 +9702,58 @@ Oracle:[-6]: You get an emblem with "At the beginning of each opponent's upkeep,
         } else {
             panic!("Expected CantBeActivated");
         }
+    }
+
+    /// Parser unit test: Pithing Needle's `K:ETBReplacement:Other:DBNameCard` /
+    /// `SVar:DBNameCard:DB$ NameCard | ...` must set `etb_choose_name = true` on the
+    /// `CardDefinition`, and the `S:Mode$ CantBeActivated | ValidCard$ Card.NamedCard`
+    /// static must parse to `StaticAbility::CantBeActivatedByName` (mtg-910 B5).
+    #[cfg(feature = "native")]
+    #[test]
+    fn test_parse_pithing_needle_etb_and_static() {
+        use crate::core::StaticAbility;
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("../cardsfolder/p/pithing_needle.txt");
+        if !path.exists() {
+            eprintln!("Skipping: cardsfolder not present");
+            return;
+        }
+        let def = CardLoader::load_from_file(&path).expect("Pithing Needle should load");
+
+        // 1. ETB flag must be set.
+        assert!(
+            def.etb_choose_name,
+            "Pithing Needle must have etb_choose_name = true \
+             (K:ETBReplacement:Other:DBNameCard with DB$ NameCard SVar)"
+        );
+
+        let card = def.instantiate(crate::core::CardId::new(1), crate::core::PlayerId::new(0));
+
+        // 2. Cache flag propagated.
+        assert!(
+            card.definition.cache.etb_choose_name,
+            "etb_choose_name must propagate to CardCache"
+        );
+
+        // 3. Static must be CantBeActivatedByName, NOT CantBeActivated.
+        assert!(
+            card.static_abilities
+                .iter()
+                .any(|s| matches!(s, StaticAbility::CantBeActivatedByName { .. })),
+            "Pithing Needle must produce CantBeActivatedByName \
+             (S:Mode$ CantBeActivated | ValidCard$ Card.NamedCard)"
+        );
+
+        // 4. Must NOT produce a creature-filter CantBeActivated.
+        assert!(
+            !card
+                .static_abilities
+                .iter()
+                .any(|s| matches!(s, StaticAbility::CantBeActivated { .. })),
+            "Pithing Needle must NOT produce CantBeActivated \
+             (Card.NamedCard is a name filter, not a creature filter)"
+        );
     }
 
     /// Parser unit test: Worship's `R:Event$ LifeReduced | IsDamage$ True

@@ -1860,6 +1860,73 @@ impl GameState {
                 }
             }
 
+            // Handle ETB "choose a card name" replacement (Pithing Needle:
+            // `K:ETBReplacement:Other:DBNameCard` → `DB$ NameCard | AILogic$
+            // PithingNeedle`). CR 614 (replacement applied as the object enters).
+            //
+            // Heuristic (AILogic$ PithingNeedle): name the opponent's battlefield
+            // card that has the most non-mana activated abilities.  This mirrors
+            // Forge's own PithingNeedle AI logic.  The chosen name is stored in
+            // `Card::chosen_name` and read by `StaticAbility::CantBeActivatedByName`
+            // (enforced at action-generation time in game_loop/actions.rs).
+            //
+            // Information note: this heuristic only looks at the opponent's
+            // *battlefield* — public information — so it is information-independent
+            // and produces identical decisions in server/client shadow mode.
+            if let Some(card) = self.cards.try_get(card_id) {
+                if card.definition.cache.etb_choose_name {
+                    let controller = card.controller;
+                    let card_name = card.name.clone();
+                    let prev_chosen_name = card.chosen_name.clone();
+
+                    // Count NON-MANA activated abilities on each opponent battlefield card.
+                    // We name the card with the highest such count, ignoring mana abilities
+                    // (Pithing Needle exempts mana abilities per its Oracle text).
+                    // Only consider cards that have at least one non-mana activated ability —
+                    // mana-only permanents (lands, mana-rocks) are poor Pithing Needle targets.
+                    // This mirrors Forge's PithingNeedle AILogic heuristic.
+                    let chosen_name: Option<String> = {
+                        let mut best_name: Option<String> = None;
+                        let mut best_count: usize = 0;
+                        for &bf_id in &self.battlefield.cards {
+                            let Some(bf_card) = self.cards.try_get(bf_id) else {
+                                continue;
+                            };
+                            if bf_card.controller == controller {
+                                continue; // only name opponents' cards
+                            }
+                            let count = bf_card
+                                .activated_abilities
+                                .iter()
+                                .filter(|ab| !ab.is_mana_ability)
+                                .count();
+                            // Require at least one non-mana activated ability; prefer the
+                            // card with the most to maximize the lock's impact.
+                            if count > 0 && count > best_count {
+                                best_count = count;
+                                best_name = Some(bf_card.name.as_str().to_string());
+                            }
+                        }
+                        best_name
+                    };
+
+                    let prior_log_size = self.logger.log_count();
+                    if let Ok(card_mut) = self.cards.get_mut(card_id) {
+                        card_mut.chosen_name = chosen_name.clone();
+                        let display = chosen_name.as_deref().unwrap_or("<none>");
+                        self.logger
+                            .normal(&format!("{} ({}) — chose card name: {}", card_name, card_id, display));
+                    }
+                    self.undo_log.log(
+                        crate::undo::GameAction::SetChosenName {
+                            card_id,
+                            prev: prev_chosen_name,
+                        },
+                        prior_log_size,
+                    );
+                }
+            }
+
             // Handle ETB "pay any amount of life" replacement (Phyrexian Processor,
             // CR 614 replacement effect applied as the object enters).
             // The AI heuristic: pay min(current_life - 1, 7) to aim for a 7/7 token
@@ -3463,6 +3530,30 @@ impl GameState {
                         false
                     }
                 })
+            })
+        })
+    }
+
+    /// True if some permanent on the battlefield has a `CantBeActivatedByName`
+    /// static (Pithing Needle) whose `chosen_name` matches `card.name`.
+    ///
+    /// Non-mana activated abilities on any source named `chosen_name` are
+    /// suppressed while the Pithing Needle is on the battlefield (CR 602.1).
+    pub fn is_activated_ability_prohibited_by_name(&self, card: &crate::core::Card) -> bool {
+        use crate::core::StaticAbility;
+        self.battlefield.cards.iter().any(|&id| {
+            self.cards.try_get(id).is_some_and(|src| {
+                if !src
+                    .static_abilities
+                    .iter()
+                    .any(|sa| matches!(sa, StaticAbility::CantBeActivatedByName { .. }))
+                {
+                    return false;
+                }
+                // Only lock when a name was actually chosen.
+                src.chosen_name
+                    .as_deref()
+                    .is_some_and(|name| name == card.name.as_str())
             })
         })
     }

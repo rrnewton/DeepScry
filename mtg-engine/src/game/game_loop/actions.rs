@@ -244,6 +244,7 @@ impl<'a> GameLoop<'a> {
             | StaticAbility::CantBlockMatching { .. }
             | StaticAbility::CantAttackOrBlockMatching { .. }
             | StaticAbility::CantBeActivated { .. }
+            | StaticAbility::CantBeActivatedByName { .. }
             | StaticAbility::CastWithFlash { .. }
             | StaticAbility::DamageIncrease { .. }
             | StaticAbility::PreventDamageToEnchantedByChosenColor { .. }
@@ -1408,6 +1409,14 @@ impl<'a> GameLoop<'a> {
                 // permanent has a CantBeActivated static that matches this card,
                 // none of its activated abilities may be activated. CR 602.1.
                 if card.is_creature() && self.game.is_activated_ability_prohibited(card) {
+                    continue;
+                }
+
+                // CantBeActivatedByName statics (Pithing Needle): if any
+                // battlefield permanent has named this card, none of its
+                // non-mana activated abilities may be activated. CR 602.1.
+                // (Mana abilities are handled separately below and exempted.)
+                if self.game.is_activated_ability_prohibited_by_name(card) {
                     continue;
                 }
 

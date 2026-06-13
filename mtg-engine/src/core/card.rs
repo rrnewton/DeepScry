@@ -239,6 +239,14 @@ pub struct CardCache {
     /// via AI heuristic, deducts it, and stores the amount in `Card::stored_int`.
     #[serde(default)]
     pub etb_pay_life: bool,
+
+    /// Precomputed: Does this card require choosing a card name on ETB?
+    /// Derived from `K:ETBReplacement:Other:<SVar>` where the SVar body is
+    /// `DB$ NameCard | ...` (Pithing Needle).  When set, `set_card_zone` prompts
+    /// the controller to name a card via AI heuristic and stores the result in
+    /// `Card::chosen_name`.  The `CantBeActivatedByName` static then reads it.
+    #[serde(default)]
+    pub etb_choose_name: bool,
 }
 
 impl Default for CardCache {
@@ -318,6 +326,7 @@ impl CardCache {
             etb_mode_ai_logic: None,
             etb_mode_choices: Vec::new(),
             etb_pay_life: false,
+            etb_choose_name: false,
         }
     }
 
@@ -911,6 +920,16 @@ pub struct Card {
     #[serde(default)]
     pub chosen_mode: Option<String>,
 
+    /// Card name chosen when a "choose a card name" ETB replacement fires
+    /// (Pithing Needle: `K:ETBReplacement:Other:DBNameCard`).  Read by
+    /// `StaticAbility::CantBeActivatedByName` to identify which sources are
+    /// locked out and by `Card.NamedCard` filters in ChangeZoneAll / Exile
+    /// (Cranial Extraction).  Serialized so snapshot/resume, undo, and
+    /// WASM rewind reconstruct the chosen name identically.  `None` when the
+    /// card never triggers a name-choice.
+    #[serde(default)]
+    pub chosen_name: Option<String>,
+
     /// Per-card integer stored by an ETB replacement (Phyrexian Processor: life paid
     /// as it entered the battlefield). Read back by a later activated ability that
     /// creates a token whose P/T equals this value (`TokenPower$ LifePaidOnETB`).
@@ -1150,6 +1169,11 @@ pub struct CardStateSnapshot {
     /// serialized state so rewind/replay reconstruct the same trigger gating.
     #[serde(default)]
     pub chosen_mode: Option<String>,
+    /// Card name chosen at ETB for "choose a card name" effects (Pithing Needle).
+    /// Mirrors the same field on `Card`.  `None` for cards that never trigger a
+    /// name-choice, or before the card has entered the battlefield.
+    #[serde(default)]
+    pub chosen_name: Option<String>,
     /// Per-card integer stored by an ETB replacement (Phyrexian Processor: life paid).
     #[serde(default)]
     pub stored_int: Option<u32>,
@@ -1234,6 +1258,7 @@ impl Card {
             chosen_color: None,
             chosen_player: None,
             chosen_mode: None,
+            chosen_name: None,
             stored_int: None,
             svars: std::collections::HashMap::new(),
             revealed_to_mask: 0,
@@ -1295,6 +1320,7 @@ impl Card {
             chosen_color: self.chosen_color,
             chosen_player: self.chosen_player,
             chosen_mode: self.chosen_mode.clone(),
+            chosen_name: self.chosen_name.clone(),
             stored_int: self.stored_int,
             svars: self.svars.clone(),
             is_legendary: self.is_legendary,
@@ -1352,6 +1378,7 @@ impl Card {
         self.chosen_color = snapshot.chosen_color;
         self.chosen_player = snapshot.chosen_player;
         self.chosen_mode = snapshot.chosen_mode;
+        self.chosen_name = snapshot.chosen_name;
         self.stored_int = snapshot.stored_int;
         self.svars = snapshot.svars;
         self.is_legendary = snapshot.is_legendary;
@@ -1404,6 +1431,7 @@ impl Card {
             self.definition.cache.etb_mode_ai_logic = def.etb_mode_ai_logic.clone();
             self.definition.cache.etb_mode_choices = def.etb_mode_choices.clone();
             self.definition.cache.etb_pay_life = def.etb_pay_life;
+            self.definition.cache.etb_choose_name = def.etb_choose_name;
             self.definition.cache.spell_relative_target_cost = def.has_relative_self_target_cost();
         } else {
             self.name = self.printed_name.clone();
@@ -1555,6 +1583,7 @@ impl Card {
         self.chosen_color = None;
         self.chosen_player = None;
         self.chosen_mode = None;
+        self.chosen_name = None;
         self.loyalty_activated_this_turn = false;
         self.regeneration_shields = 0;
         self.damage_prevention = 0;

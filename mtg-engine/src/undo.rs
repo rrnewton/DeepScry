@@ -73,6 +73,10 @@ pub enum GameAction {
     /// restores `Card::chosen_mode`. Same rationale as `SetChosenColor`.
     SetChosenMode { card_id: CardId, prev: Option<String> },
 
+    /// Set a card's ETB-chosen name (Pithing Needle: `DB$ NameCard | ...`),
+    /// storing the PREVIOUS value so a mid-turn rewind restores `Card::chosen_name`.
+    SetChosenName { card_id: CardId, prev: Option<String> },
+
     /// Set a card's `stored_int` (e.g. Phyrexian Processor's ETB life payment),
     /// storing the PREVIOUS value so a mid-turn rewind restores `Card::stored_int`.
     SetStoredInt { card_id: CardId, prev: Option<u32> },
@@ -716,6 +720,9 @@ impl fmt::Display for GameAction {
             GameAction::SetChosenMode { card_id, prev } => {
                 write!(f, "SetChosenMode({}, prev={:?})", card_id.as_u32(), prev)
             }
+            GameAction::SetChosenName { card_id, prev } => {
+                write!(f, "SetChosenName({}, prev={:?})", card_id.as_u32(), prev)
+            }
             GameAction::SetStoredInt { card_id, prev } => {
                 write!(f, "SetStoredInt({}, prev={:?})", card_id.as_u32(), prev)
             }
@@ -1147,6 +1154,15 @@ impl GameAction {
                     card.chosen_mode = prev.clone();
                 } else {
                     return Err(format!("Card {} not found for SetChosenMode undo", card_id.as_u32()));
+                }
+            }
+
+            GameAction::SetChosenName { card_id, prev } => {
+                // Restore the previous ETB-chosen name (Pithing Needle).
+                if let Ok(card) = game.cards.get_mut(*card_id) {
+                    card.chosen_name = prev.clone();
+                } else {
+                    return Err(format!("Card {} not found for SetChosenName undo", card_id.as_u32()));
                 }
             }
 

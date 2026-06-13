@@ -534,6 +534,10 @@ impl GameStateEvaluator {
                     // Activated-ability lock (Cursed Totem): not an aura;
                     // no enchanted-creature value contribution.
                 }
+                StaticAbility::CantBeActivatedByName { .. } => {
+                    // Name-based ability lock (Pithing Needle): not an aura;
+                    // no enchanted-creature value contribution.
+                }
                 StaticAbility::ExtraLandPlay { .. } => {
                     // Extra land-play statics live on the source permanent, not
                     // an aura; no enchanted-creature value here.

@@ -4267,6 +4267,21 @@ pub enum StaticAbility {
         description: String,
     },
 
+    /// Name-based activated-ability lock (Pithing Needle).
+    ///
+    /// Corresponds to Pithing Needle:
+    ///   `S:Mode$ CantBeActivated | ValidCard$ Card.NamedCard | ValidSA$ Activated.!ManaAbility`
+    ///
+    /// The source card's `Card::chosen_name` field holds the chosen name (set at ETB).
+    /// All non-mana activated abilities on any source whose name matches `chosen_name`
+    /// are suppressed while Pithing Needle is on the battlefield.
+    ///
+    /// Evaluated in `GameState::is_activated_ability_prohibited_by_name`.
+    CantBeActivatedByName {
+        /// Description for logging.
+        description: String,
+    },
+
     /// Allows the controller to play additional lands per turn.
     ///
     /// Corresponds to: `S:Mode$ Continuous | Affected$ You | AdjustLandPlays$ N`

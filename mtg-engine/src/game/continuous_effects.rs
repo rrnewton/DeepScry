@@ -1674,6 +1674,10 @@ impl GameState {
                         // Activated-ability lock (Cursed Totem): doesn't affect P/T;
                         // enforced at action-generation time in game_loop/actions.rs.
                     }
+                    StaticAbility::CantBeActivatedByName { .. } => {
+                        // Name-based ability lock (Pithing Needle): doesn't affect P/T;
+                        // enforced at action-generation time in game_loop/actions.rs.
+                    }
                     StaticAbility::ExtraLandPlay { .. } => {
                         // Extra land-play grant doesn't affect P/T; queried via
                         // GameState::effective_max_lands() at land-play time.
