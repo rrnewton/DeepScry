@@ -626,7 +626,7 @@ impl PlayerController for WasmRemoteController {
         _may_not_untap_permanents: &[CardId],
     ) -> ChoiceResult<SmallVec<[CardId; 8]>> {
         // Network: auto-untap everything for now
-        // TODO: Add network protocol support for this choice
+        // TODO(mtg-144): Add network protocol support for this choice (untap decisions)
         ChoiceResult::Ok(SmallVec::new())
     }
 

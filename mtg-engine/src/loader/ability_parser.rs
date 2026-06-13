@@ -220,6 +220,9 @@ pub enum ApiType {
     ChooseDirection,
     ChooseNumber,
     ChooseSource,
+    /// "As this enters, choose a card name."
+    /// Used by Pithing Needle (ETB replacement) and Cranial Extraction (spell).
+    NameCard,
 
     // === Game Actions ===
     Play,
@@ -436,6 +439,7 @@ impl ApiType {
             "ChooseDirection" => Self::ChooseDirection,
             "ChooseNumber" => Self::ChooseNumber,
             "ChooseSource" => Self::ChooseSource,
+            "NameCard" => Self::NameCard,
 
             // Game Actions
             "Play" => Self::Play,
@@ -554,6 +558,7 @@ impl ApiType {
             Self::ChooseDirection => "ChooseDirection",
             Self::ChooseNumber => "ChooseNumber",
             Self::ChooseSource => "ChooseSource",
+            Self::NameCard => "NameCard",
             Self::Play => "Play",
             Self::PlayLandVariant => "PlayLandVariant",
             Self::Effect => "Effect",

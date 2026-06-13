@@ -843,7 +843,7 @@ impl GameState {
                 self.log_mana_pool(player_id);
                 let player = self.get_player_mut(player_id)?;
                 if !player.mana_pool.can_pay(mana_cost) {
-                    // TODO: Should refund the tap here
+                    // TODO(mtg-733): Should refund the tap here (undo the source taps if pool payment fails)
                     return Err(MtgError::InvalidAction("Cannot pay mana cost".to_string()));
                 }
                 player.mana_pool.pay_cost(mana_cost).map_err(MtgError::InvalidAction)?;
@@ -873,7 +873,7 @@ impl GameState {
             Cost::SacrificePattern { count, card_type } => {
                 // Find permanents matching the pattern and sacrifice them
                 // For now, automatically choose without asking the controller
-                // TODO: Let controller choose which permanents to sacrifice
+                // TODO(mtg-144): Let controller choose which permanents to sacrifice
 
                 let mut to_sacrifice = Vec::new();
 
@@ -971,7 +971,7 @@ impl GameState {
             }
 
             Cost::Discard { card_id: _ } => {
-                // TODO: Implement discard cost for specific card
+                // TODO(mtg-32f9h): Implement discard cost for specific card
                 Err(MtgError::InvalidAction(format!(
                     "Cost type {cost:?} not yet implemented"
                 )))

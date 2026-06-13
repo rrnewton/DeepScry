@@ -183,6 +183,7 @@ fn resolve_timetwister(
         origins: smallvec::smallvec![Zone::Hand, Zone::Graveyard],
         destination: Zone::Library,
         shuffle: true,
+        target_player: None,
     };
     game.execute_effect(&effect).expect("ChangeZoneAll resolves");
 

@@ -570,6 +570,7 @@ impl<'a> GameLoop<'a> {
                 origins,
                 destination,
                 shuffle: _,
+                target_player: _,
             } => {
                 // Render origins as "Hand+Graveyard" etc. for a readable log.
                 let origin_desc = origins.iter().map(|z| format!("{z:?}")).collect::<Vec<_>>().join("+");
@@ -1033,6 +1034,11 @@ impl<'a> GameLoop<'a> {
             Effect::ChooseColor { player, .. } => {
                 let player_name = self.get_player_name(*player);
                 let message = format!("{source_name} ({source_id}) {player_name} chooses a color");
+                self.game.logger.gamelog(&message);
+            }
+            Effect::ChooseName { player, .. } => {
+                let player_name = self.get_player_name(*player);
+                let message = format!("{source_name} ({source_id}) {player_name} chooses a card name");
                 self.game.logger.gamelog(&message);
             }
             Effect::Clone { .. } => {

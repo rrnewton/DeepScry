@@ -4,11 +4,64 @@
 //! These functions support controller decision-making without modifying game state.
 
 use super::GameLoop;
-use crate::core::{CardId, Keyword, PlayerId, StaticAbility};
+use crate::core::{CardId, Keyword, ManaPool, PlayerId, StaticAbility};
 use crate::game::phase::Step;
 use smallvec::SmallVec;
 
+/// Snapshot of the turn-state flags needed for casting-legality checks.
+///
+/// Built once per player at the start of each `push_castable_*` call so that
+/// all the timing checks share a single, consistent read of the game state.
+/// This avoids repeating the same five-line setup block in every function.
+struct CastingContext {
+    /// Player's currently floating mana (from lands already tapped, Dark Ritual, etc.)
+    mana_pool: ManaPool,
+    /// True when `player_id` is the active player this turn.
+    is_active_player: bool,
+    /// True when the current step is a main phase (pre- or post-combat),
+    /// i.e. sorcery-speed actions are legal.
+    is_sorcery_speed: bool,
+    /// True when the spell stack contains no spells or abilities.
+    stack_is_empty: bool,
+}
+
+impl CastingContext {
+    /// Return `true` if a card with the given timing properties can be cast right now.
+    ///
+    /// - Instants and cards with Flash may be cast any time a player has priority.
+    /// - All other cards require sorcery speed (main phase, active player, empty stack).
+    ///   (MTG CR 307.5, CR 116.2)
+    #[inline]
+    fn can_cast_now(&self, is_instant_or_flash: bool) -> bool {
+        if is_instant_or_flash {
+            true
+        } else {
+            self.is_sorcery_speed && self.is_active_player && self.stack_is_empty
+        }
+    }
+}
+
 impl<'a> GameLoop<'a> {
+    /// Build the casting-context snapshot for `player_id`.
+    ///
+    /// Updates the mana engine for this player (so `can_pay_with_pool` is
+    /// accurate) and reads the three turn-state flags.  Call this once at
+    /// the start of any `push_castable_*` function instead of repeating the
+    /// same five-line setup block.
+    fn make_casting_context(&mut self, player_id: PlayerId) -> CastingContext {
+        self.mana_engine.update_mut(self.game, player_id);
+        CastingContext {
+            mana_pool: self
+                .game
+                .try_get_player(player_id)
+                .map(|p| p.mana_pool)
+                .unwrap_or_default(),
+            is_active_player: self.game.turn.active_player == player_id,
+            is_sorcery_speed: self.game.turn.current_step.is_sorcery_speed(),
+            stack_is_empty: self.game.stack.is_empty(),
+        }
+    }
+
     /// Validate that all cards in hand are revealed (network debug mode)
     ///
     /// Called when `debug_validate_reveals` is enabled (gated by `network_debug` flag).
@@ -191,6 +244,7 @@ impl<'a> GameLoop<'a> {
             | StaticAbility::CantBlockMatching { .. }
             | StaticAbility::CantAttackOrBlockMatching { .. }
             | StaticAbility::CantBeActivated { .. }
+            | StaticAbility::CantBeActivatedByName { .. }
             | StaticAbility::CastWithFlash { .. }
             | StaticAbility::DamageIncrease { .. }
             | StaticAbility::PreventDamageToEnchantedByChosenColor { .. }
@@ -649,26 +703,9 @@ impl<'a> GameLoop<'a> {
             return;
         }
 
-        // Update the mana engine for this player
-        self.mana_engine.update_mut(self.game, player_id);
-
-        // Get the player's mana pool for checking floating mana (from Dark Ritual, etc.)
-        // OPTIMIZATION: Using try_get_player() to avoid MtgError allocation on failure path
-        let mana_pool = self
-            .game
-            .try_get_player(player_id)
-            .map(|p| p.mana_pool)
-            .unwrap_or_default();
-
-        // Check if this is the active player (only active player can cast sorceries)
-        let is_active_player = self.game.turn.active_player == player_id;
-
-        // Check if it's sorcery speed (Main1 or Main2)
-        let is_sorcery_speed = self.game.turn.current_step.is_sorcery_speed();
-
-        // Check if stack is empty (required for sorcery-speed spells)
-        // MTG Rules 307.5: Sorceries and creatures can only be cast when stack is empty
-        let stack_is_empty = self.game.stack.is_empty();
+        // Snapshot turn-state flags used throughout this function.
+        // MTG Rules 307.5: Sorceries and creatures can only be cast when stack is empty.
+        let ctx = self.make_casting_context(player_id);
 
         if let Some(zones) = self.game.get_player_zones(player_id) {
             for &card_id in &zones.hand.cards {
@@ -695,14 +732,9 @@ impl<'a> GameLoop<'a> {
                     // face's own type (timing), mana cost, and target requirement.
                     if let Some(adventure) = card.definition.adventure.as_deref() {
                         let adv_is_instant = adventure.types.contains(&crate::core::CardType::Instant);
-                        let adv_can_cast_now = if adv_is_instant {
-                            true
-                        } else {
-                            // Sorcery Adventure: sorcery-speed, active player, empty stack.
-                            is_sorcery_speed && is_active_player && stack_is_empty
-                        };
+                        let adv_can_cast_now = ctx.can_cast_now(adv_is_instant);
                         if adv_can_cast_now
-                            && self.mana_engine.can_pay_with_pool(&adventure.mana_cost, &mana_pool)
+                            && self.mana_engine.can_pay_with_pool(&adventure.mana_cost, &ctx.mana_pool)
                             && self.adventure_has_legal_targets(card_id, adventure)
                         {
                             self.abilities_buffer.push(SpellAbility::CastAdventure { card_id });
@@ -715,16 +747,7 @@ impl<'a> GameLoop<'a> {
                         // CR 702.8a: Flash allows a permanent to be cast anytime you could cast an instant
                         let has_flash = card.has_keyword(crate::core::Keyword::Flash)
                             || self.game.player_has_cast_with_flash(player_id, card);
-                        let can_cast_now = if card.is_instant() || has_flash {
-                            // Instants and cards with Flash can be cast anytime with priority
-                            true
-                        } else {
-                            // Creatures and sorceries require:
-                            // - Sorcery speed (Main1 or Main2)
-                            // - Active player
-                            // - Stack is empty
-                            is_sorcery_speed && is_active_player && stack_is_empty
-                        };
+                        let can_cast_now = ctx.can_cast_now(card.is_instant() || has_flash);
 
                         if can_cast_now {
                             // Calculate effective cost (applies Affinity and other cost reductions)
@@ -733,7 +756,7 @@ impl<'a> GameLoop<'a> {
                             // Check if we can pay for this spell's effective mana cost
                             // Use can_pay_with_pool to consider floating mana from rituals like Dark Ritual
                             // Also check if we can pay any additional sacrifice costs (RaiseCost)
-                            let can_afford_mana = self.mana_engine.can_pay_with_pool(&effective_cost, &mana_pool);
+                            let can_afford_mana = self.mana_engine.can_pay_with_pool(&effective_cost, &ctx.mana_pool);
                             let can_afford_sacrifice = self.can_pay_sacrifice_costs(card, player_id);
 
                             // Check for AlternativeCost static abilities on this card.
@@ -753,7 +776,7 @@ impl<'a> GameLoop<'a> {
                                             player_had_creature_countered
                                         }
                                     };
-                                    if condition_met && self.mana_engine.can_pay_with_pool(alt_cost, &mana_pool) {
+                                    if condition_met && self.mana_engine.can_pay_with_pool(alt_cost, &ctx.mana_pool) {
                                         self.abilities_buffer.push(SpellAbility::CastFromHandWithAltCost {
                                             card_id,
                                             alternative_cost: *alt_cost,
@@ -900,25 +923,8 @@ impl<'a> GameLoop<'a> {
     fn push_castable_from_exile(&mut self, player_id: PlayerId) {
         use crate::core::{ManaCost, PersistentEffectKind, SpellAbility};
 
-        // Update the mana engine for this player
-        self.mana_engine.update_mut(self.game, player_id);
-
-        // Get the player's mana pool for checking floating mana
-        // OPTIMIZATION: Using try_get_player() to avoid MtgError allocation on failure path
-        let mana_pool = self
-            .game
-            .try_get_player(player_id)
-            .map(|p| p.mana_pool)
-            .unwrap_or_default();
-
-        // Check if this is the active player (only active player can cast sorceries)
-        let is_active_player = self.game.turn.active_player == player_id;
-
-        // Check if it's sorcery speed (Main1 or Main2)
-        let is_sorcery_speed = self.game.turn.current_step.is_sorcery_speed();
-
-        // Check if stack is empty (required for sorcery-speed spells)
-        let stack_is_empty = self.game.stack.is_empty();
+        // Snapshot turn-state flags used throughout this function.
+        let ctx = self.make_casting_context(player_id);
 
         // Iterate through all persistent effects looking for MayPlayFromExile
         for effect in self.game.persistent_effects.all() {
@@ -942,15 +948,11 @@ impl<'a> GameLoop<'a> {
                         }
 
                         // Check timing restrictions
-                        let can_cast_now = if card.is_instant() {
-                            true
-                        } else {
-                            is_sorcery_speed && is_active_player && stack_is_empty
-                        };
+                        let can_cast_now = ctx.can_cast_now(card.is_instant());
 
                         if can_cast_now {
                             // Check if we can pay the alternative cost
-                            if self.mana_engine.can_pay_with_pool(alternative_cost, &mana_pool) {
+                            if self.mana_engine.can_pay_with_pool(alternative_cost, &ctx.mana_pool) {
                                 self.abilities_buffer.push(SpellAbility::CastFromExile {
                                     card_id: *tracked_card,
                                     alternative_cost: *alternative_cost,
@@ -980,11 +982,7 @@ impl<'a> GameLoop<'a> {
                             }
 
                             // Check timing restrictions
-                            let can_cast_now = if card.is_instant() {
-                                true
-                            } else {
-                                is_sorcery_speed && is_active_player && stack_is_empty
-                            };
+                            let can_cast_now = ctx.can_cast_now(card.is_instant());
 
                             if can_cast_now {
                                 // No mana cost needed - cast for free!
@@ -1009,7 +1007,7 @@ impl<'a> GameLoop<'a> {
                         continue;
                     }
                     // Check turn restriction
-                    if *your_turn_only && !is_active_player {
+                    if *your_turn_only && !ctx.is_active_player {
                         continue;
                     }
 
@@ -1040,12 +1038,12 @@ impl<'a> GameLoop<'a> {
                             }
 
                             // Check timing (creatures are sorcery speed)
-                            if !(is_sorcery_speed && stack_is_empty) {
+                            if !(ctx.is_sorcery_speed && ctx.stack_is_empty) {
                                 continue;
                             }
 
                             // Check if we can pay the mana cost
-                            if self.mana_engine.can_pay_with_pool(&card.mana_cost, &mana_pool) {
+                            if self.mana_engine.can_pay_with_pool(&card.mana_cost, &ctx.mana_pool) {
                                 self.abilities_buffer.push(SpellAbility::CastFromGraveyard {
                                     card_id,
                                     effect_id: effect.id,
@@ -1075,11 +1073,7 @@ impl<'a> GameLoop<'a> {
 
                     // Check timing: instants can be cast any time, sorceries need sorcery speed
                     let can_cast_now = if let Some(card) = self.game.cards.try_get(*tracked_card) {
-                        if card.is_instant() {
-                            true
-                        } else {
-                            is_sorcery_speed && is_active_player && stack_is_empty
-                        }
+                        ctx.can_cast_now(card.is_instant())
                     } else {
                         continue;
                     };
@@ -1095,7 +1089,7 @@ impl<'a> GameLoop<'a> {
                         .try_get(*tracked_card)
                         .map(|c| c.mana_cost)
                         .unwrap_or_default();
-                    if self.mana_engine.can_pay_with_pool(&mana_cost, &mana_pool) {
+                    if self.mana_engine.can_pay_with_pool(&mana_cost, &ctx.mana_pool) {
                         self.abilities_buffer.push(SpellAbility::CastFromGraveyard {
                             card_id: *tracked_card,
                             effect_id: effect.id,
@@ -1125,18 +1119,8 @@ impl<'a> GameLoop<'a> {
     fn push_castable_from_command(&mut self, player_id: PlayerId) {
         use crate::core::SpellAbility;
 
-        // Update the mana engine for this player
-        self.mana_engine.update_mut(self.game, player_id);
-
-        let mana_pool = self
-            .game
-            .try_get_player(player_id)
-            .map(|p| p.mana_pool)
-            .unwrap_or_default();
-
-        let is_active_player = self.game.turn.active_player == player_id;
-        let is_sorcery_speed = self.game.turn.current_step.is_sorcery_speed();
-        let stack_is_empty = self.game.stack.is_empty();
+        // Snapshot turn-state flags used throughout this function.
+        let ctx = self.make_casting_context(player_id);
 
         // Get commander tax from the player
         let commander_tax = self
@@ -1149,15 +1133,10 @@ impl<'a> GameLoop<'a> {
             for &card_id in &zones.command.cards {
                 if let Some(card) = self.game.cards.try_get(card_id) {
                     // Check timing restrictions
-                    // Commander follows normal casting timing rules
+                    // Commander follows normal casting timing rules (CR 903.8)
                     let has_flash = card.has_keyword(crate::core::Keyword::Flash)
                         || self.game.player_has_cast_with_flash(player_id, card);
-                    let can_cast_now = if card.is_instant() || has_flash {
-                        true
-                    } else {
-                        // Sorcery-speed casting rules
-                        is_sorcery_speed && is_active_player && stack_is_empty
-                    };
+                    let can_cast_now = ctx.can_cast_now(card.is_instant() || has_flash);
 
                     if can_cast_now {
                         // Calculate total cost = base mana cost + commander tax as generic mana
@@ -1165,7 +1144,7 @@ impl<'a> GameLoop<'a> {
                         total_cost.generic = total_cost.generic.saturating_add(commander_tax);
 
                         // Check if we can afford it
-                        let can_afford = self.mana_engine.can_pay_with_pool(&total_cost, &mana_pool);
+                        let can_afford = self.mana_engine.can_pay_with_pool(&total_cost, &ctx.mana_pool);
 
                         if can_afford {
                             self.abilities_buffer
@@ -1259,9 +1238,8 @@ impl<'a> GameLoop<'a> {
             .map(|z| z.hand.cards.iter().copied().collect())
             .unwrap_or_default();
 
-        let is_active_player = self.game.turn.active_player == player_id;
-        let is_sorcery_speed = self.game.turn.current_step.is_sorcery_speed();
-        let stack_is_empty = self.game.stack.is_empty();
+        // Snapshot turn-state flags for timing checks below.
+        let ctx = self.make_casting_context(player_id);
 
         for card_id in hand_cards {
             let Some(card) = self.game.cards.try_get(card_id) else {
@@ -1293,11 +1271,7 @@ impl<'a> GameLoop<'a> {
             // Timing restrictions
             let has_flash =
                 card.has_keyword(crate::core::Keyword::Flash) || self.game.player_has_cast_with_flash(player_id, card);
-            let can_cast_now = if card.is_instant() || has_flash {
-                true
-            } else {
-                is_sorcery_speed && is_active_player && stack_is_empty
-            };
+            let can_cast_now = ctx.can_cast_now(card.is_instant() || has_flash);
 
             if !can_cast_now {
                 continue;
@@ -1364,16 +1338,19 @@ impl<'a> GameLoop<'a> {
             (is_land, is_prohibited, has_flash_kw, is_instant, cost)
         };
 
-        let is_active_player = self.game.turn.active_player == player_id;
-        let is_sorcery_speed = self.game.turn.current_step.is_sorcery_speed();
-        let stack_is_empty = self.game.stack.is_empty();
+        // Snapshot turn-state flags for timing checks below.
+        let ctx = self.make_casting_context(player_id);
 
         if is_land {
             // Land: offer PlayLandFromLibrary during sorcery speed, active player,
             // empty stack, and if the player still has a land play available.
             // (Experimental Frenzy also has CantPlayLand | Origin$ Hand, handled
             // separately — this is the grant, not the restriction.)
-            if stack_is_empty && is_sorcery_speed && is_active_player && self.game.can_play_land_effective(player_id) {
+            if ctx.stack_is_empty
+                && ctx.is_sorcery_speed
+                && ctx.is_active_player
+                && self.game.can_play_land_effective(player_id)
+            {
                 self.abilities_buffer
                     .push(SpellAbility::PlayLandFromLibrary { card_id: top_card_id });
             }
@@ -1388,21 +1365,12 @@ impl<'a> GameLoop<'a> {
                     .cards
                     .try_get(top_card_id)
                     .is_some_and(|c| self.game.player_has_cast_with_flash(player_id, c));
-            let can_cast_now = if is_instant || has_flash {
-                true
-            } else {
-                is_sorcery_speed && is_active_player && stack_is_empty
-            };
+            let can_cast_now = ctx.can_cast_now(is_instant || has_flash);
 
             if can_cast_now {
                 // Mana cost check: must be able to pay printed mana cost.
-                self.mana_engine.update_mut(self.game, player_id);
-                let mana_pool = self
-                    .game
-                    .try_get_player(player_id)
-                    .map(|p| p.mana_pool)
-                    .unwrap_or_default();
-                if self.mana_engine.can_pay_with_pool(&effective_cost, &mana_pool) {
+                // (make_casting_context already called mana_engine.update_mut above)
+                if self.mana_engine.can_pay_with_pool(&effective_cost, &ctx.mana_pool) {
                     self.abilities_buffer
                         .push(SpellAbility::CastFromLibrary { card_id: top_card_id });
                 }
@@ -1441,6 +1409,14 @@ impl<'a> GameLoop<'a> {
                 // permanent has a CantBeActivated static that matches this card,
                 // none of its activated abilities may be activated. CR 602.1.
                 if card.is_creature() && self.game.is_activated_ability_prohibited(card) {
+                    continue;
+                }
+
+                // CantBeActivatedByName statics (Pithing Needle): if any
+                // battlefield permanent has named this card, none of its
+                // non-mana activated abilities may be activated. CR 602.1.
+                // (Mana abilities are handled separately below and exempted.)
+                if self.game.is_activated_ability_prohibited_by_name(card) {
                     continue;
                 }
 
@@ -1599,8 +1575,7 @@ impl<'a> GameLoop<'a> {
                         }
                     }
 
-                    // TODO: Check other cost types (discard, etc.)
-                    // TODO: Check activation limits
+                    // TODO(mtg-32f9h): Check other cost types (discard, etc.) and activation limits
 
                     // Check sorcery-speed timing restrictions (CR 602.5d, CR 307.5)
                     // Sorcery-speed abilities require: main phase, your turn, stack empty

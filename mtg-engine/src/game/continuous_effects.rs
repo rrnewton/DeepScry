@@ -250,7 +250,7 @@ impl GameState {
         let modifypt_counters = self.calculate_modifypt_counters(creature_id)?;
 
         // Layer 7d (CR 613.4d): Switch P/T
-        // TODO: Implement for effects like "switch power and toughness"
+        // TODO(mtg-147): Implement for effects like "switch power and toughness"
         let is_switched = false;
 
         Ok(PTBreakdown {
@@ -1672,6 +1672,10 @@ impl GameState {
                     }
                     StaticAbility::CantBeActivated { .. } => {
                         // Activated-ability lock (Cursed Totem): doesn't affect P/T;
+                        // enforced at action-generation time in game_loop/actions.rs.
+                    }
+                    StaticAbility::CantBeActivatedByName { .. } => {
+                        // Name-based ability lock (Pithing Needle): doesn't affect P/T;
                         // enforced at action-generation time in game_loop/actions.rs.
                     }
                     StaticAbility::ExtraLandPlay { .. } => {

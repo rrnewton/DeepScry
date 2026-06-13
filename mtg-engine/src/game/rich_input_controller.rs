@@ -434,7 +434,7 @@ impl PlayerController for RichInputController {
         count: usize,
     ) -> ChoiceResult<SmallVec<[CardId; 7]>> {
         // Simple: discard first N cards
-        // TODO: Implement rich syntax for discard selection
+        // TODO(mtg-144): Implement rich syntax for discard selection
         ChoiceResult::Ok(hand.iter().take(count).copied().collect())
     }
 
@@ -444,7 +444,7 @@ impl PlayerController for RichInputController {
         valid_cards: &[&crate::loader::CardDefinition],
     ) -> ChoiceResult<Option<usize>> {
         // RichInputController: Auto-select first valid card
-        // TODO: Implement rich syntax for library search selection
+        // TODO(mtg-144): Implement rich syntax for library search selection
         if valid_cards.is_empty() {
             view.logger()
                 .controller_choice("RICHINPUT", "Library search: fail to find (no valid cards)");
@@ -468,7 +468,7 @@ impl PlayerController for RichInputController {
         card_type_description: &str,
     ) -> ChoiceResult<SmallVec<[CardId; 8]>> {
         // RichInputController: Auto-select first N permanents
-        // TODO: Implement rich syntax for sacrifice selection
+        // TODO(mtg-144): Implement rich syntax for sacrifice selection
         let num_to_sacrifice = count.min(valid_permanents.len());
         let to_sacrifice: SmallVec<[CardId; 8]> = valid_permanents.iter().take(num_to_sacrifice).copied().collect();
 
@@ -491,7 +491,7 @@ impl PlayerController for RichInputController {
         _may_not_untap_permanents: &[CardId],
     ) -> ChoiceResult<SmallVec<[CardId; 8]>> {
         // Rich input controller always untaps everything (returns empty list = untap all)
-        // TODO: Could add command syntax for controlling untap decisions
+        // TODO(mtg-144): Could add command syntax for controlling untap decisions
         ChoiceResult::Ok(SmallVec::new())
     }
 
@@ -505,7 +505,7 @@ impl PlayerController for RichInputController {
         _can_repeat: bool,
     ) -> ChoiceResult<SmallVec<[usize; 4]>> {
         // Rich input controller: use next command as mode index, or default to first N modes
-        // TODO: Could add command syntax like "mode 0 1" for selecting specific modes
+        // TODO(mtg-144): Could add command syntax like "mode 0 1" for selecting specific modes
         if let Some(command_str) = self.peek_command() {
             let command = command_str.to_string();
             self.current_index += 1;

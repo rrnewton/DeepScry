@@ -97,6 +97,73 @@ impl GameState {
         Ok(())
     }
 
+    /// [`Effect::ChooseName`]: choose a card name at resolution time and store it
+    /// in `GameState::remembered_name` for subsequent sub-ability filtering.
+    ///
+    /// Called for `SP$ NameCard` spell abilities (Cranial Extraction, Memoricide).
+    /// The name is picked by the AI heuristic below and stored in
+    /// `GameState::remembered_name` (undo-logged via `SetRememberedName`).
+    ///
+    /// **Information independence:** the heuristic looks only at the opponent's
+    /// *graveyard* (public) and *battlefield* (public) — never at hidden zones
+    /// (library or hand) — so it produces identical decisions on server and shadow.
+    ///
+    /// **AI heuristic:**
+    /// 1. Scan the opponent's graveyard for the most common card name (most copies).
+    /// 2. If the graveyard is empty, fall back to the opponent's battlefield cards.
+    /// 3. If neither zone has any cards, default to an arbitrary nonland name
+    ///    (`"Island"` — a harmless fallback that doesn't exile anything useful).
+    pub(in crate::game::actions) fn execute_choose_name(&mut self, player: PlayerId) -> Result<()> {
+        use std::collections::HashMap;
+        // Find the opponent's ID so we can inspect their zones.
+        let opponent_id = self.players.iter().find(|p| p.id != player).map(|p| p.id);
+
+        let chosen_name: String = if let Some(opp_id) = opponent_id {
+            // Count card names in the opponent's graveyard (public information).
+            let mut name_counts: HashMap<String, usize> = HashMap::new();
+            if let Some((_, zones)) = self.player_zones.iter().find(|(pid, _)| *pid == opp_id) {
+                for &card_id in &zones.graveyard.cards {
+                    if let Some(card) = self.cards.try_get(card_id) {
+                        *name_counts.entry(card.name.as_str().to_owned()).or_insert(0) += 1;
+                    }
+                }
+            }
+            // Fall back to battlefield if graveyard is empty.
+            if name_counts.is_empty() {
+                for &card_id in &self.battlefield.cards {
+                    if let Some(card) = self.cards.try_get(card_id) {
+                        if card.controller == opp_id && !card.is_land() {
+                            *name_counts.entry(card.name.as_str().to_owned()).or_insert(0) += 1;
+                        }
+                    }
+                }
+            }
+            // Pick the name with the highest count; break ties alphabetically for determinism.
+            name_counts
+                .into_iter()
+                .max_by(|(name_a, count_a), (name_b, count_b)| {
+                    count_a.cmp(count_b).then_with(|| name_a.cmp(name_b).reverse())
+                })
+                .map(|(name, _)| name)
+                .unwrap_or_else(|| "Island".to_owned()) // harmless fallback
+        } else {
+            "Island".to_owned() // no opponent found (shouldn't happen in normal play)
+        };
+
+        let prev = self.remembered_name.clone();
+        let prior_log_size = self.logger.log_count();
+        self.remembered_name = Some(chosen_name.clone());
+        let player_name = self
+            .get_player(player)
+            .map(|p| p.name.as_str().to_string())
+            .unwrap_or_else(|_| format!("Player {}", player.as_u32()));
+        self.logger
+            .normal(&format!("{} names a card: \"{}\"", player_name, chosen_name));
+        self.undo_log
+            .log(crate::undo::GameAction::SetRememberedName { prev }, prior_log_size);
+        Ok(())
+    }
+
     /// [`Effect::ChooseColor`]: pick a color (AI heuristic: the most prominent
     /// color in the player's deck) and store it on the `source` card.
     pub(in crate::game::actions) fn execute_choose_color(&mut self, player: PlayerId, source: CardId) -> Result<()> {

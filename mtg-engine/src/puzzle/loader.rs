@@ -287,6 +287,14 @@ async fn create_card_from_definition<'a>(
                     }
                 }
             }
+            CardModifier::NamedCard(names) => {
+                // Apply the first card name as the card's chosen_name
+                // (mirrors K:ETBReplacement:Other:DBNameCard behavior for Pithing Needle).
+                // Used in puzzles as: `Pithing Needle|NamedCard:Goblin Piper`
+                if let Some(name) = names.first() {
+                    card.chosen_name = Some(name.clone());
+                }
+            }
             // Skip modifiers that need second pass or aren't supported yet
             _ => {}
         }

@@ -1,0 +1,12 @@
+---
+title: 'combat: check for ''can block multiple creatures'' abilities before rejecting multi-block'
+status: open
+priority: 4
+issue_type: task
+created_at: 2026-06-13T16:28:39.179409953+00:00
+updated_at: 2026-06-13T16:28:39.179409953+00:00
+---
+
+# Description
+
+In game/actions/combat.rs validate_blocker_assignment(), when a blocker is assigned to block more than one attacker, the engine always errors with 'Creature can only block one attacker' without checking whether the blocking creature has an ability like 'can block any number of creatures' or 'can block an additional creature'. Cards like Wall of Tears, Hundred-Handed One (when monstrous), Reach to the Web, or Fog Bank variants may have such abilities. Fix: before erroring, check card.static_abilities for a CanBlockAdditional / CanBlockMultiple static, and also check for the keyword version (CR 702.21 Reach doesn't help here; there's no single standard keyword). Note: blocking multiple is rare and currently untested.

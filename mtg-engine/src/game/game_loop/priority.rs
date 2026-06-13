@@ -5062,7 +5062,7 @@ impl<'a> GameLoop<'a> {
 
         if zone == "Hand" {
             // Hand balancing - use existing non-interactive implementation for now
-            // TODO: Make hand discard interactive too
+            // TODO(mtg-144): Make hand discard interactive too
             self.game.execute_balance_effect(card_type, zone)?;
         } else {
             // Battlefield - interactive sacrifice

@@ -1418,7 +1418,7 @@ impl PlayerController for NetworkController {
         _view: &GameStateView,
         _may_not_untap_permanents: &[CardId],
     ) -> ChoiceResult<SmallVec<[CardId; 8]>> {
-        // TODO: Add network protocol support for this choice
+        // TODO(mtg-144): Add network protocol support for this choice (untap decisions)
         // For now, auto-untap everything
         ChoiceResult::Ok(SmallVec::new())
     }

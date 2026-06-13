@@ -494,7 +494,7 @@ impl GameState {
                 }
                 Effect::RemoveCounter { target, .. } if target.is_placeholder() => {
                     // RemoveCounter targets creatures (e.g., Heartless Act mode 2)
-                    // TODO: Some RemoveCounter effects can target any permanent
+                    // TODO(mtg-n36vb): Some RemoveCounter effects can target any permanent
                     for &card_id in &self.battlefield.cards {
                         if let Ok(target_card) = self.cards.get(card_id) {
                             if target_card.is_creature() && is_legal_target(target_card, spell_owner, &spell_colors) {
@@ -518,7 +518,7 @@ impl GameState {
                 }
                 Effect::PutCounter { target, .. } if target.is_placeholder() => {
                     // PutCounter targets creatures (e.g., +1/+1 counter effects)
-                    // TODO: Some PutCounter effects can target any permanent
+                    // TODO(mtg-n36vb): Some PutCounter effects can target any permanent
                     for &card_id in &self.battlefield.cards {
                         if let Ok(target_card) = self.cards.get(card_id) {
                             if target_card.is_creature() && is_legal_target(target_card, spell_owner, &spell_colors) {
@@ -691,6 +691,7 @@ impl GameState {
                             | Effect::ClearRemembered
                             | Effect::AddTurn { .. }
                             | Effect::AddPhase { .. }
+                            | Effect::ChooseName { .. }
                             | Effect::ChooseColor { .. }
                             | Effect::Clone { .. }
                             | Effect::Proliferate
@@ -770,6 +771,7 @@ impl GameState {
                 | Effect::UntapAll { .. }
                 | Effect::UntapOne { .. }
                 | Effect::SetLife { .. }
+                | Effect::ChooseName { .. }
                 | Effect::ChooseColor { .. }
                 | Effect::Clone { .. }
                 | Effect::Unimplemented { .. }
@@ -889,7 +891,7 @@ impl GameState {
                     // Fight with non-placeholder targets already has both fighters assigned
                 }
                 // UnlessCostWrapper delegates targeting to inner effect
-                // TODO: Handle inner effect targeting when implementing UnlessCost resolution
+                // TODO(mtg-n36vb): Handle inner effect targeting when implementing UnlessCost resolution
                 Effect::UnlessCostWrapper { .. } => {
                     // For now, skip - inner effect targeting handled when we implement full UnlessCost
                 }
@@ -1198,7 +1200,7 @@ impl GameState {
                     for &card_id in &self.battlefield.cards {
                         if let Ok(card) = self.cards.get(card_id) {
                             // By default, Airbend targets creatures
-                            // TODO: Could be extended with ValidTgts parsing for nonland permanents
+                            // TODO(mtg-n36vb): Could be extended with ValidTgts parsing for nonland permanents
                             let mut is_valid = card.is_creature();
 
                             // Check shroud/hexproof
@@ -1439,6 +1441,7 @@ impl GameState {
                 | Effect::SacrificeSelf { .. }
                 | Effect::TapAll { .. }
                 | Effect::SetLife { .. }
+                | Effect::ChooseName { .. }
                 | Effect::ChooseColor { .. }
                 | Effect::Clone { .. }
                 | Effect::Proliferate
@@ -1861,6 +1864,7 @@ impl GameState {
             | Effect::GainControl { .. }
             | Effect::PutCounterAll { .. }
             | Effect::ChangeZoneAll { .. }
+            | Effect::ChooseName { .. }
             | Effect::ChooseColor { .. }
             | Effect::Clone { .. }
             | Effect::Proliferate

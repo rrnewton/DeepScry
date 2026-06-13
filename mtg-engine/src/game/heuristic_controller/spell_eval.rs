@@ -698,6 +698,20 @@ impl HeuristicController {
                     return true;
                 }
             }
+
+            // Name-lock artifacts (Pithing Needle: etb_choose_name + CantBeActivatedByName).
+            // Cast them when the opponent has at least one permanent with a non-mana activated
+            // ability to name. Reference: Forge's PithingNeedle AILogic.
+            if spell.definition.cache.etb_choose_name {
+                let opponent_has_activatable = view.battlefield().iter().any(|&card_id| {
+                    view.get_card(card_id).is_some_and(|c| {
+                        c.controller != self.player_id && c.activated_abilities.iter().any(|ab| !ab.is_mana_ability)
+                    })
+                });
+                if opponent_has_activatable {
+                    return true;
+                }
+            }
         }
 
         // Always-beneficial effects: search library, create tokens, scry, surveil, etc.
@@ -1493,6 +1507,7 @@ impl HeuristicController {
                 origins,
                 destination,
                 shuffle: _,
+                target_player: _,
             } = e
             {
                 Some((restriction, origins, destination))

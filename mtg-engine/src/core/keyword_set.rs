@@ -653,7 +653,7 @@ pub enum KeywordArgs {
     /// Escalate cost (e.g., "Escalate:2")
     Escalate { cost: ManaCost },
     /// Escape cost (e.g., "Escape:4 R R, Exile three other cards from your graveyard")
-    /// TODO: Parse exile count separately
+    /// TODO(mtg-3): Parse exile count separately
     Escape { cost: ManaCost },
     /// Eternalize cost (e.g., "Eternalize:4 U U")
     Eternalize { cost: ManaCost },
@@ -690,7 +690,7 @@ pub enum KeywordArgs {
     /// Prowl cost (e.g., "Prowl:U B")
     Prowl { cost: ManaCost },
     /// Prototype cost (e.g., "Prototype:1 R")
-    /// TODO: Parse power/toughness from prototype
+    /// TODO(mtg-3): Parse power/toughness from prototype
     Prototype { cost: ManaCost },
     /// Reconfigure cost (e.g., "Reconfigure:2")
     Reconfigure { cost: ManaCost },
@@ -753,47 +753,47 @@ pub enum KeywordArgs {
 
     // ===== SPECIAL COMPLEX KEYWORDS =====
     /// Emerge (e.g., "Emerge:5 G G" → cost, creature type implicit)
-    /// TODO: Parse creature type requirement
+    /// TODO(mtg-3): Parse creature type requirement
     Emerge { cost: ManaCost },
     /// Firebending: Add N red mana on attack (lasts until end of combat)
     /// e.g., "Firebending:1" → add 1 {R}, "Firebending:X" → add X {R} where X is creature's power
     Firebending { amount: u8 },
     /// Ninjutsu (e.g., "Ninjutsu:U B" → cost, zone is hand by default)
-    /// TODO: Parse zone (hand vs graveyard for commander ninjutsu)
+    /// TODO(mtg-3): Parse zone (hand vs graveyard for commander ninjutsu)
     Ninjutsu { cost: ManaCost },
     /// Partner (base keyword, not PartnerWith)
     Partner,
     /// Craft (e.g., "Craft:Exile this artifact, Exile another artifact you control")
-    /// TODO: Parse craft requirements properly
+    /// TODO(mtg-3): Parse craft requirements properly
     Craft { requirements: String },
     /// Devour (e.g., "Devour:2" → amount, creature types TBD)
-    /// TODO: Parse creature type restrictions
+    /// TODO(mtg-3): Parse creature type restrictions
     Devour { amount: u8 },
 
     // ===== OTHER PARAMETERIZED KEYWORDS =====
     /// Hexproof from (e.g., "Hexproof:Blue", "Hexproof:instants")
-    /// TODO: Parse into Color | CardType once we have those enums
+    /// TODO(mtg-3): Parse into Color | CardType once we have those enums
     HexproofFrom { from: String },
     /// Partner with specific card (e.g., "Partner:Regna")
     PartnerWith { card_name: CardName },
     /// Companion deck restriction
-    /// TODO: Parse restriction into structured format
+    /// TODO(mtg-3): Parse restriction into structured format
     Companion { restriction: String },
 
     // ===== SAGA AND CLASS ENCHANTMENT KEYWORDS =====
     /// Chapter (e.g., "Chapter:3:DBCantBlock,DBSearch,DBToken")
-    /// TODO: Parse abilities properly
+    /// TODO(mtg-3): Parse abilities properly
     Chapter { chapter_number: u8, abilities: String },
     /// Class (e.g., "Class:2:W:AddTrigger$ TriggerEnter")
-    /// TODO: Parse level, cost, and abilities properly
+    /// TODO(mtg-3): Parse level, cost, and abilities properly
     Class { level: u8, cost: String, abilities: String },
 
     // ===== ETB (ENTER THE BATTLEFIELD) KEYWORDS =====
     /// ETB replacement effects (e.g., "ETBReplacement:Copy:DBCopy:Optional")
-    /// TODO: Parse into structured format
+    /// TODO(mtg-3): Parse into structured format
     ETBReplacement { effect_type: String, details: String },
     /// ETB counter (e.g., "etbCounter:P1P1:2" or "etbCounter:LOYALTY:Y:no Condition:...")
-    /// TODO: Parse counter type, amount, and conditions
+    /// TODO(mtg-3): Parse counter type, amount, and conditions
     EtbCounter {
         counter_type: String,
         amount: String,
@@ -802,16 +802,16 @@ pub enum KeywordArgs {
 
     // ===== ADDITIONAL SPECIAL KEYWORDS =====
     /// Haunt (e.g., "Haunt:TrigDestroy")
-    /// TODO: Parse trigger details
+    /// TODO(mtg-3): Parse trigger details
     Haunt { trigger: String },
     /// Replicate (e.g., "Replicate:tapXType<1/Horror>")
-    /// TODO: Parse cost properly
+    /// TODO(mtg-3): Parse cost properly
     Replicate { cost: String },
     /// MayEffectFromOpeningHand (e.g., "MayEffectFromOpeningHand:ExileCard")
     /// Leyline-type effects
     MayEffectFromOpeningHand { effect: String },
     /// Mayhem (e.g., "Mayhem:2" or "Mayhem:2 R")
-    /// TODO: Parse cost properly
+    /// TODO(mtg-3): Parse cost properly
     Mayhem { cost: String },
     /// Recover (e.g., "Recover:1 G")
     Recover { cost: ManaCost },

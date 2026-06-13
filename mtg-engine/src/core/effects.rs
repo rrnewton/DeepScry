@@ -845,6 +845,13 @@ pub struct TargetRestriction {
     /// Checked via `card.has_keyword(Keyword::Defender)`.
     #[serde(default)]
     pub requires_defender: bool,
+    /// If true, the card must share its name with the current `GameState::remembered_name`
+    /// (Cranial Extraction: `ChangeType$ Card.NamedCard`). Plain `matches()` always
+    /// returns false for named-card filters — callers must use `matches_with_name`.
+    ///
+    /// Parsed from the `NamedCard` qualifier in `ValidCards$` / `ChangeType$`.
+    #[serde(default)]
+    pub requires_named_card: bool,
     /// Exact mana value (CMC) restriction (`cmcEQ<N>` qualifier, static form).
     ///
     /// Corresponds to `ValidCards$ Permanent.nonLand+cmcEQ2` (literal N) when
@@ -883,6 +890,7 @@ impl TargetRestriction {
             min_cmc: None,
             max_cmc: None,
             requires_defender: false,
+            requires_named_card: false,
             exact_cmc: None,
             cmc_eq_svar: false,
         }
@@ -909,6 +917,7 @@ impl TargetRestriction {
             min_cmc: None,
             max_cmc: None,
             requires_defender: false,
+            requires_named_card: false,
             exact_cmc: None,
             cmc_eq_svar: false,
         }
@@ -981,6 +990,13 @@ impl TargetRestriction {
     pub fn matches(&self, card: &crate::core::Card) -> bool {
         // "Remembered" cards require FlipOntoBattlefield which is unimplemented
         if self.requires_remembered {
+            return false;
+        }
+
+        // Named-card filters require the runtime name from `GameState::remembered_name`.
+        // Plain `matches()` has no access to GameState, so it always returns false here;
+        // callers that know the remembered name must use `matches_with_name` instead.
+        if self.requires_named_card {
             return false;
         }
 
@@ -1112,6 +1128,7 @@ impl TargetRestriction {
             && self.required_color.is_none()
             && self.required_set.is_none()
             && !self.requires_other
+            && !self.requires_named_card
             && self.min_cmc.is_none()
             && self.max_cmc.is_none()
             && self.exact_cmc.is_none()
@@ -1213,6 +1230,7 @@ impl TargetRestriction {
         let mut requires_nonartifact = false;
         let mut requires_noncreature = false;
         let mut requires_defender = false;
+        let mut requires_named_card = false;
         let mut min_cmc = None;
         let mut max_cmc = None;
         let mut exact_cmc: Option<u8> = None;
@@ -1256,6 +1274,18 @@ impl TargetRestriction {
                         // (CR 702.6). Used by Overgrown Battlement's mana
                         // ability, Clear a Path, Axebane Guardian, etc.
                         "withDefender" => requires_defender = true,
+                        // `NamedCard` — card must share its name with the current
+                        // `GameState::remembered_name` (Cranial Extraction:
+                        // `ChangeType$ Card.NamedCard`). Plain `matches()` always
+                        // returns false for named-card filters; callers use
+                        // `matches_with_name` instead.
+                        "NamedCard" => requires_named_card = true,
+                        // `nonLand` — card must not be a land type. Used in the
+                        // ValidCards$ on NameCard to constrain what name can be
+                        // chosen; we don't enforce it in the filter predicate (any
+                        // nonland card name the controller picks is AI-chosen from
+                        // public info anyway).
+                        "nonLand" => {} // silently accepted; no-op in the filter
                         m if m.starts_with("cmcGE") => {
                             // Parse cmcGE4 -> min_cmc = 4 (Disdainful Stroke)
                             if let Ok(n) = m.trim_start_matches("cmcGE").parse::<u8>() {
@@ -1356,8 +1386,35 @@ impl TargetRestriction {
             min_cmc,
             max_cmc,
             requires_defender,
+            requires_named_card,
             exact_cmc,
             cmc_eq_svar,
+        }
+    }
+
+    /// Like [`TargetRestriction::matches`], but also filters by `name`:
+    /// when `requires_named_card` is set, the card's name must equal `name`
+    /// (case-sensitive, Cranial Extraction / Memoricide style). For all other
+    /// restrictions the check delegates to [`TargetRestriction::matches`].
+    pub fn matches_with_name(&self, card: &crate::core::Card, name: &str) -> bool {
+        if self.requires_named_card && card.name.as_str() != name {
+            return false;
+        }
+        // All other restrictions (type, controller, CMC, etc.) still apply —
+        // but for the `ChangeType$ Card.NamedCard` pattern the base type is "Card"
+        // (no type filter), so `matches` on a pure named-card restriction returns
+        // true for any card once the name check passes.
+        //
+        // We must NOT call `self.matches(card)` directly here because that
+        // function short-circuits to `false` when `requires_named_card` is set
+        // (it has no access to the runtime name). Instead, clone with the flag
+        // cleared so the delegate checks all OTHER restrictions normally.
+        if self.requires_named_card {
+            let mut without_name_guard = self.clone();
+            without_name_guard.requires_named_card = false;
+            without_name_guard.matches(card)
+        } else {
+            self.matches(card)
         }
     }
 
@@ -2029,6 +2086,16 @@ pub enum Effect {
         /// Nexus, Midnight Clock). Left false for ordered library moves like
         /// `LibraryPosition$ -1` (bottom-of-library, e.g. Manifold Insights).
         shuffle: bool,
+        /// Optional player scope for per-zone searches (Cranial Extraction:
+        /// "Search TARGET PLAYER's graveyard, hand, and library"). When `Some`,
+        /// only that player's per-player zones (Hand/Library/Graveyard/Exile)
+        /// are searched; when `None` all players' zones are searched (default,
+        /// Timetwister / Wheel / Tormod's Crypt behaviour).
+        ///
+        /// `PlayerId::placeholder()` encodes "the opponent of the spell's
+        /// controller" and is resolved to the actual opponent at execution time.
+        #[serde(default)]
+        target_player: Option<PlayerId>,
     },
 
     /// Move the source card itself between two named zones (neither of which is
@@ -2793,6 +2860,29 @@ pub enum Effect {
         types: Vec<TargetType>,
     },
 
+    /// Choose a card name and store it in `GameState::remembered_name`.
+    ///
+    /// Corresponds to: `SP$ NameCard | Defined$ You | ValidCards$ Card.nonLand | ...`
+    /// (Cranial Extraction, Memoricide, Cranial Extraction — any "name a card" spell).
+    ///
+    /// The chosen name is stored in `GameState::remembered_name` and read by
+    /// subsequent sub-abilities in the same resolution chain (e.g. `ChangeType$
+    /// Card.NamedCard` in `ChangeZoneAll`). This is the SPELL-ABILITY form of
+    /// NameCard (resolution-time choice); Pithing Needle's ETB form stores on
+    /// `Card::chosen_name` instead (different scope: per-card persistent vs.
+    /// per-resolution transient).
+    ///
+    /// AI heuristic: name the card most prevalent in the opponent's visible zones
+    /// (hand count hidden, so we target based on graveyard + battlefield clues).
+    /// In the AI implementation, we simply pick the most common card name in the
+    /// opponent's graveyard; if the graveyard is empty, we pick the most common
+    /// card name on the battlefield. This is information-independent (graveyard
+    /// and battlefield are public).
+    ChooseName {
+        /// The player making the choice (placeholder resolved to card_owner at cast)
+        player: PlayerId,
+    },
+
     /// Choose a color (WUBRG) and store it on the source card.
     ///
     /// Corresponds to: `AB$ ChooseColor | Cost$ ... | Defined$ You`
@@ -3199,6 +3289,7 @@ impl Effect {
             | Effect::ClearRemembered
             | Effect::AddTurn { .. }
             | Effect::AddPhase { .. }
+            | Effect::ChooseName { .. }
             | Effect::ChooseColor { .. }
             | Effect::Proliferate
             // Phase-trigger "deal damage to the active/triggered player" — the
@@ -4263,6 +4354,21 @@ pub enum StaticAbility {
     CantBeActivated {
         /// Creatures whose activated abilities are suppressed.
         creature_filter: TargetRestriction,
+        /// Description for logging.
+        description: String,
+    },
+
+    /// Name-based activated-ability lock (Pithing Needle).
+    ///
+    /// Corresponds to Pithing Needle:
+    ///   `S:Mode$ CantBeActivated | ValidCard$ Card.NamedCard | ValidSA$ Activated.!ManaAbility`
+    ///
+    /// The source card's `Card::chosen_name` field holds the chosen name (set at ETB).
+    /// All non-mana activated abilities on any source whose name matches `chosen_name`
+    /// are suppressed while Pithing Needle is on the battlefield.
+    ///
+    /// Evaluated in `GameState::is_activated_ability_prohibited_by_name`.
+    CantBeActivatedByName {
         /// Description for logging.
         description: String,
     },

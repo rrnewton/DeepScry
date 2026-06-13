@@ -3068,6 +3068,7 @@ mod tests {
                 | StaticAbility::CantAttackIfDefenderHasUntappedPowerGE { .. }
                 | StaticAbility::CantAttackOrBlockMatching { .. }
                 | StaticAbility::CantBeActivated { .. }
+                | StaticAbility::CantBeActivatedByName { .. }
                 | StaticAbility::ExtraLandPlay { .. }
                 | StaticAbility::LifeFloor { .. }
                 | StaticAbility::DamageToExileLibrary { .. }

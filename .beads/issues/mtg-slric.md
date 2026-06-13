@@ -1,0 +1,12 @@
+---
+title: Implement CastWithoutPaying delayed effect for Suspend mechanic
+status: open
+priority: 4
+issue_type: task
+created_at: 2026-06-13T16:27:56.540512788+00:00
+updated_at: 2026-06-13T16:27:56.540512788+00:00
+---
+
+# Description
+
+DelayedEffect::CastWithoutPaying in game/state.rs is not implemented. This is used by the Suspend mechanic (MTG CR 702.61): when the last time counter is removed from a suspended card, it's cast without paying its mana cost. Currently logs a warning and does nothing. Fix: when CastWithoutPaying fires, put the card on the stack bypassing normal mana costs (similar to Cascade/free-cast from exile). The card should be treated as being cast from exile (or wherever it came from), triggers 'when you cast' effects, and resolves normally. Complexity: needs to thread through the normal cast-spell infrastructure with a 'no cost' flag, similar to MayPlayOneWithoutManaCost.

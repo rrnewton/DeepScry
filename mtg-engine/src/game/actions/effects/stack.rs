@@ -424,7 +424,7 @@ impl GameState {
                     count: _,
                     valid_type: _,
                 } => {
-                    // TODO: Implement sacrifice payment
+                    // TODO(mtg-884): Implement sacrifice payment for UnlessCost
                     // For now, return false (can't pay)
                     log::debug!("UnlessCost: Sacrifice payment not yet implemented");
                     false

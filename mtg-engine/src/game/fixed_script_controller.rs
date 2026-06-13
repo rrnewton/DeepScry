@@ -413,7 +413,7 @@ impl PlayerController for FixedScriptController {
         _may_not_untap_permanents: &[CardId],
     ) -> ChoiceResult<SmallVec<[CardId; 8]>> {
         // Script controller always untaps everything (returns empty list = untap all)
-        // TODO: Could add script commands for controlling this choice
+        // TODO(mtg-144): Could add script commands for controlling this choice
         ChoiceResult::Ok(SmallVec::new())
     }
 
