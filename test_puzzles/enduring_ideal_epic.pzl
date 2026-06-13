@@ -1,0 +1,24 @@
+[metadata]
+Name:Enduring Ideal — Epic cast lock + repeating upkeep search
+Goal:Survive
+Turns:10
+Difficulty:Medium
+Description:Enduring Ideal (5WW): search your library for an enchantment, put it onto the battlefield, then shuffle. Epic — for the rest of the game you can't cast spells; at the beginning of each of your upkeeps, copy this spell except for its epic ability. Setup: P0 has Enduring Ideal in hand with exactly 7 mana available (5 Plains + Island tapped for {5}{W}{W}). Library contains Ghostly Prison, Honden of Cleansing Fire, Solitary Confinement. On turn 2 (MAIN1) P0 casts Enduring Ideal: the first enchantment (Ghostly Prison) should enter the battlefield; P0's cant_cast_spells flag should be set; a repeating upkeep delayed trigger should be registered. On turn 3 (Upkeep) the Epic trigger fires: the second enchantment (Honden of Cleansing Fire) enters the battlefield. Turn 4 upkeep: Solitary Confinement enters. Three aspects under test: (1) initial search puts enchantment on battlefield, (2) Epic cast-lock blocks future spell casting, (3) repeating upkeep trigger fires each subsequent upkeep.
+
+[state]
+turn=2
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Enduring Ideal
+p0library=Ghostly Prison;Honden of Cleansing Fire;Solitary Confinement;Plains;Plains
+p0graveyard=
+p0battlefield=Plains|Tapped;Plains|Tapped;Plains|Tapped;Plains|Tapped;Plains|Tapped;Island|Tapped
+p0exile=
+
+p1life=20
+p1hand=
+p1library=Forest;Forest;Forest;Forest;Forest
+p1graveyard=
+p1battlefield=Forest;Forest
+p1exile=

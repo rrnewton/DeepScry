@@ -10333,4 +10333,69 @@ Oracle:Prowess
             "Controller-scoped trigger (ValidActivatingPlayer$ You) must NOT be global"
         );
     }
+
+    /// Parser unit test: Enduring Ideal must parse with the Epic keyword and a
+    /// SearchLibrary effect (mtg-910 B9 — Epic mechanic).
+    ///
+    /// Card script (cardsfolder/e/enduring_ideal.txt):
+    ///   K:Epic
+    ///   A:SP$ ChangeZone | Origin$ Library | Destination$ Battlefield
+    ///     | ChangeType$ Enchantment | ChangeNum$ 1
+    ///     | SpellDescription$ Search your library for an enchantment card,
+    ///       put it onto the battlefield, then shuffle.
+    ///
+    /// Three assertions:
+    ///   1. Keyword::Epic is present in the parsed card's keyword set.
+    ///   2. The card produces at least one effect of type Effect::SearchLibrary.
+    ///   3. The SearchLibrary effect targets Enchantment cards going to Battlefield
+    ///      (the non-Epic body that the repeating upkeep trigger will re-execute).
+    #[cfg(feature = "native")]
+    #[test]
+    fn test_parse_enduring_ideal_epic_keyword_and_search() {
+        use crate::core::{Effect, Keyword};
+        use crate::zones::Zone;
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("../cardsfolder/e/enduring_ideal.txt");
+        if !path.exists() {
+            eprintln!("Skipping: cardsfolder not present");
+            return;
+        }
+        let def = CardLoader::load_from_file(&path).expect("Enduring Ideal should load");
+        let card = def.instantiate(crate::core::CardId::new(1), crate::core::PlayerId::new(0));
+
+        // 1. Epic keyword must be present.
+        assert!(
+            card.keywords.contains(Keyword::Epic),
+            "Enduring Ideal must have the Epic keyword (K:Epic line in card script)"
+        );
+
+        // 2. Must produce at least one SearchLibrary effect.
+        let has_search = card.effects.iter().any(|e| matches!(e, Effect::SearchLibrary { .. }));
+        assert!(
+            has_search,
+            "Enduring Ideal must have a SearchLibrary effect \
+             (SP$ ChangeZone | Origin$ Library | Destination$ Battlefield | ChangeType$ Enchantment)"
+        );
+
+        // 3. The SearchLibrary effect targets enchantments → battlefield.
+        let search = card.effects.iter().find_map(|e| {
+            if let Effect::SearchLibrary {
+                card_type_filter,
+                destination,
+                ..
+            } = e
+            {
+                Some((card_type_filter.clone(), *destination))
+            } else {
+                None
+            }
+        });
+        let (filter, dest) = search.expect("SearchLibrary effect not found");
+        assert!(
+            filter.to_lowercase().contains("enchantment"),
+            "SearchLibrary filter must target enchantments, got: {filter}"
+        );
+        assert_eq!(dest, Zone::Battlefield, "SearchLibrary destination must be Battlefield");
+    }
 }
