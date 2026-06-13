@@ -1,0 +1,24 @@
+[metadata]
+Name:Attunement Return-Draw-Discard
+Goal:Win
+Turns:5
+Difficulty:Easy
+Description:Verify Attunement activated ability whose cost is "Return Attunement to its owner's hand": draw 3 cards, then discard 4 cards. Regression for the Return<N/Type> activation-cost concept (mtg-913 2000 WC Replenish deck). Before the fix Attunement's whole ability was silently dropped at load time (the cost parser had no Return<...> arm), so it was a do-nothing enchantment.
+
+[state]
+turn=2
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Plains; Plains
+p0library=Plains; Plains; Plains; Plains; Plains; Plains; Plains; Plains; Plains; Plains
+p0graveyard=
+p0battlefield=Island; Island; Island; Attunement
+p0exile=
+
+p1life=20
+p1hand=
+p1library=Mountain; Mountain; Mountain; Mountain; Mountain; Mountain; Mountain; Mountain; Mountain; Mountain
+p1graveyard=
+p1battlefield=Mountain; Mountain; Mountain
+p1exile=

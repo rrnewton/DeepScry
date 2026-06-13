@@ -1,0 +1,69 @@
+---
+title: 'Card Compatibility: Attunement (2000 WC Replenish) — Return-cost WORKING'
+status: open
+priority: 3
+issue_type: task
+created_at: 2026-06-13T19:45:04.586539866+00:00
+updated_at: 2026-06-13T19:45:04.586539866+00:00
+---
+
+# Description
+
+STAMP: 2026-06-13_#3389(1ae0e772f)
+
+Card: cardsfolder/a/attunement.txt
+Set: 2000 World Championship — Replenish deck (decks/championship/2000/03_vandelogt_replenish.dck, 4-of)
+Tracker: mtg-912 / backlog mtg-913
+
+Card text:
+  {2}{U} Enchantment
+  A:AB$ Draw | Cost$ Return<1/CARDNAME> | NumCards$ 3 | SubAbility$ DBDiscard
+  SVar:DBDiscard:DB$ Discard | NumCards$ 4 | Mode$ TgtChoose
+  Oracle: Return Attunement to its owner's hand: Draw three cards, then discard four cards.
+
+Findings (2026-06-13_#3389(1ae0e772f), compat-2000-wave10):
+
+1. [BROKEN->FIXED] Return<1/CARDNAME> activation cost was unparseable.
+   Cost::parse had no Return<...> arm -> returned None -> the loader's
+   'skip abilities without parseable cost' branch (loader/card.rs) dropped the
+   WHOLE activated ability (silently, no Unimplemented warning). Attunement was
+   a do-nothing 3-mana enchantment.
+   FIX: new Cost::ReturnToHand { count, card_type } variant + parse_single arm
+   mirroring Sac<N/Type>; pay_ability_cost arm moves chosen permanent(s)
+   battlefield->owner's hand; activation-availability guard reuses
+   can_pay_sacrifice_pattern (same filter, different destination zone).
+2. [x] Ability now offered, cost paid, draw-3 + discard-4 both run.
+
+Reproducer:
+
+```sh
+./target/release/mtg tui --start-state test_puzzles/attunement_return_draw_discard.pzl \
+  --p1=fixed --p2=zero --p1-fixed-inputs='activate Attunement;*;*;*;*;*' \
+  --stop-on-choice=10 --seed 42 --verbosity 3
+```
+
+Expected log evidence:
+
+```
+Attunement activates ability: Draw three cards, then discard four cards.
+Attunement (8) is returned to hand
+Player 1 draws Plains (15)
+Player 1 draws Swamp (14)
+Player 1 draws Grizzly Bears (13)
+Player 1 discards Mountain
+... (4 discards total)
+```
+
+Unit tests: core::costs::tests::test_parse_return_to_hand_cardname,
+  test_parse_return_to_hand_typed;
+  game::actions::tests::effects::tests::test_card_compat_attunement_return_cost
+E2E test: tests/attunement_return_draw_discard_e2e.sh
+  (+ test_puzzles/attunement_return_draw_discard.pzl)
+
+MTG Rules Review: PASS with CONCERN (CR 118 cost payment, CR 602.1 ability
+availability). CONCERN: multi-match controller-choice deferred (TODO mtg-144,
+pre-existing SacrificePattern limitation, not worsened); the Return cost class
+also affects the AlternativeCost path (Daze: Return<1/Island>) and unless-cost
+path which still mis-parse Return<...> as garbage mana — deferred to a follow-up.
+
+CARD STATUS: WORKING — Return-to-hand activation cost + draw/discard chain verified in real game.

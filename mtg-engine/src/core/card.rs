@@ -705,6 +705,7 @@ fn derive_side_cost_from_cost(cost: &crate::core::Cost) -> crate::core::ManaSide
         | Cost::Untap
         | Cost::Mana(_)
         | Cost::TapAndMana(_)
+        | Cost::ReturnToHand { .. }
         | Cost::Discard { .. }
         | Cost::DiscardHand
         | Cost::Waterbend { .. }

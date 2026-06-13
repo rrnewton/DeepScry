@@ -64,6 +64,7 @@ workflow, row format, and update rules.
 | AB$ DealDamage (single target, X = 1)      | WORKING | 2026-05-12_#2226(928ec99f) | (none)     | Triskelion          |
 | Cost$ SubCounter<+1/+1>                    | WORKING | 2026-05-12_#2226(928ec99f) | (fixed)    | Triskelion          |
 | Cost$ T (tap as cost)                      | WORKING | 2026-05-12_#2226(928ec99f) | (none)     | Bazaar of Baghdad   |
+| Cost$ Return<N/Type> (return permanent(s) to owner's hand as activation cost; CARDNAME bounces self) | WORKING | 2026-06-13_#3389(1ae0e772f) | (fixed mtg-913) | Attunement |
 | Mode$ TgtChoose (controller picks discard) | WORKING | 2026-05-12_#2226(928ec99f) | (none)     | Bazaar of Baghdad   |
 | AB$ Pump Cost$ R NumAtt$ +1 (firebreathing) | WORKING | 2026-05-29_#2432(f85d828d) | (none)    | Shivan Dragon       |
 | AB$ Pump Cost$ T ValidTgts$ Creature.X (targeted activated pump) | WORKING | 2026-05-30_#2525(d40c4206) | (fixed) | Mishra's Factory |

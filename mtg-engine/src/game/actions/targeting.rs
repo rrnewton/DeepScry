@@ -997,6 +997,7 @@ impl GameState {
             | Cost::Mana(_)
             | Cost::TapAndMana(_)
             | Cost::Sacrifice { .. }
+            | Cost::ReturnToHand { .. }
             | Cost::PayLife { .. }
             | Cost::Discard { .. }
             | Cost::DiscardHand

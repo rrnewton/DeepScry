@@ -510,6 +510,7 @@ impl GameState {
                     Cost::Untap
                     | Cost::Mana(_)
                     | Cost::TapAndMana(_)
+                    | Cost::ReturnToHand { .. }
                     | Cost::PayLife { .. }
                     | Cost::Discard { .. }
                     | Cost::DiscardHand
@@ -968,6 +969,52 @@ impl GameState {
                 self.move_card(*sac_id, Zone::Battlefield, dest, owner)?;
                 // Check sacrifice triggers
                 self.check_triggers(TriggerEvent::Sacrificed, *sac_id)
+            }
+
+            Cost::ReturnToHand { count, card_type } => {
+                // Return permanent(s) matching the pattern to their owner's hand as
+                // a cost (Attunement: "Return CARDNAME to its owner's hand").
+                // Mirrors SacrificePattern's selection but the chosen permanents
+                // move to hand instead of the graveyard. CR 118.8 (bounce cost).
+                // TODO(mtg-144): let the controller choose when more than one
+                // permanent matches; today we deterministically pick CARDNAME or
+                // the lowest-id matching permanent (heuristic-safe, network-safe).
+                let mut to_return = Vec::new();
+
+                if card_type == "CARDNAME" {
+                    to_return.push(card_id);
+                } else {
+                    // Battlefield is already in a deterministic order; scanning it
+                    // gives a network-safe, reproducible choice.
+                    let battlefield_cards = self.battlefield.cards.to_vec();
+                    for permanent_id in battlefield_cards {
+                        if to_return.len() >= *count as usize {
+                            break;
+                        }
+                        let card = self.cards.get(permanent_id)?;
+                        if card.controller != player_id {
+                            continue;
+                        }
+                        if crate::game::GameState::card_matches_type_filter_static(card, card_type) {
+                            to_return.push(permanent_id);
+                        }
+                    }
+                }
+
+                if to_return.len() < *count as usize {
+                    return Err(MtgError::InvalidAction(format!(
+                        "Not enough permanents of type {} to return to hand (need {}, found {})",
+                        card_type,
+                        count,
+                        to_return.len()
+                    )));
+                }
+
+                for ret_id in to_return.iter().take(*count as usize) {
+                    let owner = self.cards.get(*ret_id)?.owner;
+                    self.move_card(*ret_id, Zone::Battlefield, Zone::Hand, owner)?;
+                }
+                Ok(())
             }
 
             Cost::Discard { card_id: _ } => {

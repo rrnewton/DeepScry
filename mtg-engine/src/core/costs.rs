@@ -31,6 +31,16 @@ pub enum Cost {
         card_type: String, // e.g., "Land", "Creature.Other", "CARDNAME"
     },
 
+    /// Return a permanent matching a pattern to its owner's hand as a cost
+    /// (e.g., "Return<1/CARDNAME>" = bounce the source itself; "Return<1/Island>"
+    /// = return an Island you control). Resolved to specific card choices at
+    /// activation time, mirroring [`Cost::SacrificePattern`] but moving the
+    /// chosen permanent(s) to hand instead of the graveyard.
+    ReturnToHand {
+        count: u8,
+        card_type: String, // e.g., "CARDNAME", "Land", "Island"
+    },
+
     /// Pay life
     PayLife { amount: i32 },
 
@@ -72,6 +82,7 @@ impl Cost {
         // Check for composite costs (space-separated, but not mana symbols like "2 T" which we handle specially)
         // Look for patterns like "T Sac<1/Land>" or "1 Sac<1/CARDNAME>" or "PayLife<1> T"
         let has_sac = trimmed.contains("Sac<");
+        let has_return = trimmed.contains("Return<");
         let has_pay_life = trimmed.contains("PayLife<");
         let has_tap = trimmed.contains(" T")
             || trimmed.contains(" Tap")
@@ -79,7 +90,8 @@ impl Cost {
             || trimmed.starts_with("Tap ");
 
         // If we have multiple cost components, parse as composite
-        if (has_sac || has_pay_life) && (has_tap || trimmed.chars().any(|c| c.is_ascii_digit() || "WUBRG".contains(c)))
+        if (has_sac || has_return || has_pay_life)
+            && (has_tap || trimmed.chars().any(|c| c.is_ascii_digit() || "WUBRG".contains(c)))
         {
             // Parse each component separately
             let mut components = Vec::new();
@@ -124,6 +136,7 @@ impl Cost {
                         | Cost::TapAndMana(_)
                         | Cost::Sacrifice { .. }
                         | Cost::SacrificePattern { .. }
+                        | Cost::ReturnToHand { .. }
                         | Cost::PayLife { .. }
                         | Cost::Discard { .. }
                         | Cost::DiscardHand
@@ -193,6 +206,22 @@ impl Cost {
                     if let Ok(count) = parts[0].parse::<u8>() {
                         let card_type = parts[1].to_string();
                         return Some(Cost::SacrificePattern { count, card_type });
+                    }
+                }
+            }
+        }
+
+        // Return-to-hand cost (e.g., "Return<1/CARDNAME>", "Return<1/Island>").
+        // Mirrors the Sac<N/Type> shape but bounces the chosen permanent(s) to
+        // hand instead of sacrificing them.
+        if trimmed.starts_with("Return<") && trimmed.ends_with('>') {
+            if let Some(spec) = trimmed.strip_prefix("Return<").and_then(|s| s.strip_suffix('>')) {
+                // Parse format: "N/Type" or "N/Type/description"
+                let parts: Vec<&str> = spec.split('/').collect();
+                if parts.len() >= 2 {
+                    if let Ok(count) = parts[0].parse::<u8>() {
+                        let card_type = parts[1].to_string();
+                        return Some(Cost::ReturnToHand { count, card_type });
                     }
                 }
             }
@@ -296,6 +325,7 @@ impl Cost {
             | Cost::Mana(_)
             | Cost::Sacrifice { .. }
             | Cost::SacrificePattern { .. }
+            | Cost::ReturnToHand { .. }
             | Cost::PayLife { .. }
             | Cost::Discard { .. }
             | Cost::DiscardHand
@@ -315,6 +345,7 @@ impl Cost {
             | Cost::Untap
             | Cost::Sacrifice { .. }
             | Cost::SacrificePattern { .. }
+            | Cost::ReturnToHand { .. }
             | Cost::PayLife { .. }
             | Cost::Discard { .. }
             | Cost::DiscardHand
@@ -333,6 +364,7 @@ impl Cost {
             | Cost::Untap
             | Cost::Sacrifice { .. }
             | Cost::SacrificePattern { .. }
+            | Cost::ReturnToHand { .. }
             | Cost::PayLife { .. }
             | Cost::Discard { .. }
             | Cost::DiscardHand
@@ -354,6 +386,7 @@ impl Cost {
             | Cost::TapAndMana(_)
             | Cost::Sacrifice { .. }
             | Cost::SacrificePattern { .. }
+            | Cost::ReturnToHand { .. }
             | Cost::Discard { .. }
             | Cost::DiscardHand
             | Cost::Waterbend { .. }
@@ -372,6 +405,7 @@ impl Cost {
             | Cost::Untap
             | Cost::Mana(_)
             | Cost::TapAndMana(_)
+            | Cost::ReturnToHand { .. }
             | Cost::PayLife { .. }
             | Cost::Discard { .. }
             | Cost::DiscardHand
@@ -393,6 +427,7 @@ impl Cost {
             | Cost::TapAndMana(_)
             | Cost::Sacrifice { .. }
             | Cost::SacrificePattern { .. }
+            | Cost::ReturnToHand { .. }
             | Cost::PayLife { .. }
             | Cost::Discard { .. }
             | Cost::DiscardHand
@@ -414,6 +449,7 @@ impl Cost {
             | Cost::TapAndMana(_)
             | Cost::Sacrifice { .. }
             | Cost::SacrificePattern { .. }
+            | Cost::ReturnToHand { .. }
             | Cost::PayLife { .. }
             | Cost::Discard { .. }
             | Cost::DiscardHand
@@ -438,6 +474,7 @@ impl Cost {
             | Cost::TapAndMana(_)
             | Cost::Sacrifice { .. }
             | Cost::SacrificePattern { .. }
+            | Cost::ReturnToHand { .. }
             | Cost::PayLife { .. }
             | Cost::Discard { .. }
             | Cost::DiscardHand
@@ -458,6 +495,7 @@ impl Cost {
             | Cost::TapAndMana(_)
             | Cost::Sacrifice { .. }
             | Cost::SacrificePattern { .. }
+            | Cost::ReturnToHand { .. }
             | Cost::PayLife { .. }
             | Cost::Discard { .. }
             | Cost::DiscardHand
@@ -477,6 +515,30 @@ impl Cost {
             | Cost::Mana(_)
             | Cost::TapAndMana(_)
             | Cost::Sacrifice { .. }
+            | Cost::ReturnToHand { .. }
+            | Cost::PayLife { .. }
+            | Cost::Discard { .. }
+            | Cost::DiscardHand
+            | Cost::Waterbend { .. }
+            | Cost::AddLoyalty { .. }
+            | Cost::SubLoyalty { .. }
+            | Cost::SubCounter { .. } => None,
+        }
+    }
+
+    /// Get the return-to-hand pattern if this cost contains a `ReturnToHand`
+    /// component (Attunement-style "Return CARDNAME to its owner's hand"),
+    /// recursing into Composite costs. Returns (count, card_type).
+    pub fn get_return_pattern(&self) -> Option<(u8, &str)> {
+        match self {
+            Cost::ReturnToHand { count, card_type } => Some((*count, card_type.as_str())),
+            Cost::Composite(costs) => costs.iter().find_map(|c| c.get_return_pattern()),
+            Cost::Tap
+            | Cost::Untap
+            | Cost::Mana(_)
+            | Cost::TapAndMana(_)
+            | Cost::Sacrifice { .. }
+            | Cost::SacrificePattern { .. }
             | Cost::PayLife { .. }
             | Cost::Discard { .. }
             | Cost::DiscardHand
@@ -583,6 +645,41 @@ mod tests {
         let cost = Cost::parse("Waterbend<5>").unwrap();
         assert_eq!(cost, Cost::Waterbend { amount: 5 });
         assert_eq!(cost.get_waterbend_amount(), Some(5));
+    }
+
+    #[test]
+    fn test_parse_return_to_hand_cardname() {
+        // Attunement: "Return<1/CARDNAME>" — bounce the source itself as a cost.
+        // mtg-913 B-followup (Return cost concept).
+        let cost = Cost::parse("Return<1/CARDNAME>").unwrap();
+        assert_eq!(
+            cost,
+            Cost::ReturnToHand {
+                count: 1,
+                card_type: "CARDNAME".to_string(),
+            }
+        );
+        // Return-to-hand is not a tap/mana/life/sacrifice/loyalty cost.
+        assert!(!cost.includes_tap());
+        assert!(!cost.includes_mana());
+        assert!(!cost.requires_sacrifice());
+        assert_eq!(cost.get_life_cost(), None);
+        assert_eq!(cost.get_sacrifice_pattern(), None);
+        assert_eq!(cost.get_return_pattern(), Some((1, "CARDNAME")));
+    }
+
+    #[test]
+    fn test_parse_return_to_hand_typed() {
+        // Daze-style alt cost / generic "return an Island you control".
+        let cost = Cost::parse("Return<1/Island>").unwrap();
+        assert_eq!(
+            cost,
+            Cost::ReturnToHand {
+                count: 1,
+                card_type: "Island".to_string(),
+            }
+        );
+        assert_eq!(cost.get_return_pattern(), Some((1, "Island")));
     }
 
     #[test]

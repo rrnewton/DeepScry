@@ -1550,6 +1550,22 @@ impl<'a> GameLoop<'a> {
                         }
                     }
 
+                    // Check return-to-hand cost (e.g., Attunement's "Return<1/CARDNAME>").
+                    // Reuses can_pay_sacrifice_pattern: both costs need N battlefield
+                    // permanents matching the same filter; only the destination zone
+                    // differs (hand vs. graveyard). Without this, an unpayable
+                    // Return<1/Island> would be offered and loop the AI.
+                    if can_activate {
+                        if let Some((ret_count, ret_pattern)) = ability.cost.get_return_pattern() {
+                            if !self
+                                .game
+                                .can_pay_sacrifice_pattern(ret_pattern, ret_count, card_id, player_id)
+                            {
+                                can_activate = false;
+                            }
+                        }
+                    }
+
                     // Check loyalty cost: once-per-turn rule (MTG CR 606.3) and affordability
                     // Uses contains_loyalty_cost() to handle loyalty costs inside Composite
                     if can_activate && ability.cost.contains_loyalty_cost() {

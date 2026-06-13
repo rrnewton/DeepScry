@@ -8604,6 +8604,58 @@ mod tests {
         assert_eq!(power4, 0, "Serra Avatar P must be 0 at life=0");
     }
 
+    /// Card compat: Attunement (cardsfolder/a/attunement.txt) — 2000 WC
+    /// Replenish deck (mtg-913 Return-cost followup).
+    ///
+    /// Script:
+    ///   `A:AB$ Draw | Cost$ Return<1/CARDNAME> | NumCards$ 3 | SubAbility$ DBDiscard`
+    ///   `SVar:DBDiscard:DB$ Discard | NumCards$ 4 | Mode$ TgtChoose`
+    ///
+    /// Before the Return-cost fix the whole activated ability was DROPPED at
+    /// load time (the cost parser had no `Return<...>` arm, so `Cost::parse`
+    /// returned None and the loader skipped the ability). This parser-shape
+    /// test asserts the ability now survives loading with a `ReturnToHand`
+    /// cost and the Draw effect intact.
+    #[test]
+    fn test_card_compat_attunement_return_cost() {
+        use std::path::PathBuf;
+
+        if !PathBuf::from("../cardsfolder/a/attunement.txt").exists() {
+            eprintln!("Skipping: cardsfolder not present");
+            return;
+        }
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+
+        let attune_id = load_test_card(&mut game, "Attunement", p1_id).expect("Attunement should load");
+        let attune = game.cards.get(attune_id).expect("card");
+
+        // The activated ability must survive loading (previously dropped).
+        assert!(
+            !attune.activated_abilities.is_empty(),
+            "Attunement must have its activated ability after loading. Abilities: {:?}",
+            attune.activated_abilities
+        );
+
+        // Exactly one ability, whose cost is the Return<1/CARDNAME> bounce.
+        let ability = &attune.activated_abilities[0];
+        assert_eq!(
+            ability.cost.get_return_pattern(),
+            Some((1, "CARDNAME")),
+            "Attunement's cost must parse as ReturnToHand<1/CARDNAME>, got {:?}",
+            ability.cost
+        );
+
+        // The ability draws (the Discard rider chains via SubAbility).
+        let has_draw = ability.effects.iter().any(|e| matches!(e, Effect::DrawCards { .. }));
+        assert!(
+            has_draw,
+            "Attunement's ability should draw cards. Effects: {:?}",
+            ability.effects
+        );
+    }
+
     /// Card compat: Lhurgoyf (cardsfolder/l/lhurgoyf.txt) — mtg-916 B2.
     ///
     /// Script:
