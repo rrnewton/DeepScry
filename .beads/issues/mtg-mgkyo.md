@@ -1,0 +1,28 @@
+---
+title: 'CI: validate examples job flaking at 600s timeout'
+status: open
+priority: 3
+issue_type: task
+created_at: 2026-06-13T21:16:02.809263201+00:00
+updated_at: 2026-06-13T21:16:02.809263201+00:00
+---
+
+# Description
+
+Root cause: run_examples.sh used GNU parallel --jobs 4 to run the 17 example programs in parallel, but GNU parallel is NOT installed on GitHub CI's ubuntu-latest runners. Without it, the script silently fell back to sequential execution. Running 17 game simulations sequentially, each invoked via `cargo run --example <X>` (which re-enters cargo's file lock for each example), took ~441 s locally on a fast 16-core box and exceeded 600 s on a slow 2-vCPU CI runner, causing intermittent CI red.
+
+Fix applied in branch claude/fix-ci-examples-timeout:
+
+1. Rewrote scripts/run_examples.sh to use a build-once / run-in-parallel strategy:
+   - ONE `cargo build -p mtg-engine --features network --examples --message-format json` invocation builds all example binaries (the shared mtg-engine lib is compiled once).
+   - Collected pre-built binary paths from cargo JSON output (robust, excludes lobby_probe).
+   - Runs pre-built binaries with `xargs -d '\n' -P$(nproc)` — no GNU parallel dependency, scales to all cores.
+   Expected wall-clock: ~30-60 s for runs (build already cached on CI via rust-cache); cold-start (build + run): ~5-12 min well under 20-min backstop.
+
+2. Raised the validate.py examples.run step timeout from 600 s (DEFAULT_STEP_TIMEOUT) to 1200 s as an explicit backstop, with a comment explaining the rationale.
+
+3. Added `timeout-minutes: 35` to the quick CI job (covers both lint and examples shards); previously the job had no timeout, falling back to GitHub's 6-hour default.
+
+No behavior change to the examples themselves — same 17 programs, same exclusion of lobby_probe, same failure reporting.
+
+Commits: branch claude/fix-ci-examples-timeout off origin/integration.

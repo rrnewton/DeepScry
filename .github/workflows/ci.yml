@@ -128,6 +128,10 @@ jobs:
   quick:
     name: validate ${{ matrix.name }}
     runs-on: ubuntu-latest
+    # examples: cold debug build (~5-10 min on 2-vCPU) + 17 parallel runs
+    # (~2-4 min); 35 min is a safe ceiling that beats the old per-step 600 s
+    # timeout that caused intermittent CI failures.  lint is fast (~10 min cold).
+    timeout-minutes: 35
     strategy:
       fail-fast: false
       matrix:

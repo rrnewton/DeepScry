@@ -372,8 +372,18 @@ def build_registry():
     # build-once) has no binary unless we declare it. (mtg-761)
     add(Step("unit", "nextest", "cargo nextest run --features network",
              "make test", deps=["build.mtg-release"], env=_REUSE, timeout=BUILD_STEP_TIMEOUT))
-    # --- examples (own debug build) ---
-    add(Step("examples", "run", "run all examples (parallel)", "make examples"))
+    # --- examples (build-once debug build, then run pre-built binaries in parallel) ---
+    # run_examples.sh does ONE `cargo build --examples` then runs the pre-built
+    # binaries with `xargs -P$(nproc)`.  No per-example cargo invocation, no
+    # dependency on GNU parallel (which is absent on ubuntu-latest CI runners).
+    # Timeout raised from DEFAULT_STEP_TIMEOUT (600 s) to 1200 s as a backstop:
+    # build + 17 parallel runs is comfortably under 300 s locally but CI runners
+    # are slow 2-vCPU boxes where a cold debug build can take ~200-300 s alone.
+    # (Root cause of CI flake: sequential fallback when GNU parallel was missing
+    # pushed wall-clock well past 600 s.  Fix: xargs-based parallel always works.
+    # Beads: see the hash issue filed in this commit for full root-cause analysis.)
+    add(Step("examples", "run", "run all examples (parallel, build-once)",
+             "make examples", timeout=1200))
     # --- agentplay (python; agent_game.py + mode-equivalence drive the release
     # mtg binary, so these depend on build.mtg-release. The old monolithic CI
     # test-unit job built the binary in-job, which MASKED this dep; an isolated
