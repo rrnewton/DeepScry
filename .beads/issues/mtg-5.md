@@ -87,3 +87,16 @@ Checked up-to-date as of 2026-04-03_#2060(79616d6b).
 - Wave 2 (landed @engine-cleanup-wave2): CastingContext DRY in game_loop/actions.rs + TODO linking
 - Wave 3 (landed @engine-cleanup-wave3): consume_next_target helper in actions/mod.rs (also fixed Power Sink)
 - Wave 4 (branch claude/engine-cleanup-wave4, commit 18f29f02): extract apply_pump_bonus_and_log shared helper in effects/pump.rs; fixes variable-pump missing gamelog (Berserk was silent)
+**Engine-cleanup waves (structural refactor, zero behavior change):**
+- wave1: pump.rs split / DRY (landed integration, pre-wave)
+- wave2: CastingContext extraction from push_castable_* (mtg-g0h6m, landed integration @2026-05-xx)
+- wave3: consume_next_target helper extraction, resolve_effect_target DRY (landed integration @2d1d6af)
+- wave4: (see wave3 branch for details)
+- wave5 (2026-06-13_#3391(eef8eab22)): effects.rs 6280→3788 lines split into 4 submodules
+  (effects/mod.rs + triggers.rs + static_abilities.rs + activated_ability.rs);
+  CopyPermanent.add_types Vec<String> → add_subtypes SmallVec<[Subtype; 2]> (strong type);
+  infra issues filed: mtg-2b0d7 (Playwright XDG isolation), mtg-9ohle (WASM RefCell borrow).
+  Branch claude/engine-cleanup-wave5, validate 35/35.
+
+---
+Checked up-to-date as of 2026-04-03_#2060(79616d6b) (structure); wave5 appended 2026-06-13_#3391(eef8eab22).
