@@ -698,6 +698,147 @@
         #pane-hand { display: flex; flex-direction: column; }
         #pane-hand #hand-body { flex: 1 1 auto; overflow-y: auto; }
 
+        /* ── Visual hand mode ─────────────────────────────────────────────────
+           Stacked/fanned card layout for #hand-body when .visual-hand is set.
+           Tunable CSS custom properties (adjust these first):
+             --hand-card-w        : width of each card image tile
+             --hand-card-h        : height of each card image tile
+             --hand-overlap-pct   : what fraction of the card width is VISIBLE
+                                    (i.e. 1 - overlap). 0.35 = 35% showing,
+                                    65% hidden under the next card.
+             --hand-lift-px       : how far a hovered card rises (translateY).
+             --hand-title-h       : height of the title strip kept visible on
+                                    each card; determines min spacing when the
+                                    pane is too narrow for the full overlap pct.
+        ─────────────────────────────────────────────────────────────────────── */
+        :root {
+            --hand-card-w:      90px;
+            --hand-card-h:      126px;   /* ~poker-card aspect ratio */
+            --hand-overlap-pct: 0.38;    /* fraction of card width that shows */
+            --hand-lift-px:     22px;    /* hover lift amount */
+            --hand-title-h:     18px;    /* title strip height always exposed */
+        }
+
+        /* The body becomes a single horizontal strip when in visual mode */
+        #hand-body.visual-hand {
+            overflow: visible;   /* let raised cards show above the pane edge */
+            overflow-x: hidden;
+            padding: 6px 4px 4px;
+            /* We position each card absolutely; the container height is the
+               card height + a little room for the lift */
+            position: relative;
+            min-height: calc(var(--hand-card-h) + var(--hand-lift-px) + 8px);
+        }
+
+        /* Each card tile in visual mode */
+        .hand-card-visual {
+            position: absolute;
+            width: var(--hand-card-w);
+            height: var(--hand-card-h);
+            border-radius: 5px;
+            border: 1px solid #2a3a60;
+            background: #161e30;
+            cursor: pointer;
+            overflow: hidden;
+            /* card renders top↗ of its container, title strip at the top */
+            display: flex;
+            flex-direction: column;
+            transition: transform 0.15s ease, box-shadow 0.15s ease, z-index 0s;
+            /* default z-index comes from the inline style (index order) */
+        }
+        .hand-card-visual:hover {
+            transform: translateY(calc(-1 * var(--hand-lift-px)));
+            box-shadow: 0 8px 20px rgba(0, 0, 0, 0.6);
+            z-index: 200 !important;
+        }
+        .hand-card-visual.selected-hand {
+            border-color: #ffd700;
+            box-shadow: 0 0 8px rgba(255, 215, 0, 0.4);
+        }
+        .hand-card-visual.valid-choice {
+            border-color: #50fa7b;
+            box-shadow: 0 0 6px rgba(80, 250, 123, 0.35);
+        }
+        .hand-card-visual.selected-hand:hover,
+        .hand-card-visual.valid-choice:hover {
+            /* keep existing selection/valid glow on hover, add lift shadow */
+            box-shadow: 0 8px 20px rgba(0, 0, 0, 0.6),
+                        0 0 8px rgba(255, 215, 0, 0.3);
+            z-index: 200 !important;
+        }
+
+        /* The card image fills the tile */
+        .hand-card-visual .hcv-img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            border-radius: 4px;
+            display: block;
+            position: absolute;
+            top: 0; left: 0;
+        }
+
+        /* Title overlay strip — always visible at the top of the card tile.
+           Semi-transparent so the card art shows through a little. */
+        .hand-card-visual .hcv-title {
+            position: relative;   /* above the absolutely-placed img */
+            z-index: 1;
+            width: 100%;
+            background: rgba(16, 20, 40, 0.82);
+            color: #e0e0e0;
+            font-size: 9px;
+            line-height: 1.2;
+            padding: 2px 4px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            height: var(--hand-title-h);
+            flex-shrink: 0;
+        }
+        .hand-card-visual .hcv-title.valid-text { color: #50fa7b; }
+        .hand-card-visual .hcv-title.selected-text { color: #ffd700; }
+
+        /* No-image fallback: show card name centered in a colored tile */
+        .hand-card-visual.no-image {
+            justify-content: center;
+            align-items: center;
+            background: #1a2540;
+            border-color: #344870;
+        }
+        .hand-card-visual.no-image .hcv-title {
+            position: static;
+            background: none;
+            text-align: center;
+            color: #c0c0c0;
+            font-size: 10px;
+            white-space: normal;
+            overflow: visible;
+            height: auto;
+            padding: 4px;
+        }
+
+        /* Toggle button in the hand pane header */
+        .hand-mode-toggle {
+            float: right;
+            margin-left: 8px;
+            background: rgba(67, 97, 238, 0.25);
+            border: 1px solid #4361ee;
+            border-radius: 3px;
+            color: #aac4ff;
+            font-size: 10px;
+            padding: 1px 5px;
+            cursor: pointer;
+            line-height: 1.4;
+            font-weight: normal;
+            text-transform: none;
+            letter-spacing: 0;
+        }
+        .hand-mode-toggle:hover {
+            background: rgba(67, 97, 238, 0.45);
+            color: #d0e0ff;
+        }
+        /* ── end visual hand mode ──────────────────────────────────────────── */
+
         /* Player info */
         .player-info-block {
             padding: 8px 10px;
@@ -1006,7 +1147,9 @@
                 </div>
             </div>
             <div id="pane-hand" class="pane">
-                <div class="pane-header" id="hand-header">Hand</div>
+                <div class="pane-header" id="hand-header">Hand
+                    <button class="hand-mode-toggle" id="btn-hand-mode" title="Toggle visual/text hand (H)">&#128247;</button>
+                </div>
                 <div class="pane-body" id="hand-body"></div>
             </div>
             <div id="pane-graveyard" class="pane">
@@ -1029,7 +1172,7 @@
         <div class="status-bar" id="status-bar">
             <span class="phase">Loading...</span>
             <span class="turn"></span>
-            <span>Space=turn A=auto G=graveyard ?=help Q=exit</span>
+            <span>Space=turn A=auto G=graveyard H=hand-mode ?=help Q=exit</span>
         </div>
     </div>
 
@@ -1064,7 +1207,7 @@
             <div style="margin-top: 6px;">
                 <button id="btn-bug-report" style="background:#9c6644;">Report Bug</button>
             </div>
-            <div class="controls-hint">Space=turn A=auto G=graveyard Q=exit C=toggle ?=help</div>
+            <div class="controls-hint">Space=turn A=auto G=graveyard H=hand Q=exit C=toggle ?=help</div>
         </div>
     </div>
 
@@ -1527,6 +1670,10 @@
         const autoRunRequested = isAutoRunRequested();
         let gamePaused = !autoRunRequested;
         let showImages = gamePrefs.showImages;
+        // Visual hand mode: 'visual' (default) or 'text'. Persisted in localStorage.
+        let handMode = (() => {
+            try { return localStorage.getItem('mtg_hand_mode') || 'visual'; } catch (e) { return 'visual'; }
+        })();
         let fullCardsLoaded = false;
         let fullTokensLoaded = false;
         let allDeckNames = [];
@@ -2376,7 +2523,7 @@
             // auto-run (A / #btn-auto) re-renders the affordance even when the
             // view model is byte-identical. applyAutoRunState() drives the
             // updateUI() that observes the flipped flag here.
-            const renderKey = stateJson + (autoRunning ? '\x01af1' : '\x01af0') + '' + JSON.stringify(cardSizes);
+            const renderKey = stateJson + (autoRunning ? '\x01af1' : '\x01af0') + '\x01hm' + handMode + '\x01' + JSON.stringify(cardSizes);
             if (renderKey === _lastRenderKey) return;
             _lastRenderKey = renderKey;
 
@@ -2497,7 +2644,26 @@
             renderCardDetails(state.selected_card);
 
             const handCount = ourPlayer?.hand_size ?? 0;
-            document.getElementById('hand-header').textContent = `Hand (${handCount})`;
+            // Update hand header text while preserving the toggle button element.
+            const handHeader = document.getElementById('hand-header');
+            const handBtn = document.getElementById('btn-hand-mode');
+            if (handHeader) {
+                // The header contains a leading text node + the button element.
+                // Replace only the text node so the button survives innerHTML resets.
+                const newText = `Hand (${handCount}) `;
+                const firstChild = handHeader.firstChild;
+                if (firstChild && firstChild.nodeType === Node.TEXT_NODE) {
+                    if (firstChild.textContent !== newText) firstChild.textContent = newText;
+                } else {
+                    handHeader.insertBefore(document.createTextNode(newText), handHeader.firstChild);
+                }
+            }
+            if (handBtn) {
+                const isVisual = handMode === 'visual';
+                // 📷 = switch to visual; 📝 = switch to text
+                handBtn.textContent = isVisual ? '\u{1F4DD}' : '\u{1F4F7}';
+                handBtn.title = isVisual ? 'Switch to text hand (H)' : 'Switch to visual hand (H)';
+            }
         }
 
         /// Render the compact info bar text above each player's zones.
@@ -2649,13 +2815,14 @@
             renderCol(oppPlayer, oppCards, oppHeader, 'Theirs');
         }
 
-        /// Render the hand as a text list. Cards are already in display order
-        /// (lands first, then descending CMC) per `get_sorted_hand`, so JS
-        /// just walks the list.
-        function renderHand(player) {
-            const container = document.getElementById('hand-body');
-            if (!container) return;
-            const cards = player?.hand || [];
+        /// Render the hand as a text list (fallback / text mode). Cards are
+        /// already in display order (lands first, then descending CMC) per
+        /// `get_sorted_hand`, so JS just walks the list.
+        function renderHandText(cards, container) {
+            container.classList.remove('visual-hand');
+            // Clear any pooled visual tiles when switching from visual mode.
+            // The pool holds DOM-node references; they are removed by innerHTML below.
+            if (container._handCardPool) container._handCardPool = null;
             if (cards.length === 0) {
                 container.innerHTML = '<div style="color:#444; font-size:12px;">(empty)</div>';
                 return;
@@ -2669,6 +2836,171 @@
                     : '';
                 return `<div class="${classes.join(' ')}" data-card-id="${card.card_id}" data-idx="${i}">${escapeHtml(card.name)}${mana}</div>`;
             }).join('');
+        }
+
+        // ── Visual hand rendering ──────────────────────────────────────────────
+        //
+        // Layout: cards are absolutely positioned in a horizontal fan.
+        // The step between card left edges is computed adaptively so the
+        // fan fills the container width whether there are 2 or 10 cards.
+        //
+        // The full visible width of one card position is (card_w * overlap_pct),
+        // but with many cards we may need to shrink that step so all title strips
+        // stay visible (at least --hand-title-h worth of each card).
+        //
+        // We REUSE the exact same image pipeline as the battlefield:
+        //   cardImageCascade → applyImageMemo → cardImageHtml (with eager=true)
+        // so no second image-loading path exists and the memo carries over.
+        //
+        // NODE REUSE: card tiles are kept in a per-container pool keyed by
+        // card_id (same pattern as renderBattlefield), so unchanged cards do not
+        // recreate their <img> and Safari does not re-decode/flicker them.
+        function renderHandVisual(cards, container) {
+            container.classList.add('visual-hand');
+
+            // Read the CSS custom properties (hand-tuning knobs).
+            const cs = getComputedStyle(document.documentElement);
+            const cardW  = parseFloat(cs.getPropertyValue('--hand-card-w'))  || 90;
+            const cardH  = parseFloat(cs.getPropertyValue('--hand-card-h'))  || 126;
+            const titleH = parseFloat(cs.getPropertyValue('--hand-title-h')) || 18;
+
+            // Image height to request from the cascade (~card height in px).
+            const imgH = Math.round(cardH);
+
+            // Persistent tile pool keyed by card_id.
+            const pool = container._handCardPool || (container._handCardPool = new Map());
+            const seen = new Set();
+
+            if (cards.length === 0) {
+                // Evict all pooled tiles.
+                for (const el of pool.values()) el.remove();
+                pool.clear();
+                // Remove any lingering visual-hand content and show placeholder.
+                container.innerHTML = '<div style="color:#444; font-size:12px;">(empty)</div>';
+                return;
+            }
+
+            // Compute adaptive step between card left edges.
+            // Available width for the fan (container minus one card width
+            // so the rightmost card fits without clipping).
+            const paneW = container.clientWidth || (cardW * 2);
+            const fanWidth = Math.max(paneW - cardW - 8, cardW * 0.3);
+            const maxStep = fanWidth / Math.max(cards.length - 1, 1);
+            // Each step must expose at least the title strip width.
+            const minStep = Math.min(titleH + 2, cardW * 0.15);
+            const step = Math.max(minStep, Math.min(maxStep, cardW));
+
+            // Reconcile pool: create/update tiles, then position them.
+            for (let i = 0; i < cards.length; i++) {
+                const card = cards[i];
+                const id = card.card_id;
+                seen.add(id);
+
+                let el = pool.get(id);
+                if (!el) {
+                    el = document.createElement('div');
+                    el.setAttribute('data-card-id', String(id));
+                    container.appendChild(el);
+                    pool.set(id, el);
+                }
+
+                // Update classes.
+                const cls = ['hand-card-visual'];
+                if (card.is_selected) cls.push('selected-hand');
+                if (card.is_valid_choice) cls.push('valid-choice');
+
+                // Resolve image using the SAME cascade the battlefield uses.
+                const urls = showImages ? cardImageCascade(card, imgH) : [];
+                const hasImage = urls.length > 0;
+                if (!hasImage) cls.push('no-image');
+                el.className = cls.join(' ');
+
+                // Image identity key (for in-place reuse without <img> recreate).
+                const newImgKey = hasImage ? (applyImageMemo(urls).key || '') : '';
+                const oldImgKey = el.getAttribute('data-img-key') || '';
+                const imgKeyChanged = oldImgKey !== newImgKey;
+
+                if (imgKeyChanged) {
+                    el.setAttribute('data-img-key', newImgKey);
+                    const existingImg = el.querySelector('img.hcv-img');
+                    if (hasImage) {
+                        // cardImageHtml builds the <img> with inline onerror cascade + memo hooks,
+                        // eager=true (same as battlefield tiles).
+                        const imgHtml = cardImageHtml(urls, 'hcv-img', card.name, true);
+                        const tmp = document.createElement('template');
+                        tmp.innerHTML = imgHtml;
+                        const newImg = tmp.content.firstChild;
+                        if (existingImg) existingImg.replaceWith(newImg);
+                        else el.insertBefore(newImg, el.firstChild);
+                    } else if (existingImg) {
+                        existingImg.remove();
+                    }
+                }
+
+                // Title strip — always at top.
+                const titleCls = card.is_selected ? 'selected-text'
+                    : card.is_valid_choice ? 'valid-text' : '';
+                const desiredTitle = `<div class="hcv-title${titleCls ? ' ' + titleCls : ''}" title="${escapeAttr(card.name)}">${escapeHtml(card.name)}</div>`;
+                const oldTitle = el.getAttribute('data-title-html') || '';
+                if (oldTitle !== desiredTitle) {
+                    el.setAttribute('data-title-html', desiredTitle);
+                    const existingTitle = el.querySelector('.hcv-title');
+                    const tmp = document.createElement('template');
+                    tmp.innerHTML = desiredTitle;
+                    const newTitle = tmp.content.firstChild;
+                    if (existingTitle) existingTitle.replaceWith(newTitle);
+                    else el.appendChild(newTitle);
+                }
+
+                // Absolute positioning: left edge + z-index by slot.
+                const left = Math.round(4 + i * step);
+                if (el.style.left !== left + 'px') el.style.left = left + 'px';
+                if (el.style.top  !== '0px')       el.style.top  = '0px';
+                const zIdx = String(10 + i);
+                if (el.style.zIndex !== zIdx) el.style.zIndex = zIdx;
+
+                // Width/height in case CSS vars changed.
+                if (el.style.width  !== cardW + 'px') el.style.width  = cardW + 'px';
+                if (el.style.height !== cardH + 'px') el.style.height = cardH + 'px';
+            }
+
+            // Remove tiles for cards no longer in hand.
+            for (const [id, el] of pool.entries()) {
+                if (!seen.has(id)) {
+                    el.remove();
+                    pool.delete(id);
+                }
+            }
+        }
+
+        /// Top-level hand renderer: dispatches to text or visual mode.
+        function renderHand(player) {
+            const container = document.getElementById('hand-body');
+            if (!container) return;
+            const cards = player?.hand || [];
+            if (handMode === 'visual') {
+                renderHandVisual(cards, container);
+            } else {
+                renderHandText(cards, container);
+            }
+        }
+
+        /// Toggle between visual and text hand modes.
+        function toggleHandMode() {
+            handMode = (handMode === 'visual') ? 'text' : 'visual';
+            try { localStorage.setItem('mtg_hand_mode', handMode); } catch (e) { /* ignore */ }
+            // Force a re-render by clearing the last render key.
+            _lastRenderKey = null;
+            // Clean up pool when switching away from visual so stale tiles don't
+            // accumulate in the DOM behind the text list.
+            const container = document.getElementById('hand-body');
+            if (container && handMode === 'text') {
+                if (container._handCardPool) {
+                    for (const el of container._handCardPool.values()) el.remove();
+                    container._handCardPool = null;
+                }
+            }
+            updateUI();
         }
 
         /// Build a battlefield/hand card tile. CSS classes, formatted P/T,
@@ -3229,6 +3561,11 @@
                     e.preventDefault();
                     showGraveyardDialog();
                     break;
+                case 'h':
+                case 'H':
+                    e.preventDefault();
+                    toggleHandMode();
+                    break;
                 default:
                     // 1-9 quick select. When synthetic meta-choices are shown
                     // (AI-watch paused state), the number picks one of them
@@ -3462,9 +3799,16 @@
         }
 
         function setupEventDelegation() {
-            // Hand clicks.
+            // Hand mode toggle button.
+            const btnHandMode = document.getElementById('btn-hand-mode');
+            if (btnHandMode) btnHandMode.addEventListener('click', (e) => {
+                e.stopPropagation();
+                toggleHandMode();
+            });
+
+            // Hand clicks — handles both text (.hand-entry) and visual (.hand-card-visual) modes.
             document.getElementById('hand-body').addEventListener('click', (e) => {
-                const entry = e.target.closest('.hand-entry');
+                const entry = e.target.closest('.hand-entry, .hand-card-visual');
                 if (!entry) return;
                 selectCardById(parseInt(entry.dataset.cardId, 10), 'hand');
             });
