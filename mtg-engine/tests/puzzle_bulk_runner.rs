@@ -33,12 +33,34 @@ use mtg_engine::{
 };
 use rayon::prelude::*;
 use std::{
+    cell::RefCell,
     fs,
     io::Write,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
     time::Instant,
 };
+
+// ─── Per-rayon-worker async runtime ───────────────────────────────────────────
+// A single-threaded tokio runtime is created ONCE per rayon worker thread and
+// cached for its lifetime.  This avoids spawning 694 × num_cpus worker threads
+// (one multi-threaded runtime per puzzle), which was causing heavy
+// oversubscription when rayon's own pool was also sized to num_cpus.
+//
+// The `current_thread` runtime has no internal thread pool; `block_on` runs
+// the future directly on the calling thread.  That is all we need: each rayon
+// worker calls `block_on` for one puzzle at a time, sequentially on its own
+// thread, so there is no need for tokio-level parallelism inside a single task.
+//
+// Perf fix: mtg-5wds0 + claude/puzzle-runner-perf
+thread_local! {
+    static TOKIO_RT: RefCell<tokio::runtime::Runtime> = RefCell::new(
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("failed to create per-worker tokio runtime")
+    );
+}
 
 // ─── Outcome type ─────────────────────────────────────────────────────────────
 
@@ -129,8 +151,10 @@ fn workspace_root_for_puzzles() -> PathBuf {
 // ─── Single-puzzle runner ─────────────────────────────────────────────────────
 
 /// Run one puzzle and return the outcome.  This function is called from a rayon
-/// worker thread.  It creates its own tokio runtime (same pattern as
-/// `src/tournament.rs`) because rayon threads live outside any async context.
+/// worker thread.  It drives the per-worker thread-local tokio runtime (see
+/// `TOKIO_RT` above) rather than constructing a new multi-threaded runtime for
+/// each puzzle — avoiding the 694 × num_cpus thread oversubscription that made
+/// puzzle.bulk-check slow under rayon parallelism.
 fn run_one(path: &Path, card_db: &Arc<CardDatabase>) -> PuzzleOutcome {
     // --- Load puzzle file ---
     let contents = match fs::read_to_string(path) {
@@ -150,12 +174,11 @@ fn run_one(path: &Path, card_db: &Arc<CardDatabase>) -> PuzzleOutcome {
         }
     };
 
-    // --- Run game via a blocking tokio runtime ---
+    // --- Run game via the per-worker single-threaded tokio runtime ---
     let card_db_ref = Arc::clone(card_db);
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        tokio::runtime::Runtime::new()
-            .expect("failed to create tokio runtime")
-            .block_on(async move {
+        TOKIO_RT.with(|rt| {
+            rt.borrow().block_on(async move {
                 let mut game = load_puzzle_into_game(&puzzle, &card_db_ref).await?;
                 game.seed_rng(42);
 
@@ -176,6 +199,7 @@ fn run_one(path: &Path, card_db: &Arc<CardDatabase>) -> PuzzleOutcome {
 
                 Ok::<_, mtg_engine::MtgError>((puzzle.assertions.len(), report))
             })
+        })
     }));
 
     match result {
