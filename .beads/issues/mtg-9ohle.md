@@ -1,0 +1,12 @@
+---
+title: WASM RefCell already borrowed panic in browser e2e
+status: open
+priority: 2
+issue_type: task
+created_at: 2026-06-13T19:18:39.628695125+00:00
+updated_at: 2026-06-13T19:18:39.628695125+00:00
+---
+
+# Description
+
+WASM `RefCell already borrowed` panic in browser e2e — integration CI went red on two consecutive runs with a RefCell double-borrow in the WASM layer's browser e2e, then went green at 1ae0e772f. Likely an intermittent re-entrant borrow (BorrowMutError) in the WASM bindings. Investigate the re-entrancy and make the borrow non-overlapping; possibly determinism-relevant.
