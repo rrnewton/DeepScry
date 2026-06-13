@@ -6,7 +6,7 @@ issue_type: epic
 labels:
 - tracking
 created_at: 2025-10-26T21:06:34+00:00
-updated_at: 2026-06-13T18:53:59.081810256+00:00
+updated_at: 2026-06-13T21:03:23.418408785+00:00
 ---
 
 # Description
@@ -100,3 +100,9 @@ Checked up-to-date as of 2026-04-03_#2060(79616d6b).
 
 ---
 Checked up-to-date as of 2026-04-03_#2060(79616d6b) (structure); wave5 appended 2026-06-13_#3391(eef8eab22).
+
+- wave6 (2026-06-13_#3402(125e3c570)): DRY card-type filters + strengthen Effect::Balance types.
+  (1) Card::has_card_type_str added to core/card.rs; routed 8+ duplicate match blocks across
+  game/actions/mod.rs, effects/tapping.rs, effects/zones.rs, game_loop/actions.rs, priority.rs.
+  (2) Effect::Balance::card_type String → Option<CardType>; zone String → Zone enum.
+  Branch claude/engine-cleanup-wave6. 1228 tests pass. Pure refactor, no gameplay change.
