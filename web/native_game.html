@@ -176,6 +176,55 @@
             min-height: 0;
         }
 
+        /* ── Active-turn glow ──────────────────────────────────────────────
+           Whose-turn indicator: lights up the battlefield pane + its banner
+           with a vivid animated glow so it's unmistakable at a glance.
+           Tune these two custom properties to adjust the effect:
+             --glow-color   : base hue of the glow (default: warm gold/amber)
+             --glow-intense : peak box-shadow spread/opacity at pulse maximum
+        */
+        :root {
+            --glow-color: #f5a623;     /* warm amber/gold – easy to tune */
+            --glow-intense: 0 0 18px 6px rgba(245, 166, 35, 0.85),
+                            0 0 40px 12px rgba(245, 166, 35, 0.40),
+                            inset 0 0 0 2px rgba(245, 166, 35, 0.70);
+        }
+
+        @keyframes active-turn-pulse {
+            0%   { box-shadow: 0 0 10px 3px rgba(245, 166, 35, 0.55),
+                               0 0 24px 8px rgba(245, 166, 35, 0.22),
+                               inset 0 0 0 2px rgba(245, 166, 35, 0.45); }
+            50%  { box-shadow: var(--glow-intense); }
+            100% { box-shadow: 0 0 10px 3px rgba(245, 166, 35, 0.55),
+                               0 0 24px 8px rgba(245, 166, 35, 0.22),
+                               inset 0 0 0 2px rgba(245, 166, 35, 0.45); }
+        }
+
+        .pane.active-turn {
+            border-color: var(--glow-color);
+            animation: active-turn-pulse 1.8s ease-in-out infinite;
+            /* Lift the active pane above siblings so the outer glow
+               isn't clipped by adjacent panes' overflow:hidden. */
+            z-index: 2;
+        }
+
+        .pane.active-turn .pane-header {
+            background: #3d2800;           /* deep amber background */
+            color: #ffe08a;                /* brighter gold text */
+            border-bottom-color: var(--glow-color);
+            text-shadow: 0 0 8px rgba(245, 166, 35, 0.90),
+                         0 0 18px rgba(245, 166, 35, 0.55);
+            /* Subtle header pulse: fade between two intensities */
+            animation: active-header-pulse 1.8s ease-in-out infinite;
+        }
+
+        @keyframes active-header-pulse {
+            0%   { background: #2e1e00; }
+            50%  { background: #4a3100; }
+            100% { background: #2e1e00; }
+        }
+        /* ── end active-turn glow ─────────────────────────────────────────── */
+
         /* Left column */
         .left-col {
             display: flex;
@@ -2451,6 +2500,7 @@
             renderActionAffordance(state.choices || [], state.game_over);
             renderLog(state.logs || []);
             renderStatusBar(state);
+            renderActiveTurnGlow(ourPlayer, oppPlayer, state);
 
             // Card details: the view model already contains the
             // pre-formatted CardDetailView for whatever Rust currently
@@ -3127,6 +3177,47 @@
             if (mini) {
                 mini.textContent = state.game_over ? 'END' : `T${state.turn_number || 0}`;
             }
+        }
+
+        // ==================== ACTIVE-TURN GLOW ====================
+        //
+        // Applies / removes the `.active-turn` CSS class on the two
+        // battlefield panes (#pane-player-field, #pane-opp-field) to produce
+        // the animated amber glow that makes whose-turn-it-is unmistakable.
+        //
+        // Decision logic (in priority order):
+        //   1. Use player.is_active from the view model — the Rust side
+        //      sets this on whichever player currently holds priority.
+        //   2. Fall back to state.active_player_idx (seat index) when
+        //      is_active is missing (older view model schema).
+        //   3. If the game is over, remove the glow from both panes.
+        //
+        // The function is idempotent: toggling the class every 30 ms render
+        // tick is fine — classList.toggle(cls, bool) is a no-op when the
+        // class is already in the right state.
+        function renderActiveTurnGlow(ourPlayer, oppPlayer, state) {
+            const playerPane = document.getElementById('pane-player-field');
+            const oppPane    = document.getElementById('pane-opp-field');
+            if (!playerPane || !oppPane) return;
+
+            if (state.game_over) {
+                playerPane.classList.remove('active-turn');
+                oppPane.classList.remove('active-turn');
+                return;
+            }
+
+            // Determine which seat is active.
+            // ourPlayer.is_active means OUR pane (#pane-player-field) glows.
+            let ourTurn = false;
+            if (ourPlayer?.is_active !== undefined) {
+                ourTurn = !!ourPlayer.is_active;
+            } else if (state.active_player_idx !== undefined) {
+                const ourIdx = state.our_player_idx ?? 0;
+                ourTurn = (state.active_player_idx === ourIdx);
+            }
+
+            playerPane.classList.toggle('active-turn',  ourTurn);
+            oppPane.classList.toggle('active-turn',    !ourTurn);
         }
 
         // ==================== KEYBOARD HANDLING ====================
