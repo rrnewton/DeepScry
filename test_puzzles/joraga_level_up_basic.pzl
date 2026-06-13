@@ -1,0 +1,22 @@
+[metadata]
+Name=Joraga Treespeaker Level Up Basic
+Goal=Win
+Turns=4
+Difficulty=Easy
+Description=P0 has 2 Forests and a Joraga Treespeaker already on the battlefield (entered previous turn — no summoning sickness). On turn 3 Main1, P0 should be able to activate Level Up ({1}{G}) by tapping both Forests for mana. This verifies that the Level Up mana-cost payment works correctly.
+
+[state]
+turn=3
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=
+p0battlefield=Forest; Forest; Joraga Treespeaker
+p0library=Forest; Forest; Forest; Forest; Forest
+p0graveyard=
+
+p1life=20
+p1hand=
+p1battlefield=Forest; Grizzly Bears
+p1library=Forest; Forest; Forest; Forest
+p1graveyard=

@@ -4,5 +4,7 @@ mod combat_bugfixes;
 mod effects;
 mod equipment;
 mod keywords;
+mod level_up;
 mod netarch_reserved_zone;
+mod ratchet_bomb;
 mod spell_casting;
