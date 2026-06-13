@@ -2977,29 +2977,64 @@ impl GameState {
     }
 
     /// Check if a card matches a type filter string (static method)
-    /// Whether `card` matches a simple bare type/subtype filter string: one of
+    /// Whether `card` matches a type/subtype filter string: one of
     /// the permanent card types (`Land`/`Creature`/`Artifact`/`Enchantment`),
-    /// `Permanent` (any), else treated as a subtype. This is the ONE shared
-    /// implementation for the "count/find permanents of a controlled type"
-    /// helpers (mtg-907 DRY: the byte-identical `GameLoop::card_matches_type_filter`
-    /// copy was deleted and routed here).
+    /// `Permanent` (any), else treated as a subtype. Supports compound filters
+    /// with `.`-qualifier grammar: `"Island.untapped"` means base-type AND untapped.
     ///
-    /// NOTE: this is the *simple* type/subtype filter (no `.`/`+` qualifier
-    /// grammar). It is distinct from `card_matches_search_filter` (the
+    /// This is the ONE shared implementation for the "count/find permanents of a
+    /// controlled type" helpers (mtg-907 DRY: the byte-identical
+    /// `GameLoop::card_matches_type_filter` copy was deleted and routed here).
+    ///
+    /// NOTE: this filter uses `.`-qualifier grammar for tapped/untapped state.
+    /// It is distinct from `card_matches_search_filter` (the
     /// `Type.Subtype` / comma-list fetch grammar) and from
     /// `TargetRestriction::parse` (the `ValidTgts` `.`-modifier grammar) — those
     /// are genuinely different DSLs, not duplicates of this one.
     pub(crate) fn card_matches_type_filter_static(card: &crate::core::Card, type_filter: &str) -> bool {
-        if type_filter == "Permanent" {
-            return true;
+        // Handle compound filters: "Island.untapped" means base-type AND untapped.
+        // Split on '.' — the first segment is the base type, subsequent segments
+        // are qualifiers (currently only "untapped"/"tapped" are recognized).
+        let segments: smallvec::SmallVec<[&str; 3]> = type_filter.split('.').collect();
+        let base = segments[0];
+
+        // Check the base type first.
+        // Try the strong-type map first (has_card_type_str handles all main types);
+        // fall back to subtype check for unrecognised tokens (creature subtypes,
+        // set-specific types, etc.).
+        // `Permanent` matches any permanent; otherwise try the strong-type map
+        // (has_card_type_str handles all main types) and fall back to a subtype
+        // check for unrecognised tokens (e.g. "Goblin", "Island").
+        let base_match = base == "Permanent"
+            || card.has_card_type_str(base)
+            || card.subtypes.contains(&crate::core::Subtype::new(base));
+
+        if !base_match {
+            return false;
         }
-        // Try the strong-type map first; fall back to subtype check for
-        // unrecognised tokens (creature subtypes, set-specific types, etc.).
-        if card.has_card_type_str(type_filter) {
-            return true;
+
+        // Apply qualifier flags (segments after the base type).
+        // "Other" is handled by callers (can_pay_sacrifice_pattern), not here.
+        // "untapped" — the card must not be tapped.
+        for &qualifier in &segments[1..] {
+            match qualifier {
+                "untapped" => {
+                    if card.tapped {
+                        return false;
+                    }
+                }
+                "tapped" => {
+                    if !card.tapped {
+                        return false;
+                    }
+                }
+                // Unrecognized qualifiers (e.g. "Other") are ignored here; callers
+                // strip them before delegating to this function.
+                _ => {}
+            }
         }
-        // Not a recognised main type — treat as a subtype (e.g. "Goblin", "Island").
-        card.subtypes.contains(&crate::core::Subtype::new(type_filter))
+
+        true
     }
 
     /// Cast a spell following the full 8-step process (MTG Rules 601.2)

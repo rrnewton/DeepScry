@@ -523,6 +523,14 @@ impl NetworkController {
                 let name = view.card_name(*card_id).unwrap_or_default();
                 format!("Play {} from top of library", name)
             }
+            SpellAbility::CastFromHandWithReturnCost {
+                card_id,
+                count,
+                card_type,
+            } => {
+                let name = view.card_name(*card_id).unwrap_or_default();
+                format!("Cast {} (return {} {})", name, count, card_type)
+            }
         }
     }
 

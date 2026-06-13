@@ -493,6 +493,30 @@ pub enum StaticAbility {
         description: String,
     },
 
+    /// Alternative-cost static that replaces the mana cost with a permanent-return
+    /// cost (bounce a matching permanent to hand instead of paying mana).
+    ///
+    /// Corresponds to: `S:Mode$ AlternativeCost | ValidSA$ Spell.Self
+    ///   | Cost$ Return<N/Type> | Description$ ...`
+    ///
+    /// Example: Daze — "You may return an Island you control to its owner's hand
+    /// rather than pay this spell's mana cost." (CR 601.2b alt-cost).
+    ///
+    /// Applied in `push_castable_spells` (actions.rs): when `condition` is met and
+    /// the player controls at least `count` untapped permanents matching `card_type`
+    /// on the battlefield, the spell is offered as
+    /// `SpellAbility::CastFromHandWithReturnCost { card_id, count, card_type }`.
+    AlternativeCostReturn {
+        /// Runtime condition that must be satisfied (usually `Always`).
+        condition: AltCostCondition,
+        /// Number of permanents to return.
+        count: u8,
+        /// Type filter for the permanents to return (e.g. `"Island"`).
+        card_type: String,
+        /// Description for logging/display.
+        description: String,
+    },
+
     /// Continuous static: while the source is on the battlefield, the controller
     /// may cast nonland spells with CMC ≤ the value of `cmc_limit_svar` without
     /// paying their mana costs (Fires of Invention, CR 702.25).
@@ -596,12 +620,17 @@ pub enum StaticAbility {
     },
 }
 
-/// Condition checked at cast time for an [`StaticAbility::AlternativeCost`].
+/// Condition checked at cast time for an [`StaticAbility::AlternativeCost`] or
+/// [`StaticAbility::AlternativeCostReturn`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AltCostCondition {
     /// True when one of the casting player's creature spells was countered
     /// this turn by an opponent's effect (Summoning Trap condition).
     HadCreatureCounteredThisTurn,
+    /// Always available (no extra condition beyond being able to pay the cost).
+    /// Used by Daze: "You may return an Island you control to its owner's hand
+    /// rather than pay this spell's mana cost." — CR 601.2b.
+    Always,
 }
 
 /// Source expression for a CharacteristicDefiningPt static ability.
@@ -756,6 +785,11 @@ pub enum UnlessCostType {
     /// Reveal N cards of the given type from hand
     /// Format: `Reveal<N/Type>` (e.g., Reveal<1/Giant>)
     Reveal { count: u8, card_type: String },
+    /// Return N permanents of the given type from the battlefield to their owner's hand.
+    /// Format: `Return<N/Type>` (e.g., `Return<1/Island.untapped>`)
+    /// Used by karoo lands (Coral Atoll, Everglades, Dormant Volcano, etc.):
+    /// "sacrifice ~ unless you return a matching land you control to hand."
+    ReturnToHand { count: u8, card_type: String },
 }
 
 /// Represents an UnlessCost condition that wraps an effect

@@ -1703,6 +1703,10 @@ impl GameState {
                         // Alternative-cost static (Summoning Trap). Handled at cast time
                         // in push_castable_spells; does not affect P/T.
                     }
+                    StaticAbility::AlternativeCostReturn { .. } => {
+                        // Return-permanent alternative-cost static (Daze). Handled at cast
+                        // time in push_castable_spells; does not affect P/T.
+                    }
                     StaticAbility::MayPlayWithoutManaCost { .. } => {
                         // Fires of Invention free-cast grant. Handled at cast time in
                         // push_castable_with_fires; does not affect P/T.

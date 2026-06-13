@@ -136,6 +136,22 @@ pub enum SpellAbility {
         alternative_cost: ManaCost,
     },
 
+    /// Cast a spell from hand by returning permanents to hand instead of paying mana.
+    ///
+    /// Used by Daze: "You may return an Island you control to its owner's hand rather
+    /// than pay this spell's mana cost." — CR 601.2b (alternative costs).
+    ///
+    /// The named permanent(s) move from the controller's battlefield to their owner's
+    /// hand as a cost payment before the spell resolves. All other 8-step casting
+    /// steps (targeting, etc.) proceed normally with zero mana cost override.
+    CastFromHandWithReturnCost {
+        card_id: CardId,
+        /// Number of permanents to return (from `StaticAbility::AlternativeCostReturn`).
+        count: u8,
+        /// Type filter identifying which permanents may be returned (e.g. `"Island"`).
+        card_type: String,
+    },
+
     /// Cast the top card of the library as a spell (Experimental Frenzy, Future Sight).
     ///
     /// The card moves from the library to the stack and resolves normally,
@@ -165,6 +181,7 @@ impl SpellAbility {
             SpellAbility::CastFromGraveyard { card_id, .. } => *card_id,
             SpellAbility::CastAdventure { card_id } => *card_id,
             SpellAbility::CastFromHandWithAltCost { card_id, .. } => *card_id,
+            SpellAbility::CastFromHandWithReturnCost { card_id, .. } => *card_id,
             SpellAbility::CastFromLibrary { card_id } | SpellAbility::PlayLandFromLibrary { card_id } => *card_id,
         }
     }
@@ -184,6 +201,7 @@ impl SpellAbility {
                 | SpellAbility::CastFromGraveyard { .. }
                 | SpellAbility::CastAdventure { .. }
                 | SpellAbility::CastFromHandWithAltCost { .. }
+                | SpellAbility::CastFromHandWithReturnCost { .. }
                 | SpellAbility::CastFromLibrary { .. }
         )
     }

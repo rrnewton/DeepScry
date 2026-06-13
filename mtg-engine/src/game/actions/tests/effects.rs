@@ -3076,6 +3076,7 @@ mod tests {
                 | StaticAbility::CharacteristicDefiningPt { .. }
                 | StaticAbility::GrantUpkeepSacrificeUnlessPay { .. }
                 | StaticAbility::AlternativeCost { .. }
+                | StaticAbility::AlternativeCostReturn { .. }
                 | StaticAbility::MayPlayWithoutManaCost { .. }
                 | StaticAbility::MayPlayFromLibrary { .. }
                 | StaticAbility::OpalescenceStyle { .. }

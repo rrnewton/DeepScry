@@ -890,10 +890,60 @@ impl GameState {
                     // EachDamage gets targets from parent ability's ValidTgts, resolved at spell resolution
                     // Fight with non-placeholder targets already has both fighters assigned
                 }
-                // UnlessCostWrapper delegates targeting to inner effect
-                // TODO(mtg-n36vb): Handle inner effect targeting when implementing UnlessCost resolution
-                Effect::UnlessCostWrapper { .. } => {
-                    // For now, skip - inner effect targeting handled when we implement full UnlessCost
+                // UnlessCostWrapper delegates targeting to inner effect.
+                // CR 115.1a: a spell with an UnlessCost (counter-unless) takes a
+                // target at cast time from the inner effect's requirements.  Walk
+                // into the inner effect and collect valid targets exactly as we
+                // would for a bare (non-wrapped) CounterSpell.
+                Effect::UnlessCostWrapper { inner_effect, .. } => {
+                    if let Effect::CounterSpell {
+                        target,
+                        spell_restriction,
+                        ..
+                    } = inner_effect.as_ref()
+                    {
+                        if target.is_placeholder() {
+                            for &card_id in &self.stack.cards {
+                                if card_id == spell_card_id {
+                                    continue;
+                                }
+                                let Ok(target_card) = self.cards.get(card_id) else {
+                                    continue;
+                                };
+                                if let Some(color) = spell_restriction.required_color {
+                                    if !target_card.is_color(color) {
+                                        continue;
+                                    }
+                                }
+                                if !spell_restriction.types.is_empty() {
+                                    let type_ok = spell_restriction.types.iter().any(|t| match t {
+                                        crate::core::TargetType::Creature => target_card.is_creature(),
+                                        crate::core::TargetType::Artifact => target_card.is_artifact(),
+                                        crate::core::TargetType::Enchantment => target_card.is_enchantment(),
+                                        crate::core::TargetType::Land => target_card.is_land(),
+                                        crate::core::TargetType::Planeswalker => {
+                                            target_card.types.contains(&crate::core::CardType::Planeswalker)
+                                        }
+                                        crate::core::TargetType::Any => true,
+                                    });
+                                    if !type_ok {
+                                        continue;
+                                    }
+                                }
+                                if spell_restriction.requires_noncreature && target_card.is_creature() {
+                                    continue;
+                                }
+                                if let Some(min) = spell_restriction.min_cmc {
+                                    if target_card.mana_cost.cmc() < min {
+                                        continue;
+                                    }
+                                }
+                                valid_targets.push(card_id);
+                            }
+                        }
+                    }
+                    // Other inner effects (ForceSacrifice, etc.) don't take a cast-time
+                    // target — their target is resolved at resolution from context.
                 }
                 // GrantCastWithFlash operates on the controller (no cast-time target needed).
                 Effect::GrantCastWithFlash { .. } => {}

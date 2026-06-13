@@ -1,10 +1,10 @@
 ---
 title: 'Bug: Return<N/Type> cost unsupported in AlternativeCost + unless-cost paths'
-status: open
+status: closed
 priority: 3
 issue_type: bug
 created_at: 2026-06-13T19:45:23.502909108+00:00
-updated_at: 2026-06-13T19:45:23.502909108+00:00
+updated_at: 2026-06-13T21:57:37.864921681+00:00
 ---
 
 # Description
@@ -35,3 +35,26 @@ subset is fixed (mtg-mbcm0). This issue tracks the remaining alt-cost +
 unless-cost subset.
 
 Parent: mtg-912 (2000 WC tracker), mtg-913 (backlog).
+
+## FIXED: wave11 (claude/compat-2000-wave11, 2026-06-13)
+
+Both paths fixed:
+- StaticAbility::AlternativeCostReturn + SpellAbility::CastFromHandWithReturnCost
+  implement the Daze alt-cost path. Loader parses Cost$ Return<N/Type> in
+  AlternativeCost context to produce the new static ability.
+- UnlessCostType::ReturnToHand added to parse_unless_cost; execute_unless_cost_wrapper
+  handles the payment (find matching permanents, move BF->Hand).
+- AltCostCondition::Always added for unconditional alt costs (Daze has no CheckSVar).
+- card_matches_type_filter_static extended with compound filter 'Base.qualifier'
+  (e.g. Island.untapped for Coral Atoll).
+- CRITICAL BUG ALSO FIXED: get_valid_targets_for_spell did not recurse into
+  UnlessCostWrapper to find CounterSpell targets — added proper handling so Daze
+  correctly targets Lightning Bolt (or other spells) on the stack.
+
+Cards confirmed WORKING post-fix:
+- Daze (deck 03): Island returned to hand as alt-cost, counter-unless resolves
+  correctly. Verified by puzzle test test_daze_island_return_alt_cost.
+- Coral Atoll: ETB return-unless trigger fires, Island returned, Coral Atoll
+  stays on battlefield. Verified by puzzle test test_coral_atoll_unless_return.
+
+Daze is in 2000 WC deck 03 (van de Logt Replenish). This fix moves coverage to 45/72 (62.5%).

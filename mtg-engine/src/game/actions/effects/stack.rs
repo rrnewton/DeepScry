@@ -369,6 +369,11 @@ impl GameState {
                     .map(|(_, zones)| zones.hand.cards.len() >= *count as usize)
                     .unwrap_or(false)
             }
+            UnlessCostType::ReturnToHand { count, card_type } => {
+                // Check if the payer controls enough permanents of the matching type.
+                // Reuses can_pay_sacrifice_pattern: same filter/count, different destination.
+                self.can_pay_sacrifice_pattern(card_type, *count, CardId::new(0), payer_id)
+            }
         };
 
         // AI heuristic: decide whether to pay
@@ -442,6 +447,54 @@ impl GameState {
                     // Reveal doesn't consume cards, just show them
                     // For now, assume success
                     true
+                }
+                UnlessCostType::ReturnToHand { count, card_type } => {
+                    // Return matching permanents from battlefield to owner's hand.
+                    // CR 118.8: a return-to-hand cost is paid by moving the permanents.
+                    // Logic mirrors Cost::ReturnToHand in payment_execution.rs.
+                    let mut to_return = Vec::new();
+                    let battlefield_cards = self.battlefield.cards.to_vec();
+                    for permanent_id in battlefield_cards {
+                        if to_return.len() >= *count as usize {
+                            break;
+                        }
+                        if let Ok(card) = self.cards.get(permanent_id) {
+                            if card.controller == payer_id
+                                && crate::game::GameState::card_matches_type_filter_static(card, card_type)
+                            {
+                                to_return.push(permanent_id);
+                            }
+                        }
+                    }
+                    if to_return.len() < *count as usize {
+                        log::debug!(
+                            "UnlessCost ReturnToHand: not enough {} permanents (need {}, found {})",
+                            card_type,
+                            count,
+                            to_return.len()
+                        );
+                        false
+                    } else {
+                        let mut success = true;
+                        for permanent_id in to_return {
+                            let owner = self.cards.get(permanent_id).map(|c| c.owner).unwrap_or(payer_id);
+                            if self
+                                .move_card(
+                                    permanent_id,
+                                    crate::zones::Zone::Battlefield,
+                                    crate::zones::Zone::Hand,
+                                    owner,
+                                )
+                                .is_err()
+                            {
+                                success = false;
+                            } else {
+                                let name = self.cards.try_get(permanent_id).map(|c| c.name.as_str()).unwrap_or("?");
+                                log::info!("{} returned to hand (UnlessCost payment)", name);
+                            }
+                        }
+                        success
+                    }
                 }
             }
         } else {

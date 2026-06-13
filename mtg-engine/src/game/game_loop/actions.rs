@@ -254,6 +254,7 @@ impl<'a> GameLoop<'a> {
             | StaticAbility::CharacteristicDefiningPt { .. }
             | StaticAbility::GrantUpkeepSacrificeUnlessPay { .. }
             | StaticAbility::AlternativeCost { .. }
+            | StaticAbility::AlternativeCostReturn { .. }
             | StaticAbility::MayPlayWithoutManaCost { .. }
             | StaticAbility::MayPlayFromLibrary { .. }
             | StaticAbility::OpalescenceStyle { .. }
@@ -763,26 +764,84 @@ impl<'a> GameLoop<'a> {
                             // Check for AlternativeCost static abilities on this card.
                             // E.g. Summoning Trap: may be cast for {0} when a creature spell
                             // was countered this turn by an opponent.
+                            // E.g. Daze: may be cast by returning an Island to hand.
                             let player_had_creature_countered = self
                                 .game
                                 .try_get_player(player_id)
                                 .is_some_and(|p| p.had_creature_countered_this_turn);
                             for static_ability in &card.static_abilities {
-                                if let crate::core::StaticAbility::AlternativeCost {
-                                    condition, alt_cost, ..
-                                } = static_ability
-                                {
-                                    let condition_met = match condition {
-                                        crate::core::AltCostCondition::HadCreatureCounteredThisTurn => {
-                                            player_had_creature_countered
+                                match static_ability {
+                                    crate::core::StaticAbility::AlternativeCost {
+                                        condition, alt_cost, ..
+                                    } => {
+                                        let condition_met = match condition {
+                                            crate::core::AltCostCondition::HadCreatureCounteredThisTurn => {
+                                                player_had_creature_countered
+                                            }
+                                            crate::core::AltCostCondition::Always => true,
+                                        };
+                                        if condition_met && self.mana_engine.can_pay_with_pool(alt_cost, &ctx.mana_pool)
+                                        {
+                                            self.abilities_buffer.push(SpellAbility::CastFromHandWithAltCost {
+                                                card_id,
+                                                alternative_cost: *alt_cost,
+                                            });
                                         }
-                                    };
-                                    if condition_met && self.mana_engine.can_pay_with_pool(alt_cost, &ctx.mana_pool) {
-                                        self.abilities_buffer.push(SpellAbility::CastFromHandWithAltCost {
-                                            card_id,
-                                            alternative_cost: *alt_cost,
-                                        });
                                     }
+                                    crate::core::StaticAbility::AlternativeCostReturn {
+                                        condition,
+                                        count,
+                                        card_type,
+                                        ..
+                                    } => {
+                                        // Daze-style: return N matching permanents to hand as the
+                                        // whole cost. Offered when condition is met AND the player
+                                        // controls enough matching permanents (CR 601.2b alt-cost).
+                                        let condition_met = match condition {
+                                            crate::core::AltCostCondition::HadCreatureCounteredThisTurn => {
+                                                player_had_creature_countered
+                                            }
+                                            crate::core::AltCostCondition::Always => true,
+                                        };
+                                        if condition_met
+                                            && self
+                                                .game
+                                                .can_pay_sacrifice_pattern(card_type, *count, card_id, player_id)
+                                        {
+                                            self.abilities_buffer.push(SpellAbility::CastFromHandWithReturnCost {
+                                                card_id,
+                                                count: *count,
+                                                card_type: card_type.clone(),
+                                            });
+                                        }
+                                    }
+                                    crate::core::StaticAbility::ModifyPT { .. }
+                                    | crate::core::StaticAbility::GrantKeyword { .. }
+                                    | crate::core::StaticAbility::ReduceCost { .. }
+                                    | crate::core::StaticAbility::RaiseCost { .. }
+                                    | crate::core::StaticAbility::GrantAbility { .. }
+                                    | crate::core::StaticAbility::GainControl { .. }
+                                    | crate::core::StaticAbility::SacrificeMatchingPresent { .. }
+                                    | crate::core::StaticAbility::CantBeCast { .. }
+                                    | crate::core::StaticAbility::CantPlayLand { .. }
+                                    | crate::core::StaticAbility::CantBlockMatching { .. }
+                                    | crate::core::StaticAbility::CastWithFlash { .. }
+                                    | crate::core::StaticAbility::DamageIncrease { .. }
+                                    | crate::core::StaticAbility::PreventDamageToEnchantedByChosenColor { .. }
+                                    | crate::core::StaticAbility::CantAttackIfDefenderHasUntappedPowerGE { .. }
+                                    | crate::core::StaticAbility::CantAttackOrBlockMatching { .. }
+                                    | crate::core::StaticAbility::CantBeActivated { .. }
+                                    | crate::core::StaticAbility::CantBeActivatedByName { .. }
+                                    | crate::core::StaticAbility::ExtraLandPlay { .. }
+                                    | crate::core::StaticAbility::LifeFloor { .. }
+                                    | crate::core::StaticAbility::DamageToExileLibrary { .. }
+                                    | crate::core::StaticAbility::CharacteristicDefiningPt { .. }
+                                    | crate::core::StaticAbility::GrantUpkeepSacrificeUnlessPay { .. }
+                                    | crate::core::StaticAbility::MayPlayWithoutManaCost { .. }
+                                    | crate::core::StaticAbility::MayPlayFromLibrary { .. }
+                                    | crate::core::StaticAbility::DisableCreatureEtbTriggers { .. }
+                                    | crate::core::StaticAbility::OpalescenceStyle { .. }
+                                    | crate::core::StaticAbility::TokenCreationBonus { .. } => {}
                                 }
                             }
 

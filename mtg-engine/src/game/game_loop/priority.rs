@@ -3700,6 +3700,190 @@ impl<'a> GameLoop<'a> {
                                 // Spell is now on the stack - will resolve when both players pass
                             }
 
+                            crate::core::SpellAbility::CastFromHandWithReturnCost {
+                                card_id,
+                                count,
+                                card_type,
+                            } => {
+                                // Daze-style: return N permanents matching card_type to hand as
+                                // the FULL cost of casting the spell. CR 601.2b (alternative cost).
+                                // Payment: move permanents battlefield→hand BEFORE the spell goes
+                                // on the stack. Then cast via 8-step with zero mana override.
+                                let card_name = self
+                                    .game
+                                    .cards
+                                    .get(card_id)
+                                    .map(|c| c.name.to_string())
+                                    .unwrap_or_else(|_| "Unknown".to_string());
+
+                                // Collect the permanents to return (deterministic: scan in
+                                // battlefield order, take first `count` matching).
+                                let to_return: Vec<crate::core::CardId> = {
+                                    let bf = self.game.battlefield.cards.to_vec();
+                                    let mut chosen = Vec::new();
+                                    for &pid in &bf {
+                                        if chosen.len() >= count as usize {
+                                            break;
+                                        }
+                                        if let Ok(card) = self.game.cards.get(pid) {
+                                            if card.controller == current_priority
+                                                && crate::game::GameState::card_matches_type_filter_static(
+                                                    card, &card_type,
+                                                )
+                                            {
+                                                chosen.push(pid);
+                                            }
+                                        }
+                                    }
+                                    chosen
+                                };
+
+                                if to_return.len() < count as usize {
+                                    // Can no longer pay (racing-state guard). Treat as pass.
+                                    if self.verbosity >= VerbosityLevel::Normal && !self.replaying {
+                                        self.game.logger.normal(&format!(
+                                            "Cannot pay return-cost for {} (not enough {} on battlefield)",
+                                            card_name, card_type
+                                        ));
+                                    }
+                                    consecutive_passes += 1;
+                                    self.game.turn.consecutive_passes = consecutive_passes;
+                                    current_priority = if current_priority == active_player {
+                                        non_active_player
+                                    } else {
+                                        active_player
+                                    };
+                                    self.game.turn.priority_player = Some(current_priority);
+                                    continue;
+                                }
+
+                                // Pay: return permanents to hand.
+                                for pid in &to_return {
+                                    let owner = self.game.cards.get(*pid).map(|c| c.owner).unwrap_or(current_priority);
+                                    let pname = self
+                                        .game
+                                        .cards
+                                        .try_get(*pid)
+                                        .map(|c| c.name.to_string())
+                                        .unwrap_or_else(|| "?".to_string());
+                                    if let Err(e) = self.game.move_card(
+                                        *pid,
+                                        crate::zones::Zone::Battlefield,
+                                        crate::zones::Zone::Hand,
+                                        owner,
+                                    ) {
+                                        if self.verbosity >= VerbosityLevel::Normal && !self.replaying {
+                                            self.game
+                                                .logger
+                                                .normal(&format!("Error returning {} for {}: {}", pname, card_name, e));
+                                        }
+                                    } else if self.verbosity >= VerbosityLevel::Normal && !self.replaying {
+                                        self.game.logger.gamelog(&format!(
+                                            "{} is returned to hand as cost for {}",
+                                            pname, card_name
+                                        ));
+                                    }
+                                }
+
+                                if self.verbosity >= VerbosityLevel::Normal && !self.replaying {
+                                    self.game.logger.gamelog(&format!(
+                                        "{} casts {} for free (return-cost paid)",
+                                        self.get_player_name(current_priority),
+                                        card_name
+                                    ));
+                                }
+
+                                // Choose targets BEFORE cast_spell_8_step_from puts the spell on
+                                // the stack (mirrors the CastSpell arm, CR 601.2c step 3).
+                                let valid_targets = self
+                                    .game
+                                    .get_valid_targets_for_spell(card_id)
+                                    .unwrap_or_else(|_| smallvec::smallvec![]);
+                                let (min_targets, max_targets) =
+                                    self.game.target_count_bounds_for_spell(card_id, valid_targets.len());
+                                let num_valid = valid_targets.len();
+                                let forced_all = min_targets == max_targets && max_targets == num_valid;
+                                let trivial_single = min_targets == max_targets && max_targets == 1 && num_valid == 1;
+                                let chosen_targets_vec: smallvec::SmallVec<[crate::core::CardId; 2]> = if num_valid == 0
+                                {
+                                    smallvec::smallvec![]
+                                } else if forced_all || trivial_single {
+                                    valid_targets.iter().copied().take(max_targets).collect()
+                                } else {
+                                    let prior_log_size = self.game.logger.log_count();
+                                    let choice = self.choose_targets_with_hook(
+                                        controller,
+                                        current_priority,
+                                        card_id,
+                                        &valid_targets,
+                                        min_targets,
+                                        max_targets,
+                                    );
+                                    let chosen = handle_choice_result_break!(choice, self.game, current_priority);
+                                    let replay_choice = crate::game::ReplayChoice::Targets(chosen.clone());
+                                    self.log_choice_point(current_priority, Some(replay_choice), prior_log_size);
+                                    chosen.into_iter().collect()
+                                };
+                                if !chosen_targets_vec.is_empty()
+                                    && self.verbosity >= VerbosityLevel::Normal
+                                    && !self.replaying
+                                {
+                                    let target_names: Vec<String> = chosen_targets_vec
+                                        .iter()
+                                        .filter_map(|&tid| {
+                                            if let Some(pid) = crate::core::player_target_from_sentinel(tid) {
+                                                Some(self.game.player_display_name(pid))
+                                            } else {
+                                                self.game.cards.try_get(tid).map(|c| format!("{} ({})", c.name, tid))
+                                            }
+                                        })
+                                        .collect();
+                                    if !target_names.is_empty() {
+                                        self.game
+                                            .logger
+                                            .gamelog(&format!("  → targeting {}", target_names.join(", ")));
+                                    }
+                                }
+                                // Keep a copy for spell_targets registration (closure moves the original)
+                                let targets_for_resolution = chosen_targets_vec.clone();
+                                let targets_for_callback = chosen_targets_vec;
+
+                                self.mana_engine.update_mut(self.game, current_priority);
+
+                                if let Err(e) = self.game.cast_spell_8_step_from(
+                                    current_priority,
+                                    card_id,
+                                    move |_, _| targets_for_callback,
+                                    &self.mana_engine,
+                                    crate::zones::Zone::Hand,
+                                    Some(crate::core::ManaCost::new()), // zero mana cost override
+                                ) {
+                                    if self.verbosity >= VerbosityLevel::Normal && !self.replaying {
+                                        self.game
+                                            .logger
+                                            .normal(&format!("Error casting {} with return cost: {}", card_name, e));
+                                    }
+                                    consecutive_passes += 1;
+                                    self.game.turn.consecutive_passes = consecutive_passes;
+                                    current_priority = if current_priority == active_player {
+                                        non_active_player
+                                    } else {
+                                        active_player
+                                    };
+                                    self.game.turn.priority_player = Some(current_priority);
+                                    continue;
+                                }
+                                // Store targets for resolution (CounterSpell reads spell_targets
+                                // in resolve_top_spell_from_stack to substitute placeholder targets)
+                                if !targets_for_resolution.is_empty() {
+                                    self.game
+                                        .sub_action_scratch
+                                        .spell_targets
+                                        .push((card_id, targets_for_resolution));
+                                }
+                                // Spell is now on the stack
+                            }
+
                             crate::core::SpellAbility::CastFromLibrary { card_id } => {
                                 // Cast the top card of the library (Experimental Frenzy).
                                 // Uses the standard 8-step casting process from Zone::Library.

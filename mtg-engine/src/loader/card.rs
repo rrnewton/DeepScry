@@ -2596,6 +2596,10 @@ impl CardDefinition {
 
         // First, try the standard params_to_effect conversion
         if let Some(effect) = params_to_effect(svar_params) {
+            // Apply UnlessCost$ wrapping before counter-condition wrapping so that
+            // effects like `DB$ Sacrifice | UnlessCost$ Return<N/Type>` (Coral Atoll)
+            // become UnlessCostWrapper { .. } rather than bare ForceSacrifice.
+            let effect = super::effect_converter::wrap_with_unless_cost(effect, svar_params);
             // Wrap in a counter-gated conditional when the SVar carries
             //   ConditionDefined$ Self | ConditionPresent$ Card.counters_<CMP><N>_<TYPE>
             // (e.g. All Hallow's Eve's exile→graveyard move + mass resurrection,
@@ -5802,7 +5806,12 @@ impl CardDefinition {
             // AlternativeCost-specific parameters.
             // `alt_cost_mana`: the alternative mana cost (parsed from `Cost$`).
             // `alt_cost_check_svar`: SVar variable name to check (e.g. `SetTrap`).
+            // `alt_cost_return`: Return<N/Type> cost parsed from `Cost$` (Daze-style).
+            //   Stored as (count, card_type) when recognized; mutually exclusive with
+            //   alt_cost_mana — a Cost$ is either a mana string or a Return<...> token.
             let mut alt_cost_mana: Option<crate::core::ManaCost> = None;
+            let mut alt_cost_return: Option<(u8, String)> = None;
+            let mut alt_cost_has_check_svar = false;
 
             // Split by | and parse each parameter
             for param in ability.split('|') {
@@ -5980,9 +5989,23 @@ impl CardDefinition {
                             }
                         }
                         "Cost" => {
-                            // AlternativeCost: parse Cost$ as a mana cost (e.g. "0", "2GG")
+                            // AlternativeCost: parse Cost$ as either a mana cost (e.g. "0", "2GG")
+                            // or a Return<N/Type> permanent-return cost (Daze-style).
                             if is_alternative_cost {
-                                alt_cost_mana = Some(crate::core::ManaCost::from_string(value));
+                                if value.starts_with("Return<") && value.ends_with('>') {
+                                    // Return-permanent alt-cost (e.g. "Return<1/Island>").
+                                    // Parse exactly like Cost::ReturnToHand: strip the brackets,
+                                    // split on '/', take count + type filter.
+                                    let inner = &value[7..value.len() - 1];
+                                    let parts: Vec<&str> = inner.split('/').collect();
+                                    if let (Some(count_str), Some(card_type)) = (parts.first(), parts.get(1)) {
+                                        if let Ok(count) = count_str.parse::<u8>() {
+                                            alt_cost_return = Some((count, card_type.to_string()));
+                                        }
+                                    }
+                                } else {
+                                    alt_cost_mana = Some(crate::core::ManaCost::from_string(value));
+                                }
                             }
                             // Parse Cost$ for RaiseCost sacrifice costs
                             // Format: Sac<amount/type/description> or Sac<X/type/description>
@@ -6117,8 +6140,11 @@ impl CardDefinition {
                         "CheckSVar" => {
                             // `CheckSVar$ <svar>` — for AlternativeCost, the SVar whose
                             // value is checked at cast time. E.g. `CheckSVar$ SetTrap`
-                            // on Summoning Trap. Currently unused — the condition is
-                            // encoded directly in `AltCostCondition`.
+                            // on Summoning Trap. Presence signals a conditional alt-cost
+                            // (HadCreatureCounteredThisTurn); absence means Always.
+                            if is_alternative_cost {
+                                alt_cost_has_check_svar = true;
+                            }
                             let _ = value;
                         }
                         "MayPlay" => {
@@ -6349,19 +6375,41 @@ impl CardDefinition {
                 }
             }
 
-            // AlternativeCost ability (Summoning Trap: may be cast for {0} when a
-            // creature spell you cast was countered this turn by an opponent).
-            // Shape: S:Mode$ AlternativeCost | ValidSA$ Spell.Self | Cost$ 0
-            //        | CheckSVar$ SetTrap | Description$ ...
-            // We currently only recognize CheckSVar$ values whose SVar body is a
-            // counter expression (Summoning Trap's SetTrap increments via StoreSVar).
-            // The condition maps to `AltCostCondition::HadCreatureCounteredThisTurn`.
+            // AlternativeCost ability.
+            //
+            // Two forms:
+            //
+            // 1. Mana alternative (Summoning Trap): Cost$ <mana> | CheckSVar$ ...
+            //    Shape: S:Mode$ AlternativeCost | ValidSA$ Spell.Self | Cost$ 0
+            //           | CheckSVar$ SetTrap | Description$ ...
+            //    Any AlternativeCost with a CheckSVar is treated as
+            //    HadCreatureCounteredThisTurn (the only conditioned variant we
+            //    support). Pure Cost$ 0 without CheckSVar is `Always`.
+            //
+            // 2. Return-to-hand alternative (Daze): Cost$ Return<N/Type>
+            //    Shape: S:Mode$ AlternativeCost | ValidSA$ Spell.Self
+            //           | Cost$ Return<1/Island> | Description$ ...
+            //    Emitted as StaticAbility::AlternativeCostReturn { condition: Always, ... }.
             if is_alternative_cost {
-                if let Some(alt_cost) = alt_cost_mana.take() {
-                    // CheckSVar$ links to the Summoning-Trap "SetTrap" counter; any
-                    // AlternativeCost with a CheckSVar is treated as the
-                    // HadCreatureCounteredThisTurn condition (the only one we support).
-                    let condition = crate::core::AltCostCondition::HadCreatureCounteredThisTurn;
+                if let Some((count, card_type)) = alt_cost_return.take() {
+                    // Daze-style return-permanent alt-cost.  No CheckSVar means
+                    // it's always available (condition=Always) when you control
+                    // enough matching permanents. CR 601.2b.
+                    abilities.push(StaticAbility::AlternativeCostReturn {
+                        condition: crate::core::AltCostCondition::Always,
+                        count,
+                        card_type,
+                        description: description.clone(),
+                    });
+                } else if let Some(alt_cost) = alt_cost_mana.take() {
+                    // Mana alternative (Summoning Trap, etc.).
+                    // If there is a CheckSVar$, we map to HadCreatureCounteredThisTurn.
+                    // Without a CheckSVar (rare pure-zero-cost variant), use Always.
+                    let condition = if alt_cost_has_check_svar {
+                        crate::core::AltCostCondition::HadCreatureCounteredThisTurn
+                    } else {
+                        crate::core::AltCostCondition::Always
+                    };
                     abilities.push(StaticAbility::AlternativeCost {
                         condition,
                         alt_cost,

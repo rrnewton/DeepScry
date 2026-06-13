@@ -563,6 +563,9 @@ impl GameStateEvaluator {
                 StaticAbility::AlternativeCost { .. } => {
                     // Alternative-cost static (Summoning Trap): no direct creature value.
                 }
+                StaticAbility::AlternativeCostReturn { .. } => {
+                    // Return-permanent alternative-cost static (Daze): no direct creature value.
+                }
                 StaticAbility::MayPlayWithoutManaCost { .. } => {
                     // Fires of Invention free-cast grant: high-value enchantment, but
                     // this evaluator is for Aura attachment decisions; not applicable.

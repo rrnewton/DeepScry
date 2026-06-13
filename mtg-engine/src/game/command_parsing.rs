@@ -268,6 +268,7 @@ pub fn parse_spell_ability_choice(
                 | SpellAbility::CastFromGraveyard { .. }
                 | SpellAbility::CastAdventure { .. }
                 | SpellAbility::CastFromHandWithAltCost { .. }
+                | SpellAbility::CastFromHandWithReturnCost { .. }
                 | SpellAbility::CastFromLibrary { .. } => {}
             }
         }
@@ -315,7 +316,9 @@ pub fn parse_spell_ability_choice(
                         }
                     }
                 }
-                SpellAbility::CastFromHandWithAltCost { card_id, .. } | SpellAbility::CastFromLibrary { card_id } => {
+                SpellAbility::CastFromHandWithAltCost { card_id, .. }
+                | SpellAbility::CastFromHandWithReturnCost { card_id, .. }
+                | SpellAbility::CastFromLibrary { card_id } => {
                     if let Some(card_name) = view.card_name(*card_id) {
                         if card_matches(&card_name, card_pattern) {
                             return Some(ability.clone());

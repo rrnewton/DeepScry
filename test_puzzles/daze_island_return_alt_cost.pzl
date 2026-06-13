@@ -1,0 +1,34 @@
+[metadata]
+Name:Daze island-return alternative cost
+Goal:Win
+Turns:4
+Difficulty:Easy
+Description:Verify Daze can be cast by returning an Island to its owner's hand rather than paying {1}{U}. Regression for mtg-hjp2u (Return<N/Type> alt-cost path). P0 has 0 mana available but controls an Island; Daze in hand. P1 casts Lightning Bolt at P0. P0 responds by returning the Island (alt-cost) and countering with Daze. P0 life should stay at 20; the Lightning Bolt must be in P1's graveyard (countered); P0 Island must be in P0 hand (returned as cost).
+
+[state]
+turn=3
+activeplayer=p1
+activephase=MAIN1
+p0life=20
+p0hand=Daze
+p0library=Plains; Plains; Plains; Plains; Plains; Plains; Plains; Plains; Plains; Plains
+p0graveyard=
+p0battlefield=Island
+p0exile=
+
+p1life=20
+p1hand=Lightning Bolt
+p1library=Mountain; Mountain; Mountain; Mountain; Mountain; Mountain; Mountain; Mountain
+p1graveyard=
+p1battlefield=Mountain
+p1exile=
+
+[assertions]
+# P0 should survive (Lightning Bolt countered by Daze)
+me life eq 20
+# Lightning Bolt should be countered (in graveyard)
+opponent graveyard contains Lightning Bolt
+# P0's Island was returned as Daze's cost (now in P0 hand)
+me hand contains Island
+# Daze itself resolved (countered the bolt), so Daze goes to graveyard
+me graveyard contains Daze

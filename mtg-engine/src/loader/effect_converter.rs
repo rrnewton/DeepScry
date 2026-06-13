@@ -2801,7 +2801,11 @@ pub fn params_to_effect_with_svars(params: &AbilityParams, svars: &HashMap<Strin
         return build_repeat_each_effect(params, svars);
     }
 
-    // For all other types, delegate to the base function
+    // For all other types, delegate to the base function.
+    // NOTE: do NOT add wrap_with_unless_cost here. Callers that need UnlessCost$
+    // wrapping (e.g. the card.rs trigger-SVar path at line 2588) apply it
+    // explicitly. Adding it here causes double-wrapping when the caller also wraps
+    // (Chain Lightning regression: UnlessCostWrapper nested inside UnlessCostWrapper).
     params_to_effect(params)
 }
 
@@ -3049,6 +3053,16 @@ fn parse_unless_cost(params: &AbilityParams) -> Option<crate::core::effects::Unl
         let count = parts.first().and_then(|s| s.parse::<u8>().ok()).unwrap_or(1);
         let card_type = parts.get(1).unwrap_or(&"Card").to_string();
         UnlessCostType::Reveal { count, card_type }
+    } else if cost_str.starts_with("Return<") && cost_str.ends_with('>') {
+        // Format: Return<N/Type> or Return<N/Type/description>
+        // Used by karoo/Lair ETB triggers: "Return<1/Island.untapped/untapped Island>"
+        // sacrifice the entering land unless you return a matching permanent.
+        // parts[2] is the Oracle-text description; we store only the type filter.
+        let inner = &cost_str[7..cost_str.len() - 1];
+        let parts: Vec<&str> = inner.split('/').collect();
+        let count = parts.first().and_then(|s| s.parse::<u8>().ok()).unwrap_or(1);
+        let card_type = parts.get(1).unwrap_or(&"Land").to_string();
+        UnlessCostType::ReturnToHand { count, card_type }
     } else {
         // Assume it's a mana cost (e.g., "2", "1U", "X")
         let mana_cost = crate::core::ManaCost::from_string(cost_str);
