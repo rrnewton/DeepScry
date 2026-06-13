@@ -462,8 +462,17 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
             // RememberCounteredCMC$ True (Mana Drain): record the countered
             // spell's mana value so a chained delayed trigger can use it.
             let remember_mana_value = params.get("RememberCounteredCMC") == Some("True");
+            // Defined$ TriggeredSpellAbility (In the Eye of Chaos, Presence of
+            // the Master): counter the spell that caused the SpellCast trigger
+            // to fire. Use the TRIGGERED_SPELL_ID sentinel; resolved to the
+            // actual cast_spell_id from TriggerContext at resolution time.
+            let target = if params.get("Defined") == Some("TriggeredSpellAbility") {
+                CardId::triggered_spell()
+            } else {
+                CardId::new(0) // Placeholder — resolved from chosen_targets
+            };
             Some(Effect::CounterSpell {
-                target: CardId::new(0), // Placeholder
+                target,
                 spell_restriction,
                 remember_mana_value,
             })
@@ -1722,11 +1731,21 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
             // filter (tokenized, NOT substring-matched), generalizing across all
             // five Circles of Protection. The chosen source CardId is a
             // placeholder resolved from the ability's target at activation.
-            let color = choose_source_color(params)?;
-            Some(Effect::PreventDamageFromSource {
-                protected: PlayerId::new(0), // Placeholder - resolved to controller at activation
-                color,
-                source: CardId::new(0), // Placeholder - resolved from chosen target
+            if let Some(color) = choose_source_color(params) {
+                return Some(Effect::PreventDamageFromSource {
+                    protected: PlayerId::new(0), // Placeholder - resolved to controller at activation
+                    color,
+                    source: CardId::new(0), // Placeholder - resolved from chosen target
+                });
+            }
+            // Non-CoP ChooseSource shapes (e.g. Reverse Damage's `Choices$ Card,Emblem`):
+            // choose any damage source, then prevent that damage and gain life.
+            // Full prevention replacement is not yet implemented (TODO(mtg-713):
+            // B15 — non-CoP ChooseSource damage prevention + life gain).
+            // Emit a NoOp so the spell is at least castable rather than silently
+            // uncastable (empty effects list).
+            Some(Effect::NoOp {
+                api_type: "ChooseSource(non-CoP)".to_string(),
             })
         }
 
@@ -4446,18 +4465,25 @@ Oracle:Target creature gets +3/+1 until end of turn. Create a Clue token.
     }
 
     #[test]
-    fn test_convert_choose_source_non_cop_returns_none() {
-        // Martyr's Cause-style multi-filter chooser (`Choices$ Card,Emblem`) is
-        // NOT the single-colour CoP shape, so this arm declines to convert it
-        // (returns None) rather than mis-modelling it.
+    fn test_convert_choose_source_non_cop_returns_noop() {
+        // Martyr's Cause / Reverse Damage-style multi-filter chooser
+        // (`Choices$ Card,Emblem`) is NOT the single-colour CoP shape, so this
+        // arm emits a NoOp rather than PreventDamageFromSource. The NoOp makes
+        // the spell castable (non-empty effects list) even though the prevention
+        // replacement is not yet fully implemented (TODO: mtg-713 B15).
         let params = AbilityParams::parse(
             "A:AB$ ChooseSource | Cost$ Sac<1/Creature> | Choices$ Card,Emblem | SubAbility$ DBEffect",
         )
         .unwrap();
+        let effect = params_to_effect(&params);
         assert!(
-            params_to_effect(&params).is_none(),
-            "non-CoP ChooseSource shapes should not convert to PreventDamageFromSource"
+            effect.is_some(),
+            "non-CoP ChooseSource should produce a NoOp (not None) so the spell is castable"
         );
+        match effect.unwrap() {
+            Effect::NoOp { .. } => {}
+            other => panic!("Expected NoOp for non-CoP ChooseSource, got {:?}", other),
+        }
     }
 
     #[test]

@@ -3631,14 +3631,36 @@ impl CardDefinition {
 
             // Parse SpellCast triggers (Mode$ SpellCast)
             // Example: T:Mode$ SpellCast | ValidCard$ Card.nonCreature | ValidActivatingPlayer$ You | Execute$ TrigCounter
-            // This triggers when the controller casts a spell matching ValidCard$ criteria
+            // This triggers when the controller (or any player for global triggers) casts a
+            // spell matching ValidCard$ criteria.
             if mode == Some("SpellCast") {
                 let mut effects = Vec::new();
 
-                // Check ValidCard$ to determine what spells trigger this
-                // Card.nonCreature = triggers on noncreature spells (instants, sorceries, etc.)
+                // Check ValidCard$ to determine what spells trigger this.
+                // Tokenize on `$` boundaries; do NOT substring-match.
                 let valid_card = params.get("ValidCard").map(|s| s.as_str());
+
+                // Card.nonCreature = triggers on noncreature spells (instants, sorceries, etc.)
                 let is_noncreature_only = valid_card == Some("Card.nonCreature");
+
+                // `Instant,Sorcery` — triggers on instants or sorceries only
+                // (Stormchaser's Talent level 3, etc.)
+                let is_instant_or_sorcery =
+                    valid_card == Some("Instant,Sorcery") || valid_card == Some("Sorcery,Instant");
+
+                // `Instant` — triggers on instant spells only
+                // (In the Eye of Chaos: "Whenever a player casts an instant spell")
+                let is_instant_only = valid_card == Some("Instant");
+
+                // `Enchantment` — triggers on enchantment spells only
+                // (Presence of the Master: "Whenever a player casts an enchantment spell")
+                let is_enchantment_only = valid_card == Some("Enchantment");
+
+                // Global "any player" triggers have no ValidActivatingPlayer$ You restriction.
+                // In the Eye of Chaos and Presence of the Master say "whenever A player casts"
+                // which means any player, not just the controller.
+                let activating_player = params.get("ValidActivatingPlayer").map(|s| s.as_str());
+                let fires_for_any_caster = activating_player != Some("You");
 
                 // Check if we have Execute$ parameter (references a SVar with effects)
                 // Use extract_effects_from_svar helper (DRY)
@@ -3658,12 +3680,24 @@ impl CardDefinition {
                 // Use new_any() to mark trigger_self_only = false
                 let mut trigger = Trigger::new_any(TriggerEvent::SpellCast, effects, description);
 
-                // Set structured filter flag for noncreature-only triggers
+                // Set structured filter flags for spell type and caster scope
                 if is_noncreature_only {
                     trigger.requires_noncreature = true;
                     if !trigger.description.contains("noncreature") {
                         trigger.description = format!("[noncreature] {}", trigger.description);
                     }
+                }
+                if is_instant_or_sorcery {
+                    trigger.requires_instant_or_sorcery = true;
+                }
+                if is_instant_only {
+                    trigger.requires_instant = true;
+                }
+                if is_enchantment_only {
+                    trigger.requires_enchantment = true;
+                }
+                if fires_for_any_caster {
+                    trigger.fires_for_any_caster = true;
                 }
 
                 triggers.push(trigger);
@@ -9917,6 +9951,168 @@ Oracle:As Phyrexian Processor enters, pay any amount of life.\n{4}, {T}: Create 
             1,
             "Experimental Frenzy should have exactly one MayPlayFromLibrary static; got {:?}",
             statics
+        );
+    }
+
+    /// In the Eye of Chaos (B8): global SpellCast trigger fires for any player's
+    /// instant spells — `ValidCard$ Instant` and no `ValidActivatingPlayer$ You`.
+    /// The trigger must have `fires_for_any_caster = true` and `requires_instant = true`,
+    /// and carry a CounterSpell with `target = CardId::triggered_spell()`.
+    #[test]
+    fn test_parse_in_the_eye_of_chaos_global_spellcast_trigger() {
+        use crate::core::{Effect, TriggerEvent};
+
+        let content = r#"
+Name:In the Eye of Chaos
+ManaCost:2 U
+Types:World Enchantment
+T:Mode$ SpellCast | ValidCard$ Instant | Execute$ TrigCounter | TriggerZones$ Battlefield | TriggerDescription$ Whenever a player casts an instant spell, counter it unless that player pays {X}, where X is its mana value.
+SVar:TrigCounter:DB$ Counter | Defined$ TriggeredSpellAbility | UnlessCost$ X | UnlessPayer$ TriggeredActivator
+SVar:X:TriggeredCard$CardManaCost
+Oracle:Whenever a player casts an instant spell, counter it unless that player pays {X}, where X is its mana value.
+"#;
+
+        let def = CardLoader::parse(content).unwrap();
+        let triggers = def.parse_triggers();
+
+        let trigger = triggers
+            .iter()
+            .find(|t| t.event == TriggerEvent::SpellCast)
+            .expect("In the Eye of Chaos must have a SpellCast trigger");
+
+        assert!(
+            trigger.fires_for_any_caster,
+            "In the Eye of Chaos fires for any player's casts (no ValidActivatingPlayer$ You)"
+        );
+        assert!(
+            trigger.requires_instant,
+            "In the Eye of Chaos requires instant spells (ValidCard$ Instant)"
+        );
+        assert!(
+            !trigger.requires_instant_or_sorcery,
+            "requires_instant_or_sorcery must NOT be set (uses requires_instant instead)"
+        );
+
+        // The CounterSpell effect must target the triggering spell (not a placeholder)
+        let counter_effect = trigger
+            .effects
+            .iter()
+            .find(|e| matches!(e, Effect::UnlessCostWrapper { .. } | Effect::CounterSpell { .. }))
+            .expect("trigger must carry a CounterSpell or UnlessCostWrapper effect");
+
+        match counter_effect {
+            Effect::UnlessCostWrapper {
+                inner_effect,
+                unless_cost,
+            } => {
+                // X mana cost with TriggeredActivator payer
+                match &unless_cost.cost {
+                    crate::core::effects::UnlessCostType::Mana(mana_cost) => {
+                        assert!(mana_cost.has_x(), "UnlessCost$ X must have x_count > 0");
+                    }
+                    other => panic!("Expected Mana cost with X, got {:?}", other),
+                }
+                assert_eq!(
+                    unless_cost.payer, "TriggeredActivator",
+                    "payer must be TriggeredActivator before resolution"
+                );
+                match inner_effect.as_ref() {
+                    Effect::CounterSpell { target, .. } => {
+                        assert!(
+                            target.is_triggered_spell(),
+                            "CounterSpell target must be triggered_spell sentinel"
+                        );
+                    }
+                    other => panic!("Inner effect must be CounterSpell, got {:?}", other),
+                }
+            }
+            Effect::CounterSpell { target, .. } => {
+                assert!(
+                    target.is_triggered_spell(),
+                    "CounterSpell target must be triggered_spell sentinel"
+                );
+            }
+            _ => panic!("Expected CounterSpell or UnlessCostWrapper effect"),
+        }
+    }
+
+    /// Presence of the Master (B8): global SpellCast trigger fires for any player's
+    /// enchantment spells — `ValidCard$ Enchantment` and no `ValidActivatingPlayer$ You`.
+    /// The trigger must have `fires_for_any_caster = true` and `requires_enchantment = true`.
+    #[test]
+    fn test_parse_presence_of_the_master_global_spellcast_trigger() {
+        use crate::core::{Effect, TriggerEvent};
+
+        let content = r#"
+Name:Presence of the Master
+ManaCost:3 W
+Types:Enchantment
+T:Mode$ SpellCast | ValidCard$ Enchantment | TriggerZones$ Battlefield | Execute$ TrigCounter | TriggerDescription$ Whenever a player casts an enchantment spell, counter it.
+SVar:TrigCounter:DB$ Counter | Defined$ TriggeredSpellAbility
+Oracle:Whenever a player casts an enchantment spell, counter it.
+"#;
+
+        let def = CardLoader::parse(content).unwrap();
+        let triggers = def.parse_triggers();
+
+        let trigger = triggers
+            .iter()
+            .find(|t| t.event == TriggerEvent::SpellCast)
+            .expect("Presence of the Master must have a SpellCast trigger");
+
+        assert!(
+            trigger.fires_for_any_caster,
+            "Presence of the Master fires for any player's casts"
+        );
+        assert!(
+            trigger.requires_enchantment,
+            "Presence of the Master requires enchantment spells (ValidCard$ Enchantment)"
+        );
+
+        // Must carry a CounterSpell targeting the triggering spell
+        let counter_effect = trigger
+            .effects
+            .iter()
+            .find(|e| matches!(e, Effect::CounterSpell { .. }))
+            .expect("trigger must carry a CounterSpell effect");
+        match counter_effect {
+            Effect::CounterSpell { target, .. } => {
+                assert!(
+                    target.is_triggered_spell(),
+                    "CounterSpell target must be triggered_spell sentinel (Defined$ TriggeredSpellAbility)"
+                );
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    /// Prowess-style trigger: `ValidActivatingPlayer$ You` must NOT set
+    /// `fires_for_any_caster` — it should stay controller-scoped.
+    #[test]
+    fn test_parse_prowess_spellcast_trigger_not_global() {
+        use crate::core::TriggerEvent;
+
+        let content = r#"
+Name:Jeskai Sage
+ManaCost:1 U
+Types:Creature Human Monk
+PT:1/1
+T:Mode$ SpellCast | ValidCard$ Card.nonCreature | ValidActivatingPlayer$ You | Execute$ TrigPump | TriggerDescription$ Whenever you cast a noncreature spell, this creature gets +1/+1 until end of turn.
+SVar:TrigPump:DB$ Pump | NumAtt$ 1 | NumDef$ 1
+Oracle:Prowess
+"#;
+
+        let def = CardLoader::parse(content).unwrap();
+        let triggers = def.parse_triggers();
+
+        let trigger = triggers
+            .iter()
+            .find(|t| t.event == TriggerEvent::SpellCast)
+            .expect("must have a SpellCast trigger");
+
+        assert!(
+            !trigger.fires_for_any_caster,
+            "Controller-scoped trigger (ValidActivatingPlayer$ You) must NOT be global"
         );
     }
 }

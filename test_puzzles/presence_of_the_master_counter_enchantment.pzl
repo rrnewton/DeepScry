@@ -1,0 +1,24 @@
+[metadata]
+Name:Presence of the Master Counters Enchantment Spell
+Goal:Win
+Turns:3
+Difficulty:Easy
+Description:Presence of the Master ("Whenever a player casts an enchantment spell, counter it."). P0 controls Presence of the Master on the battlefield. P1 tries to cast an Aura (Paralyze). The Presence trigger must fire for P1's cast (fires_for_any_caster=true, requires_enchantment=true) and counter the enchantment spell, leaving P1 with Paralyze in graveyard and the target creature alive. Before the fix (mtg-713 B8), SpellCast triggers only fired for the trigger source's controller, so P1's cast would never trigger P0's Presence.
+
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=
+p0library=Plains; Plains; Plains; Plains
+p0graveyard=
+p0battlefield=Plains; Plains; Plains; Plains; Presence of the Master
+p0exile=
+
+p1life=20
+p1hand=Paralyze
+p1library=Swamp; Swamp; Swamp; Swamp
+p1graveyard=
+p1battlefield=Swamp; Grizzly Bears
+p1exile=

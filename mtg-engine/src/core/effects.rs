@@ -3567,6 +3567,26 @@ pub struct Trigger {
     #[serde(default)]
     pub requires_instant_or_sorcery: bool,
 
+    /// When true, the SpellCast trigger fires if the cast spell is an instant
+    /// (but NOT necessarily a sorcery). Corresponds to `ValidCard$ Instant`.
+    /// Example: In the Eye of Chaos — "Whenever a player casts an instant spell"
+    #[serde(default)]
+    pub requires_instant: bool,
+
+    /// When true, the SpellCast trigger fires if the cast spell is an enchantment.
+    /// Corresponds to `ValidCard$ Enchantment`.
+    /// Example: Presence of the Master — "Whenever a player casts an enchantment spell"
+    #[serde(default)]
+    pub requires_enchantment: bool,
+
+    /// When true, the SpellCast trigger fires for ANY player's casts, not only
+    /// the trigger source's controller. Corresponds to "whenever a player casts"
+    /// (global world-enchantment triggers like In the Eye of Chaos or Presence
+    /// of the Master). When false (the default), only the source controller's
+    /// casts fire the trigger (Prowess, Storm, etc.).
+    #[serde(default)]
+    pub fires_for_any_caster: bool,
+
     /// When true, the trigger fires only when the event source is the
     /// permanent this trigger's card is *attached to* (`ValidSource$
     /// Card.AttachedBy`). Used by Auras/Equipment that watch the host's
@@ -3696,6 +3716,9 @@ impl Trigger {
             requires_opponent_cause: false,
             requires_noncreature: false,
             requires_instant_or_sorcery: false,
+            requires_instant: false,
+            requires_enchantment: false,
+            fires_for_any_caster: false,
             requires_attached_source: false,
             combat_damage_target: CombatDamageTarget::Any,
             requires_combat_damage: false,
@@ -3730,6 +3753,9 @@ impl Trigger {
             requires_opponent_cause: false,
             requires_noncreature: false,
             requires_instant_or_sorcery: false,
+            requires_instant: false,
+            requires_enchantment: false,
+            fires_for_any_caster: false,
             requires_attached_source: false,
             combat_damage_target: CombatDamageTarget::Any,
             requires_combat_damage: false,
@@ -3770,6 +3796,9 @@ impl Trigger {
             requires_opponent_cause: false,
             requires_noncreature: false,
             requires_instant_or_sorcery: false,
+            requires_instant: false,
+            requires_enchantment: false,
+            fires_for_any_caster: false,
             requires_attached_source: false,
             combat_damage_target: CombatDamageTarget::Any,
             requires_combat_damage: false,
@@ -3805,6 +3834,9 @@ impl Trigger {
             requires_opponent_cause: false,
             requires_noncreature: false,
             requires_instant_or_sorcery: false,
+            requires_instant: false,
+            requires_enchantment: false,
+            fires_for_any_caster: false,
             requires_attached_source: false,
             combat_damage_target: CombatDamageTarget::Any,
             requires_combat_damage: false,

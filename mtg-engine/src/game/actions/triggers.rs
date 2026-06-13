@@ -138,6 +138,25 @@ pub struct TriggerContext {
     /// `None` when the trigger was not fired by a card-zone-change event or when
     /// the triggered card's power is not relevant.
     pub triggered_card_power: Option<i32>,
+
+    /// For SpellCast triggers that fire for any player's casts
+    /// (`fires_for_any_caster = true`): the spell on the stack that caused
+    /// the trigger to fire. Corresponds to `Defined$ TriggeredSpellAbility`
+    /// in Counter effects (In the Eye of Chaos, Presence of the Master).
+    /// `None` for other trigger types.
+    pub cast_spell_id: Option<CardId>,
+
+    /// For SpellCast triggers that fire for any player's casts: the player
+    /// who cast the triggering spell. Corresponds to `UnlessPayer$ TriggeredActivator`
+    /// in UnlessCost effects (In the Eye of Chaos). `None` for other trigger types.
+    pub caster_id: Option<PlayerId>,
+
+    /// For SpellCast triggers that fire for any player's casts: the mana value
+    /// (converted mana cost) of the cast spell. Used to resolve `UnlessCost$ X`
+    /// where `SVar:X:TriggeredCard$CardManaCost` (In the Eye of Chaos: "counter
+    /// it unless that player pays {X}", where X = the instant's mana value).
+    /// `None` for triggers that don't need this.
+    pub cast_spell_mana_value: Option<u8>,
 }
 
 impl TriggerContext {
@@ -155,6 +174,9 @@ impl TriggerContext {
             damage_amount: None,
             triggered_card_counter_amounts: SmallVec::new(),
             triggered_card_power: None,
+            cast_spell_id: None,
+            caster_id: None,
+            cast_spell_mana_value: None,
         }
     }
 
@@ -207,6 +229,22 @@ impl TriggerContext {
     /// Builder method to set sacrificed creature power
     pub fn with_sacrificed_power(mut self, power: u8) -> Self {
         self.sacrificed_power = power;
+        self
+    }
+
+    /// Builder method to set the cast spell (for `fires_for_any_caster` SpellCast triggers).
+    /// Resolves `Defined$ TriggeredSpellAbility` in CounterSpell effects and
+    /// `UnlessPayer$ TriggeredActivator` in UnlessCost effects.
+    pub fn with_cast_spell(mut self, spell_id: CardId, caster: PlayerId) -> Self {
+        self.cast_spell_id = Some(spell_id);
+        self.caster_id = Some(caster);
+        self
+    }
+
+    /// Builder method to set the mana value of the cast spell (for `UnlessCost$ X`
+    /// where X = `TriggeredCard$CardManaCost`, i.e., In the Eye of Chaos).
+    pub fn with_cast_spell_mana_value(mut self, mana_value: u8) -> Self {
+        self.cast_spell_mana_value = Some(mana_value);
         self
     }
 }
@@ -700,6 +738,68 @@ pub fn resolve_effect_placeholder(effect: &Effect, ctx: &TriggerContext) -> Effe
         Effect::SkipUntapStep { player } if player.is_placeholder() => Effect::SkipUntapStep { player: ctx.controller },
         Effect::SkipUntapStep { player } if player.is_target_opponent() => Effect::SkipUntapStep {
             player: ctx.opponent.unwrap_or(ctx.controller),
+        },
+
+        // =========================================================================
+        // UnlessCostWrapper: resolve `UnlessPayer$ TriggeredActivator` to the
+        // player who cast the spell that fired the trigger (In the Eye of Chaos).
+        // Also recursively resolve the inner effect (e.g. CounterSpell with
+        // TriggeredSpellAbility). Only applies when the payer is still a named
+        // reference rather than a numeric ID string.
+        // =========================================================================
+        Effect::UnlessCostWrapper {
+            inner_effect,
+            unless_cost,
+        } if unless_cost.payer.parse::<u32>().is_err() => {
+            use crate::core::effects::UnlessCostType;
+            // Resolve the payer reference to a concrete PlayerId
+            let resolved_payer_id = match unless_cost.payer.as_str() {
+                "TriggeredActivator" => {
+                    // The player who cast the spell that triggered this (In the Eye of Chaos)
+                    ctx.caster_id.unwrap_or(ctx.controller)
+                }
+                "You" => ctx.controller,
+                _ => ctx.controller,
+            };
+            // Resolve X in mana cost if this is `UnlessCost$ X` and we know the
+            // triggering spell's mana value (In the Eye of Chaos: X = triggered instant's CMC).
+            let resolved_cost = match &unless_cost.cost {
+                UnlessCostType::Mana(mana_cost) if mana_cost.has_x() => {
+                    if let Some(mana_value) = ctx.cast_spell_mana_value {
+                        UnlessCostType::Mana(mana_cost.with_x_value(mana_value))
+                    } else {
+                        unless_cost.cost.clone()
+                    }
+                }
+                _ => unless_cost.cost.clone(),
+            };
+            // Recursively resolve the inner effect (handles TriggeredSpellAbility
+            // inside a CounterSpell inner effect)
+            let resolved_inner = resolve_effect_placeholder(inner_effect, ctx);
+            Effect::UnlessCostWrapper {
+                inner_effect: Box::new(resolved_inner),
+                unless_cost: crate::core::effects::UnlessCost {
+                    cost: resolved_cost,
+                    payer: resolved_payer_id.as_u32().to_string(),
+                    switched: unless_cost.switched,
+                },
+            }
+        }
+
+        // =========================================================================
+        // CounterSpell with Defined$ TriggeredSpellAbility: resolve to the spell
+        // that caused the SpellCast trigger to fire (In the Eye of Chaos, Presence
+        // of the Master). The `cast_spell_id` is set on the TriggerContext when
+        // `fires_for_any_caster` SpellCast triggers are executed.
+        // =========================================================================
+        Effect::CounterSpell {
+            target,
+            spell_restriction,
+            remember_mana_value,
+        } if target.is_triggered_spell() => Effect::CounterSpell {
+            target: ctx.cast_spell_id.unwrap_or(CardId::new(0)),
+            spell_restriction: spell_restriction.clone(),
+            remember_mana_value: *remember_mana_value,
         },
 
         // =========================================================================

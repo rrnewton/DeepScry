@@ -7185,3 +7185,127 @@ async fn test_forestwalk_blocks_forest_owner() -> Result<()> {
     println!("✓ Forestwalk correctly prevents blocking when defending player controls a Forest (CR 702.14a)");
     Ok(())
 }
+
+/// Presence of the Master must counter an enchantment spell cast by an opponent
+/// (global SpellCast trigger, `fires_for_any_caster = true`).
+///
+/// Before mtg-713 B8 was fixed, `check_spellcast_triggers` only fired for
+/// the trigger source's controller, so P0's Presence never saw P1's Paralyze.
+/// After the fix the trigger fires for any caster, targets the spell on the
+/// stack via `Defined$ TriggeredSpellAbility`, and counters it.
+///
+/// Puzzle layout:
+///   P0 battlefield: Presence of the Master
+///   P1 hand:        Paralyze (Enchantment Aura — an enchantment spell)
+///   P1 battlefield: Grizzly Bears (the intended Aura target, must survive)
+#[tokio::test]
+async fn test_presence_of_the_master_counters_enchantment() -> Result<()> {
+    use mtg_engine::zones::Zone;
+
+    let cardsfolder = require_cardsfolder();
+    let puzzle_path = PathBuf::from("../test_puzzles/presence_of_the_master_counter_enchantment.pzl");
+    let puzzle_contents = std::fs::read_to_string(&puzzle_path)?;
+    let puzzle = PuzzleFile::parse(&puzzle_contents)?;
+
+    let card_db = CardDatabase::new(cardsfolder);
+    let mut game = load_puzzle_into_game(&puzzle, &card_db).await?;
+    game.seed_rng(42);
+
+    let p0_id = game.players[0].id; // controls Presence of the Master
+    let p1_id = game.players[1].id; // holds Paralyze in hand
+
+    // Sanity: Presence of the Master is on the battlefield.
+    let presence_id = game
+        .battlefield
+        .cards
+        .iter()
+        .copied()
+        .find(|&id| {
+            game.cards
+                .try_get(id)
+                .is_some_and(|c| c.name.as_str() == "Presence of the Master")
+        })
+        .expect("Presence of the Master should be on the battlefield");
+    assert_eq!(
+        game.cards.get(presence_id)?.controller,
+        p0_id,
+        "P0 must control Presence of the Master"
+    );
+
+    // Verify Presence of the Master has a global SpellCast trigger that fires
+    // for enchantments cast by any player.
+    {
+        let card = game.cards.get(presence_id)?;
+        let global_trigger = card
+            .triggers
+            .iter()
+            .find(|t| t.event == mtg_engine::core::TriggerEvent::SpellCast && t.fires_for_any_caster)
+            .expect("Presence of the Master must have a global (fires_for_any_caster) SpellCast trigger");
+        assert!(
+            global_trigger.requires_enchantment,
+            "Presence of the Master's trigger must require an enchantment spell"
+        );
+    }
+
+    // Grizzly Bears on P1's battlefield — the intended enchant target.
+    let bears_id = game
+        .battlefield
+        .cards
+        .iter()
+        .copied()
+        .find(|&id| {
+            game.cards
+                .try_get(id)
+                .is_some_and(|c| c.name.as_str() == "Grizzly Bears")
+        })
+        .expect("Grizzly Bears should be on P1's battlefield");
+
+    // Paralyze starts in P1's hand.
+    let p1_zones = game.get_player_zones(p1_id).expect("P1 zones");
+    let paralyze_id = p1_zones
+        .hand
+        .cards
+        .iter()
+        .copied()
+        .find(|&id| game.cards.try_get(id).is_some_and(|c| c.name.as_str() == "Paralyze"))
+        .expect("Paralyze should be in P1's hand");
+
+    // Simulate P1 casting Paralyze: move it from hand onto the stack.
+    game.move_card(paralyze_id, Zone::Hand, Zone::Stack, p1_id)?;
+    assert!(
+        game.stack.contains(paralyze_id),
+        "Paralyze must be on the stack before trigger check"
+    );
+
+    // Fire SpellCast triggers with P1 as the caster.
+    // The global Presence of the Master trigger must fire, resolve its
+    // CounterSpell effect targeting the triggered spell (Paralyze), and move
+    // it to P1's graveyard.
+    game.check_spellcast_triggers(paralyze_id, p1_id)?;
+
+    // Paralyze must have been countered — it must no longer be on the stack.
+    assert!(
+        !game.stack.contains(paralyze_id),
+        "Paralyze must be countered off the stack by Presence of the Master"
+    );
+
+    // Paralyze must be in P1's graveyard (countered spells go to their owner's graveyard).
+    let in_graveyard = game
+        .get_player_zones(p1_id)
+        .expect("P1 zones after trigger")
+        .graveyard
+        .cards
+        .contains(&paralyze_id);
+    assert!(in_graveyard, "countered Paralyze must be in P1's graveyard");
+
+    // Grizzly Bears must still be alive on the battlefield — it was never enchanted.
+    assert!(
+        game.battlefield.contains(bears_id),
+        "Grizzly Bears must survive (Paralyze was countered before it could resolve)"
+    );
+
+    println!(
+        "✓ Presence of the Master counters P1's Paralyze (global fires_for_any_caster SpellCast trigger, mtg-713 B8)"
+    );
+    Ok(())
+}

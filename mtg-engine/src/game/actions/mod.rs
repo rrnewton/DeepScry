@@ -7564,15 +7564,28 @@ impl GameState {
             .get(cast_spell_id)
             .map(|c| c.is_instant() || c.is_sorcery())
             .unwrap_or(false);
+        let is_instant = self.cards.get(cast_spell_id).map(|c| c.is_instant()).unwrap_or(false);
+        let is_enchantment = self
+            .cards
+            .get(cast_spell_id)
+            .map(|c| c.is_enchantment())
+            .unwrap_or(false);
 
-        // Collect SpellCast triggers from permanents on the battlefield
-        // These triggers fire when their controller casts a spell
+        // Collect SpellCast triggers from permanents on the battlefield.
+        //
+        // Triggers with `fires_for_any_caster = false` (the default) only fire
+        // for their controller's spells (Prowess, Storm, etc.).
+        // Triggers with `fires_for_any_caster = true` fire for any player's
+        // spells (world enchantments: In the Eye of Chaos, Presence of the
+        // Master — "whenever A player casts ...").
         struct TriggerToExecute {
             source_card_id: CardId,
             controller: PlayerId,
             source_name: String,
             effects: Vec<Effect>,
             description: String,
+            /// True if this trigger fires for any caster (not just its controller).
+            fires_for_any_caster: bool,
         }
 
         let triggers_to_execute: Vec<TriggerToExecute> = self
@@ -7581,17 +7594,18 @@ impl GameState {
             .iter()
             .filter_map(|&card_id| {
                 if let Some(card) = self.cards.try_get(card_id) {
-                    // Only trigger for permanents controlled by the caster
-                    if card.controller != caster_id {
-                        return None;
-                    }
-
                     // Find SpellCast triggers on this permanent
                     let matching_triggers: Vec<&Trigger> = card
                         .triggers
                         .iter()
                         .filter(|trigger| {
                             if trigger.event != TriggerEvent::SpellCast {
+                                return false;
+                            }
+
+                            // Controller-scoped triggers only fire for the caster's own spells.
+                            // Global triggers (`fires_for_any_caster`) fire for everyone.
+                            if !trigger.fires_for_any_caster && card.controller != caster_id {
                                 return false;
                             }
 
@@ -7603,6 +7617,16 @@ impl GameState {
 
                             // Check instant-or-sorcery-only triggers
                             if trigger.requires_instant_or_sorcery && !is_instant_or_sorcery {
+                                return false;
+                            }
+
+                            // Check instant-only triggers (In the Eye of Chaos)
+                            if trigger.requires_instant && !is_instant {
+                                return false;
+                            }
+
+                            // Check enchantment-only triggers (Presence of the Master)
+                            if trigger.requires_enchantment && !is_enchantment {
                                 return false;
                             }
 
@@ -7622,6 +7646,7 @@ impl GameState {
                                     source_name: card.name.to_string(),
                                     effects: trigger.effects.clone(),
                                     description: trigger.description.clone(),
+                                    fires_for_any_caster: trigger.fires_for_any_caster,
                                 })
                                 .collect::<Vec<_>>(),
                         )
@@ -7639,8 +7664,19 @@ impl GameState {
             self.logger
                 .gamelog(&format!("Trigger: {} - {}", trigger.source_name, trigger.description));
 
-            // Build trigger context
-            let ctx = TriggerContext::new(trigger.source_card_id, trigger.controller);
+            // Build trigger context. For global ("any caster") triggers, thread
+            // through the cast_spell_id, caster_id, and the cast spell's mana
+            // value so that `Defined$ TriggeredSpellAbility`,
+            // `UnlessPayer$ TriggeredActivator`, and `UnlessCost$ X`
+            // (where X = `TriggeredCard$CardManaCost`) can be resolved.
+            let ctx = if trigger.fires_for_any_caster {
+                let mana_value = self.cards.get(cast_spell_id).map(|c| c.mana_cost.cmc()).unwrap_or(0);
+                TriggerContext::new(trigger.source_card_id, trigger.controller)
+                    .with_cast_spell(cast_spell_id, caster_id)
+                    .with_cast_spell_mana_value(mana_value)
+            } else {
+                TriggerContext::new(trigger.source_card_id, trigger.controller)
+            };
 
             // Execute effects with placeholder resolution
             for effect in trigger.effects {
