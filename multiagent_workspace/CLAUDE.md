@@ -88,7 +88,11 @@ parent/                       (= ~/work/mtg/)
 ├── worktrees/
 │   ├── ACTIVE.md             (registry of live agent worktrees)
 │   ├── ARCHIVED.md           (historical log)
-│   └── <branch-name>/        (each live worktree)
+│   ├── slot01/               (permanent cached worktree — active or in use)
+│   ├── slot02/               (permanent cached worktree — active or in use)
+│   └── parked/
+│       ├── slot03/           (parked permanent worktree — broken while parked, OK)
+│       └── slot04/           (parked permanent worktree — broken while parked, OK)
 ├── deepscry/             (primary checkout)
 ├── ai_docs/                  (transient AI scratch notes; optional)
 ├── experiments/              (captured experiment data; optional)
@@ -133,12 +137,57 @@ Worktree naming:
   stay put; only the branch inside them changes. This also makes moving
   the whole workspace to a new partition safe: you can copy or reflink
   the slot directories without git repair.
-- Pick the next available slot number; record it in `ACTIVE.md` before
-  the agent's first commit.
 - The primary checkout (`deepscry/`) is for integration work only:
   the donor of cached `target/` artifacts, the staging ground for
   merging accepted work, and the launchpad for new worktrees. Agents
   do not directly modify it.
+
+### Slot pool protocol (PERMANENT SLOTS ONLY — READ CAREFULLY)
+
+**There are exactly four permanent cached worktree slots: slot01, slot02,
+slot03, slot04.** Never create slot05, slot06, or any higher-numbered slot
+as a permanent slot. Reprovisioning a new slot is expensive (it reflink-clones
+the multi-gigabyte `forge-java` submodule); reusing an existing one is cheap.
+
+Slot states:
+
+- **Active** — checked out to a live feature branch, in `worktrees/slot0X/`,
+  listed in `ACTIVE.md`. An agent is working in it.
+- **Parked** — not in use, moved to `worktrees/parked/slot0X/`. Parked worktrees
+  are intentionally broken (git worktree metadata is stale) but that is fine
+  while parked. They are NOT listed in `ACTIVE.md`.
+
+**Park a slot when its task completes** (instead of deleting it):
+```sh
+# 1. Archive its ACTIVE.md row first (see Archive process below)
+# 2. Switch it to a detached HEAD so no branch is "in use":
+git -C worktrees/slot0X checkout --detach HEAD
+# 3. Move it to the parked directory:
+mv worktrees/slot0X worktrees/parked/slot0X
+# (Do NOT run git worktree remove — that would destroy the cached target/)
+```
+
+**Unpark a slot to start a new task**:
+```sh
+# 1. Move it back:
+mv worktrees/parked/slot0X worktrees/slot0X
+# 2. Repair the git worktree metadata:
+git -C deepscry worktree repair worktrees/slot0X
+# 3. Switch to a new feature branch off integration:
+git -C worktrees/slot0X fetch origin
+git -C worktrees/slot0X checkout -b claude/<new-branch> origin/integration
+# 4. Register in ACTIVE.md BEFORE first commit.
+```
+
+**`git worktree move` does NOT work with submodules** — it fails with
+`fatal: working trees containing submodules cannot be moved or removed`.
+Always use plain `mv` for parking/unparking; then run `git worktree repair`.
+
+**Temporary over-provisioning (>4 active slots):** If all four permanent slots
+are busy and a new task is urgent, create a temporary extra slot (slot05, etc.)
+using `new_worktree.sh`. When that task finishes, **DELETE it entirely** —
+do NOT park it. Temporary slots do not become permanent. The ceiling is 4 cached
+worktrees; above that is conscious temporary overhead that must be cleaned up.
 
 Branch rules:
 
@@ -273,14 +322,16 @@ Worktree lifecycle:
    committed; truly transient files must be deleted or added to
    `.gitignore`. The reviewer or orchestrator must refuse to close a
    task whose worktree is not clean.
-3. **Closure.** When a task closes, DELETE the worktree — do not leave
-   it sitting around (each worktree holds gigabytes of `target/` data
-   even with reflinking, and stale worktrees confuse later agents
-   about which branch is canonical). Move its record (final commit
-   SHA, branch, archive date) from `worktrees/ACTIVE.md` to
-   `worktrees/ARCHIVED.md`. The local feature branch stays unless it
-   has merged into a tracked branch or the user explicitly approves
-   deletion. See Archive process below for the mechanical steps.
+3. **Closure.** When a task closes:
+   - **Permanent slots (slot01–slot04):** PARK the worktree — do NOT delete it.
+     Move it to `worktrees/parked/slot0X/` using `mv` (see Slot pool protocol
+     above). Move the `ACTIVE.md` row to `ARCHIVED.md`. The cached `target/`
+     stays intact for the next task, saving the expensive reflink-clone.
+   - **Temporary slots (slot05+):** DELETE the worktree entirely with
+     `git -C deepscry worktree remove --force worktrees/slot0X` and move the
+     `ACTIVE.md` row to `ARCHIVED.md`. Do not park temporary slots.
+   The local feature branch stays unless it has merged into a tracked branch
+   or the user explicitly approves deletion. See Archive process below.
 4. **Audit cadence.** The orchestrator must periodically reconcile —
    minimally before each new agent spawn — that `worktrees/` on disk
    matches `ACTIVE.md` exactly: no rogue paths, no stranded entries,
