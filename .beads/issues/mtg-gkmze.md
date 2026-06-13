@@ -5,6 +5,7 @@ priority: 2
 issue_type: task
 created_at: 2026-06-13T22:51:28.730546644+00:00
 updated_at: 2026-06-13T23:40:19.908884646+00:00
+updated_at: 2026-06-13T22:51:28.730546644+00:00
 ---
 
 # Description
@@ -64,6 +65,9 @@ also run in parallel with the bulk runner; to be consolidated as migration lands
 ## First corpus run results (2026-06-13)
 - Total puzzles discovered: 694
 - Wall-clock: ~0.25s (release) / ~1.5s (debug)
+## First corpus run results (2026-06-13)
+- Total puzzles discovered: 694
+- Wall-clock: ~1.9s (debug) / ~6s (nextest debug mode)
 - Threads: 16 (num_cpus)
 - OK: 639 (637 smoke, 2 assert)
 - FAIL: 55 total
@@ -88,6 +92,20 @@ also run in parallel with the bulk runner; to be consolidated as migration lands
 - 'Token support not yet implemented' — ~28 puzzles (forge-java corpus uses
   tokens e.g. Food, Treasure, creature tokens that our engine doesn't support yet)
 - 'Card not found' — specific cards missing from cardsfolder (stormchasers_talent_l3,
+- "Invalid difficulty: Common" — forge-java corpus uses "Common" difficulty,
+  our parser requires Easy/Medium/Hard. Affects PP00.pzl, PP01.pzl, PP29.pzl,
+  PP30.pzl, PS_AER1.pzl, PS_AKH1.pzl, PS_AKH4.pzl, PS_J221.pzl, MTGP_02.pzl,
+  MTGP_09.pzl, forge_tutorial01-03.pzl, Spellslinger.pzl
+- "Unknown phase: DECLAREATK" — test_deserters_disciple_combat_timing.pzl,
+  test_fire_lord_ozai_attack_trigger.pzl
+- "Unknown counter type: TIME" — PS_SPM4.pzl
+- "Missing [state] section" — test_barrels_of_blasting_jelly.pzl,
+  test_cracked_earth_technique.pzl (WIP/template puzzle stubs)
+
+### Panics/engine errors (36): game-loop failures
+- "Token support not yet implemented" — ~28 puzzles (forge-java corpus uses
+  tokens e.g. Food, Treasure, creature tokens that our engine doesn't support yet)
+- "Card not found" — specific cards missing from cardsfolder (stormchasers_talent_l3,
   c_a_food, Ragnarok_Divine_Deliverance, Voldaren_Thrillseeker, Urza_Planeswalker)
 
 ## Validate step status
@@ -98,6 +116,7 @@ also run in parallel with the bulk runner; to be consolidated as migration lands
 
 ## TODO for next phases
 - Fix 'Invalid difficulty: Common' in parser to accept it (accept forge-java values)
+- Fix "Invalid difficulty: Common" in parser to accept it (accept forge-java values)
 - Implement token support to unblock the 28 token-using puzzles
 - Fix card-not-found cases (missing cards in cardsfolder)
 - Track per-card fixes as they land; tighten baseline tolerances
