@@ -28,8 +28,6 @@
 //! - **Menace (702.111b)** — requires 2+ blockers in total. Whether a *single*
 //!   blocker may legally block a menace attacker depends on the rest of the
 //!   block declaration, so it can only be enforced on the full assignment.
-//! - **Landwalk (702.14)** — requires looking up the defending player's lands.
-//!   Use [`can_block_with_view`] when a `GameStateView` is available.
 
 use crate::core::{CardId, Color, Keyword, KeywordArgs};
 use crate::game::controller::GameStateView;
@@ -37,18 +35,21 @@ use crate::game::state::GameState;
 use smallvec::SmallVec;
 
 /// Returns `true` if `blocker_id` may legally be assigned to block `attacker_id`
-/// in the current game state, ignoring multi-blocker rules (Menace) and
-/// landwalk.
+/// in the current game state, ignoring only multi-blocker rules (Menace).
 ///
-/// Use this from the UI to filter the blocker choice menu and from the engine
-/// to validate user input. Both call sites MUST use the same predicate so the
-/// engine never silently drops a legal-looking choice.
+/// Landwalk (CR 702.14) IS enforced here using the full `GameState`; no
+/// separate `can_block_with_view` call is needed for server-side validation.
+///
+/// Use this from the engine to validate blocker assignments and to build the
+/// available-blockers list passed to controllers. Both call sites MUST use the
+/// same predicate so the engine never silently drops a legal-looking choice.
 pub fn can_block(game: &GameState, attacker_id: CardId, blocker_id: CardId) -> bool {
     can_block_impl(game, attacker_id, blocker_id, None)
 }
 
-/// Like [`can_block`], but also enforces Landwalk by looking at the defending
-/// player's battlefield via the supplied `view`.
+/// Like [`can_block`], but uses a controller's `GameStateView` for the
+/// Landwalk check instead of the full `GameState`.  Use this from controller
+/// code (heuristic AI, TUI) where only the shadow/client view is available.
 pub fn can_block_with_view(game: &GameState, view: &GameStateView, attacker_id: CardId, blocker_id: CardId) -> bool {
     can_block_impl(game, attacker_id, blocker_id, Some(view))
 }
@@ -124,21 +125,43 @@ fn can_block_impl(game: &GameState, attacker_id: CardId, blocker_id: CardId, vie
         }
     }
 
-    // 702.14 Landwalk: needs view to check defending player's lands.
+    // Global block prohibition: some battlefield permanent (e.g. Light of Day)
+    // carries a CantAttackOrBlockMatching static that forbids certain creature
+    // types from blocking entirely (CR 509.1b).
+    if game.is_block_prohibited(blocker) {
+        return false;
+    }
+
+    // 702.14 Landwalk: unblockable if defending player controls the named land type.
+    // Check using either the controller's view (controller code) or the full game
+    // state (server-side engine validation) — both paths must produce the same
+    // verdict to avoid engine/controller desync.
     if attacker.has_keyword(Keyword::Landwalk) {
-        if let Some(view) = view {
-            for keyword_args in attacker.keywords.iter_args() {
-                if let KeywordArgs::Landwalk { land_type } = keyword_args {
-                    let defender_has_land = view.battlefield().iter().filter_map(|&id| view.get_card(id)).any(|c| {
+        for keyword_args in attacker.keywords.iter_args() {
+            if let KeywordArgs::Landwalk { land_type } = keyword_args {
+                let defender_has_land = if let Some(view) = view {
+                    view.battlefield().iter().filter_map(|&id| view.get_card(id)).any(|c| {
                         c.controller == blocker.controller
                             && c.is_land()
                             && c.subtypes
                                 .iter()
                                 .any(|st| st.as_str().eq_ignore_ascii_case(land_type.as_str()))
-                    });
-                    if defender_has_land {
-                        return false;
-                    }
+                    })
+                } else {
+                    game.battlefield
+                        .cards
+                        .iter()
+                        .filter_map(|&id| game.cards.get(id).ok())
+                        .any(|c| {
+                            c.controller == blocker.controller
+                                && c.is_land()
+                                && c.subtypes
+                                    .iter()
+                                    .any(|st| st.as_str().eq_ignore_ascii_case(land_type.as_str()))
+                        })
+                };
+                if defender_has_land {
+                    return false;
                 }
             }
         }

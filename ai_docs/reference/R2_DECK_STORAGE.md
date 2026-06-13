@@ -41,13 +41,41 @@ The server reads these at startup (mirrors how `.r2.env` is sourced):
 ```
 AWS_ACCESS_KEY_ID
 AWS_SECRET_ACCESS_KEY
-R2_ENDPOINT      # https://<account-id>.r2.cloudflarestorage.com
-R2_BUCKET        # deepscry-decks
+R2_ENDPOINT           # https://<account-id>.r2.cloudflarestorage.com
+R2_BUCKET             # deepscry-decks
+R2_PUBLIC_BASE_URL    # optional — see "Public bucket" below
 ```
 
-All four must be present or the endpoint returns 503 (the rest of the server
-is unaffected). `deploy-cloud.sh` forwards them into the systemd
+The first four must be present or the endpoint returns 503 (the rest of the
+server is unaffected). `deploy-cloud.sh` forwards them into the systemd
 `EnvironmentFile`; see `scripts/deepscry-deploy.env.example`.
+
+## Public bucket (optional — enables permanent "Direct link" URLs)
+
+By default R2 objects are private (access only via presigned URLs that expire
+after ~10 minutes). Setting `R2_PUBLIC_BASE_URL` enables **permanent, stable
+Direct link URLs** — no expiry, no re-mint needed.
+
+**What it does:**
+- The credentials endpoint includes a `public_url` field, e.g.
+  `https://pub-<hash>.r2.dev/decks/<user-id>/collection.tgz`
+- The deck editor's "Direct link" button uses this URL instead of the expiring
+  presigned URL when it is present
+- The link is stable as long as the user's identity doesn't change — the URL
+  can be bookmarked or shared
+
+**Required operator step (one-time, out-of-band):**
+1. In the Cloudflare dashboard: R2 → `deepscry-decks` → Settings →
+   "Public access" → click "Allow Access"
+2. Note the `pub-<hash>.r2.dev` subdomain shown
+3. Add to `.r2.env`: `R2_PUBLIC_BASE_URL=https://pub-<hash>.r2.dev`
+4. Re-deploy: `./scripts/deploy-cloud.sh deploy`
+
+**Security note:** deck collections contain only MTG deck lists (card names +
+counts) — no personal data, no secrets. Making the bucket public means any
+user's collection URL is world-readable if discovered, but there is nothing
+sensitive to expose. This is why the feature is opt-in (requires the operator
+to enable it) rather than the default.
 
 ## Feature flag (client)
 

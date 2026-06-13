@@ -1,0 +1,21 @@
+[metadata]
+Name=Cavalier of Gales Dies Trigger Test
+Goal=Win
+Turns=5
+Difficulty=Medium
+Description=P1 has Cavalier of Gales already on battlefield. P2 has a creature. Cavalier attacks. When it dies (needs a kill mechanism), verify the dies trigger shuffles it into library and scrys 2. P2 has low life so Cavalier may just win by attacking.
+
+[state]
+turn=3
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=
+p0battlefield=Island;Island;Island;Cavalier of Gales
+p0library=Island;Island;Island;Island;Island
+p0graveyard=
+p1life=5
+p1hand=
+p1battlefield=Plains;Plains;Plains
+p1library=Plains;Plains;Plains
+p1graveyard=

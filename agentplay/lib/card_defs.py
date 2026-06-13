@@ -57,9 +57,15 @@ class CardDatabase:
             line = line.strip()
             if not line or line.startswith("[") or line.startswith("#"):
                 continue
+            # Skip metadata key=value lines (e.g. "Name=...", "Description=...")
+            if "=" in line and not line[0].isdigit():
+                continue
             # Format: "N CardName" or "N CardName|SET"
             parts = line.split(None, 1)
             if len(parts) < 2:
+                continue
+            # First token must be a count (integer); skip non-card lines
+            if not parts[0].isdigit():
                 continue
             card_name = parts[1].split("|")[0].strip()
             if card_name not in self._cards:
@@ -90,19 +96,23 @@ class CardDatabase:
         # with underscores replacing spaces
         filename = card_name.lower().replace(" ", "_").replace("'", "").replace(",", "")
         first_letter = filename[0] if filename else "a"
-        card_path = self._cardsfolder / first_letter / f"{filename}.txt"
-        if not card_path.exists():
-            # Try with apostrophe variants
-            for variant in [
-                card_name.lower().replace(" ", "_"),
-                card_name.lower().replace(" ", "_").replace("'", "_"),
-            ]:
-                alt = self._cardsfolder / variant[0] / f"{variant}.txt"
-                if alt.exists():
-                    card_path = alt
-                    break
-            else:
-                return None
+        try:
+            card_path = self._cardsfolder / first_letter / f"{filename}.txt"
+            if not card_path.exists():
+                # Try with apostrophe variants
+                for variant in [
+                    card_name.lower().replace(" ", "_"),
+                    card_name.lower().replace(" ", "_").replace("'", "_"),
+                ]:
+                    alt = self._cardsfolder / variant[0] / f"{variant}.txt"
+                    if alt.exists():
+                        card_path = alt
+                        break
+                else:
+                    return None
+        except OSError:
+            # Path may be too long (e.g. from malformed metadata lines)
+            return None
         return self._parse_card_file(card_path)
 
     @staticmethod

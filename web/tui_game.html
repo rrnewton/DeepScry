@@ -1103,6 +1103,9 @@
                 window.__mtg_network_set_lobby_create = networkModule.network_set_lobby_create;
                 window.__mtg_network_set_lobby_join = networkModule.network_set_lobby_join;
                 window.__mtg_network_clear_lobby_action = networkModule.network_clear_lobby_action;
+                // Phase 0 keepalive ping export (mtg-z459a). network.js guards
+                // optional usage so older WASM builds without it still work.
+                window.__mtg_network_ping = networkModule.network_ping;
 
                 const networkJs = await import('./network.js');
                 getNetworkClient = networkJs.getNetworkClient;
@@ -2447,8 +2450,14 @@
                         network_set_lobby_create: window.__mtg_network_set_lobby_create,
                         network_set_lobby_join: window.__mtg_network_set_lobby_join,
                         network_clear_lobby_action: window.__mtg_network_clear_lobby_action,
+                        // Phase 0 keepalive (mtg-z459a): lets network.js send a
+                        // periodic Ping over the live in-game socket.
+                        network_ping: window.__mtg_network_ping,
                     };
                     networkClient = wireBugReportNetworkClient(getNetworkClient(wasmExports));
+                    // Expose the live client for the Phase 0 keepalive e2e
+                    // (window.__mtgNetworkClient._sendKeepalivePing).
+                    window.__mtgNetworkClient = networkClient;
 
                     // Set up callbacks
                     networkClient.onStateChange = (state) => {

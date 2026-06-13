@@ -1027,6 +1027,31 @@ impl WasmNetworkClient {
                 self.push_state_sync(action_count, StateSyncEntry::SearchCandidates { searcher, cards });
             }
 
+            ServerMessage::DigDecision {
+                digger,
+                kept,
+                action_count,
+            } => {
+                // mtg-677/mtg-908: server-authoritative Dig kept-list.
+                // Key it in the reveal-class log by action_count so
+                // apply_state_sync_at delivers it to execute_dig on the shadow
+                // before it catches up to the Dig action.
+                log::debug!(
+                    "WasmNetworkClient: DigDecision for {:?} ({} kept) ac={}",
+                    digger,
+                    kept.len(),
+                    action_count
+                );
+                use smallvec::SmallVec;
+                self.push_state_sync(
+                    action_count,
+                    StateSyncEntry::DigDecision {
+                        digger,
+                        kept: SmallVec::from_vec(kept),
+                    },
+                );
+            }
+
             #[cfg(debug_assertions)]
             ServerMessage::DebugStateDump { .. } => {
                 // Debug info, just log
@@ -1333,6 +1358,17 @@ impl WasmNetworkClient {
                 }
                 BufferedFact::SearchCandidates { searcher, cards } => {
                     self.push_state_sync(ac, StateSyncEntry::SearchCandidates { searcher, cards });
+                }
+                BufferedFact::DigDecision { digger, kept } => {
+                    // mtg-677/mtg-908: authoritative Dig kept-list via buffer.
+                    use smallvec::SmallVec;
+                    self.push_state_sync(
+                        ac,
+                        StateSyncEntry::DigDecision {
+                            digger,
+                            kept: SmallVec::from_vec(kept),
+                        },
+                    );
                 }
                 BufferedFact::Choice {
                     choice_seq,
@@ -1665,6 +1701,16 @@ impl WasmNetworkClient {
                     }
                 }
                 StateSyncEntry::LibraryReorder { .. } => {}
+                StateSyncEntry::DigDecision { digger: _, kept } => {
+                    // mtg-677/mtg-908: Deliver the server's authoritative kept-list
+                    // to the shadow. `execute_dig` consumes it from this field.
+                    log::debug!(
+                        "apply_state_sync (wasm): DigDecision ac={} kept={} cards",
+                        ac,
+                        kept.len()
+                    );
+                    shadow.sub_action_scratch.pending_dig_authoritative_decision = Some(kept);
+                }
             }
             // The reveal cursor was already advanced to `reveal_bound` above.
             applied += 1;

@@ -253,6 +253,7 @@ async fn create_card_from_definition<'a>(
     let mut card = paper_card.instantiate(card_id, owner);
 
     // Apply basic modifiers (tapped state and counters)
+    let mut has_explicit_loyalty = false;
     for modifier in &card_def.modifiers {
         match modifier {
             CardModifier::Tapped => card.tapped = true,
@@ -262,10 +263,43 @@ async fn create_card_from_definition<'a>(
                     if *count > 0 {
                         card.add_counter(*counter_type, *count as u8);
                     }
+                    if *counter_type == crate::core::CounterType::Loyalty {
+                        has_explicit_loyalty = true;
+                    }
+                }
+            }
+            CardModifier::ChosenColor(colors) => {
+                // Apply the first named color as the card's chosen_color
+                // (mirrors K:ETBReplacement:Other:ChooseColor behavior).
+                // Used for Prismatic Ward puzzles: `Prismatic Ward|ChosenColor:Red`
+                if let Some(color_str) = colors.first() {
+                    use crate::core::Color;
+                    let chosen = match color_str.as_str() {
+                        "White" => Some(Color::White),
+                        "Blue" => Some(Color::Blue),
+                        "Black" => Some(Color::Black),
+                        "Red" => Some(Color::Red),
+                        "Green" => Some(Color::Green),
+                        _ => None,
+                    };
+                    if let Some(color) = chosen {
+                        card.chosen_color = Some(color);
+                    }
                 }
             }
             // Skip modifiers that need second pass or aren't supported yet
             _ => {}
+        }
+    }
+
+    // Planeswalkers placed directly on the battlefield (not cast from the stack)
+    // must enter with their printed starting loyalty counters (CR 306.5b).
+    // When the spell resolution path is used, `priority.rs` applies starting
+    // loyalty after the spell resolves; puzzle placement bypasses that path, so
+    // we apply it here — unless the puzzle explicitly set loyalty counters.
+    if !has_explicit_loyalty {
+        if let Some(loyalty) = paper_card.loyalty {
+            card.add_counter(crate::core::CounterType::Loyalty, loyalty);
         }
     }
 
@@ -278,17 +312,21 @@ async fn create_card_from_definition<'a>(
 }
 
 /// Apply card modifiers that need second pass (attachments, etc.) or card references
+#[allow(clippy::wildcard_enum_match_arm)]
 fn apply_card_modifiers(
     game: &mut GameState,
     state_def: &GameStateDefinition,
-    _id_map: &HashMap<u32, CardId>,
+    id_map: &HashMap<u32, CardId>,
 ) -> Result<()> {
-    // For now, just apply summoning sickness to creatures on battlefield
-    // by checking if they should have it based on the current turn
+    // First: build a map from card name → card definitions with their modifiers
+    // (for the SummonSick pass below that uses name matching).
+    // Second: collect AttachedTo modifiers keyed by the CARD's own CardId.
+    // We collect first to avoid borrow conflicts.
+
+    // --- Summoning sickness pass ---
     for card_id in game.battlefield.cards.iter() {
         if let Ok(card) = game.cards.get_mut(*card_id) {
             if card.types.contains(&CardType::Creature) {
-                // Check if the card has SummonSick modifier in the definition
                 let has_summoning_sickness = state_def
                     .players
                     .iter()
@@ -304,20 +342,43 @@ fn apply_card_modifiers(
                     .map(|def| def.modifiers.iter().any(|m| matches!(m, CardModifier::SummonSick)))
                     .unwrap_or(false);
 
-                // If SummonSick modifier is present, set entered this turn
-                // Otherwise, set to a previous turn so it doesn't have summoning sickness
                 if has_summoning_sickness {
                     card.turn_entered_battlefield = Some(state_def.turn);
                 } else {
-                    // Set to previous turn (or turn 1 if already turn 1)
                     card.turn_entered_battlefield = Some(state_def.turn.saturating_sub(1));
                 }
             }
         }
     }
 
-    // TODO: Apply attachment modifiers when card attachment support is added
-    // TODO: Apply other advanced modifiers as needed
+    // --- AttachedTo pass: set card.attached_to for Auras / Equipment ---
+    // Collect (card_id, target_puzzle_id) pairs to avoid borrow conflicts.
+    let attach_jobs: Vec<(CardId, u32)> = state_def
+        .players
+        .iter()
+        .flat_map(|p| p.battlefield.iter())
+        .filter_map(|def| {
+            // Only cards with an Id AND an AttachedTo modifier need second-pass attachment.
+            let card_puzzle_id = def.id?;
+            let target_puzzle_id = def.modifiers.iter().find_map(|m| {
+                if let CardModifier::AttachedTo(tid) = m {
+                    Some(*tid)
+                } else {
+                    None
+                }
+            })?;
+            let card_id = id_map.get(&card_puzzle_id)?;
+            Some((*card_id, target_puzzle_id))
+        })
+        .collect();
+
+    for (aura_id, target_puzzle_id) in attach_jobs {
+        if let Some(&target_id) = id_map.get(&target_puzzle_id) {
+            if let Ok(card) = game.cards.get_mut(aura_id) {
+                card.attached_to = Some(target_id);
+            }
+        }
+    }
 
     Ok(())
 }

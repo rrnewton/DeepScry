@@ -390,6 +390,20 @@ impl GameState {
                         valid_targets.push(card_id);
                     }
                 }
+                Effect::ReturnPermanentToHand { target, restriction } if target.is_placeholder() => {
+                    // Bounce effect: return target permanent to its owner's hand.
+                    // Use the parsed TargetRestriction from ValidTgts$ to filter valid targets.
+                    // Examples: Teferi -3 (Artifact,Creature,Enchantment), Petty Theft (nonland OppCtrl).
+                    for &card_id in &self.battlefield.cards {
+                        if let Ok(target_card) = self.cards.get(card_id) {
+                            if restriction.matches(target_card)
+                                && is_legal_target(target_card, spell_owner, &spell_colors)
+                            {
+                                valid_targets.push(card_id);
+                            }
+                        }
+                    }
+                }
                 Effect::ExilePermanent { target } if target.is_placeholder() => {
                     // Exile can target any permanent (typically creatures, like Swords to Plowshares)
                     // Use cached targeting restrictions like DestroyPermanent
@@ -632,6 +646,7 @@ impl GameState {
                             | Effect::AddMana { .. }
                             | Effect::Balance { .. }
                             | Effect::CreateToken { .. }
+                            | Effect::CreateTokenWithStoredPt { .. }
                             | Effect::Dig { .. }
                             | Effect::SearchLibrary { .. }
                             | Effect::Firebend { .. }
@@ -643,6 +658,7 @@ impl GameState {
                             | Effect::TapPermanent { .. }
                             | Effect::UntapPermanent { .. }
                             | Effect::TapOrUntapPermanent { .. }
+                            | Effect::ReturnPermanentToHand { .. }
                             | Effect::ExilePermanent { .. }
                             | Effect::Airbend { .. }
                             | Effect::Earthbend { .. }
@@ -664,8 +680,10 @@ impl GameState {
                             | Effect::DamageAll { .. }
                             | Effect::LoseLife { .. }
                             | Effect::ForceSacrifice { .. }
+                            | Effect::SacrificeSelf { .. }
                             | Effect::TapAll { .. }
                             | Effect::UntapAll { .. }
+                            | Effect::UntapOne { .. }
                             | Effect::SetLife { .. }
                             | Effect::CreateDelayedTrigger { .. }
                             | Effect::CopySpellAbility { .. }
@@ -685,10 +703,25 @@ impl GameState {
                             | Effect::SelfExileFromStack { .. }
                             | Effect::MoveSelfBetweenZones { .. }
                             | Effect::ReturnCardsFromGraveyardToHand { .. }
+                            | Effect::PutCardsFromHandOnTopOfLibrary { .. }
+                            | Effect::RevealCardsFromHand { .. }
                             | Effect::ReturnGraveyardCardToHand { .. }
+                            | Effect::ReturnGraveyardCardToZone { .. }
+                            | Effect::PutCreatureFromHandOnBattlefield { .. }
+                            | Effect::ReturnSelfAsEnchantment { .. }
                             | Effect::PreventAllCombatDamageThisTurn { .. }
                             | Effect::ExileIfWouldDieThisTurn { .. }
-                            | Effect::ConditionalSelfCounter { .. } => {
+                            | Effect::ConditionalSelfCounter { .. }
+                            | Effect::RearrangeTopOfLibrary { .. }
+                            | Effect::SkipUntapStep { .. }
+                            | Effect::CreateTokenDynamic { .. }
+                            | Effect::CreateEmblem { .. }
+                            | Effect::PlayFromGraveyard { .. }
+                            | Effect::RepeatEach { .. }
+                            | Effect::ExtraLandPlay { .. }
+                            | Effect::TapPermanentsMatchingFilter { .. }
+                            | Effect::ChooseAndRememberOneOfEach { .. }
+                            | Effect::GrantCastWithFlash { .. } => {
                                 // Non-Destroy/Copy modes in modal spells
                                 // TODO(mtg-30): Add handlers for targeting modes that need them
                             }
@@ -723,6 +756,7 @@ impl GameState {
                 | Effect::AddMana { .. }
                 | Effect::Balance { .. }
                 | Effect::CreateToken { .. }
+                | Effect::CreateTokenWithStoredPt { .. }
                 | Effect::Dig { .. }
                 | Effect::SearchLibrary { .. }
                 | Effect::Firebend { .. }
@@ -731,8 +765,10 @@ impl GameState {
                 | Effect::AddPhase { .. }
                 | Effect::AttachEquipment { .. }
                 | Effect::ForceSacrifice { .. }
+                | Effect::SacrificeSelf { .. }
                 | Effect::TapAll { .. }
                 | Effect::UntapAll { .. }
+                | Effect::UntapOne { .. }
                 | Effect::SetLife { .. }
                 | Effect::ChooseColor { .. }
                 | Effect::Clone { .. }
@@ -746,9 +782,30 @@ impl GameState {
                 | Effect::SelfExileFromStack { .. }
                 | Effect::MoveSelfBetweenZones { .. }
                 | Effect::ReturnCardsFromGraveyardToHand { .. }
+                | Effect::PutCardsFromHandOnTopOfLibrary { .. }
+                | Effect::RevealCardsFromHand { .. }
                 | Effect::ReturnGraveyardCardToHand { .. }
+                | Effect::ReturnGraveyardCardToZone { .. }
+                | Effect::PutCreatureFromHandOnBattlefield { .. }
+                | Effect::ReturnSelfAsEnchantment { .. }
                 | Effect::PreventAllCombatDamageThisTurn { .. }
-                | Effect::ConditionalSelfCounter { .. } => {
+                | Effect::ConditionalSelfCounter { .. }
+                | Effect::RearrangeTopOfLibrary { .. }
+                | Effect::SkipUntapStep { .. }
+                | Effect::CreateTokenDynamic { .. }
+                | Effect::CreateEmblem { .. }
+                // PlayFromGraveyard is triggered from a planeswalker activated ability;
+                // targeting is handled through get_valid_targets_for_ability, not here.
+                | Effect::PlayFromGraveyard { .. }
+                // RepeatEach targets are consumed from chosen_targets at resolve_effect_target
+                // time (Pattern A) or iterate over players (Pattern B) — no cast-time targeting.
+                | Effect::RepeatEach { .. }
+                // ExtraLandPlay grants permission to the spell controller; no cast-time target.
+                | Effect::ExtraLandPlay { .. }
+                // TapPermanentsMatchingFilter uses a filter, not a specific cast-time target.
+                | Effect::TapPermanentsMatchingFilter { .. }
+                // ChooseAndRememberOneOfEach reads from remembered_players; no cast-time target.
+                | Effect::ChooseAndRememberOneOfEach { .. } => {
                     // These effects target players or have no targeting requirements
                     // AttachEquipment targeting is handled via Equip keyword abilities
                     // ChooseColor is a player choice effect (no permanent targets)
@@ -756,8 +813,18 @@ impl GameState {
                     // Proliferate: player chooses permanents/players during resolution, no targeting
                     // SelfExileFromStack: operates on the resolving spell itself, no targets
                     // ReturnCardsFromGraveyardToHand: works on the caster's graveyard, no targeting
+                    // PutCardsFromHandOnTopOfLibrary: controller picks cards during resolution, no targeting
+                    // RevealCardsFromHand: controller reveals their own hand cards, no cast-time targeting
                     // ReturnGraveyardCardToHand: AI picks matching card, no cast-time targeting
+                    // ReturnGraveyardCardToZone: AI picks matching card, no cast-time targeting
+                    // PutCreatureFromHandOnBattlefield: AI picks creature, no cast-time targeting
+                    // ReturnSelfAsEnchantment: death trigger self-return, no cast-time targeting
                     // PreventAllCombatDamageThisTurn: reuses last_resolved_target, no cast-time target
+                    // PlayFromGraveyard: targeting via get_valid_targets_for_ability (activated ability path)
+                    // RearrangeTopOfLibrary: controller looks at own library top, no cast-time targeting
+                    // SkipUntapStep: opponent auto-targeted (resolved from ValidTgts$ during init), no
+                    //   separate cast-time targeting step needed
+                    // ExtraLandPlay: target is the spell controller, no permanent target needed
                 }
                 // Effects with already-specified targets (non-zero target field)
                 // The handlers above only match when target.is_placeholder()
@@ -785,6 +852,7 @@ impl GameState {
                 | Effect::UntapPermanent { .. }
                 | Effect::TapOrUntapPermanent { .. }
                 | Effect::CounterSpell { .. }
+                | Effect::ReturnPermanentToHand { .. }
                 | Effect::ExilePermanent { .. }
                 // ExileIfWouldDieThisTurn rides on the parent DealDamage's
                 // target (no independent targeting); nothing to enumerate here.
@@ -825,6 +893,8 @@ impl GameState {
                 Effect::UnlessCostWrapper { .. } => {
                     // For now, skip - inner effect targeting handled when we implement full UnlessCost
                 }
+                // GrantCastWithFlash operates on the controller (no cast-time target needed).
+                Effect::GrantCastWithFlash { .. } => {}
             }
         }
 
@@ -1310,6 +1380,27 @@ impl GameState {
                 }
                 // ===== EXHAUSTIVE EFFECT HANDLING FOR ABILITY TARGETING =====
                 // Effects that don't need targets or have targets pre-specified
+                // SetLife that targets a player by name: Sorin Markov -3
+                // ("Target opponent's life total becomes 10."). The effect is parsed
+                // with player=placeholder; the ability description carries "target
+                // opponent" or "target player", so we enumerate the appropriate
+                // player set here using the ability's AbilityCache flags.
+                Effect::SetLife { player, .. } if player.is_placeholder() && ability.cache.requires_target => {
+                    if ability.cache.targets_opponent {
+                        // Enumerate opponents only
+                        for player in &self.players {
+                            if player.id != ability_controller {
+                                valid_targets.push(crate::core::player_as_target_sentinel(player.id));
+                            }
+                        }
+                    } else if ability.cache.targets_player {
+                        // Enumerate all players
+                        for player in &self.players {
+                            valid_targets.push(crate::core::player_as_target_sentinel(player.id));
+                        }
+                    }
+                }
+
                 Effect::DrawCards { .. }
                 | Effect::DrawCardsXPaid { .. }
                 | Effect::DiscardCards { .. }
@@ -1324,6 +1415,7 @@ impl GameState {
                 | Effect::AddMana { .. }
                 | Effect::Balance { .. }
                 | Effect::CreateToken { .. }
+                | Effect::CreateTokenWithStoredPt { .. }
                 | Effect::Dig { .. }
                 | Effect::SearchLibrary { .. }
                 | Effect::Firebend { .. }
@@ -1338,11 +1430,13 @@ impl GameState {
                 | Effect::DestroyAll { .. }
                 | Effect::PutCounterAll { .. }
                 | Effect::UntapAll { .. }
+                | Effect::UntapOne { .. }
                 | Effect::Unimplemented { .. }
                 | Effect::NoOp { .. }
                 | Effect::ClassLevelUp { .. }
                 | Effect::EachDamage { .. }
                 | Effect::ForceSacrifice { .. }
+                | Effect::SacrificeSelf { .. }
                 | Effect::TapAll { .. }
                 | Effect::SetLife { .. }
                 | Effect::ChooseColor { .. }
@@ -1352,10 +1446,27 @@ impl GameState {
                 | Effect::SelfExileFromStack { .. }
                 | Effect::MoveSelfBetweenZones { .. }
                 | Effect::ReturnCardsFromGraveyardToHand { .. }
+                | Effect::PutCardsFromHandOnTopOfLibrary { .. }
+                | Effect::RevealCardsFromHand { .. }
                 | Effect::ReturnGraveyardCardToHand { .. }
+                | Effect::ReturnGraveyardCardToZone { .. }
+                | Effect::PutCreatureFromHandOnBattlefield { .. }
+                | Effect::ReturnSelfAsEnchantment { .. }
                 | Effect::PreventAllCombatDamageThisTurn { .. }
                 | Effect::ConditionalSelfCounter { .. }
-                | Effect::UnlessCostWrapper { .. } => {
+                | Effect::RearrangeTopOfLibrary { .. }
+                | Effect::SkipUntapStep { .. }
+                | Effect::UnlessCostWrapper { .. }
+                | Effect::CreateTokenDynamic { .. }
+                | Effect::CreateEmblem { .. }
+                // RepeatEach targets are consumed from chosen_targets at resolve_effect_target
+                // time (Pattern A) or iterate over players (Pattern B) — no cast-time targeting.
+                | Effect::RepeatEach { .. }
+                | Effect::ExtraLandPlay { .. }
+                // TapPermanentsMatchingFilter uses a filter, not a cast-time target.
+                | Effect::TapPermanentsMatchingFilter { .. }
+                // ChooseAndRememberOneOfEach reads from remembered_players; no cast-time target.
+                | Effect::ChooseAndRememberOneOfEach { .. } => {
                     // These effects target players or have no targeting requirements
                     // CreateDelayedTrigger targets creatures - handled via ValidTgts$ Creature
                     // CopySpellAbility doesn't need explicit targets - copies triggering spell
@@ -1365,8 +1476,57 @@ impl GameState {
                     // Proliferate: player chooses during resolution, no targeting
                     // SelfExileFromStack: operates on the resolving spell itself, no targets
                     // ReturnCardsFromGraveyardToHand: uses remembered_cards count, no targeting
+                    // PutCardsFromHandOnTopOfLibrary: controller picks cards during resolution, no targeting
+                    // RevealCardsFromHand: controller reveals their own hand cards, no cast-time targeting
                     // ReturnGraveyardCardToHand: AI picks matching card, no cast-time targeting
+                    // ReturnSelfAsEnchantment: death trigger self-return, no cast-time targeting
+                    // ExtraLandPlay: target is the spell controller, no permanent target needed
                     // PreventAllCombatDamageThisTurn: reuses UntapPermanent's last_resolved_target
+                    // RearrangeTopOfLibrary: controller looks at own library top, no targeting
+                    // SkipUntapStep: opponent auto-targeted (ValidTgts$ resolved at init)
+                    // RepeatEach: targets resolved from chosen_targets at execution time
+                }
+                Effect::PlayFromGraveyard {
+                    target,
+                    type_filter,
+                    max_mana_value,
+                    ..
+                } if target.is_placeholder() => {
+                    // Target: an instant or sorcery card in the controller's graveyard
+                    // that matches the type_filter and (optionally) has CMC <= max_mana_value.
+                    // Per Chandra's −2: ValidTgts$ Instant.YouCtrl+cmcLE3,Sorcery.YouCtrl+cmcLE3
+                    if let Some(zones) = self.get_player_zones(ability_controller) {
+                        let graveyard_cards: SmallVec<[CardId; 16]> =
+                            zones.graveyard.cards.iter().copied().collect();
+                        for card_id in graveyard_cards {
+                            if let Ok(card) = self.cards.get(card_id) {
+                                // Must be instant or sorcery (from type_filter, or default)
+                                let type_ok = if type_filter.is_empty() {
+                                    card.is_type(&crate::core::CardType::Instant)
+                                        || card.is_type(&crate::core::CardType::Sorcery)
+                                } else {
+                                    type_filter.split(',').any(|t| {
+                                        let t = t.trim().split('.').next().unwrap_or(t);
+                                        match t {
+                                            "Instant" => card.is_type(&crate::core::CardType::Instant),
+                                            "Sorcery" => card.is_type(&crate::core::CardType::Sorcery),
+                                            _ => false,
+                                        }
+                                    })
+                                };
+                                if !type_ok {
+                                    continue;
+                                }
+                                // Check CMC restriction
+                                if let Some(max_cmc) = max_mana_value {
+                                    if card.mana_cost.cmc() > *max_cmc {
+                                        continue;
+                                    }
+                                }
+                                valid_targets.push(card_id);
+                            }
+                        }
+                    }
                 }
                 // Effects with pre-specified targets (guard failed: target.as_u32() != 0)
                 Effect::DealDamage { .. }
@@ -1383,6 +1543,7 @@ impl GameState {
                 | Effect::UntapPermanent { .. }
                 | Effect::TapOrUntapPermanent { .. }
                 | Effect::CounterSpell { .. }
+                | Effect::ReturnPermanentToHand { .. }
                 | Effect::ExilePermanent { .. }
                 | Effect::ExileIfWouldDieThisTurn { .. }
                 | Effect::Airbend { .. }
@@ -1403,11 +1564,19 @@ impl GameState {
                 | Effect::LoseLife { .. }
                 | Effect::Earthbend { .. }
                 | Effect::GainControl { .. }
-                | Effect::Fight { .. } => {
+                | Effect::Fight { .. }
+                // PlayFromGraveyard targets a graveyard card; targeting is handled
+                // through get_valid_targets_for_ability (activated ability path).
+                // If it ever appears as a spell sub-effect, target is pre-specified.
+                | Effect::PlayFromGraveyard { .. }
+                // GrantCastWithFlash grants the controller flash-casting permission;
+                // no cast-time target needed for activated abilities either.
+                | Effect::GrantCastWithFlash { .. } => {
                     // Target already specified (guard failed: target.as_u32() != 0)
                     // PumpAllCreatures doesn't use explicit targets - it affects all matching creatures
                     // Earthbend target was handled above when target.is_placeholder()
                     // ChooseColor doesn't require any targets - it's a player choice effect
+                    // PlayFromGraveyard: activated-ability targeting via get_valid_targets_for_ability
                 }
             }
         }
@@ -1609,6 +1778,17 @@ impl GameState {
                 // (players are always valid targets)
                 true
             }
+            Effect::ReturnPermanentToHand { target, restriction } if target.is_placeholder() => {
+                // Bounce requires at least one permanent matching the ValidTgts$ filter.
+                let restr = restriction.clone();
+                self.battlefield.cards.iter().any(|&card_id| {
+                    if let Ok(card) = self.cards.get(card_id) {
+                        restr.matches(card) && is_legal_target(card, spell_owner, source_colors)
+                    } else {
+                        false
+                    }
+                })
+            }
             Effect::ExilePermanent { target } if target.is_placeholder() => {
                 // Exile requires a permanent target
                 self.battlefield.cards.iter().any(|&card_id| {
@@ -1648,6 +1828,7 @@ impl GameState {
             | Effect::AddMana { .. }
             | Effect::Balance { .. }
             | Effect::CreateToken { .. }
+            | Effect::CreateTokenWithStoredPt { .. }
             | Effect::Dig { .. }
             | Effect::SearchLibrary { .. }
             | Effect::Firebend { .. }
@@ -1672,8 +1853,10 @@ impl GameState {
             | Effect::DamageAll { .. }
             | Effect::LoseLife { .. }
             | Effect::ForceSacrifice { .. }
+            | Effect::SacrificeSelf { .. }
             | Effect::TapAll { .. }
             | Effect::UntapAll { .. }
+            | Effect::UntapOne { .. }
             | Effect::SetLife { .. }
             | Effect::GainControl { .. }
             | Effect::PutCounterAll { .. }
@@ -1685,13 +1868,32 @@ impl GameState {
             | Effect::SelfExileFromStack { .. }
             | Effect::MoveSelfBetweenZones { .. }
             | Effect::ReturnCardsFromGraveyardToHand { .. }
+            | Effect::PutCardsFromHandOnTopOfLibrary { .. }
+            | Effect::RevealCardsFromHand { .. }
             | Effect::ReturnGraveyardCardToHand { .. }
+            | Effect::ReturnGraveyardCardToZone { .. }
+            | Effect::PutCreatureFromHandOnBattlefield { .. }
+            | Effect::ReturnSelfAsEnchantment { .. }
             | Effect::PreventAllCombatDamageThisTurn { .. }
             | Effect::ConditionalSelfCounter { .. }
+            | Effect::RearrangeTopOfLibrary { .. }
+            | Effect::SkipUntapStep { .. }
+            | Effect::CreateTokenDynamic { .. }
+            | Effect::CreateEmblem { .. }
             // ExileIfWouldDieThisTurn reuses the parent DealDamage's target, so
             // it never needs its own target check.
             | Effect::ExileIfWouldDieThisTurn { .. }
-            | Effect::Fight { .. } => true, // Filter-based / no-target effects
+            | Effect::Fight { .. }
+            // RepeatEach has no cast-time targets; they are resolved at execute time.
+            | Effect::RepeatEach { .. }
+            // ExtraLandPlay targets the spell controller — no permanent target needed.
+            | Effect::ExtraLandPlay { .. }
+            // TapPermanentsMatchingFilter uses a filter; no cast-time permanent target needed.
+            | Effect::TapPermanentsMatchingFilter { .. }
+            // ChooseAndRememberOneOfEach reads from remembered_players; no cast-time target.
+            | Effect::ChooseAndRememberOneOfEach { .. }
+            // GrantCastWithFlash grants the controller flash permission — no permanent target needed.
+            | Effect::GrantCastWithFlash { .. } => true, // Filter-based / no-target effects
 
             // ===== EXHAUSTIVE EFFECT HANDLING =====
             // Effects with pre-specified targets (guard failed: target.as_u32() != 0)
@@ -1701,6 +1903,7 @@ impl GameState {
             | Effect::DealDamageDivided { .. }
             | Effect::DealDamageDynamic { .. } => true, // TargetRef::Player/Permanent already specified
             Effect::DestroyPermanent { .. }
+            | Effect::ReturnPermanentToHand { .. }
             | Effect::PumpCreature { .. }
             | Effect::DebuffCreature { .. }
             | Effect::PumpCreatureVariable { .. }
@@ -1718,7 +1921,11 @@ impl GameState {
             | Effect::PutCounter { .. }
             | Effect::MultiplyCounter { .. }
             | Effect::Earthbend { .. }
-            | Effect::CopyPermanent { .. } => {
+            | Effect::CopyPermanent { .. }
+            // PlayFromGraveyard is an activated-ability effect; valid-target check
+            // is done in get_valid_targets_for_ability. When it appears on a spell
+            // the target has already been pre-specified, so always return true here.
+            | Effect::PlayFromGraveyard { .. } => {
                 // Target already specified (guard failed: target.as_u32() != 0)
                 // If a target was pre-assigned, we assume it's valid
                 true
@@ -1742,12 +1949,22 @@ impl GameState {
     /// # Errors
     ///
     /// Returns an error if the spell card cannot be found.
-    pub fn apply_selected_modes(&mut self, spell_card_id: CardId, selected_mode_indices: &[usize]) -> Result<bool> {
+    /// Apply selected mode indices to a modal spell, replacing the `ModalChoice` effect with
+    /// the selected mode effects. Returns `(found_modal, total_mode_cost)` where
+    /// `total_mode_cost` is the sum of `ModeCost$` values for all selected modes (used by the
+    /// caller to record via `set_mode_cost_paid_logged` for undo-safe tracking).
+    pub fn apply_selected_modes(
+        &mut self,
+        spell_card_id: CardId,
+        selected_mode_indices: &[usize],
+    ) -> Result<(bool, u8)> {
         let spell_card = self.cards.get_mut(spell_card_id)?;
 
         // Find the ModalChoice effect and get selected mode effects
         let mut new_effects = Vec::new();
         let mut found_modal = false;
+        // Sum of ModeCost$ values for all selected modes (only one mode for tiered spells)
+        let mut total_mode_cost: u8 = 0;
 
         for effect in spell_card.effects.drain(..) {
             if let Effect::ModalChoice { modes, .. } = effect {
@@ -1756,6 +1973,7 @@ impl GameState {
                 for &mode_idx in selected_mode_indices {
                     if let Some(mode) = modes.get(mode_idx) {
                         new_effects.push((*mode.effect).clone());
+                        total_mode_cost = total_mode_cost.saturating_add(mode.mode_cost);
                     }
                 }
             } else {
@@ -1765,7 +1983,7 @@ impl GameState {
         }
 
         spell_card.effects = new_effects;
-        Ok(found_modal)
+        Ok((found_modal, total_mode_cost))
     }
 }
 
@@ -1988,6 +2206,92 @@ mod tests {
         assert!(
             !targets.contains(&battlefield_creature_id),
             "Animate Dead should NOT target creatures on battlefield (this was the bug in mtg-239!)"
+        );
+    }
+
+    /// Test that AbilityCache correctly parses "target opponent" vs "target player"
+    #[test]
+    fn test_ability_cache_targets_opponent_vs_player() {
+        // Sorin Markov -3: targets only opponents
+        let cache_sorin = crate::core::AbilityCache::new("Target opponent's life total becomes 10.");
+        assert!(
+            cache_sorin.targets_opponent,
+            "Sorin -3 should have targets_opponent=true"
+        );
+        assert!(
+            !cache_sorin.targets_player,
+            "Sorin -3 should NOT have targets_player=true (exclusive)"
+        );
+        assert!(cache_sorin.requires_target, "Sorin -3 should require a target");
+
+        // Ancestral Recall-like ability targeting any player
+        let cache_player = crate::core::AbilityCache::new("Target player draws three cards.");
+        assert!(
+            !cache_player.targets_opponent,
+            "Target-player ability should NOT have targets_opponent=true"
+        );
+        assert!(
+            cache_player.targets_player,
+            "Target-player ability should have targets_player=true"
+        );
+        assert!(
+            cache_player.requires_target,
+            "Target-player ability should require a target"
+        );
+    }
+
+    /// Test that Sorin Markov's -3 ability enumerates opponents as valid targets (mtg-914 fix)
+    ///
+    /// The -3 ability is "Target opponent's life total becomes 10."
+    /// Before the fix, SetLife was in the no-target catch-all of get_valid_targets_for_ability,
+    /// so the ability was never shown (empty targets → can_activate=false).
+    #[test]
+    fn test_sorin_markov_minus3_targets_opponent_only() {
+        use crate::core::{ActivatedAbility, CardType, Effect, PlayerId};
+        use crate::game::state::GameState;
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let player1 = PlayerId::new(0);
+        let player2 = PlayerId::new(1);
+
+        // Create a Sorin Markov planeswalker card controlled by player1
+        let sorin_id = game.cards.next_id();
+        let mut sorin_card = crate::core::Card::new(sorin_id, "Sorin Markov", player1);
+        sorin_card.add_type(CardType::Planeswalker);
+        sorin_card.controller = player1;
+
+        // Add the -3 ability: SetLife targeting an opponent
+        // player=PlayerId::new(0) is the placeholder; the description drives targeting
+        let minus3_effect = Effect::SetLife {
+            player: PlayerId::new(0), // placeholder
+            amount: 10,
+        };
+        let minus3_ability = ActivatedAbility::new(
+            Cost::SubLoyalty { amount: 3 },
+            vec![minus3_effect],
+            "Target opponent's life total becomes 10.".to_string(),
+            false,
+        );
+        sorin_card.activated_abilities.push(minus3_ability);
+        game.cards.insert(sorin_id, sorin_card);
+        game.battlefield.cards.push(sorin_id);
+
+        // Get valid targets for the -3 ability (index 0)
+        let targets = game.get_valid_targets_for_ability(sorin_id, 0).unwrap();
+
+        // Should include player2 (opponent) as a sentinel
+        let p2_sentinel = crate::core::player_as_target_sentinel(player2);
+        assert!(
+            targets.contains(&p2_sentinel),
+            "Sorin -3 should target the opponent (player2); got {:?}",
+            targets
+        );
+
+        // Should NOT include player1 (the controller) — ability says "opponent"
+        let p1_sentinel = crate::core::player_as_target_sentinel(player1);
+        assert!(
+            !targets.contains(&p1_sentinel),
+            "Sorin -3 should NOT target player1 (the controller)"
         );
     }
 }

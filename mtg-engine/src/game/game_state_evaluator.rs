@@ -513,6 +513,66 @@ impl GameStateEvaluator {
                     // creature/artifact itself, not an aura attached to a
                     // creature; they contribute no enchanted-creature value.
                 }
+                StaticAbility::DamageIncrease { .. } => {
+                    // Damage-increase statics (Torbran) live on the creature
+                    // itself, not an aura; no enchanted-creature value.
+                }
+                StaticAbility::PreventDamageToEnchantedByChosenColor { .. } => {
+                    // Prismatic Ward: prevents damage from chosen color to
+                    // enchanted creature. Moderate defensive value.
+                    value += 20;
+                }
+                StaticAbility::CantAttackIfDefenderHasUntappedPowerGE { .. } => {
+                    // Conditional attack prohibition (Orgg): not an aura ability;
+                    // no enchanted-creature value contribution.
+                }
+                StaticAbility::CantAttackOrBlockMatching { .. } => {
+                    // Global attack/block hoser (Light of Day, etc.): not an aura;
+                    // no enchanted-creature value contribution.
+                }
+                StaticAbility::CantBeActivated { .. } => {
+                    // Activated-ability lock (Cursed Totem): not an aura;
+                    // no enchanted-creature value contribution.
+                }
+                StaticAbility::ExtraLandPlay { .. } => {
+                    // Extra land-play statics live on the source permanent, not
+                    // an aura; no enchanted-creature value here.
+                }
+                StaticAbility::LifeFloor { .. } => {
+                    // Worship-style floor: not an aura ability; no
+                    // enchanted-creature value contribution.
+                }
+                StaticAbility::DamageToExileLibrary { .. } => {
+                    // Crumbling Sanctuary redirect: not an aura; no
+                    // enchanted-creature value contribution.
+                }
+                StaticAbility::CharacteristicDefiningPt { .. } => {
+                    // CDA P/T (Serra Avatar): lives on the creature itself, not
+                    // an aura; no enchanted-creature value contribution.
+                }
+                StaticAbility::GrantUpkeepSacrificeUnlessPay { .. } => {
+                    // Upkeep sacrifice-unless-pay (Energy Flux, Aura Flux): lives on the
+                    // enchantment/artifact source, not an Aura; no enchanted-creature value.
+                }
+                StaticAbility::AlternativeCost { .. } => {
+                    // Alternative-cost static (Summoning Trap): no direct creature value.
+                }
+                StaticAbility::MayPlayWithoutManaCost { .. } => {
+                    // Fires of Invention free-cast grant: high-value enchantment, but
+                    // this evaluator is for Aura attachment decisions; not applicable.
+                }
+                StaticAbility::MayPlayFromLibrary { .. } => {
+                    // Experimental Frenzy top-library grant: not applicable to Aura value.
+                }
+                StaticAbility::OpalescenceStyle { .. } => {
+                    // Opalescence continuous effect: turns non-Aura enchantments into
+                    // creatures with P/T = mana value.  High-value board-wide effect.
+                    // Not an Aura itself; no enchanted-creature value contribution.
+                }
+                StaticAbility::DisableCreatureEtbTriggers { .. } => {
+                    // Torpor Orb: suppresses creature ETB triggers globally.
+                    // Not an Aura; no enchanted-creature value contribution.
+                }
             }
         }
 

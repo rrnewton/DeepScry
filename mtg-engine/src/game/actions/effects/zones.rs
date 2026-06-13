@@ -7,32 +7,61 @@
 //! elsewhere" effect — because that extraction is the structural prerequisite
 //! for the mtg-908 network-desync fix.
 //!
-//! ## mtg-908 follow-on (READ BEFORE editing `execute_dig`)
+//! ## mtg-677/mtg-908 fix (READ BEFORE editing `execute_dig`)
 //!
-//! [`Effect::Dig`]'s "which cards to keep" decision currently runs an INLINE AI
-//! heuristic ([`GameState::dig_card_score`]) that peeks at the actual (hidden)
-//! library contents. On a network game the server scores the real top-N while
-//! the client shadow scores its hidden-shadowed top-N, so the two pick
-//! different cards → fatal state-hash desync (mtg-908: the user's 2025 04-vs-02
-//! game died this way at turn 13).
+//! The `execute_dig` self-dig path previously used an inline AI heuristic
+//! ([`GameState::dig_card_score`]) that peeked at actual (potentially hidden)
+//! library card identities to rank which cards to keep. On a network game the
+//! server scores the real top-N while each client shadow scores its own
+//! (different) hidden view of the top-N, so they pick different cards →
+//! fatal state-hash desync (mtg-908: user's 2025 04-vs-02 game died at
+//! turn 13 this way).
 //!
-//! The fix (tracked in mtg-908, NOT done here) mirrors how Scry is handled:
-//! intercept Dig in the `priority.rs` effect-resolution loop where the
-//! `controller` handle is in scope, call a new
-//! `controller.choose_dig_partition(...)` (server-authoritative, sent to the
-//! client), and reduce THIS `execute_dig` to a controller-less fallback
-//! (default keep-first-N), exactly like [`GameState::execute_scry`].
+//! The fix (mtg-677/mtg-908, DONE HERE) follows the same broadcast pattern
+//! as `LibraryReordered` (the scry/surveil fix from mtg-420):
 //!
-//! THIS slice is purely structural / behavior-preserving: `execute_dig` keeps
-//! the existing hidden-info heuristic verbatim. Keeping the whole self-dig
-//! decision + application in one cohesive method is deliberate — it makes the
-//! mtg-908 swap (decision → controller, application → a `dig_apply_decision`
-//! helper) a clean follow-on rather than surgery on the giant dispatcher.
+//! - **Server**: runs the heuristic, records the kept-list in
+//!   `sub_action_scratch.pending_dig_decisions`, which `NetworkController`
+//!   drains into a `ChoiceRequest`. The coordinator broadcasts it to BOTH
+//!   clients as `ServerMessage::DigDecision` before the choice.
+//! - **Shadow**: `apply_state_sync_at` / `apply_state_sync_up_to_frontier`
+//!   delivers the kept-list via `StateSyncEntry::DigDecision` into
+//!   `sub_action_scratch.pending_dig_authoritative_decision`. `execute_dig`
+//!   checks that field FIRST and uses it if present, bypassing the heuristic.
+//! - **Non-network / local AI** games: neither field is set; the heuristic
+//!   runs as before (hidden info is acceptable when there is no network shadow).
 
-use crate::core::{CardId, DigFilter, PlayerId};
+use crate::core::{Card, CardId, DigFilter, PlayerId};
 use crate::game::GameState;
 use crate::zones::Zone;
 use crate::Result;
+
+/// Check whether a card matches a `RevealValid$` filter string.
+///
+/// Filter syntax: `"Card.Artifact+YouCtrl"`, `"Card.Creature"`, etc.
+/// We extract the first dot-delimited segment after `Card.` (if present) and
+/// check it against the card's types.  `+YouCtrl` and similar qualifiers are
+/// always true here (we only reveal cards from the controlling player's own hand).
+///
+/// Returns `true` for the catch-all filter `"Card"` (no type restriction).
+fn card_matches_reveal_filter(card: &Card, filter: &str) -> bool {
+    // Normalise: drop "Card." prefix, take just the type segment before "+".
+    let type_part = filter
+        .strip_prefix("Card.")
+        .unwrap_or(filter)
+        .split('+')
+        .next()
+        .unwrap_or(filter);
+
+    if type_part.is_empty() || type_part == "Card" {
+        return true; // No type restriction.
+    }
+
+    // Match against card type names (case-insensitive).
+    card.types
+        .iter()
+        .any(|t| format!("{t:?}").eq_ignore_ascii_case(type_part))
+}
 
 impl GameState {
     /// [`Effect::Dig`]: look at the top `dig_count` cards of a library and move
@@ -45,11 +74,12 @@ impl GameState {
     /// 2. `!target_self` (Fire Lord Ozai, Xander's Pact): exile the top N from
     ///    each opponent's library.
     ///
-    /// NOTE (mtg-908): the self-dig "which cards to keep" ranking below uses
-    /// [`GameState::dig_card_score`] against the real (hidden) library — a
-    /// network-desync hazard slated to move behind a server-authoritative
-    /// controller choice. Preserved verbatim here (behavior-preserving
-    /// extraction); see the module doc.
+    /// Network-safety: on a shadow game (mtg-677/mtg-908) the server's kept-list
+    /// arrives via `sub_action_scratch.pending_dig_authoritative_decision` (set by
+    /// `apply_state_sync_at` before the shadow reaches this call) and is used
+    /// instead of the hidden-info `dig_card_score` heuristic. On a server or local
+    /// AI game the heuristic runs and the result is recorded in
+    /// `sub_action_scratch.pending_dig_decisions` for broadcast. See module doc.
     #[allow(clippy::too_many_arguments)]
     pub(in crate::game::actions) fn execute_dig(
         &mut self,
@@ -125,34 +155,76 @@ impl GameState {
                     (change_count as usize).min(valid_ids.len())
                 };
 
-                // AI heuristic: rank valid cards by value, pick best ones
-                // Score: creatures by (power+toughness)*10 + cmc*5 + 80,
-                //        lands by 100, others by 50 + cmc*30
-                if valid_ids.len() > 1 && max_select < valid_ids.len() {
-                    valid_ids.sort_by(|&a, &b| {
-                        let score_a = self.dig_card_score(a);
-                        let score_b = self.dig_card_score(b);
-                        score_b.cmp(&score_a) // Descending: best first
-                    });
-                }
-
-                // If optional and no good cards, AI may choose to skip
-                let select_count = if optional && max_select > 0 {
-                    // Simple heuristic: skip only if best card scores very low
-                    let best_score = valid_ids.first().map(|&id| self.dig_card_score(id)).unwrap_or(0);
-                    if best_score < 30 {
-                        0
+                // --- MTG-677/MTG-908: Authoritative Dig decision ---
+                //
+                // On a SHADOW game, the server has already pushed the
+                // authoritative kept-list via `StateSyncEntry::DigDecision`
+                // which `apply_state_sync_at` stored in
+                // `sub_action_scratch.pending_dig_authoritative_decision`.
+                // We consume it here instead of running the hidden-info
+                // heuristic, eliminating the information leak that caused
+                // state-hash desync (the heuristic peeked at real hidden
+                // card identities that the shadow does not know).
+                //
+                // On the SERVER, we run the heuristic as before and then
+                // record the decision in `pending_dig_decisions` so
+                // `NetworkController` can broadcast it to clients.
+                let selected: smallvec::SmallVec<[CardId; 8]> = if let Some(authoritative) =
+                    self.sub_action_scratch.pending_dig_authoritative_decision.take()
+                {
+                    // Shadow path: use the server's decision verbatim.
+                    // Only keep IDs that are actually in `valid_ids` (the
+                    // shadow may have dummy IDs for unidentified cards, but
+                    // the server's CardIds are globally unique and stable).
+                    log::debug!(
+                        target: "dig",
+                        "execute_dig (shadow): using authoritative kept list: {:?}",
+                        authoritative
+                    );
+                    authoritative.into_iter().filter(|id| valid_ids.contains(id)).collect()
+                } else {
+                    // Server path (or non-network local AI game): run the
+                    // heuristic, then record for broadcast.
+                    if valid_ids.len() > 1 && max_select < valid_ids.len() {
+                        valid_ids.sort_by(|&a, &b| {
+                            let score_a = self.dig_card_score(a);
+                            let score_b = self.dig_card_score(b);
+                            score_b.cmp(&score_a) // Descending: best first
+                        });
+                    }
+                    let select_count = if optional && max_select > 0 {
+                        let best_score = valid_ids.first().map(|&id| self.dig_card_score(id)).unwrap_or(0);
+                        if best_score < 30 {
+                            0
+                        } else {
+                            max_select
+                        }
                     } else {
                         max_select
+                    };
+                    let kept: smallvec::SmallVec<[CardId; 8]> = valid_ids.iter().take(select_count).copied().collect();
+                    // Record for network broadcast (no-op in non-network games).
+                    if !self.is_shadow_game {
+                        let ac = self.undo_log.len() as u64;
+                        self.sub_action_scratch
+                            .pending_dig_decisions
+                            .borrow_mut()
+                            .push((digger, kept.clone(), ac));
+                        log::debug!(
+                            target: "dig",
+                            "execute_dig (server): recorded kept list ({} cards) at ac={}",
+                            kept.len(),
+                            ac
+                        );
                     }
-                } else {
-                    max_select
+                    kept
                 };
-
-                // Move selected cards to destination
-                let selected: smallvec::SmallVec<[CardId; 8]> = valid_ids.iter().take(select_count).copied().collect();
+                // Rest = valid cards NOT in `selected` (order-independent: valid_ids
+                // may have been sorted by the heuristic, or `selected` came from the
+                // authoritative server list; either way, "rest" is "every valid card
+                // that was NOT kept").
                 let rest_from_valid: smallvec::SmallVec<[CardId; 8]> =
-                    valid_ids.iter().skip(select_count).copied().collect();
+                    valid_ids.iter().copied().filter(|id| !selected.contains(id)).collect();
 
                 for &card_id in &selected {
                     let card_name = self
@@ -330,10 +402,11 @@ impl GameState {
     /// AI heuristic scoring a card for Dig selection: creatures by P/T + CMC,
     /// lands at a fixed 100, other cards by CMC. Higher = more desirable to keep.
     ///
-    /// NOTE (mtg-908): this reads the real (potentially hidden) card identity,
-    /// which is the network-desync hazard. On the fix it becomes a legitimate
-    /// controller-side decision over the controller's OWN view (server-
-    /// authoritative). Kept here verbatim for the behavior-preserving extraction.
+    /// This heuristic reads the real (potentially hidden) card identity, so it
+    /// is only safe on the SERVER side (authoritative game state). On a shadow
+    /// game `execute_dig` bypasses this heuristic entirely — it uses the
+    /// server-authoritative kept-list from `pending_dig_authoritative_decision`
+    /// instead (mtg-677/mtg-908 fix).
     pub(in crate::game::actions) fn dig_card_score(&self, card_id: CardId) -> i32 {
         let Some(card) = self.cards.try_get(card_id) else {
             return 0;
@@ -379,10 +452,29 @@ impl GameState {
             self.apply_regeneration_shield(target)?;
         } else {
             let dest = self.death_destination_for_card(target);
-            // Check death triggers BEFORE moving the card (trigger still has access to card data)
-            let _ = self.check_death_triggers(target);
+            // Move the card to the graveyard/exile FIRST (per CR 704.3 — state-based actions move
+            // the card before triggers fire), then fire death triggers with the card now in
+            // its destination zone. This is required for triggers like Enduring Vitality whose
+            // death trigger returns the card from the graveyard — the card must already be in
+            // the graveyard when the trigger effect executes, so the graveyard→battlefield move
+            // in execute_return_self_as_enchantment finds it there.
             self.move_card(target, Zone::Battlefield, dest, owner)?;
+            let _ = self.check_death_triggers(target);
         }
+        Ok(())
+    }
+
+    /// [`Effect::ReturnPermanentToHand`]: return the target permanent from the
+    /// battlefield to its owner's hand (bounce). CR 701.20.
+    /// Fizzles on a placeholder or reuse-previous sentinel.
+    pub(in crate::game::actions) fn execute_return_permanent_to_hand(&mut self, target: CardId) -> Result<()> {
+        if target.is_placeholder() || target.is_reuse_previous() {
+            return Ok(());
+        }
+        let owner = self.cards.get(target)?.owner;
+        let card_name = self.cards.get(target)?.name.to_string();
+        self.logger.gamelog(&format!("Returned {} to hand", card_name));
+        self.move_card(target, Zone::Battlefield, Zone::Hand, owner)?;
         Ok(())
     }
 
@@ -412,6 +504,72 @@ impl GameState {
                 card.exile_if_would_die_this_turn = true;
             }
         }
+        Ok(())
+    }
+
+    /// [`Effect::PlayFromGraveyard`]: `AB$ Play | TgtZone$ Graveyard` — grant
+    /// one-time permission to cast a targeted instant/sorcery from the graveyard
+    /// this turn (Chandra, Acolyte of Flame −2). Creates a
+    /// `PersistentEffectKind::CastTargetedSpellFromGraveyard` that the priority
+    /// loop offers as a `SpellAbility::CastFromGraveyard`. If `exile_on_resolution`
+    /// is set, also marks the card with `exile_if_would_go_to_graveyard_this_turn`
+    /// so `resolve_spell_finalize` sends it to exile instead (CR 614 replacement).
+    pub(in crate::game::actions) fn execute_play_from_graveyard(
+        &mut self,
+        target: CardId,
+        exile_on_resolution: bool,
+    ) -> Result<()> {
+        if target.is_placeholder() {
+            // Fizzle — no valid graveyard target was chosen.
+            return Ok(());
+        }
+
+        let (owner, card_name) = {
+            let card = self.cards.get(target)?;
+            (card.owner, card.name.to_string())
+        };
+
+        // Mark the card so resolve_spell_finalize exiles it on resolution
+        // (the ReplaceGraveyard$ Exile clause from the card script).
+        if exile_on_resolution {
+            if let Ok(card) = self.cards.get_mut(target) {
+                card.exile_if_would_go_to_graveyard_this_turn = true;
+            }
+        }
+
+        // Create the one-shot cast-permission persistent effect.
+        use crate::core::{persistent_effect::CleanupCondition, persistent_effect::PersistentEffectKind, CardId};
+        let cleanup = CleanupCondition::Any(vec![
+            // Remove once the card is cast (it leaves the graveyard).
+            CleanupCondition::TrackedCardIsCast { card: target },
+            // Also remove at end of turn if it was never cast.
+            CleanupCondition::EndOfTurn,
+        ]);
+        self.persistent_effects.add(
+            PersistentEffectKind::CastTargetedSpellFromGraveyard {
+                tracked_card: target,
+                owner,
+                exile_on_resolution,
+            },
+            // Source card: use a stable placeholder — the planewalker is on the
+            // battlefield but we don't have its CardId at this call site. The
+            // persistent effect store doesn't use source_card for tracking here.
+            CardId::placeholder(),
+            owner,
+            cleanup,
+        );
+
+        self.logger.gamelog(&format!(
+            "{} may cast {} from graveyard this turn{}",
+            self.player_display_name(owner),
+            card_name,
+            if exile_on_resolution {
+                " (exile instead of graveyard on resolution)"
+            } else {
+                ""
+            },
+        ));
+
         Ok(())
     }
 
@@ -522,18 +680,20 @@ impl GameState {
                 // CR 701.15a: Regeneration replaces destruction
                 self.apply_regeneration_shield(card_id)?;
             } else {
-                let _ = self.check_death_triggers(card_id);
                 let card_name = self
                     .cards
                     .get(card_id)
                     .map(|c| c.name.to_string())
                     .unwrap_or_else(|_| "Unknown".to_string());
+                // Move the card first (CR 704.3), then fire death triggers so any
+                // "return from graveyard" trigger sees the card in its destination zone.
                 self.move_card(
                     card_id,
                     Zone::Battlefield,
                     self.death_destination_for_card(card_id),
                     owner,
                 )?;
+                let _ = self.check_death_triggers(card_id);
                 self.logger
                     .gamelog(&format!("{} ({}) is destroyed", card_name, card_id));
             }
@@ -550,6 +710,9 @@ impl GameState {
     ) -> Result<()> {
         // Each player sacrifices all permanents matching the restriction (e.g., All is Dust)
         // Sacrifice bypasses indestructible and regeneration (CR 701.17)
+        // Snapshot remembered_cards so we can pass the slice to
+        // `matches_with_remembered` without conflicting borrows.
+        let remembered: smallvec::SmallVec<[CardId; 8]> = self.remembered_cards.iter().copied().collect();
         let targets: Vec<(CardId, PlayerId)> = self
             .battlefield
             .cards
@@ -557,7 +720,7 @@ impl GameState {
             .copied()
             .filter_map(|card_id| {
                 let card = self.cards.try_get(card_id)?;
-                if restriction.matches(card) {
+                if restriction.matches_with_remembered(card, &remembered) {
                     Some((card_id, card.owner))
                 } else {
                     None
@@ -566,18 +729,20 @@ impl GameState {
             .collect();
 
         for (card_id, owner) in targets {
-            let _ = self.check_death_triggers(card_id);
             let card_name = self
                 .cards
                 .try_get(card_id)
                 .map(|c| c.name.to_string())
                 .unwrap_or_else(|| "Unknown".to_string());
+            // Move the card first (CR 704.3), then fire death triggers so any
+            // "return from graveyard" trigger sees the card in its destination zone.
             self.move_card(
                 card_id,
                 Zone::Battlefield,
                 self.death_destination_for_card(card_id),
                 owner,
             )?;
+            let _ = self.check_death_triggers(card_id);
             self.logger
                 .gamelog(&format!("{} ({}) is sacrificed", card_name, card_id));
         }
@@ -732,6 +897,135 @@ impl GameState {
         Ok(())
     }
 
+    /// [`Effect::PutCardsFromHandOnTopOfLibrary`]: non-interactive (fallback)
+    /// path that moves `cards_to_put` from the player's hand to the top of their
+    /// library.
+    ///
+    /// The interactive path (priority loop) asks the controller which cards to
+    /// choose and calls this function with the chosen set.  The non-interactive
+    /// fallback (e.g., execute_effect with no controller) uses a deterministic
+    /// heuristic: pick the `count` cards with the smallest CMC in hand (proxy
+    /// for "least valuable"), stable-sorted by `CardId` for server/client
+    /// determinism.
+    ///
+    /// MTG CR 701.19b: the player puts the chosen cards on top of their library
+    /// in any order they choose; we put them on top one by one (first chosen card
+    /// ends up deepest, last on top) so the caller's ordering is respected.
+    pub(crate) fn execute_put_cards_from_hand_on_top_of_library(
+        &mut self,
+        player: PlayerId,
+        cards_to_put: &[CardId],
+    ) -> Result<()> {
+        let player_name = self
+            .get_player(player)
+            .ok()
+            .map(|p| p.name.as_str())
+            .unwrap_or("?")
+            .to_string();
+        for &card_id in cards_to_put {
+            let card_name = self
+                .cards
+                .try_get(card_id)
+                .map(|c| c.name.as_str())
+                .unwrap_or("?")
+                .to_string();
+            self.move_card(card_id, crate::zones::Zone::Hand, crate::zones::Zone::Library, player)?;
+            // Log the move so replay can reconstruct which card went back.
+            self.logger
+                .gamelog(&format!("{} puts {} on top of library", player_name, card_name));
+        }
+        Ok(())
+    }
+
+    /// Fallback heuristic for [`Effect::PutCardsFromHandOnTopOfLibrary`]: pick
+    /// the `count` cards with the smallest CMC from `hand`, breaking ties by
+    /// `CardId` (smallest first = deterministic across server/clients).  Returns
+    /// up to `hand.len()` cards even if `count > hand.len()`.
+    pub(crate) fn pick_cards_to_put_back_heuristic(
+        &self,
+        hand: &[CardId],
+        count: usize,
+    ) -> smallvec::SmallVec<[CardId; 7]> {
+        let mut sorted: smallvec::SmallVec<[CardId; 16]> = hand.iter().copied().collect();
+        sorted.sort_by_key(|&id| {
+            let cmc = self.cards.try_get(id).map(|c| c.mana_cost.cmc()).unwrap_or(0);
+            (cmc, id.as_u32())
+        });
+        sorted.into_iter().take(count).collect()
+    }
+
+    /// [`Effect::RevealCardsFromHand`]: reveal matching cards from a player's
+    /// hand and optionally store the revealed count in
+    /// [`GameState::remembered_amount`] for use by chained sub-abilities.
+    ///
+    /// Filter syntax follows Forge's `RevealValid$` field, e.g.
+    /// `"Card.Artifact+YouCtrl"`.  Currently we match on card types contained
+    /// in the filter string (`Artifact`, `Land`, `Creature`, …); the `+YouCtrl`
+    /// qualifier is implicit (we always reveal *your own* hand cards here).
+    ///
+    /// Non-interactive: reveals ALL matching cards (maximises the mana gained
+    /// from a Metalworker, which is the correct greedy play with the zero
+    /// controller since Metalworker's mana scales with revealed artifacts).
+    ///
+    /// MTG CR 701.15 (Reveal): a player reveals a card by showing it to all
+    /// other players.  The revealed cards stay in the hand after the reveal.
+    pub(crate) fn execute_reveal_cards_from_hand(
+        &mut self,
+        player: PlayerId,
+        filter: &str,
+        remember_count: bool,
+    ) -> Result<()> {
+        let player_name = self
+            .get_player(player)
+            .ok()
+            .map(|p| p.name.as_str())
+            .unwrap_or("?")
+            .to_string();
+
+        // Collect matching card IDs from hand (cards stay in hand after reveal).
+        let matching: smallvec::SmallVec<[CardId; 8]> = self
+            .get_player_zones(player)
+            .map(|z| {
+                z.hand
+                    .cards
+                    .iter()
+                    .copied()
+                    .filter(|&id| {
+                        self.cards
+                            .try_get(id)
+                            .map(|c| card_matches_reveal_filter(c, filter))
+                            .unwrap_or(false)
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let count = matching.len();
+
+        // Log each revealed card (all players see the reveal — CR 701.15).
+        for &id in &matching {
+            let card_name = self
+                .cards
+                .try_get(id)
+                .map(|c| c.name.as_str())
+                .unwrap_or("?")
+                .to_string();
+            self.logger.gamelog(&format!("{player_name} reveals {card_name}"));
+        }
+
+        if count == 0 {
+            self.logger
+                .gamelog(&format!("{player_name} reveals no cards (no matching cards in hand)"));
+        }
+
+        // Optionally remember the count for the chained sub-ability.
+        if remember_count {
+            self.remembered_amount = Some(count as u32);
+        }
+
+        Ok(())
+    }
+
     /// [`Effect::ReturnGraveyardCardToHand`]: return exactly one card matching
     /// `type_filter` from `player`'s graveyard to hand (Stormchaser's Talent
     /// level-2 "return target instant or sorcery"). The card is picked in stable
@@ -815,6 +1109,372 @@ impl GameState {
             self.logger
                 .gamelog(&format!("{} returns {} from graveyard to hand", player_name, card_name));
         }
+        Ok(())
+    }
+
+    /// [`Effect::ReturnGraveyardCardToZone`]: return exactly one card matching
+    /// `type_filter` from a player's graveyard to `destination` (Library,
+    /// Battlefield, etc.), optionally under the caster's control
+    /// (`gain_control`).
+    ///
+    /// Examples:
+    /// - Reclaim: graveyard → top of library (any card the caster owns).
+    ///   CR 700.4: putting a card on top of your library is a zone-change; the
+    ///   card keeps its identity (it is NOT shuffled in unless another effect
+    ///   says so). `library_position$ 0` = top.
+    /// - Goryo's Vengeance: graveyard → battlefield, haste, GainControl$ True.
+    ///   The spell's SubAbility chain handles the haste grant + EOT exile;
+    ///   this effect handles only the zone move. CR 701.3: when a card is put
+    ///   onto the battlefield with "under your control", its controller is
+    ///   overridden to the casting player regardless of ownership.
+    /// - Debtors' Knell trigger: graveyard → battlefield, GainControl$ True,
+    ///   any creature from any graveyard.
+    ///
+    /// The AI picks the highest-power creature (for battlefield) or highest-CMC
+    /// non-land (for library/hand) from the graveyard of `player` when
+    /// `type_filter` has no ownership restriction, otherwise from any player's
+    /// graveyard. This is deterministic across server/clients (graveyards are
+    /// public, CR 400.2) so it is information-independent for network safety.
+    #[allow(clippy::too_many_arguments)]
+    pub(in crate::game::actions) fn execute_return_graveyard_card_to_zone(
+        &mut self,
+        player: PlayerId,
+        type_filter: &str,
+        destination: Zone,
+        gain_control: bool,
+        library_position: u8,
+        remember_changed: bool,
+    ) -> Result<()> {
+        // Collect all player IDs so we can search across graveyards when needed.
+        let all_players: smallvec::SmallVec<[PlayerId; 4]> = self.players.iter().map(|p| p.id).collect();
+
+        // Build candidate list: (card_id, owner, score)
+        // Cards are only reachable from graveyards (public zone, CR 400.2).
+        let filter_types: Vec<&str> = if type_filter.is_empty() {
+            vec![]
+        } else {
+            type_filter.split(',').map(|s| s.trim()).collect()
+        };
+        // Determine whether ownership is restricted to the caster.
+        // Forge's `Card.YouCtrl` / `Card.YouOwn` suffix on ValidTgts$ restricts
+        // to the casting player's graveyard; bare types (e.g. "Creature") do not.
+        let own_graveyard_only = type_filter.contains("YouCtrl") || type_filter.contains("YouOwn");
+
+        let search_players: smallvec::SmallVec<[PlayerId; 4]> = if own_graveyard_only {
+            smallvec::smallvec![player]
+        } else {
+            all_players
+        };
+
+        // Helper: type matches a card by the base type token(s).
+        let type_matches = |card: &crate::core::Card| -> bool {
+            if filter_types.is_empty() {
+                return true;
+            }
+            filter_types.iter().any(|&t| match t {
+                "Card" => true,
+                "Creature" => card.is_creature(),
+                "Instant" => card.is_instant(),
+                "Sorcery" => card.is_sorcery(),
+                "Land" => card.is_land(),
+                "Artifact" => card.is_artifact(),
+                "Enchantment" => card.is_enchantment(),
+                other => card.subtypes.iter().any(|st| st.as_str().eq_ignore_ascii_case(other)),
+            })
+        };
+
+        // Collect candidates with a simple value score (power for creatures,
+        // CMC for others). Deterministic low-to-high CardId tiebreak ensures
+        // identical picks on server and both clients (CR 400.2 — graveyard is
+        // public, no hidden info).
+        let mut candidates: smallvec::SmallVec<[(CardId, PlayerId, i32); 8]> = smallvec::SmallVec::new();
+        for &pid in &search_players {
+            if let Some(zones) = self.get_player_zones(pid) {
+                let gy: smallvec::SmallVec<[CardId; 8]> = zones.graveyard.cards.iter().copied().collect();
+                for card_id in gy {
+                    if let Some(card) = self.cards.try_get(card_id) {
+                        if type_matches(card) {
+                            let score = if card.is_creature() {
+                                i32::from(card.current_power()) + i32::from(card.current_toughness())
+                            } else {
+                                i32::from(card.mana_cost.cmc())
+                            };
+                            candidates.push((card_id, pid, score));
+                        }
+                    }
+                }
+            }
+        }
+
+        if candidates.is_empty() {
+            let player_name = self
+                .get_player(player)
+                .ok()
+                .map(|p| p.name.as_str())
+                .unwrap_or("?")
+                .to_string();
+            self.logger.gamelog(&format!(
+                "{} has no matching {} in graveyard to return",
+                player_name,
+                if type_filter.is_empty() { "card" } else { type_filter }
+            ));
+            return Ok(());
+        }
+
+        // Pick: highest score, then lowest CardId for determinism.
+        candidates.sort_by(|a, b| b.2.cmp(&a.2).then_with(|| a.0.as_u32().cmp(&b.0.as_u32())));
+        let (chosen, card_owner, _) = candidates[0];
+
+        let card_name = self
+            .cards
+            .try_get(chosen)
+            .map(|c| c.name.as_str())
+            .unwrap_or("?")
+            .to_string();
+        let player_name = self
+            .get_player(player)
+            .ok()
+            .map(|p| p.name.as_str())
+            .unwrap_or("?")
+            .to_string();
+
+        // Move from graveyard → destination.
+        // `gain_control` → move under `player`'s ownership for the purpose of
+        // zone placement (CR 701.3). We pass `player` as the "owner" so the card
+        // lands in the right player's Battlefield slot and the controller is set
+        // correctly by `move_card`.
+        let effective_owner = if gain_control { player } else { card_owner };
+        self.move_card(chosen, Zone::Graveyard, destination, effective_owner)?;
+
+        // For Library destination, honour `library_position`: 0 = top, 1 = bottom.
+        // `move_card` appends to the top by default; for bottom, move the card to
+        // position 0 (index 0 = bottom of library Vec).
+        if destination == Zone::Library && library_position != 0 {
+            if let Some(zones) = self.get_player_zones_mut(effective_owner) {
+                zones.library.remove(chosen);
+                zones.library.add_to_bottom(chosen);
+            }
+        }
+
+        // `RememberChanged$ True` — push the moved card onto remembered_cards so
+        // chained `Defined$ Remembered` sub-abilities (e.g. Goryo's Vengeance
+        // DBPump that grants Haste then schedules EOT exile) can find it.
+        if remember_changed {
+            self.remembered_cards.push(chosen);
+        }
+
+        let dest_label = match destination {
+            Zone::Library => {
+                if library_position == 0 {
+                    "the top of library"
+                } else {
+                    "the bottom of library"
+                }
+            }
+            Zone::Battlefield => "the battlefield",
+            Zone::Hand => "hand",
+            Zone::Exile => "exile",
+            Zone::Graveyard => "graveyard",
+            Zone::Stack | Zone::Command => "another zone",
+        };
+        self.logger.gamelog(&format!(
+            "{} returns {} from graveyard to {}",
+            player_name, card_name, dest_label
+        ));
+        Ok(())
+    }
+
+    /// [`Effect::PutCreatureFromHandOnBattlefield`]: put a creature card from the
+    /// controller's hand directly onto the battlefield (without paying its mana
+    /// cost). Used by Sneak Attack:
+    ///   `A:AB$ ChangeZone | Origin$ Hand | Destination$ Battlefield
+    ///    | ChangeType$ Creature.YouCtrl | RememberChanged$ True`
+    ///
+    /// The AI picks the highest-power creature in hand (deterministic across
+    /// server/clients — hand is private but the decision is information-
+    /// independent: the heuristic scores by power/CMC, not by hidden opponent
+    /// information). When `remember_changed` the moved card is pushed onto
+    /// `remembered_cards` so a chained `Animate | Defined$ Remembered`
+    /// (e.g. Sneak Attack DBPump) can apply haste + schedule an EOT sacrifice.
+    ///
+    /// CR 400.7 / CR 701.3: the card changes zones from Hand → Battlefield
+    /// under the ability controller's ownership; the entry is not a cast.
+    pub(in crate::game::actions) fn execute_put_creature_from_hand_on_battlefield(
+        &mut self,
+        player: PlayerId,
+        type_filter: &str,
+        remember_changed: bool,
+    ) -> Result<()> {
+        let filter_types: Vec<&str> = if type_filter.is_empty() {
+            vec![]
+        } else {
+            type_filter.split(',').map(|s| s.trim()).collect()
+        };
+
+        let type_matches = |card: &crate::core::Card| -> bool {
+            if filter_types.is_empty() {
+                return true;
+            }
+            filter_types.iter().any(|&t| match t {
+                "Card" => true,
+                "Creature" => card.is_creature(),
+                "Instant" => card.is_instant(),
+                "Sorcery" => card.is_sorcery(),
+                "Land" => card.is_land(),
+                "Artifact" => card.is_artifact(),
+                "Enchantment" => card.is_enchantment(),
+                other => card.subtypes.iter().any(|st| st.as_str().eq_ignore_ascii_case(other)),
+            })
+        };
+
+        // Collect candidates from the controller's hand. Score: power+toughness
+        // for creatures, CMC otherwise. Deterministic tiebreak by CardId.
+        let hand_cards: smallvec::SmallVec<[CardId; 8]> = self
+            .get_player_zones(player)
+            .map(|z| z.hand.cards.iter().copied().collect())
+            .unwrap_or_default();
+
+        let mut candidates: smallvec::SmallVec<[(CardId, i32); 8]> = smallvec::SmallVec::new();
+        for card_id in hand_cards {
+            if let Some(card) = self.cards.try_get(card_id) {
+                if type_matches(card) {
+                    let score = if card.is_creature() {
+                        i32::from(card.current_power()) + i32::from(card.current_toughness())
+                    } else {
+                        i32::from(card.mana_cost.cmc())
+                    };
+                    candidates.push((card_id, score));
+                }
+            }
+        }
+
+        if candidates.is_empty() {
+            let player_name = self
+                .get_player(player)
+                .ok()
+                .map(|p| p.name.as_str())
+                .unwrap_or("?")
+                .to_string();
+            self.logger.gamelog(&format!(
+                "{} has no matching {} in hand to put onto the battlefield",
+                player_name,
+                if type_filter.is_empty() { "card" } else { type_filter }
+            ));
+            return Ok(());
+        }
+
+        // Pick: highest score, then lowest CardId for determinism.
+        candidates.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.as_u32().cmp(&b.0.as_u32())));
+        let (chosen, _) = candidates[0];
+
+        let card_name = self
+            .cards
+            .try_get(chosen)
+            .map(|c| c.name.as_str())
+            .unwrap_or("?")
+            .to_string();
+        let player_name = self
+            .get_player(player)
+            .ok()
+            .map(|p| p.name.as_str())
+            .unwrap_or("?")
+            .to_string();
+
+        // Move hand → battlefield under the controller's ownership (CR 701.3).
+        self.move_card(chosen, Zone::Hand, Zone::Battlefield, player)?;
+
+        if remember_changed {
+            self.remembered_cards.push(chosen);
+        }
+
+        self.logger.gamelog(&format!(
+            "{} puts {} onto the battlefield from hand",
+            player_name, card_name
+        ));
+        Ok(())
+    }
+
+    /// [`Effect::ReturnSelfAsEnchantment`]: return the card (that just died) from
+    /// the graveyard to the battlefield under its owner's control, but strip all
+    /// creature (and other non-enchantment) card types so the resulting permanent
+    /// is purely an enchantment.
+    ///
+    /// This implements Enduring Vitality's death trigger:
+    ///   "When Enduring Vitality dies, if it was a creature, return it to the
+    ///    battlefield under its owner's control. It's an enchantment."
+    ///
+    /// Rules context (CR 400.7 / CR 110.5c):
+    ///   - The card returns as a new object; its creature sub-types and creature
+    ///     card type are stripped so it is now only an Enchantment.
+    ///   - It will no longer trigger dies-as-creature triggers (the `+Creature`
+    ///     guard in the trigger's ValidCard filter prevents re-triggering).
+    pub(in crate::game::actions) fn execute_return_self_as_enchantment(
+        &mut self,
+        source: crate::core::CardId,
+    ) -> crate::Result<()> {
+        use crate::core::CardType;
+
+        // Fizzle gracefully if the source ID is unresolved or not in graveyard.
+        if source.is_placeholder() {
+            log::debug!("ReturnSelfAsEnchantment: unresolved placeholder — fizzling");
+            return Ok(());
+        }
+
+        // Find the card's owner (needed for move_card destination routing).
+        let (card_name, owner) = {
+            let card = match self.cards.try_get(source) {
+                Some(c) => c,
+                None => {
+                    log::debug!("ReturnSelfAsEnchantment: card {:?} not found — fizzling", source);
+                    return Ok(());
+                }
+            };
+            (card.name.as_str().to_string(), card.owner)
+        };
+
+        // Verify the card is in the graveyard (it should be — we just came from
+        // check_death_triggers, but guard defensively).
+        let in_graveyard = self
+            .get_player_zones(owner)
+            .is_some_and(|z| z.graveyard.cards.contains(&source));
+        if !in_graveyard {
+            log::debug!(
+                "ReturnSelfAsEnchantment: {} ({:?}) not in graveyard — fizzling",
+                card_name,
+                source
+            );
+            return Ok(());
+        }
+
+        // Move from graveyard → battlefield under the owner's control.
+        self.move_card(source, Zone::Graveyard, Zone::Battlefield, owner)?;
+
+        // Strip all card types except Enchantment so the permanent is purely
+        // an enchantment and no longer a creature (CR 110.5c, CR 205.1a).
+        // We preserve Legendary if present (rule 704.5j), Land type removal
+        // doesn't apply here, but we do remove Creature + Artifact + Instant/Sorcery.
+        {
+            let card = self.cards.get_mut(source)?;
+            // Keep only Enchantment (and Land, which shouldn't be present but is
+            // harmless to preserve). Strip Creature, Artifact, Planeswalker, etc.
+            card.types
+                .retain(|t| matches!(t, CardType::Enchantment | CardType::Land));
+            // Ensure Enchantment is present (it should already be, but be safe).
+            if !card.types.contains(&CardType::Enchantment) {
+                card.types.push(CardType::Enchantment);
+            }
+            // Refresh cached is_creature / is_enchantment / ... flags.
+            card.refresh_type_cache();
+        }
+
+        self.logger.gamelog(&format!(
+            "{} returns to the battlefield as an enchantment (no longer a creature)",
+            card_name
+        ));
+
+        // Fire ETB triggers for the returning permanent (CR 603.6a).
+        self.check_triggers(crate::core::TriggerEvent::EntersBattlefield, source)?;
+
         Ok(())
     }
 
@@ -981,5 +1641,149 @@ impl GameState {
             self.shuffle_library(player);
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::Card;
+    use crate::game::GameState;
+
+    /// Regression for mtg-677/mtg-908: on the SERVER side `execute_dig` must
+    /// enqueue the kept card IDs into `pending_dig_decisions` so
+    /// `NetworkController` can broadcast the decision to both clients before
+    /// the next `ChoiceRequest`. Without this, the shadow re-derives the kept
+    /// list from hidden card data → different picks → fatal state-hash desync.
+    #[test]
+    fn test_execute_dig_server_enqueues_dig_decision() {
+        let mut game = GameState::new_two_player("P1".into(), "P2".into(), 20);
+        game.set_skip_reveals(false); // network mode
+                                      // NOT a shadow game → we are the server / authoritative
+        let p1_id = game.players[0].id;
+
+        // Construct a 3-card library for P1.
+        let card_a = game.next_card_id();
+        let card_b = game.next_card_id();
+        let card_c = game.next_card_id();
+        for cid in [card_a, card_b, card_c] {
+            game.cards.insert(cid, Card::new(cid, "Mountain".to_string(), p1_id));
+        }
+        if let Some(zones) = game.get_player_zones_mut(p1_id) {
+            // bottom-to-top: c is bottom, a is top
+            zones.library.cards = vec![card_c, card_b, card_a];
+        }
+
+        // execute_dig: look at top 2, keep 1, rest to bottom.
+        // Empty change_valid → all cards valid (no filter).
+        game.execute_dig(
+            2,             // dig_count
+            1,             // change_count
+            false,         // change_all
+            Zone::Hand,    // destination (kept)
+            Zone::Library, // rest_destination
+            false,         // may_play
+            false,         // may_play_without_mana_cost
+            true,          // target_self
+            false,         // optional
+            false,         // rest_random
+            false,         // reveal
+            &[],           // change_valid (empty = all cards valid)
+        )
+        .expect("execute_dig must not error");
+
+        // The server must have queued exactly one pending_dig_decision.
+        let decisions = game.sub_action_scratch.pending_dig_decisions.borrow().clone();
+        assert_eq!(
+            decisions.len(),
+            1,
+            "server execute_dig must enqueue exactly one pending_dig_decision (mtg-677/mtg-908)"
+        );
+        let (digger, kept, _ac) = &decisions[0];
+        assert_eq!(*digger, p1_id, "digger must be P1");
+        assert_eq!(kept.len(), 1, "kept must have exactly 1 card (change_count=1)");
+
+        // The shadow must NOT have a pending_dig_authoritative_decision
+        // (the field is only populated by apply_state_sync, never by execute_dig).
+        assert!(
+            game.sub_action_scratch.pending_dig_authoritative_decision.is_none(),
+            "pending_dig_authoritative_decision must remain None after server-side execute_dig"
+        );
+    }
+
+    /// Regression for mtg-677/mtg-908: on the SHADOW side `execute_dig` must
+    /// consume `pending_dig_authoritative_decision` and use it as the kept list
+    /// instead of re-deriving via the heuristic. This ensures the shadow picks
+    /// exactly the same cards as the server.
+    #[test]
+    fn test_execute_dig_shadow_uses_authoritative_decision() {
+        let mut game = GameState::new_two_player("P1".into(), "P2".into(), 20);
+        game.set_skip_reveals(false); // network mode
+        game.is_shadow_game = true; // we are a shadow
+        let p1_id = game.players[0].id;
+
+        // Construct a 3-card library for P1: card_a = top, card_b = next, card_c = bottom.
+        let card_a = game.next_card_id();
+        let card_b = game.next_card_id();
+        let card_c = game.next_card_id();
+        for cid in [card_a, card_b, card_c] {
+            game.cards
+                .insert(cid, Card::new(cid, "Lightning Bolt".to_string(), p1_id));
+        }
+        if let Some(zones) = game.get_player_zones_mut(p1_id) {
+            // bottom-to-top: c is bottom, a is top
+            zones.library.cards = vec![card_c, card_b, card_a];
+        }
+
+        // Pre-populate the authoritative decision: "keep card_b" (the second card
+        // from top). The heuristic would have picked card_a (top). This verifies
+        // the shadow respects the server decision rather than running the heuristic.
+        game.sub_action_scratch.pending_dig_authoritative_decision = Some(smallvec::smallvec![card_b]);
+
+        game.execute_dig(
+            2,             // dig_count
+            1,             // change_count
+            false,         // change_all
+            Zone::Hand,    // destination
+            Zone::Library, // rest_destination
+            false,         // may_play
+            false,         // may_play_without_mana_cost
+            true,          // target_self
+            false,         // optional
+            false,         // rest_random
+            false,         // reveal
+            &[],           // change_valid (all cards valid — no filter)
+        )
+        .expect("execute_dig must not error");
+
+        // card_b must now be in P1's hand (the authoritative kept card).
+        let hand_ids = game
+            .get_player_zones(p1_id)
+            .map(|z| z.hand.cards.clone())
+            .unwrap_or_default();
+        assert!(
+            hand_ids.contains(&card_b),
+            "shadow must keep card_b as directed by authoritative decision, but hand={:?}",
+            hand_ids
+        );
+
+        // card_a must NOT be in the hand (the heuristic would have kept it, but
+        // the shadow must use the server's decision).
+        assert!(
+            !hand_ids.contains(&card_a),
+            "shadow must NOT keep card_a when authoritative decision says keep card_b"
+        );
+
+        // The authoritative decision must have been consumed (cleared).
+        assert!(
+            game.sub_action_scratch.pending_dig_authoritative_decision.is_none(),
+            "pending_dig_authoritative_decision must be consumed (None) after shadow execute_dig"
+        );
+
+        // The shadow must NOT enqueue a pending_dig_decision (server-only path).
+        assert!(
+            game.sub_action_scratch.pending_dig_decisions.borrow().is_empty(),
+            "shadow execute_dig must NOT enqueue pending_dig_decisions"
+        );
     }
 }

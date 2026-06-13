@@ -512,8 +512,8 @@ impl HeuristicController {
                     // Firebreathing/pump abilities (Shivan Dragon, Granite Gargoyle)
                     value += 5 + power * 3 + toughness * 2;
                 }
-                ActivatedAbilityType::Destroy => {
-                    // Destroy abilities are extremely valuable (Royal Assassin)
+                ActivatedAbilityType::Destroy { .. } => {
+                    // Destroy abilities are extremely valuable (Royal Assassin, Chaos Orb)
                     value += 40;
                 }
                 ActivatedAbilityType::Regenerate => {
@@ -542,6 +542,17 @@ impl HeuristicController {
                     // they do not add to a creature's combat/eval value here.
                     // (Their activation is handled in should_activate_ability.)
                 }
+                ActivatedAbilityType::Charm => {
+                    // Modal abilities on Equipment (e.g. Jitte) add flexibility value.
+                    value += 10;
+                }
+                ActivatedAbilityType::LevelUp => {
+                    // Leveler creatures (Joraga Treespeaker) gain stats and abilities
+                    // as they accumulate LEVEL counters. The potential upside is real
+                    // but hard to quantify without knowing the level bands. Use a
+                    // modest bonus — the creature is already functional at level 0.
+                    value += 8;
+                }
                 ActivatedAbilityType::Other => {}
             }
         }
@@ -566,6 +577,12 @@ impl HeuristicController {
                 crate::core::TriggerEvent::Attacks => {
                     // Attack triggers (value scales with the effect)
                     value += 10;
+                }
+                crate::core::TriggerEvent::AttackerUnblocked => {
+                    // "Attacks and isn't blocked" triggers (Eternal of Harsh Truths,
+                    // Abyssal Nightstalker, Floral Spuzzem, etc.) reward evasion
+                    // attacks and are highly desirable on unblockable/evasion creatures.
+                    value += 12;
                 }
                 crate::core::TriggerEvent::Blocks => {
                     // Block triggers

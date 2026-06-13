@@ -1,0 +1,24 @@
+[metadata]
+Name:Umezawa's Jitte — mode 2: -1/-1 curse kills opponent's 1/1 (B3 verify, mtg-911)
+Goal:Win
+Turns:3
+Difficulty:Easy
+Description:P0 controls Isamaru, Hound of Konda (Id:5) equipped with Umezawa's Jitte (Id:6, 2 CHARGE counters, AttachedTo:5). P1 controls Llanowar Elves (Id:7, a 1/1). P0 activates the Jitte ability, chooses mode 2 (-1/-1 until EOT to target creature), targets Llanowar Elves. Elves become 0/0 and die. Verifies B3 ModalChoice mode-dispatch fix: JitteCurse sub-effect must target a ValidTgts$ creature and apply -1/-1 counters.
+
+[state]
+turn=3
+activeplayer=p0
+activephase=MAIN1
+p0life=10
+p0hand=
+p0battlefield=Plains; Plains; Plains; Isamaru, Hound of Konda|Id:5; Umezawa's Jitte|Id:6|Counters:CHARGE=2|AttachedTo:5
+p0library=Plains; Plains; Plains
+p0graveyard=
+p0exile=
+
+p1life=20
+p1hand=
+p1battlefield=Forest; Llanowar Elves|Id:7
+p1library=Forest; Forest; Forest
+p1graveyard=
+p1exile=

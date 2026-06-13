@@ -853,7 +853,7 @@ fn test_destroy_ability_classification() {
     // Test that the ability is classified as Destroy
     let ability_type = controller.classify_activated_ability(&destroy_ability);
     assert!(
-        matches!(ability_type, ActivatedAbilityType::Destroy),
+        matches!(ability_type, ActivatedAbilityType::Destroy { .. }),
         "Royal Assassin's ability should be classified as Destroy"
     );
 
@@ -883,6 +883,7 @@ fn test_destroy_ability_classification() {
             power_bonus: 1,
             toughness_bonus: 0,
             keywords_granted: smallvec::SmallVec::new(),
+            keyword_args_granted: smallvec::SmallVec::new(),
         }],
         "{R}: +1/+0 until end of turn".to_string(),
         false,
@@ -956,7 +957,7 @@ fn test_royal_assassin_from_cardsfolder() {
     let controller = HeuristicController::new(p1_id);
     let ability_type = controller.classify_activated_ability(ability);
     assert!(
-        matches!(ability_type, ActivatedAbilityType::Destroy),
+        matches!(ability_type, ActivatedAbilityType::Destroy { .. }),
         "Royal Assassin's ability should be classified as Destroy by AI"
     );
 }
@@ -992,7 +993,7 @@ fn test_has_valuable_destroy_target() {
 
     // Test that we detect this as a valuable target
     assert!(
-        controller.has_valuable_destroy_target(&view),
+        controller.has_valuable_destroy_target(&view, true),
         "Should detect 3/3 tapped creature as valuable destroy target"
     );
 }
@@ -1048,6 +1049,7 @@ fn test_should_cast_board_wipe_opponent_advantage() {
     wrath.effects.push(crate::core::Effect::DestroyAll {
         restriction: TargetRestriction::from_types([TargetType::Creature]),
         no_regenerate: true,
+        cmc_eq_source: None,
     });
     game.cards.insert(wrath_id, wrath);
 
@@ -1101,6 +1103,7 @@ fn test_should_not_cast_board_wipe_own_advantage() {
     wrath.effects.push(crate::core::Effect::DestroyAll {
         restriction: TargetRestriction::from_types([TargetType::Creature]),
         no_regenerate: true,
+        cmc_eq_source: None,
     });
     game.cards.insert(wrath_id, wrath);
 
@@ -1147,6 +1150,7 @@ fn test_should_cast_board_wipe_low_life() {
     wrath.effects.push(crate::core::Effect::DestroyAll {
         restriction: TargetRestriction::from_types([TargetType::Creature]),
         no_regenerate: true,
+        cmc_eq_source: None,
     });
     game.cards.insert(wrath_id, wrath);
 
@@ -1373,6 +1377,7 @@ fn test_should_cast_spell_routes_board_wipe() {
     wrath.effects.push(crate::core::Effect::DestroyAll {
         restriction: TargetRestriction::from_types([TargetType::Creature]),
         no_regenerate: true,
+        cmc_eq_source: None,
     });
     game.cards.insert(wrath_id, wrath);
 
@@ -2221,7 +2226,7 @@ fn test_northern_paladin_from_cardsfolder() {
     let controller = HeuristicController::new(p1_id);
     let ability_type = controller.classify_activated_ability(ability);
     assert!(
-        matches!(ability_type, ActivatedAbilityType::Destroy),
+        matches!(ability_type, ActivatedAbilityType::Destroy { .. }),
         "Northern Paladin's ability should be classified as Destroy by AI"
     );
 }
@@ -2935,6 +2940,7 @@ fn test_should_cast_put_counter_all() {
             power_le: None,
             requires_nontoken: false,
             requires_remembered: false,
+            requires_not_remembered: false,
             requires_nonartifact: false,
             required_color: None,
             required_set: None,
@@ -2943,6 +2949,10 @@ fn test_should_cast_put_counter_all() {
             power_le_source: false,
             requires_noncreature: false,
             min_cmc: None,
+            max_cmc: None,
+            requires_defender: false,
+            exact_cmc: None,
+            cmc_eq_svar: false,
         },
         counter_type: CounterType::P1P1,
         amount: 1,
@@ -2988,6 +2998,7 @@ fn test_should_cast_put_counter_all() {
             power_le: None,
             requires_nontoken: false,
             requires_remembered: false,
+            requires_not_remembered: false,
             requires_nonartifact: false,
             required_color: None,
             required_set: None,
@@ -2996,6 +3007,10 @@ fn test_should_cast_put_counter_all() {
             power_le_source: false,
             requires_noncreature: false,
             min_cmc: None,
+            max_cmc: None,
+            requires_defender: false,
+            exact_cmc: None,
+            cmc_eq_svar: false,
         },
         counter_type: CounterType::P1P1,
         amount: 1,
@@ -3067,6 +3082,7 @@ fn test_should_cast_change_zone_all() {
             power_le: None,
             requires_nontoken: false,
             requires_remembered: false,
+            requires_not_remembered: false,
             requires_nonartifact: false,
             required_color: None,
             required_set: None,
@@ -3075,6 +3091,10 @@ fn test_should_cast_change_zone_all() {
             power_le_source: false,
             requires_noncreature: false,
             min_cmc: None,
+            max_cmc: None,
+            requires_defender: false,
+            exact_cmc: None,
+            cmc_eq_svar: false,
         },
         origins: smallvec![crate::zones::Zone::Battlefield],
         destination: crate::zones::Zone::Hand,

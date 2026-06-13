@@ -4,7 +4,7 @@
 //! These functions support controller decision-making without modifying game state.
 
 use super::GameLoop;
-use crate::core::{CardId, Keyword, PlayerId};
+use crate::core::{CardId, Keyword, PlayerId, StaticAbility};
 use crate::game::phase::Step;
 use smallvec::SmallVec;
 
@@ -82,11 +82,28 @@ impl<'a> GameLoop<'a> {
     pub(super) fn get_available_attacker_creatures(&self, player_id: PlayerId) -> SmallVec<[CardId; 8]> {
         let mut creatures: SmallVec<[CardId; 8]> = SmallVec::new();
 
+        // Pre-compute the defending player id once (2-player: the other player).
+        let defending_player_id = self.game.players.iter().find(|p| p.id != player_id).map(|p| p.id);
+
+        // Island Sanctuary protection (CR 614): if the defending player activated
+        // sanctuary this turn, only creatures with flying or islandwalk may attack.
+        let defender_has_sanctuary = defending_player_id.is_some_and(|def_id| {
+            self.game
+                .players
+                .iter()
+                .find(|p| p.id == def_id)
+                .is_some_and(|p| p.island_sanctuary_protected)
+        });
+
         for &card_id in &self.game.battlefield.cards {
             // Using try_get() to avoid Result drop overhead in hot path
             if let Some(card) = self.game.cards.try_get(card_id) {
+                // A permanent is eligible as an attacker if it is a creature —
+                // either intrinsically (card.is_creature()) OR via an Opalescence-style
+                // continuous effect that gives it the Creature type (CR 613.1a Layer 4).
+                let counts_as_creature = card.is_creature() || self.game.is_opalescence_creature(card);
                 if card.controller == player_id
-                    && card.is_creature()
+                    && counts_as_creature
                     && !card.tapped
                     && !self.game.combat.is_attacking(card_id)
                 {
@@ -102,7 +119,31 @@ impl<'a> GameLoop<'a> {
                     // Check for defender keyword
                     let has_defender = card.has_defender();
 
-                    if !has_summoning_sickness && !has_defender {
+                    // Check conditional CantAttack statics on the creature itself
+                    // (e.g. Orgg: "can't attack if defending player controls an
+                    // untapped creature with power >= N"). CR 508.1c.
+                    let blocked_by_cant_attack_static = card
+                        .static_abilities
+                        .iter()
+                        .any(|sa| self.cant_attack_static_fires(sa, defending_player_id));
+
+                    // Island Sanctuary (CR 614): only creatures with flying or
+                    // islandwalk (Landwalk:Island) can attack a protected player.
+                    let blocked_by_sanctuary = defender_has_sanctuary
+                        && !self.game.has_keyword_with_effects(card_id, Keyword::Flying)
+                        && !self.game.has_islandwalk(card_id);
+
+                    // Check global CantAttackOrBlockMatching statics on other
+                    // battlefield permanents (e.g. Light of Day: "black creatures
+                    // can't attack or block"). CR 508.1c.
+                    let globally_cant_attack = self.game.is_attack_prohibited(card);
+
+                    if !has_summoning_sickness
+                        && !has_defender
+                        && !blocked_by_cant_attack_static
+                        && !blocked_by_sanctuary
+                        && !globally_cant_attack
+                    {
                         creatures.push(card_id);
                     }
                 }
@@ -112,6 +153,58 @@ impl<'a> GameLoop<'a> {
         // Sort for deterministic ordering
         creatures.sort();
         creatures
+    }
+
+    /// Returns `true` if a `CantAttack`-family static ability blocks the
+    /// creature from appearing in the attack-declaration choice menu.
+    ///
+    /// Called once per potential attacker, per ability, so this must be cheap.
+    fn cant_attack_static_fires(&self, ability: &StaticAbility, defender_id: Option<PlayerId>) -> bool {
+        match ability {
+            StaticAbility::CantAttackIfDefenderHasUntappedPowerGE { min_power, .. } => {
+                // Orgg (CR 508.1): "can't attack if defending player controls
+                // an untapped creature with power >= min_power."
+                let Some(def_id) = defender_id else {
+                    return false;
+                };
+                self.game.battlefield.cards.iter().any(|&bid| {
+                    self.game.cards.try_get(bid).is_some_and(|c| {
+                        c.controller == def_id
+                            && c.is_creature()
+                            && !c.tapped
+                            && i32::from(c.current_power()) >= *min_power
+                    })
+                })
+            }
+            // None of the other self-carried static abilities restrict attacking
+            // on their own (global CantAttackOrBlockMatching is handled via
+            // is_attack_prohibited() which scans the whole battlefield).
+            StaticAbility::ModifyPT { .. }
+            | StaticAbility::GrantKeyword { .. }
+            | StaticAbility::ReduceCost { .. }
+            | StaticAbility::RaiseCost { .. }
+            | StaticAbility::GrantAbility { .. }
+            | StaticAbility::GainControl { .. }
+            | StaticAbility::SacrificeMatchingPresent { .. }
+            | StaticAbility::CantBeCast { .. }
+            | StaticAbility::CantPlayLand { .. }
+            | StaticAbility::CantBlockMatching { .. }
+            | StaticAbility::CantAttackOrBlockMatching { .. }
+            | StaticAbility::CantBeActivated { .. }
+            | StaticAbility::CastWithFlash { .. }
+            | StaticAbility::DamageIncrease { .. }
+            | StaticAbility::PreventDamageToEnchantedByChosenColor { .. }
+            | StaticAbility::ExtraLandPlay { .. }
+            | StaticAbility::LifeFloor { .. }
+            | StaticAbility::DamageToExileLibrary { .. }
+            | StaticAbility::CharacteristicDefiningPt { .. }
+            | StaticAbility::GrantUpkeepSacrificeUnlessPay { .. }
+            | StaticAbility::AlternativeCost { .. }
+            | StaticAbility::MayPlayWithoutManaCost { .. }
+            | StaticAbility::MayPlayFromLibrary { .. }
+            | StaticAbility::OpalescenceStyle { .. }
+            | StaticAbility::DisableCreatureEtbTriggers { .. } => false,
+        }
     }
 
     /// Get creatures that can block for a player (v2 interface)
@@ -124,10 +217,17 @@ impl<'a> GameLoop<'a> {
         for &card_id in &self.game.battlefield.cards {
             // Using try_get() to avoid Result drop overhead in hot path
             if let Some(card) = self.game.cards.try_get(card_id) {
+                // A permanent is eligible as a blocker if it is a creature —
+                // either intrinsically (card.is_creature()) OR via an Opalescence-style
+                // continuous effect that gives it the Creature type (CR 613.1a Layer 4).
+                let counts_as_creature = card.is_creature() || self.game.is_opalescence_creature(card);
                 if card.controller == player_id
-                    && card.is_creature()
+                    && counts_as_creature
                     && !card.tapped
                     && !self.game.combat.is_blocking(card_id)
+                    // Global CantAttackOrBlockMatching statics (e.g. Light of Day:
+                    // "black creatures can't attack or block"). CR 509.1b.
+                    && !self.game.is_block_prohibited(card)
                 {
                     creatures.push(card_id);
                 }
@@ -211,6 +311,51 @@ impl<'a> GameLoop<'a> {
             }
         }
 
+        // Self-ReduceCost: apply ReduceCost static abilities carried on the card
+        // being cast itself (ValidCard$ Card.Self | EffectZone$ All).
+        // Example: Eddymurk Crab — "costs {1} less for each instant/sorcery in
+        // your graveyard". Mirrors the same pass in actions/mod.rs.
+        // CR 601.2e: cost reductions from the spell itself are applied first.
+        for self_ability in &card.static_abilities {
+            if let StaticAbility::ReduceCost {
+                valid_card: crate::core::CostReductionTarget::SelfCard,
+                amount,
+                condition,
+                description,
+            } = self_ability
+            {
+                let condition_met = if let Some(cond) = condition {
+                    self.count_cards_matching_filter(player_id, &cond.is_present, cond.present_zone)
+                        >= cond.min_count as usize
+                } else {
+                    true
+                };
+
+                if condition_met {
+                    let reduce_by = match amount {
+                        crate::core::CostReductionAmount::Fixed(n) => *n,
+                        crate::core::CostReductionAmount::Dynamic(expr) => {
+                            self.game.evaluate_count_expression(expr, player_id).unwrap_or(0).max(0) as u8
+                        }
+                    };
+
+                    let old_generic = effective_cost.generic;
+                    effective_cost.generic = effective_cost.generic.saturating_sub(reduce_by);
+
+                    if old_generic != effective_cost.generic {
+                        log::debug!(
+                            "Self-ReduceCost on {}: {} (reducing generic by {}, was {}, now {})",
+                            card.name,
+                            description,
+                            reduce_by,
+                            old_generic,
+                            effective_cost.generic
+                        );
+                    }
+                }
+            }
+        }
+
         // Check for ReduceCost / RaiseCost static abilities from permanents.
         // Polarity rules (CR 601.2f): ReduceCost only helps its own controller;
         // RaiseCost ("hose" effects like Gloom, Karma) applies regardless of
@@ -249,15 +394,26 @@ impl<'a> GameLoop<'a> {
                     };
 
                     if condition_met {
+                        // Resolve the reduction amount: fixed constant or dynamic
+                        // CountExpression evaluated against the caster's game state.
+                        // Dynamic example: Eddymurk Crab (`Amount$X` with
+                        // `SVar:X:Count$ValidGraveyard Instant.YouOwn,Sorcery.YouOwn`).
+                        let reduce_by = match amount {
+                            crate::core::CostReductionAmount::Fixed(n) => *n,
+                            crate::core::CostReductionAmount::Dynamic(expr) => {
+                                self.game.evaluate_count_expression(expr, player_id).unwrap_or(0).max(0) as u8
+                            }
+                        };
+
                         let old_generic = effective_cost.generic;
-                        effective_cost.generic = effective_cost.generic.saturating_sub(*amount);
+                        effective_cost.generic = effective_cost.generic.saturating_sub(reduce_by);
 
                         if old_generic != effective_cost.generic {
                             log::debug!(
                                 "ReduceCost from {}: {} (reducing generic by {}, was {}, now {})",
                                 source_card.name,
                                 description,
-                                amount,
+                                reduce_by,
                                 old_generic,
                                 effective_cost.generic
                             );
@@ -488,6 +644,11 @@ impl<'a> GameLoop<'a> {
     pub(crate) fn push_castable_spells(&mut self, player_id: PlayerId) {
         use crate::core::SpellAbility;
 
+        // CR 702.88b: Epic — player can't cast spells for the rest of the game.
+        if self.game.try_get_player(player_id).is_some_and(|p| p.cant_cast_spells) {
+            return;
+        }
+
         // Update the mana engine for this player
         self.mana_engine.update_mut(self.game, player_id);
 
@@ -517,7 +678,15 @@ impl<'a> GameLoop<'a> {
                     // CantPlayLand on ARN-origin cards). A prohibited spell is
                     // never offered as a legal play. (CR 605: a spell can't be
                     // cast while a continuous effect says it can't.)
-                    if self.game.is_play_prohibited(card) {
+                    if self.game.is_play_prohibited(player_id, card) {
+                        continue;
+                    }
+                    // Origin-scoped prohibition: Experimental Frenzy's
+                    // `CantBeCast | ValidCard$ Card | Caster$ You | Origin$ Hand`
+                    // prevents casting ANY spell from hand while Frenzy is on the
+                    // battlefield. is_play_prohibited skips origin-restricted
+                    // statics; we check them here since we know the card is in hand.
+                    if self.game.has_hand_cast_prohibition(player_id, card) {
                         continue;
                     }
                     // Adventure (CR 715): if this card has an Adventure face, the
@@ -566,6 +735,32 @@ impl<'a> GameLoop<'a> {
                             // Also check if we can pay any additional sacrifice costs (RaiseCost)
                             let can_afford_mana = self.mana_engine.can_pay_with_pool(&effective_cost, &mana_pool);
                             let can_afford_sacrifice = self.can_pay_sacrifice_costs(card, player_id);
+
+                            // Check for AlternativeCost static abilities on this card.
+                            // E.g. Summoning Trap: may be cast for {0} when a creature spell
+                            // was countered this turn by an opponent.
+                            let player_had_creature_countered = self
+                                .game
+                                .try_get_player(player_id)
+                                .is_some_and(|p| p.had_creature_countered_this_turn);
+                            for static_ability in &card.static_abilities {
+                                if let crate::core::StaticAbility::AlternativeCost {
+                                    condition, alt_cost, ..
+                                } = static_ability
+                                {
+                                    let condition_met = match condition {
+                                        crate::core::AltCostCondition::HadCreatureCounteredThisTurn => {
+                                            player_had_creature_countered
+                                        }
+                                    };
+                                    if condition_met && self.mana_engine.can_pay_with_pool(alt_cost, &mana_pool) {
+                                        self.abilities_buffer.push(SpellAbility::CastFromHandWithAltCost {
+                                            card_id,
+                                            alternative_cost: *alt_cost,
+                                        });
+                                    }
+                                }
+                            }
 
                             if can_afford_mana && can_afford_sacrifice {
                                 // For Aura spells, check if there are valid targets
@@ -654,6 +849,25 @@ impl<'a> GameLoop<'a> {
                                         .get_valid_targets_for_spell(card_id)
                                         .map(|targets| !targets.is_empty())
                                         .unwrap_or(false);
+                                    if has_valid_targets {
+                                        self.abilities_buffer.push(SpellAbility::CastSpell { card_id });
+                                    }
+                                } else if let Some(graveyard_filter) = Self::spell_requires_graveyard_target(card) {
+                                    // For spells like Regrowth that target a card in a graveyard
+                                    // (CR 601.2c: can't cast without at least one legal target).
+                                    // YouCtrl effects search only the caster's graveyard; unrestricted
+                                    // effects (e.g. Debtors' Knell) search all graveyards.
+                                    let has_valid_targets = self.game.player_zones.iter().any(|(pid, zones)| {
+                                        if graveyard_filter.own_only && *pid != player_id {
+                                            return false;
+                                        }
+                                        zones.graveyard.cards.iter().any(|&gy_id| {
+                                            self.game
+                                                .cards
+                                                .try_get(gy_id)
+                                                .is_some_and(|gy_card| graveyard_filter.type_matches(gy_card))
+                                        })
+                                    });
                                     if has_valid_targets {
                                         self.abilities_buffer.push(SpellAbility::CastSpell { card_id });
                                     }
@@ -842,10 +1056,63 @@ impl<'a> GameLoop<'a> {
                     }
                 }
 
+                PersistentEffectKind::CastTargetedSpellFromGraveyard {
+                    tracked_card, owner, ..
+                } => {
+                    if *owner != player_id {
+                        continue;
+                    }
+
+                    // Verify the card is still in the graveyard
+                    let is_in_graveyard = self
+                        .game
+                        .get_player_zones(player_id)
+                        .map(|zones| zones.graveyard.cards.contains(tracked_card))
+                        .unwrap_or(false);
+                    if !is_in_graveyard {
+                        continue;
+                    }
+
+                    // Check timing: instants can be cast any time, sorceries need sorcery speed
+                    let can_cast_now = if let Some(card) = self.game.cards.try_get(*tracked_card) {
+                        if card.is_instant() {
+                            true
+                        } else {
+                            is_sorcery_speed && is_active_player && stack_is_empty
+                        }
+                    } else {
+                        continue;
+                    };
+
+                    if !can_cast_now {
+                        continue;
+                    }
+
+                    // Check mana affordability
+                    let mana_cost = self
+                        .game
+                        .cards
+                        .try_get(*tracked_card)
+                        .map(|c| c.mana_cost)
+                        .unwrap_or_default();
+                    if self.mana_engine.can_pay_with_pool(&mana_cost, &mana_pool) {
+                        self.abilities_buffer.push(SpellAbility::CastFromGraveyard {
+                            card_id: *tracked_card,
+                            effect_id: effect.id,
+                            add_finality_counter: false, // Chandra -2 doesn't add finality
+                        });
+                    }
+                }
+
                 // Other persistent effect kinds don't grant casting permission
                 PersistentEffectKind::Imprint { .. }
                 | PersistentEffectKind::Suspend { .. }
-                | PersistentEffectKind::CantBeBlocked { .. } => {}
+                | PersistentEffectKind::CantBeBlocked { .. }
+                // ExtraLandPlay is queried via can_play_land_effective(), not here
+                | PersistentEffectKind::ExtraLandPlay { .. }
+                // GrantCastWithFlash is queried via player_has_cast_with_flash(), not here.
+                // It modifies the timing of already-offered spells; no new abilities to offer.
+                | PersistentEffectKind::GrantCastWithFlash { .. } => {}
             }
         }
     }
@@ -910,6 +1177,239 @@ impl<'a> GameLoop<'a> {
         }
     }
 
+    /// Push free-cast spells from hand when Fires of Invention (or a card with
+    /// `StaticAbility::MayPlayWithoutManaCost`) is on the battlefield.
+    ///
+    /// For each `MayPlayWithoutManaCost` static on any battlefield permanent
+    /// controlled by `player_id`, enumerate cards in hand whose CMC ≤ the
+    /// evaluated SVar (land count) and offer them as
+    /// `SpellAbility::CastFromHandWithAltCost { alternative_cost: ManaCost::zero() }`.
+    ///
+    /// Enforcements applied here:
+    /// - Fires of Invention `CantBeCast | Caster$ You.NonActive` — via `is_play_prohibited`.
+    /// - Fires of Invention `CantBeCast | NumLimitEachTurn$ 2` — checked directly
+    ///   against `spells_cast_this_turn`: if the player has already cast ≥ 2 spells
+    ///   this turn, no more free casts are offered.
+    /// - Experimental Frenzy `CantBeCast | Origin$ Hand` — via `has_hand_cast_prohibition`.
+    fn push_castable_with_fires(&mut self, player_id: PlayerId) {
+        use crate::core::{ManaCost, SpellAbility, StaticAbility};
+
+        // Collect MayPlayWithoutManaCost statics from battlefield permanents
+        // controlled by this player. We need the source card's SVars to evaluate
+        // the CMC limit. Collect (svar_name, source_svars) pairs.
+        let sources: smallvec::SmallVec<[String; 2]> = self
+            .game
+            .battlefield
+            .cards
+            .iter()
+            .filter_map(|&src_id| {
+                let src = self.game.cards.try_get(src_id)?;
+                if src.controller != player_id {
+                    return None;
+                }
+                src.static_abilities.iter().find_map(|sa| {
+                    if let StaticAbility::MayPlayWithoutManaCost { cmc_limit_svar, .. } = sa {
+                        // Resolve the SVar body from this source card
+                        src.svars.get(cmc_limit_svar.as_str()).cloned()
+                    } else {
+                        None
+                    }
+                })
+            })
+            .collect();
+
+        if sources.is_empty() {
+            return;
+        }
+
+        // Fires of Invention: NumLimitEachTurn$ 2 cap.
+        // If the player has already cast 2 or more spells this turn, no
+        // further free casts via Fires are offered. (CR 605: a continuous
+        // effect that says "you can't cast more than N spells per turn" stops
+        // the player from casting additional spells once N is reached.)
+        let spells_cast = self
+            .game
+            .try_get_player(player_id)
+            .map(|p| p.spells_cast_this_turn)
+            .unwrap_or(0);
+        if spells_cast >= 2 {
+            return;
+        }
+
+        // For each CMC-limit SVar body, evaluate the max CMC.
+        // Body is "Count$Valid Land.YouCtrl" for Fires of Invention.
+        let max_cmc: usize = sources
+            .iter()
+            .map(|svar_body| {
+                // Parse "Count$Valid Land.YouCtrl" → count lands you control
+                if let Some(count_expr) = svar_body.strip_prefix("Count$Valid ") {
+                    let filter_type = count_expr.split('.').next().unwrap_or("");
+                    self.count_permanents_by_type(player_id, filter_type)
+                } else {
+                    svar_body.parse().unwrap_or(0)
+                }
+            })
+            .max()
+            .unwrap_or(0);
+
+        // Collect hand cards (avoid borrow conflict)
+        let hand_cards: smallvec::SmallVec<[crate::core::CardId; 16]> = self
+            .game
+            .get_player_zones(player_id)
+            .map(|z| z.hand.cards.iter().copied().collect())
+            .unwrap_or_default();
+
+        let is_active_player = self.game.turn.active_player == player_id;
+        let is_sorcery_speed = self.game.turn.current_step.is_sorcery_speed();
+        let stack_is_empty = self.game.stack.is_empty();
+
+        for card_id in hand_cards {
+            let Some(card) = self.game.cards.try_get(card_id) else {
+                continue;
+            };
+
+            // Must be a non-land spell
+            if card.is_land() {
+                continue;
+            }
+
+            // CMC restriction: card CMC must be ≤ land count
+            if card.mana_cost.cmc() as usize > max_cmc {
+                continue;
+            }
+
+            // Respect is_play_prohibited (CantBeCast statics including the
+            // Fires of Invention `CantBeCast | Caster$ You.NonActive` restriction).
+            if self.game.is_play_prohibited(player_id, card) {
+                continue;
+            }
+
+            // Origin-scoped prohibition: Experimental Frenzy's
+            // `CantBeCast | Origin$ Hand` blocks hand casts even via Fires.
+            if self.game.has_hand_cast_prohibition(player_id, card) {
+                continue;
+            }
+
+            // Timing restrictions
+            let has_flash =
+                card.has_keyword(crate::core::Keyword::Flash) || self.game.player_has_cast_with_flash(player_id, card);
+            let can_cast_now = if card.is_instant() || has_flash {
+                true
+            } else {
+                is_sorcery_speed && is_active_player && stack_is_empty
+            };
+
+            if !can_cast_now {
+                continue;
+            }
+
+            // Offer as free-cast from hand (zero mana cost)
+            self.abilities_buffer.push(SpellAbility::CastFromHandWithAltCost {
+                card_id,
+                alternative_cost: ManaCost::new(),
+            });
+        }
+    }
+
+    /// Push castable cards from the top of the library when a
+    /// `StaticAbility::MayPlayFromLibrary` is active (Experimental Frenzy).
+    ///
+    /// Offers the top card of the controller's library as
+    /// `SpellAbility::CastFromLibrary` (for non-land spells) or
+    /// `SpellAbility::PlayLandFromLibrary` (for lands), subject to normal
+    /// timing rules.
+    fn push_castable_from_library(&mut self, player_id: PlayerId) {
+        use crate::core::{SpellAbility, StaticAbility};
+
+        // Check whether any battlefield permanent controlled by this player
+        // has MayPlayFromLibrary.
+        let has_may_play_from_library = self.game.battlefield.cards.iter().any(|&src_id| {
+            self.game.cards.try_get(src_id).is_some_and(|src| {
+                src.controller == player_id
+                    && src
+                        .static_abilities
+                        .iter()
+                        .any(|sa| matches!(sa, StaticAbility::MayPlayFromLibrary { .. }))
+            })
+        });
+
+        if !has_may_play_from_library {
+            return;
+        }
+
+        // Get the top card of the player's library (last element = top).
+        let top_card_id = self
+            .game
+            .get_player_zones(player_id)
+            .and_then(|z| z.library.cards.last().copied());
+
+        let Some(top_card_id) = top_card_id else {
+            return;
+        };
+
+        // Extract the information we need from top_card without keeping a borrow.
+        let (is_land, is_prohibited, has_flash_kw, is_instant, effective_cost) = {
+            let Some(top_card) = self.game.cards.try_get(top_card_id) else {
+                return;
+            };
+            // Skip hidden (reserved) cards in shadow games — no instance to examine.
+            if top_card.name.as_str().is_empty() {
+                return;
+            }
+            let is_land = top_card.is_land();
+            let is_prohibited = self.game.is_play_prohibited(player_id, top_card);
+            let has_flash_kw = top_card.has_keyword(crate::core::Keyword::Flash);
+            let is_instant = top_card.is_instant();
+            let cost = self.calculate_effective_cost(top_card, player_id);
+            (is_land, is_prohibited, has_flash_kw, is_instant, cost)
+        };
+
+        let is_active_player = self.game.turn.active_player == player_id;
+        let is_sorcery_speed = self.game.turn.current_step.is_sorcery_speed();
+        let stack_is_empty = self.game.stack.is_empty();
+
+        if is_land {
+            // Land: offer PlayLandFromLibrary during sorcery speed, active player,
+            // empty stack, and if the player still has a land play available.
+            // (Experimental Frenzy also has CantPlayLand | Origin$ Hand, handled
+            // separately — this is the grant, not the restriction.)
+            if stack_is_empty && is_sorcery_speed && is_active_player && self.game.can_play_land_effective(player_id) {
+                self.abilities_buffer
+                    .push(SpellAbility::PlayLandFromLibrary { card_id: top_card_id });
+            }
+        } else {
+            // Non-land spell: apply normal timing rules.
+            if is_prohibited {
+                return;
+            }
+            let has_flash = has_flash_kw
+                || self
+                    .game
+                    .cards
+                    .try_get(top_card_id)
+                    .is_some_and(|c| self.game.player_has_cast_with_flash(player_id, c));
+            let can_cast_now = if is_instant || has_flash {
+                true
+            } else {
+                is_sorcery_speed && is_active_player && stack_is_empty
+            };
+
+            if can_cast_now {
+                // Mana cost check: must be able to pay printed mana cost.
+                self.mana_engine.update_mut(self.game, player_id);
+                let mana_pool = self
+                    .game
+                    .try_get_player(player_id)
+                    .map(|p| p.mana_pool)
+                    .unwrap_or_default();
+                if self.mana_engine.can_pay_with_pool(&effective_cost, &mana_pool) {
+                    self.abilities_buffer
+                        .push(SpellAbility::CastFromLibrary { card_id: top_card_id });
+                }
+            }
+        }
+    }
+
     /// Push activatable abilities directly to abilities_buffer
     ///
     /// Zero allocation - pushes SpellAbility::ActivateAbility directly to the buffer
@@ -934,6 +1434,13 @@ impl<'a> GameLoop<'a> {
             if let Some(card) = self.game.cards.try_get(card_id) {
                 // Only check permanents controlled by this player
                 if card.controller != player_id {
+                    continue;
+                }
+
+                // CantBeActivated statics (Cursed Totem): if any battlefield
+                // permanent has a CantBeActivated static that matches this card,
+                // none of its activated abilities may be activated. CR 602.1.
+                if card.is_creature() && self.game.is_activated_ability_prohibited(card) {
                     continue;
                 }
 
@@ -1378,35 +1885,43 @@ impl<'a> GameLoop<'a> {
 
         // Add playable lands (only in main phases when player can play lands AND stack is empty)
         // MTG Rules 307.4: Can only play land when stack is empty and you have priority during your main phase
-        if stack_is_empty
+        //
+        // Experimental Frenzy: `CantPlayLand | Player$ You | Origin$ Hand` blocks
+        // playing lands from hand. Check once per populate call (player-level, not
+        // per-land) before iterating the hand.
+        let hand_land_prohibited = self.game.has_hand_land_prohibition(player_id);
+        if !hand_land_prohibited
+            && stack_is_empty
             && matches!(self.game.turn.current_step, Step::Main1 | Step::Main2)
             && self.game.turn.active_player == player_id
+            && self.game.can_play_land_effective(player_id)
         {
-            if let Ok(player) = self.game.get_player(player_id) {
-                if player.can_play_land() {
-                    // Collect first (the closure below borrows self.game while
-                    // we also push into self.abilities_buffer).
-                    let playable: smallvec::SmallVec<[crate::core::CardId; 8]> =
-                        Self::lands_in_hand_iter(self.game, player_id)
-                            .filter(|&land_id| {
-                                // Skip lands a CantPlayLand / CantBeCast static
-                                // prohibits (City in a Bottle: ARN-origin lands).
-                                !self
-                                    .game
-                                    .cards
-                                    .try_get(land_id)
-                                    .is_some_and(|c| self.game.is_play_prohibited(c))
-                            })
-                            .collect();
-                    for land_id in playable {
-                        self.abilities_buffer.push(SpellAbility::PlayLand { card_id: land_id });
-                    }
-                }
+            // Collect first (the closure below borrows self.game while
+            // we also push into self.abilities_buffer).
+            let playable: smallvec::SmallVec<[crate::core::CardId; 8]> = Self::lands_in_hand_iter(self.game, player_id)
+                .filter(|&land_id| {
+                    // Skip lands a CantPlayLand / CantBeCast static
+                    // prohibits (City in a Bottle: ARN-origin lands).
+                    !self
+                        .game
+                        .cards
+                        .try_get(land_id)
+                        .is_some_and(|c| self.game.is_play_prohibited(player_id, c))
+                })
+                .collect();
+            for land_id in playable {
+                self.abilities_buffer.push(SpellAbility::PlayLand { card_id: land_id });
             }
         }
 
         // Add castable spells (pushes directly to abilities_buffer)
         self.push_castable_spells(player_id);
+
+        // Add free-cast spells from hand via Fires of Invention / MayPlayWithoutManaCost
+        self.push_castable_with_fires(player_id);
+
+        // Add castable top-of-library plays via Experimental Frenzy / MayPlayFromLibrary
+        self.push_castable_from_library(player_id);
 
         // Add castable spells from exile (Airbend, Suspend, etc.)
         self.push_castable_from_exile(player_id);
@@ -1527,6 +2042,8 @@ impl<'a> GameLoop<'a> {
                 Effect::TapPermanent { target } if target.is_placeholder() => true,
                 // UntapPermanent with placeholder target
                 Effect::UntapPermanent { target } if target.is_placeholder() => true,
+                // ReturnPermanentToHand with placeholder target (bounce)
+                Effect::ReturnPermanentToHand { target, .. } if target.is_placeholder() => true,
                 // ExilePermanent with placeholder target
                 Effect::ExilePermanent { target } if target.is_placeholder() => true,
                 // CopyPermanent with placeholder target
@@ -1549,6 +2066,73 @@ impl<'a> GameLoop<'a> {
                 }
                 _ => false,
             }
+        })
+    }
+
+    /// Check if a spell requires a graveyard card target (e.g. Regrowth, Reclaim).
+    ///
+    /// Returns `Some(GraveyardTargetFilter)` when the spell has a
+    /// `ReturnGraveyardCardToHand` or `ReturnGraveyardCardToZone` effect so that
+    /// `push_castable_spells` can gate the offer on there being at least one
+    /// matching card in the relevant graveyard (CR 601.2c).
+    ///
+    /// `ReturnGraveyardCardToHand` always searches only the caster's own graveyard
+    /// (these spells always use `ValidTgts$ Card.YouCtrl` / `Instant.YouCtrl` etc.).
+    /// `ReturnGraveyardCardToZone` can search any graveyard (Goryo's Vengeance,
+    /// Debtors' Knell) — we conservatively require *some* graveyard to be non-empty.
+    #[allow(clippy::wildcard_enum_match_arm)]
+    fn spell_requires_graveyard_target(card: &crate::core::Card) -> Option<GraveyardTargetFilter<'_>> {
+        use crate::core::Effect;
+
+        for effect in &card.effects {
+            match effect {
+                Effect::ReturnGraveyardCardToHand { type_filter, .. } => {
+                    return Some(GraveyardTargetFilter {
+                        type_filter: type_filter.as_str(),
+                        // Forge ValidTgts$ Card.YouCtrl — always the caster's own GY.
+                        own_only: true,
+                    });
+                }
+                Effect::ReturnGraveyardCardToZone { type_filter, .. } => {
+                    return Some(GraveyardTargetFilter {
+                        type_filter: type_filter.as_str(),
+                        // May target any player's GY (Goryo's Vengeance, etc.).
+                        own_only: false,
+                    });
+                }
+                _ => {}
+            }
+        }
+        None
+    }
+}
+
+/// Descriptor returned by `spell_requires_graveyard_target` that captures which
+/// graveyard(s) to search and what card types count as legal targets.
+struct GraveyardTargetFilter<'a> {
+    /// Comma-separated type filter (e.g. `"Instant,Sorcery"`, `"Card"`).
+    /// Empty means any card type is a legal target.
+    type_filter: &'a str,
+    /// When `true` only the casting player's own graveyard is searched
+    /// (`YouCtrl` effects like Regrowth/Reclaim).  When `false` all
+    /// graveyards are eligible (e.g. Debtors' Knell / Goryo's Vengeance).
+    own_only: bool,
+}
+
+impl GraveyardTargetFilter<'_> {
+    fn type_matches(&self, card: &crate::core::Card) -> bool {
+        if self.type_filter.is_empty() {
+            return true;
+        }
+        self.type_filter.split(',').any(|t| match t.trim() {
+            "Instant" => card.is_instant(),
+            "Sorcery" => card.is_sorcery(),
+            "Creature" => card.is_creature(),
+            "Land" => card.is_land(),
+            "Artifact" => card.is_artifact(),
+            "Enchantment" => card.is_enchantment(),
+            "Card" => true,
+            _ => false,
         })
     }
 }

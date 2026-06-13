@@ -3,7 +3,7 @@
 //! This module provides a transaction log of game actions that can be
 //! rewound to efficiently explore the game tree without expensive deep copies.
 
-use crate::core::{CardId, CardStateSnapshot, CounterType, Keyword, PlayerId};
+use crate::core::{CardId, CardStateSnapshot, CounterType, Keyword, KeywordArgs, PlayerId};
 use crate::zones::Zone;
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
@@ -68,6 +68,15 @@ pub enum GameAction {
     /// target decks, so this is the most current-relevant ETB choice-field hole.
     SetChosenPlayer { card_id: CardId, prev: Option<PlayerId> },
 
+    /// Set a card's ETB-chosen mode (e.g. Palace Siege's `DB$ GenericChoice |
+    /// Choices$ Khans,Dragons`), storing the PREVIOUS value so a mid-turn rewind
+    /// restores `Card::chosen_mode`. Same rationale as `SetChosenColor`.
+    SetChosenMode { card_id: CardId, prev: Option<String> },
+
+    /// Set a card's `stored_int` (e.g. Phyrexian Processor's ETB life payment),
+    /// storing the PREVIOUS value so a mid-turn rewind restores `Card::stored_int`.
+    SetStoredInt { card_id: CardId, prev: Option<u32> },
+
     /// Modify life total (delta is the change, not absolute value)
     ModifyLife { player_id: PlayerId, delta: i32 },
 
@@ -125,8 +134,13 @@ pub enum GameAction {
         card_id: CardId,
         power_delta: i32,
         toughness_delta: i32,
-        /// Keywords granted by this pump effect (for undo)
+        /// Simple keywords granted by this pump effect (for undo)
         keywords_granted: smallvec::SmallVec<[Keyword; 2]>,
+        /// Complex (parameterized) keywords granted by this pump effect (for undo).
+        /// Stored as Vec (heap-allocated, 24-byte inline) to avoid inflating the
+        /// enum variant size (KeywordArgs contains ManaCost which is large).
+        #[serde(default)]
+        keyword_args_granted: Vec<KeywordArgs>,
     },
 
     /// Debuff creature (keyword removal)
@@ -432,6 +446,11 @@ pub enum GameAction {
         /// site dedups against the existing set), so undo never strips a keyword
         /// the card printed or gained from another source.
         granted_keywords: SmallVec<[crate::core::Keyword; 2]>,
+        /// Complex (parameterized) keywords the animate newly inserted (e.g. Landwalk:Forest).
+        /// Stored as Vec (heap-allocated, 24-byte inline) to avoid inflating the
+        /// enum variant size (KeywordArgs contains ManaCost which is large).
+        #[serde(default)]
+        granted_keyword_args: Vec<crate::core::KeywordArgs>,
     },
     /// Records that `source` was appended to `target`'s `damaged_by_this_turn`
     /// list when combat (or other) damage was dealt. `undo()` pops that exact
@@ -487,6 +506,27 @@ pub enum GameAction {
     /// the push needs logging for the rewind path; logging it also keeps the
     /// per-action undo oracle exact.
     PushExtraTurn { player: PlayerId },
+
+    /// Set or clear the `Player::skip_untap_next_turn` flag.
+    ///
+    /// Set by `Effect::SkipUntapStep` (Yosei die trigger) and cleared at the
+    /// start of `untap_step` when the flag is consumed.
+    SetSkipUntapNextTurn {
+        player_id: PlayerId,
+        /// Value the field held BEFORE this action (for undo).
+        old_value: bool,
+        /// Value the field was SET TO by this action.
+        new_value: bool,
+    },
+
+    /// Set the `Player::cant_cast_spells` flag (Epic mechanic, CR 702.88b).
+    ///
+    /// Once set this flag is permanent (never cleared during normal play).
+    SetCantCastSpells {
+        player_id: PlayerId,
+        /// Value before this action (always false on the way in).
+        old_value: bool,
+    },
 
     /// Records that a brand-new entity (a token, via `Effect::CreateToken`) was
     /// minted: `next_card_id()` advanced `next_entity_id`, the instance was
@@ -607,6 +647,28 @@ pub enum GameAction {
     /// undos.
     SetXPaid { card_id: CardId, prev: u8 },
 
+    /// Snapshot of a card's `times_kicked` (number of times Multikicker was paid,
+    /// CR 702.33a) captured BEFORE it is overwritten in the priority loop. Mirrors
+    /// `SetXPaid` — the same mid-turn rewind+replay hazard applies here.
+    SetTimesKicked { card_id: CardId, prev: u8 },
+
+    /// Snapshot of a card's `bargain_paid` flag (CR 702.162) captured BEFORE it is
+    /// set in the priority loop. Mirrors `SetTimesKicked` — same rewind semantics.
+    SetBargainPaid { card_id: CardId, prev: bool },
+
+    /// Snapshot of a card's `kicker_paid` flag (CR 702.32) captured BEFORE it is
+    /// set in the priority loop. Mirrors `SetBargainPaid` — same rewind semantics.
+    SetKickerPaid { card_id: CardId, prev: bool },
+
+    /// Snapshot of a card's `offspring_paid` flag (CR 702.198) captured BEFORE it
+    /// is set in the priority loop. Mirrors `SetKickerPaid` — same rewind semantics.
+    SetOffspringPaid { card_id: CardId, prev: bool },
+
+    /// Snapshot of a card's `mode_cost_paid` value captured BEFORE it is set by
+    /// `apply_selected_modes` in the priority loop. Mirrors `SetOffspringPaid` — same
+    /// rewind semantics.
+    SetModeCostPaid { card_id: CardId, prev: u8 },
+
     /// Restore the full state snapshot of a card (e.g. when leaving battlefield
     /// the transient state is reset, and undoing it restores the snapshotted state).
     RestoreCardState {
@@ -651,6 +713,12 @@ impl fmt::Display for GameAction {
                     prev.map(|p| p.as_u32())
                 )
             }
+            GameAction::SetChosenMode { card_id, prev } => {
+                write!(f, "SetChosenMode({}, prev={:?})", card_id.as_u32(), prev)
+            }
+            GameAction::SetStoredInt { card_id, prev } => {
+                write!(f, "SetStoredInt({}, prev={:?})", card_id.as_u32(), prev)
+            }
             GameAction::ModifyLife { player_id, delta } => {
                 write!(f, "Life(P{} {:+})", player_id.as_u32(), delta)
             }
@@ -690,17 +758,19 @@ impl fmt::Display for GameAction {
                 power_delta,
                 toughness_delta,
                 keywords_granted,
+                keyword_args_granted,
             } => {
-                if keywords_granted.is_empty() {
+                if keywords_granted.is_empty() && keyword_args_granted.is_empty() {
                     write!(f, "Pump({} {:+}/{:+})", card_id.as_u32(), power_delta, toughness_delta)
                 } else {
                     write!(
                         f,
-                        "Pump({} {:+}/{:+} +{:?})",
+                        "Pump({} {:+}/{:+} +{:?} +{:?})",
                         card_id.as_u32(),
                         power_delta,
                         toughness_delta,
-                        keywords_granted
+                        keywords_granted,
+                        keyword_args_granted
                     )
                 }
             }
@@ -865,6 +935,20 @@ impl fmt::Display for GameAction {
             GameAction::PushExtraTurn { player } => {
                 write!(f, "PushExtraTurn(P{})", player.as_u32())
             }
+            GameAction::SetSkipUntapNextTurn {
+                player_id,
+                old_value,
+                new_value,
+            } => write!(
+                f,
+                "SetSkipUntapNextTurn(P{} {} -> {})",
+                player_id.as_u32(),
+                old_value,
+                new_value
+            ),
+            GameAction::SetCantCastSpells { player_id, old_value } => {
+                write!(f, "SetCantCastSpells(P{} {} -> true)", player_id.as_u32(), old_value,)
+            }
             GameAction::CreateEntity { card_id } => {
                 write!(f, "CreateEntity(card={})", card_id.as_u32())
             }
@@ -919,6 +1003,21 @@ impl fmt::Display for GameAction {
             }
             GameAction::SetXPaid { card_id, prev } => {
                 write!(f, "SetXPaid(card={}, prev={})", card_id, prev)
+            }
+            GameAction::SetTimesKicked { card_id, prev } => {
+                write!(f, "SetTimesKicked(card={}, prev={})", card_id, prev)
+            }
+            GameAction::SetBargainPaid { card_id, prev } => {
+                write!(f, "SetBargainPaid(card={}, prev={})", card_id, prev)
+            }
+            GameAction::SetKickerPaid { card_id, prev } => {
+                write!(f, "SetKickerPaid(card={}, prev={})", card_id, prev)
+            }
+            GameAction::SetOffspringPaid { card_id, prev } => {
+                write!(f, "SetOffspringPaid(card={}, prev={})", card_id, prev)
+            }
+            GameAction::SetModeCostPaid { card_id, prev } => {
+                write!(f, "SetModeCostPaid(card={}, prev={})", card_id, prev)
             }
             GameAction::SetManaPool { player_id, prev } => {
                 write!(f, "SetManaPool(P{}, prev={})", player_id.as_u32(), prev.total())
@@ -1039,6 +1138,24 @@ impl GameAction {
                     card.chosen_player = *prev;
                 } else {
                     return Err(format!("Card {} not found for SetChosenPlayer undo", card_id.as_u32()));
+                }
+            }
+
+            GameAction::SetChosenMode { card_id, prev } => {
+                // Restore the previous ETB-chosen mode (Palace Siege Khans/Dragons).
+                if let Ok(card) = game.cards.get_mut(*card_id) {
+                    card.chosen_mode = prev.clone();
+                } else {
+                    return Err(format!("Card {} not found for SetChosenMode undo", card_id.as_u32()));
+                }
+            }
+
+            GameAction::SetStoredInt { card_id, prev } => {
+                // Restore the previous stored integer (Phyrexian Processor life paid on ETB).
+                if let Ok(card) = game.cards.get_mut(*card_id) {
+                    card.stored_int = *prev;
+                } else {
+                    return Err(format!("Card {} not found for SetStoredInt undo", card_id.as_u32()));
                 }
             }
 
@@ -1184,6 +1301,7 @@ impl GameAction {
                 power_delta,
                 toughness_delta,
                 keywords_granted,
+                keyword_args_granted,
             } => {
                 // Reverse the pump by applying negative deltas
                 if let Ok(card) = game.cards.get_mut(*card_id) {
@@ -1196,6 +1314,12 @@ impl GameAction {
                     for keyword in keywords_granted {
                         card.keywords.remove(*keyword);
                         card.temp_keywords_until_eot.remove(*keyword);
+                    }
+                    // Also remove any complex (parameterized) keywords granted
+                    for kw_args in keyword_args_granted {
+                        let kw = kw_args.keyword();
+                        card.keywords.remove(kw);
+                        card.temp_keywords_until_eot.remove(kw);
                     }
                 } else {
                     return Err(format!("Card {} not found for PumpCreature undo", card_id.as_u32()));
@@ -1536,6 +1660,7 @@ impl GameAction {
                 prev_temp_animate_subtypes,
                 prev_temp_removed_subtypes,
                 granted_keywords,
+                granted_keyword_args,
             } => {
                 // Restore the exact pre-animate typeline + tracking vectors and
                 // refresh the definition cache. get_mut tolerates a missing card
@@ -1553,6 +1678,9 @@ impl GameAction {
                     // printed or otherwise-granted keyword (mtg-610).
                     for kw in granted_keywords {
                         card.keywords.remove(*kw);
+                    }
+                    for kw_args in granted_keyword_args.iter() {
+                        card.keywords.remove(kw_args.keyword());
                     }
                     let types = card.types.clone();
                     let subtypes = card.subtypes.clone();
@@ -1609,6 +1737,22 @@ impl GameAction {
                 // boundary pop_front may have already drained it).
                 if game.extra_turns.back() == Some(player) {
                     game.extra_turns.pop_back();
+                }
+            }
+            GameAction::SetSkipUntapNextTurn {
+                player_id,
+                old_value,
+                new_value: _,
+            } => {
+                // Restore the previous skip_untap_next_turn flag value.
+                if let Some(player) = game.players.iter_mut().find(|p| p.id == *player_id) {
+                    player.skip_untap_next_turn = *old_value;
+                }
+            }
+            GameAction::SetCantCastSpells { player_id, old_value } => {
+                // Restore the previous cant_cast_spells flag value (Epic undo).
+                if let Some(player) = game.players.iter_mut().find(|p| p.id == *player_id) {
+                    player.cant_cast_spells = *old_value;
                 }
             }
             GameAction::CreateEntity { card_id } => {
@@ -1699,6 +1843,39 @@ impl GameAction {
                 // tolerates a missing card, matching the other card-field undos.
                 if let Ok(card) = game.cards.get_mut(*card_id) {
                     card.x_paid = *prev;
+                }
+            }
+            GameAction::SetTimesKicked { card_id, prev } => {
+                // Restore the captured times-kicked value. get_mut tolerates a
+                // missing card, matching the other card-field undos.
+                if let Ok(card) = game.cards.get_mut(*card_id) {
+                    card.times_kicked = *prev;
+                }
+            }
+            GameAction::SetBargainPaid { card_id, prev } => {
+                // Restore the captured bargain-paid flag. get_mut tolerates a
+                // missing card, matching the other card-field undos.
+                if let Ok(card) = game.cards.get_mut(*card_id) {
+                    card.bargain_paid = *prev;
+                }
+            }
+            GameAction::SetKickerPaid { card_id, prev } => {
+                // Restore the captured kicker-paid flag. get_mut tolerates a
+                // missing card, matching the other card-field undos.
+                if let Ok(card) = game.cards.get_mut(*card_id) {
+                    card.kicker_paid = *prev;
+                }
+            }
+            GameAction::SetOffspringPaid { card_id, prev } => {
+                // Restore the captured offspring-paid flag. Mirrors SetKickerPaid.
+                if let Ok(card) = game.cards.get_mut(*card_id) {
+                    card.offspring_paid = *prev;
+                }
+            }
+            GameAction::SetModeCostPaid { card_id, prev } => {
+                // Restore the captured mode-cost-paid value. Mirrors SetOffspringPaid.
+                if let Ok(card) = game.cards.get_mut(*card_id) {
+                    card.mode_cost_paid = *prev;
                 }
             }
             GameAction::SetCombatManaPool { player_id, prev } => {

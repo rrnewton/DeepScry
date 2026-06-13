@@ -1,10 +1,10 @@
-//! Token-creation and copy effect-family handlers extracted from the
-//! `execute_effect` dispatcher (see `game/actions/mod.rs`).
+//! Token-creation, emblem-creation, and copy effect-family handlers extracted
+//! from the `execute_effect` dispatcher (see `game/actions/mod.rs`).
 //!
-//! Groups the effects that mint tokens or copy stack/permanent objects
-//! (CR 111, CR 707):
-//! - [`Effect::CreateToken`] — instantiate N tokens from a token script
-//!   (CR 111.2),
+//! Groups the effects that mint tokens, emblems, or copy stack/permanent objects
+//! (CR 111, CR 113, CR 707):
+//! - [`Effect::CreateToken`] — instantiate N tokens from a token script (CR 111.2),
+//! - [`Effect::CreateEmblem`] — mint a synthetic Card in the command zone (CR 113.2),
 //! - [`Effect::CopyPermanent`] — make token copies of a permanent (CR 707.2),
 //! - [`Effect::CopySpellAbility`] — copy the resolving spell onto the stack
 //!   (CR 707.10, Chain Lightning's Parent path).
@@ -14,7 +14,7 @@
 //! including the undo-log entity-mint bookkeeping (mtg-ba6uq #3) and the
 //! shadow-game token dedup that keeps server/client `next_entity_id` in lockstep.
 
-use crate::core::{CardId, PlayerId};
+use crate::core::{CardId, PlayerId, StaticAbility, Trigger};
 use crate::game::GameState;
 use crate::Result;
 
@@ -23,7 +23,33 @@ impl GameState {
     /// `controller` (or under every player when `for_each_player`). CR 111.2:
     /// the creator is owner and controller. Each mint is undo-logged
     /// (mtg-ba6uq #3) and revealed to all players for network determinism.
+    ///
+    /// `token_script` may be a comma-separated list of distinct token script
+    /// names (e.g. Wurmcoil Engine: `"c_3_3_a_phyrexian_wurm_deathtouch,
+    /// c_3_3_a_phyrexian_wurm_lifelink"`). When multiple names are present,
+    /// one token of each distinct kind is created per repetition of `amount`.
     pub(in crate::game::actions) fn execute_create_token(
+        &mut self,
+        controller: PlayerId,
+        token_script: &str,
+        amount: u8,
+        for_each_player: bool,
+    ) -> Result<()> {
+        // TokenScript$ may name multiple distinct tokens via comma separation
+        // (CR 111.2 — each listed token is minted independently). Split and
+        // delegate so every script name goes through the single-script path.
+        let scripts: Vec<&str> = token_script.split(',').map(str::trim).collect();
+        if scripts.len() > 1 {
+            for script in scripts {
+                self.execute_create_token_single(controller, script, amount, for_each_player)?;
+            }
+            return Ok(());
+        }
+        self.execute_create_token_single(controller, token_script, amount, for_each_player)
+    }
+
+    /// Inner helper: create `amount` tokens from a single (non-comma) `token_script`.
+    fn execute_create_token_single(
         &mut self,
         controller: PlayerId,
         token_script: &str,
@@ -126,6 +152,83 @@ impl GameState {
         Ok(())
     }
 
+    /// [`Effect::CreateTokenWithStoredPt`]: create one token whose power/toughness
+    /// equals `source_card.stored_int` (Phyrexian Processor: life paid on ETB).
+    ///
+    /// The token script (`b_x_x_phyrexian_minion`) has `PT:*/*`; we override its
+    /// base power and toughness from the stored amount. If `stored_int` is `None`
+    /// (shouldn't happen in normal play), the token is created as a 0/0 — matching
+    /// the pre-fix behaviour so the engine doesn't crash.
+    pub(in crate::game::actions) fn execute_create_token_with_stored_pt(
+        &mut self,
+        source_card: crate::core::CardId,
+        controller: crate::core::PlayerId,
+        token_script: &str,
+    ) -> Result<()> {
+        // Read the stored amount from the source card (Phyrexian Processor).
+        let stored = self.cards.try_get(source_card).and_then(|c| c.stored_int);
+        let pt = stored.unwrap_or(0) as i8;
+        if stored.is_none() {
+            log::warn!(
+                target: "token",
+                "CreateTokenWithStoredPt: source card {:?} has no stored_int; creating 0/0 token",
+                source_card
+            );
+        }
+
+        let token_def = self.token_definitions.get(token_script).cloned();
+        if let Some(token_def) = token_def {
+            let token_id = self.next_card_id();
+
+            if self.is_shadow_game && self.cards.contains(token_id) {
+                if !self.battlefield.contains(token_id) {
+                    self.battlefield.add(token_id);
+                }
+                return Ok(());
+            }
+
+            let mut token = token_def.instantiate(token_id, controller);
+            token.is_token = true;
+            token.controller = controller;
+            // Override the printed `*/*` with the life-paid amount (CR 208.2a
+            // defines base P/T; layer 7b CDAs don't apply to tokens, so the
+            // stored value goes in as the printed base stat).
+            token.set_base_power(Some(pt));
+            token.set_base_toughness(Some(pt));
+
+            let token_name = token.name.to_string();
+            self.cards.insert(token_id, token);
+
+            let mint_log_size = self.logger.log_count();
+            self.undo_log.log(
+                crate::undo::GameAction::CreateEntity { card_id: token_id },
+                mint_log_size,
+            );
+
+            let prior_log_size = self.logger.log_count();
+            self.maybe_reveal_to_all(token_id, prior_log_size);
+            self.battlefield.add(token_id);
+
+            log::debug!(target: "token",
+                "Created {}/{} {} token (id={}) under player {}'s control from stored_int={}",
+                pt, pt, token_name, token_id.as_u32(), controller.as_u32(), stored.unwrap_or(0)
+            );
+            self.logger.gamelog(&format!(
+                "Created {}/{} {} under {}'s control",
+                pt,
+                pt,
+                token_name,
+                self.get_player(controller)?.name
+            ));
+        } else {
+            log::warn!(
+                "Token definition not found: '{}' - skipping CreateTokenWithStoredPt",
+                token_script
+            );
+        }
+        Ok(())
+    }
+
     /// [`Effect::CopyPermanent`]: create `num_copies` token copies of `target`
     /// under `controller`, applying optional set-power/set-toughness/add-types
     /// modifications (CR 707.2). Fizzles if the target left the battlefield.
@@ -173,6 +276,8 @@ impl GameState {
             token.counters.clear();
             token.damage = 0;
             token.attached_to = None;
+            // CR 111.9: a copy created as a token IS a token permanent.
+            token.is_token = true;
 
             // Apply modifications
 
@@ -333,6 +438,94 @@ impl GameState {
                 );
             }
         }
+        Ok(())
+    }
+
+    /// [`Effect::CreateEmblem`]: mint a synthetic Card in `controller`'s command
+    /// zone and populate it with the given static abilities and/or triggers.
+    ///
+    /// CR 113.2: Emblems are objects with abilities that are placed in the command
+    /// zone.  They have no owner or controller in the rules (CR 113.4), but we
+    /// track the creating player as both owner and controller for scoping purposes
+    /// ("creatures YOU control", etc.).
+    ///
+    /// The command zone is already scanned by:
+    /// - `continuous_effects.rs::calculate_modifypt_effects` / `calculate_granted_keywords`
+    ///   (for static ModifyPT and GrantKeyword abilities), and
+    /// - `steps.rs::fire_phase_triggers` (for phase triggers with TriggerZones$ Command).
+    ///
+    /// So once the emblem card is placed in the command zone, the existing machinery
+    /// handles it with no further special-casing.
+    ///
+    /// Undo-log note: emblems created by ultimate abilities are permanent — they last
+    /// for the rest of the game. We still undo-log the entity creation so that
+    /// snapshot/resume and network-rewind can reconstruct them correctly.
+    pub(in crate::game::actions) fn execute_create_emblem(
+        &mut self,
+        controller: PlayerId,
+        emblem_name: &str,
+        static_abilities: &[StaticAbility],
+        triggers: &[Trigger],
+    ) -> Result<()> {
+        use crate::core::CardName;
+
+        let emblem_id = self.next_card_id();
+
+        // In shadow games, emblems for opponent actions are pre-added via
+        // CardRevealed before this effect runs (same pattern as tokens).
+        if self.is_shadow_game && self.cards.contains(emblem_id) {
+            let already_in_command = self
+                .get_player_zones(controller)
+                .is_some_and(|z| z.command.cards.contains(&emblem_id));
+            if !already_in_command {
+                if let Some(zones) = self.get_player_zones_mut(controller) {
+                    zones.command.add(emblem_id);
+                }
+            }
+            return Ok(());
+        }
+
+        // Mint a minimal synthetic Card for the emblem
+        let mut emblem_card = crate::core::Card::new(emblem_id, CardName::from(emblem_name), controller);
+        emblem_card.controller = controller;
+        emblem_card.static_abilities = static_abilities.to_vec();
+        emblem_card.triggers = triggers.to_vec();
+        // Mark as non-token so it persists through zone-change cleanup
+        emblem_card.is_token = false;
+
+        let name_for_log = emblem_card.name.to_string();
+        let controller_name = self
+            .players
+            .iter()
+            .find(|p| p.id == controller)
+            .map(|p| p.name.as_str())
+            .unwrap_or("unknown")
+            .to_string();
+
+        // Log the entity mint so rewind can remove it
+        let mint_log_size = self.logger.log_count();
+        self.undo_log.log(
+            crate::undo::GameAction::CreateEntity { card_id: emblem_id },
+            mint_log_size,
+        );
+
+        // Reveal to all players for network determinism
+        let prior_log_size = self.logger.log_count();
+        self.cards.insert(emblem_id, emblem_card);
+        self.maybe_reveal_to_all(emblem_id, prior_log_size);
+
+        // Place in the controller's command zone
+        if let Some(zones) = self.get_player_zones_mut(controller) {
+            zones.command.add(emblem_id);
+        }
+
+        log::debug!(target: "emblem",
+            "Created emblem '{}' (id={}) for player {}",
+            name_for_log, emblem_id.as_u32(), controller.as_u32()
+        );
+        self.logger
+            .gamelog(&format!("{} gets an emblem: {}", controller_name, name_for_log));
+
         Ok(())
     }
 }

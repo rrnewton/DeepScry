@@ -478,6 +478,13 @@ enum GameToHandler {
         /// Game `action_count` of the reorder's own undo action (mtg-752).
         action_count: u64,
     },
+    /// Server wants to broadcast a Dig-effect kept-list to this client
+    /// (mtg-677/mtg-908). Handler forwards as `ServerMessage::DigDecision`.
+    DigDecision {
+        digger: PlayerId,
+        kept: Vec<CardId>,
+        action_count: u64,
+    },
     /// Game has ended normally.
     /// Handler should forward to client and exit.
     GameEnded(GameEndInfo),
@@ -2566,6 +2573,35 @@ async fn run_coordinator(
                             }
                         }
 
+                        // mtg-677/mtg-908: Broadcast DigDecision (server-authoritative
+                        // Dig kept-list) to BOTH clients before the ChoiceRequest.
+                        if !choice_request.dig_decisions.is_empty() {
+                            log::debug!(
+                                "Coordinator: Broadcasting {} dig decision(s) before P1 ChoiceRequest",
+                                choice_request.dig_decisions.len()
+                            );
+                            for (digger, kept, action_count) in &choice_request.dig_decisions {
+                                let msg_p1 = GameToHandler::DigDecision {
+                                    digger: *digger,
+                                    kept: kept.clone(),
+                                    action_count: *action_count,
+                                };
+                                let msg_p2 = GameToHandler::DigDecision {
+                                    digger: *digger,
+                                    kept: kept.clone(),
+                                    action_count: *action_count,
+                                };
+                                if p1_to_handler_tx.send(msg_p1).await.is_err() {
+                                    log::error!("Coordinator: Failed to send DigDecision to P1");
+                                    return Err(anyhow!("P1 handler channel closed"));
+                                }
+                                if p2_to_handler_tx.send(msg_p2).await.is_err() {
+                                    log::error!("Coordinator: Failed to send DigDecision to P2");
+                                    return Err(anyhow!("P2 handler channel closed"));
+                                }
+                            }
+                        }
+
                         // Forward to P1 handler
                         if p1_to_handler_tx.send(GameToHandler::ChoiceRequest(Box::new(choice_request))).await.is_err() {
                             log::error!("Coordinator: Failed to send ChoiceRequest to P1 handler");
@@ -2774,6 +2810,35 @@ async fn run_coordinator(
                             }
                         }
 
+                        // mtg-677/mtg-908: Broadcast DigDecision before P2 ChoiceRequest.
+                        // Same pattern as the P1 branch above.
+                        if !choice_request.dig_decisions.is_empty() {
+                            log::debug!(
+                                "Coordinator: Broadcasting {} dig decision(s) before P2 ChoiceRequest",
+                                choice_request.dig_decisions.len()
+                            );
+                            for (digger, kept, action_count) in &choice_request.dig_decisions {
+                                let msg_p1 = GameToHandler::DigDecision {
+                                    digger: *digger,
+                                    kept: kept.clone(),
+                                    action_count: *action_count,
+                                };
+                                let msg_p2 = GameToHandler::DigDecision {
+                                    digger: *digger,
+                                    kept: kept.clone(),
+                                    action_count: *action_count,
+                                };
+                                if p1_to_handler_tx.send(msg_p1).await.is_err() {
+                                    log::error!("Coordinator: Failed to send DigDecision to P1");
+                                    return Err(anyhow!("P1 handler channel closed"));
+                                }
+                                if p2_to_handler_tx.send(msg_p2).await.is_err() {
+                                    log::error!("Coordinator: Failed to send DigDecision to P2");
+                                    return Err(anyhow!("P2 handler channel closed"));
+                                }
+                            }
+                        }
+
                         // Forward to P2 handler
                         if p2_to_handler_tx.send(GameToHandler::ChoiceRequest(Box::new(choice_request))).await.is_err() {
                             log::error!("Coordinator: Failed to send ChoiceRequest to P2 handler");
@@ -2967,6 +3032,8 @@ async fn handle_player_websocket(
     // ignores those copies and consumes the buffer.
     let mut pending_choice_facts: Vec<OpponentChoiceInfo> = Vec::new();
     let mut pending_reorder_facts: Vec<(PlayerId, Vec<CardId>, u64)> = Vec::new();
+    // Pending Dig-effect kept-lists for the ChoiceRequest buffer (mtg-677/mtg-908).
+    let mut pending_dig_facts: Vec<(PlayerId, Vec<CardId>, u64)> = Vec::new();
 
     loop {
         tokio::select! {
@@ -3056,6 +3123,7 @@ async fn handle_player_websocket(
                                 &choice_request,
                                 conn.player_id,
                                 &pending_reorder_facts,
+                                &pending_dig_facts,
                                 &pending_choice_facts,
                             )
                         };
@@ -3101,6 +3169,7 @@ async fn handle_player_websocket(
 
                             // The accumulated facts are now delivered in the buffer.
                             pending_reorder_facts.clear();
+                            pending_dig_facts.clear();
                             pending_choice_facts.clear();
 
                             // Mark that we're waiting for this choice
@@ -3189,6 +3258,24 @@ async fn handle_player_websocket(
                             // mtg-752 L2: the reorder's own undo-log position
                             // (ReorderLibrary for scry/surveil), threaded from
                             // pending_library_reorders. Client keys on it in L3.
+                            action_count,
+                        }).await?;
+                    }
+
+                    Some(GameToHandler::DigDecision { digger, kept, action_count }) => {
+                        // mtg-677/mtg-908: forward server-authoritative Dig kept-list
+                        // to the client eagerly (pre-ChoiceRequest).
+                        log::debug!(
+                            "Handler P{}: Forwarding DigDecision for {:?} ({} kept) ac={}",
+                            conn.player_id, digger, kept.len(), action_count
+                        );
+                        // Minimal lazy protocol (mtg-752) Phase-1 dual-emit:
+                        // accumulate for the next ChoiceRequest buffer so a
+                        // buffer-aware client can apply it from the buffer.
+                        pending_dig_facts.push((digger, kept.clone(), action_count));
+                        conn.send(&ServerMessage::DigDecision {
+                            digger,
+                            kept,
                             action_count,
                         }).await?;
                     }
@@ -3508,6 +3595,7 @@ fn assemble_choice_buffer(
     choice_request: &ChoiceRequest,
     searcher: PlayerId,
     reorders: &[(PlayerId, Vec<CardId>, u64)],
+    dig_decisions: &[(PlayerId, Vec<CardId>, u64)],
     choices: &[OpponentChoiceInfo],
 ) -> Vec<(u64, BufferedFact)> {
     let mut buffer: Vec<(u64, BufferedFact)> = Vec::new();
@@ -3554,6 +3642,17 @@ fn assemble_choice_buffer(
             BufferedFact::LibraryReorder {
                 player: *player,
                 new_order: new_order.clone(),
+            },
+        ));
+    }
+
+    // (3b) Dig-effect kept-lists (mtg-677/mtg-908).
+    for (digger, kept, ac) in dig_decisions {
+        buffer.push((
+            *ac,
+            BufferedFact::DigDecision {
+                digger: *digger,
+                kept: kept.clone(),
             },
         ));
     }

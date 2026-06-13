@@ -76,6 +76,41 @@ pub struct Player {
     /// Number of spells cast this turn (for storm-like effects and spell counting)
     #[serde(default)]
     pub spells_cast_this_turn: u8,
+
+    /// When true, this player's next untap step is skipped entirely (CR 502.1).
+    ///
+    /// Set by `Effect::SkipUntapStep` (e.g. Yosei, the Morning Star die trigger).
+    /// Cleared — and applied — at the start of `untap_step` the first time the
+    /// player reaches their untap step after the flag is set.
+    #[serde(default)]
+    pub skip_untap_next_turn: bool,
+
+    /// Island Sanctuary protection active this turn (CR 614 replacement effect).
+    ///
+    /// Set to `true` when the player activates Island Sanctuary's draw-skip
+    /// replacement during their draw step. While `true`, only creatures with
+    /// flying or islandwalk may attack this player (CR 508.1). Cleared in the
+    /// cleanup step (CR 514.2) alongside other per-turn replacements.
+    #[serde(default)]
+    pub island_sanctuary_protected: bool,
+
+    /// True if one of this player's creature spells was countered this turn by an
+    /// opponent's effect (CR 702.36a, Summoning Trap condition).
+    ///
+    /// Set in `counter_spell()` when a creature spell cast by this player is
+    /// countered by a source controlled by an opponent.  Cleared in the cleanup
+    /// step (CR 514.2) alongside other per-turn replacement flags.
+    ///
+    /// Drives the `AlternativeCost` condition on Summoning Trap: when this flag
+    /// is true the player may cast Summoning Trap for {0} instead of its normal
+    /// mana cost (see `push_castable_spells` in `actions.rs`).
+    #[serde(default)]
+    pub had_creature_countered_this_turn: bool,
+
+    /// When true, this player can't cast spells for the rest of the game
+    /// (CR 702.88b: Epic — "For the rest of the game, you can't cast spells.").
+    #[serde(default)]
+    pub cant_cast_spells: bool,
 }
 
 impl Player {
@@ -97,6 +132,10 @@ impl Player {
             damage_prevention: 0,
             source_prevention_shields: Vec::new(),
             spells_cast_this_turn: 0,
+            skip_untap_next_turn: false,
+            island_sanctuary_protected: false,
+            had_creature_countered_this_turn: false,
+            cant_cast_spells: false,
         }
     }
 

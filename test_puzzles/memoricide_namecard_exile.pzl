@@ -1,0 +1,23 @@
+[metadata]
+Name:Memoricide — NameCard choose-name exile from gy/hand/library
+Goal:Win
+Turns:5
+Difficulty:Medium
+Description:P0 casts Memoricide targeting P1 who holds 2 copies of Lightning Bolt in hand, 1 in graveyard, and 1 in library. The NameCard effect should allow P0 to name "Lightning Bolt" and then exile all copies from P1's graveyard, hand, and library (DBExile, ChangeType$ Card.NamedCard, Hidden$ True). If NameCard is a no-op the copies survive. Regression for 2010 WC tracker mtg-914 B4.
+
+[state]
+turn=2
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Memoricide
+p0library=Swamp; Swamp; Swamp; Swamp; Swamp
+p0graveyard=
+p0battlefield=Swamp; Swamp; Swamp; Swamp
+
+p1life=20
+p1hand=Lightning Bolt; Lightning Bolt
+p1library=Lightning Bolt; Mountain; Mountain; Mountain
+p1graveyard=Lightning Bolt
+p1battlefield=Mountain; Mountain
+p1exile=

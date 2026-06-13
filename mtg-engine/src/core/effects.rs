@@ -1,8 +1,44 @@
 //! Card effects and ability system
 
-use crate::core::{CardId, Color, Keyword, PlayerId};
+use crate::core::{CardId, Color, Keyword, KeywordArgs, PlayerId};
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
+
+/// Who is subject to a `CantBeCast` prohibition.
+///
+/// Parsed from the `Caster$` field in `S:Mode$ CantBeCast | Caster$ <value>` lines.
+/// - `Any`         — no `Caster$` key present; applies to all players.
+/// - `You`         — only the source card's *controller* is restricted.
+/// - `YouNonActive`— only the controller while they are the **non-active** player.
+/// - `Opponent`    — only opponents of the source's controller are restricted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum CasterRestriction {
+    /// Applies to all players (default when `Caster$` is absent).
+    #[default]
+    Any,
+    /// Restricts only the source's controller.
+    You,
+    /// Restricts the source's controller only while they are non-active.
+    YouNonActive,
+    /// Restricts opponents of the source's controller only.
+    Opponent,
+}
+
+/// Action to schedule on the target at the beginning of the next end step.
+///
+/// Used by Animate effects (`AtEOT$ Sacrifice` / `AtEOT$ Exile`) to implement
+/// "that creature gains haste; sacrifice/exile it at the beginning of the next
+/// end step" — e.g. Sneak Attack and Goryo's Vengeance (CR 603.7a delayed
+/// triggered ability fires at the beginning of the next end step).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AtEotAction {
+    /// Sacrifice the target at the beginning of the next end step.
+    /// Used by Sneak Attack: `AtEOT$ Sacrifice`.
+    Sacrifice,
+    /// Exile the target at the beginning of the next end step.
+    /// Used by Goryo's Vengeance: `AtEOT$ Exile`.
+    Exile,
+}
 
 /// Target reference for effects
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -210,6 +246,18 @@ pub enum DynamicAmount {
     /// toughness is public information, so it is information-independent
     /// (network determinism). Clamped to >= 0.
     SacrificedToughness,
+
+    /// The number of counters of a specific type on the card that triggered the
+    /// effect (the "triggered card", read via last-known information per CR
+    /// 608.2g/603.6c). Used by Hangarback Walker's death trigger: "create a
+    /// 1/1 Thopter for each +1/+1 counter on CARDNAME." The count is captured
+    /// into the `TriggerContext` before the card leaves the battlefield,
+    /// ensuring deterministic network behavior (the counter count is public
+    /// information — always visible on the battlefield).
+    ///
+    /// Parsed from SVar bodies of the form `TriggeredCard$CardCounters.<type>`,
+    /// e.g. `SVar:Y:TriggeredCard$CardCounters.P1P1`.
+    TriggeredCardCounters(crate::core::CounterType),
 }
 
 impl DynamicAmount {
@@ -256,6 +304,14 @@ impl DynamicAmount {
             ("SVar", rest) if rest.contains("/LimitMax.") => {
                 Some(DynamicAmount::DamageDealtCappedByTarget { cap: None })
             }
+            // Hangarback Walker et al.: SVar:Y:TriggeredCard$CardCounters.P1P1
+            // The token count equals the number of counters of type <T> on the
+            // card that just triggered the effect (last-known information).
+            ("TriggeredCard", counter_ref) => {
+                let counter_str = counter_ref.strip_prefix("CardCounters.")?;
+                let ct = crate::core::CounterType::parse(counter_str)?;
+                Some(DynamicAmount::TriggeredCardCounters(ct))
+            }
             // Count$… bodies (hand size, permanent counts, …) drive a dynamic
             // life amount evaluated against the recipient at resolution time.
             // Ivory Tower: SVar:X:Count$ValidHand Card.YouOwn/Minus.4. Delegate
@@ -286,9 +342,16 @@ pub enum CountExpression {
 
     /// Count permanents matching a filter (Count$Valid filter)
     /// Filter examples: "Artifact.OppCtrl", "Creature.YouCtrl", "Land.YouCtrl"
+    ///
+    /// The optional `modifier` is applied to the raw count after counting.
+    /// Forge encodes per-copy multiplication as `/Times.N` (e.g.
+    /// `Count$Valid Shrine.YouCtrl/Times.2` = "2 × Shrines you control").
     ValidPermanents {
         /// The filter string (e.g., "Artifact.OppCtrl")
         filter: String,
+        /// Arithmetic post-modifier applied to the raw count (`/Times.N`,
+        /// `/Plus.N`, `/Minus.N`). Defaults to `None`.
+        modifier: CountModifier,
     },
 
     /// Count cards drawn this turn (Count$YouDrewThisTurn)
@@ -333,6 +396,17 @@ pub enum CountExpression {
     /// instant, captured into the always-logged PumpCreature undo delta).
     TargetedCardPower,
 
+    /// The power of the card that caused the trigger (last-known information).
+    ///
+    /// Anax, Hardened in the Forge: `SVar:Z:TriggeredCard$CardPower` used inside
+    /// a `Count$Compare Z GE4.2.1` expression — "create 2 Satyr tokens if the
+    /// dying creature had power >= 4, else create 1". Resolved in
+    /// `resolve_effect_placeholder` from `TriggerContext::triggered_card_power`
+    /// (captured via last-known information before the card moves zones,
+    /// CR 608.2g / 603.6c). Information-independent: power is a public
+    /// characteristic (CR 613), so server and all clients compute the same value.
+    TriggeredCardPower,
+
     /// Count spells cast this turn (Count$YouCastThisTurn)
     SpellsCastThisTurn,
 
@@ -367,6 +441,15 @@ pub enum CountExpression {
         false_value: i32,
     },
 
+    /// The number of times Multikicker was paid for this spell (Count$TimesKicked).
+    ///
+    /// Corresponds to Forge's `SVar:XKicked:Count$TimesKicked` — e.g. Everflowing
+    /// Chalice uses `K:etbCounter:CHARGE:XKicked` with this SVar so it enters with
+    /// one CHARGE counter per kicker payment. Resolved at effect-execution time from
+    /// `Card::times_kicked`, which is set by the priority loop when the caster pays
+    /// Multikicker one or more times (CR 702.33a).
+    TimesKicked,
+
     /// Conditional value based on whether the spell was kicked (Count$Kicked.true_val.false_val)
     ///
     /// Corresponds to Forge's `Count$Kicked.5.2` = "5 if kicked, 2 if not".
@@ -378,6 +461,23 @@ pub enum CountExpression {
         kicked_value: i32,
         /// Value if the spell was NOT kicked (default)
         unkicked_value: i32,
+    },
+
+    /// Conditional value based on whether the spell was bargained (Count$Bargain.true_val.false_val)
+    ///
+    /// Corresponds to Forge's `Count$Bargain.3.2` = "3 if bargained, 2 if not".
+    /// Bargain (The Wilds of Eldraine mechanic, CR 702.162) lets you sacrifice an
+    /// artifact, enchantment, or token as an optional additional cost when casting
+    /// the spell. Used by Torch the Tower's `SVar:X:Count$Bargain.3.2`.
+    ///
+    /// Since we don't yet track bargain-payment state at resolution time, this
+    /// evaluates to `unbargained_value` as a conservative correct default — the
+    /// spell always deals at least its base (non-bargained) amount.
+    Bargain {
+        /// Value if the spell was bargained (optional sacrifice paid)
+        bargained_value: i32,
+        /// Value if the spell was NOT bargained (default)
+        unbargained_value: i32,
     },
 }
 
@@ -440,6 +540,12 @@ pub enum CountModifier {
     Minus(i32),
     /// Add N to the raw count (`/Plus.N`).
     Plus(i32),
+    /// Multiply the raw count by N (`/Times.N`).
+    /// Used by per-Shrine life gain: `Count$Valid Shrine.YouCtrl/Times.2`
+    /// means "count Shrines I control, then multiply by 2" (CR 700.4:
+    /// "for each" iterates the counted objects; the /Times.N suffix is
+    /// Forge's compact encoding of that per-copy multiplication).
+    Times(i32),
 }
 
 impl CountModifier {
@@ -457,6 +563,11 @@ impl CountModifier {
                 .ok()
                 .map(CountModifier::Plus)
                 .unwrap_or(CountModifier::None)
+        } else if let Some(rest) = suffix.strip_prefix("Times.") {
+            rest.parse()
+                .ok()
+                .map(CountModifier::Times)
+                .unwrap_or(CountModifier::None)
         } else {
             CountModifier::None
         }
@@ -468,6 +579,7 @@ impl CountModifier {
             CountModifier::None => value,
             CountModifier::Minus(n) => value - n,
             CountModifier::Plus(n) => value + n,
+            CountModifier::Times(n) => value * n,
         }
     }
 }
@@ -515,10 +627,20 @@ impl CountExpression {
             if svar_value == "Targeted$CardPower" {
                 return CountExpression::TargetedCardPower;
             }
+            // `TriggeredCard$CardPower` — the power of the card that fired the
+            // trigger (last-known information). Used in Anax, Hardened in the
+            // Forge: `SVar:Z:TriggeredCard$CardPower` inside a
+            // `Count$Compare Z GE4.2.1` expression. Resolved in
+            // `resolve_effect_placeholder` from `TriggerContext::triggered_card_power`.
+            if svar_value == "TriggeredCard$CardPower" {
+                return CountExpression::TriggeredCardPower;
+            }
             // Parse Count$ expressions
             if let Some(rest) = svar_value.strip_prefix("Count$") {
                 if rest == "xPaid" {
                     return CountExpression::XPaid;
+                } else if rest == "TimesKicked" {
+                    return CountExpression::TimesKicked;
                 } else if let Some(hand_rest) = rest.strip_prefix("ValidHand ") {
                     // Count$ValidHand <selector>[/Modifier]
                     // (Black Vise: "Count$ValidHand Card.ChosenCtrl/Minus.4").
@@ -540,9 +662,16 @@ impl CountExpression {
                     };
                     return CountExpression::ValidGraveyard { filter, modifier };
                 } else if rest.starts_with("Valid ") {
-                    // Count$Valid filter
-                    let filter = rest.strip_prefix("Valid ").unwrap_or(rest).to_string();
-                    return CountExpression::ValidPermanents { filter };
+                    // Count$Valid filter[/Modifier]
+                    // Examples:
+                    //   Count$Valid Artifact.OppCtrl        → filter="Artifact.OppCtrl", modifier=None
+                    //   Count$Valid Shrine.YouCtrl/Times.2  → filter="Shrine.YouCtrl", modifier=Times(2)
+                    let raw = rest.strip_prefix("Valid ").unwrap_or(rest);
+                    let (filter, modifier) = match raw.split_once('/') {
+                        Some((f, suffix)) => (f.to_string(), CountModifier::parse(suffix)),
+                        None => (raw.to_string(), CountModifier::None),
+                    };
+                    return CountExpression::ValidPermanents { filter, modifier };
                 } else if rest == "YouDrewThisTurn" {
                     return CountExpression::CardsDrawnThisTurn;
                 } else if rest == "YouCastThisTurn" {
@@ -580,6 +709,21 @@ impl CountExpression {
                             return CountExpression::Kicked {
                                 kicked_value: kicked_val,
                                 unkicked_value: unkicked_val,
+                            };
+                        }
+                    }
+                } else if let Some(bargain_rest) = rest.strip_prefix("Bargain.") {
+                    // Count$Bargain.BargainedValue.UnbargainedValue
+                    // Example: "Bargain.3.2" = 3 if bargained, 2 if not (Torch the Tower)
+                    // Bargain (CR 702.162): optional sacrifice of artifact/enchantment/token at cast time.
+                    let parts: Vec<&str> = bargain_rest.splitn(2, '.').collect();
+                    if parts.len() == 2 {
+                        if let (Ok(bargained_val), Ok(unbargained_val)) =
+                            (parts[0].parse::<i32>(), parts[1].parse::<i32>())
+                        {
+                            return CountExpression::Bargain {
+                                bargained_value: bargained_val,
+                                unbargained_value: unbargained_val,
                             };
                         }
                     }
@@ -630,6 +774,15 @@ pub struct TargetRestriction {
     /// If true, target must be in the "remembered" set (unimplemented — always fails)
     #[serde(default)]
     pub requires_remembered: bool,
+    /// If true, target must NOT be in the "remembered" set — `!IsRemembered` qualifier.
+    ///
+    /// Used by Tragic Arrogance's `SacAllOthers`:
+    ///   `ValidCards$ Permanent.nonLand+!IsRemembered`
+    /// At runtime, `execute_sacrifice_all` calls
+    /// `matches_excluding_remembered(&game.remembered_cards)` which returns false
+    /// for any card whose id appears in the remembered list.
+    #[serde(default)]
+    pub requires_not_remembered: bool,
     /// If true, target must NOT be an artifact (e.g. The Abyss's
     /// `Creature.nonArtifact`). Artifact creatures are excluded.
     #[serde(default)]
@@ -677,6 +830,35 @@ pub struct TargetRestriction {
     /// `None` means no minimum CMC restriction.
     #[serde(default)]
     pub min_cmc: Option<u8>,
+    /// Maximum mana value (CMC) restriction (`cmcLE<N>` qualifier).
+    ///
+    /// Corresponds to `ValidCards$ Creature.cmcLE3` (Consume the Meek),
+    /// `ValidTgts$ Instant.YouCtrl+cmcLE3` (Past in Flames), etc.
+    /// `None` means no maximum CMC restriction.
+    #[serde(default)]
+    pub max_cmc: Option<u8>,
+    /// If true, target creature must have the Defender keyword (CR 702.6).
+    ///
+    /// Corresponds to the `withDefender` qualifier in `ValidTgts$` /
+    /// `ValidCards$` (e.g. `Creature.withDefender+YouCtrl` for Overgrown
+    /// Battlement's mana ability, `Creature.withDefender` for Clear a Path).
+    /// Checked via `card.has_keyword(Keyword::Defender)`.
+    #[serde(default)]
+    pub requires_defender: bool,
+    /// Exact mana value (CMC) restriction (`cmcEQ<N>` qualifier, static form).
+    ///
+    /// Corresponds to `ValidCards$ Permanent.nonLand+cmcEQ2` (literal N) when
+    /// the CMC is known at load time. For the dynamic SVar form (`cmcEQX`),
+    /// `cmc_eq_svar` is set instead and the caller resolves it at runtime.
+    /// `None` means no exact-CMC restriction.
+    #[serde(default)]
+    pub exact_cmc: Option<u8>,
+    /// If true, the exact-CMC filter (`cmcEQX`) references an SVar whose value
+    /// is not known until resolution time (Ratchet Bomb: CMC must equal the
+    /// number of charge counters). The caller is responsible for resolving the
+    /// SVar and writing the result into `exact_cmc` before matching.
+    #[serde(default)]
+    pub cmc_eq_svar: bool,
 }
 
 impl TargetRestriction {
@@ -690,6 +872,7 @@ impl TargetRestriction {
             power_le: None,
             requires_nontoken: false,
             requires_remembered: false,
+            requires_not_remembered: false,
             requires_nonartifact: false,
             required_color: None,
             required_set: None,
@@ -698,6 +881,10 @@ impl TargetRestriction {
             power_le_source: false,
             requires_noncreature: false,
             min_cmc: None,
+            max_cmc: None,
+            requires_defender: false,
+            exact_cmc: None,
+            cmc_eq_svar: false,
         }
     }
 
@@ -711,6 +898,7 @@ impl TargetRestriction {
             power_le: None,
             requires_nontoken: false,
             requires_remembered: false,
+            requires_not_remembered: false,
             requires_nonartifact: false,
             required_color: None,
             required_set: None,
@@ -719,6 +907,10 @@ impl TargetRestriction {
             power_le_source: false,
             requires_noncreature: false,
             min_cmc: None,
+            max_cmc: None,
+            requires_defender: false,
+            exact_cmc: None,
+            cmc_eq_svar: false,
         }
     }
 
@@ -865,6 +1057,28 @@ impl TargetRestriction {
             }
         }
 
+        // Check maximum CMC restriction (Consume the Meek: Creature.cmcLE3)
+        if let Some(max) = self.max_cmc {
+            if card.mana_cost.cmc() > max {
+                return false;
+            }
+        }
+
+        // Check exact CMC restriction (Ratchet Bomb: Permanent.nonLand+cmcEQ<N>).
+        // `exact_cmc` is populated by the caller from a static `cmcEQ<N>` qualifier
+        // or by resolving the SVar X (charge-counter count) at activation time.
+        if let Some(eq) = self.exact_cmc {
+            if card.mana_cost.cmc() != eq {
+                return false;
+            }
+        }
+
+        // Check `withDefender` — target must have the Defender keyword (CR 702.6).
+        // Overgrown Battlement, Axebane Guardian, Clear a Path, etc.
+        if self.requires_defender && !card.has_keyword(crate::core::Keyword::Defender) {
+            return false;
+        }
+
         // Check type restriction
         if self.types.is_empty() {
             return true; // No type restriction
@@ -893,10 +1107,15 @@ impl TargetRestriction {
             && !self.requires_no_counters
             && !self.requires_nontoken
             && !self.requires_remembered
+            && !self.requires_not_remembered
             && !self.requires_nonartifact
             && self.required_color.is_none()
             && self.required_set.is_none()
             && !self.requires_other
+            && self.min_cmc.is_none()
+            && self.max_cmc.is_none()
+            && self.exact_cmc.is_none()
+            && !self.cmc_eq_svar
     }
 
     /// Like [`TargetRestriction::matches`] but also honors the `Other`
@@ -910,6 +1129,23 @@ impl TargetRestriction {
     /// callers that genuinely have no source (none today filter on `Other`).
     pub fn matches_excluding(&self, card: &crate::core::Card, source: crate::core::CardId) -> bool {
         if self.requires_other && card.id == source {
+            return false;
+        }
+        self.matches(card)
+    }
+
+    /// Like [`TargetRestriction::matches`], but also enforces the
+    /// `requires_not_remembered` qualifier at runtime by checking the provided
+    /// remembered-card slice.
+    ///
+    /// Used by `execute_sacrifice_all` for Tragic Arrogance's
+    /// `ValidCards$ Permanent.nonLand+!IsRemembered`: a permanent whose id
+    /// appears in `remembered` is the one the caster chose to keep, so it must
+    /// NOT be sacrificed.
+    pub fn matches_with_remembered(&self, card: &crate::core::Card, remembered: &[crate::core::CardId]) -> bool {
+        // If this filter requires cards that are NOT in the remembered list,
+        // reject any card whose id IS in remembered.
+        if self.requires_not_remembered && remembered.contains(&card.id) {
             return false;
         }
         self.matches(card)
@@ -966,14 +1202,21 @@ impl TargetRestriction {
     /// - "Creature.powerLE2" -> [Creature] with power_le=2
     /// - "Card.nonCreature" -> requires_noncreature=true (Negate: counter any noncreature spell)
     /// - "Card.cmcGE4" -> min_cmc=4 (Disdainful Stroke: counter spells with CMC >= 4)
+    /// - "Permanent.nonLand+cmcEQ2" -> exact_cmc=2 (static literal form)
+    /// - "Permanent.nonLand+cmcEQX" -> cmc_eq_svar=true (dynamic SVar form; caller resolves X)
     pub fn parse(valid_tgts: &str) -> Self {
         let mut types = SmallVec::new();
         let mut requires_no_counters = false;
         let mut requires_nontoken = false;
         let mut requires_remembered = false;
+        let mut requires_not_remembered = false;
         let mut requires_nonartifact = false;
         let mut requires_noncreature = false;
+        let mut requires_defender = false;
         let mut min_cmc = None;
+        let mut max_cmc = None;
+        let mut exact_cmc: Option<u8> = None;
+        let mut cmc_eq_svar = false;
         let mut controller = ControllerRestriction::Any;
         let mut power_ge = None;
         let mut power_le = None;
@@ -997,16 +1240,44 @@ impl TargetRestriction {
                         "!HasCounters" => requires_no_counters = true,
                         "!token" => requires_nontoken = true,
                         "IsRemembered" => requires_remembered = true,
+                        "!IsRemembered" => requires_not_remembered = true,
                         "YouCtrl" => controller = ControllerRestriction::YouCtrl,
                         "OppCtrl" => controller = ControllerRestriction::OppCtrl,
                         "ActivePlayerCtrl" => controller = ControllerRestriction::ActivePlayerCtrl,
+                        // Forge DSL: "ControlledBy TriggeredDefendingPlayer" — target must be
+                        // controlled by the defending player in the current combat.  In a 2-player
+                        // game the defending player is always the opponent of the attacker, so we
+                        // map this to OppCtrl for targeting purposes.
+                        "ControlledBy TriggeredDefendingPlayer" => controller = ControllerRestriction::OppCtrl,
                         "nonArtifact" => requires_nonartifact = true,
                         "nonCreature" => requires_noncreature = true,
                         "Other" => requires_other = true,
+                        // `withDefender` — target must have the Defender keyword
+                        // (CR 702.6). Used by Overgrown Battlement's mana
+                        // ability, Clear a Path, Axebane Guardian, etc.
+                        "withDefender" => requires_defender = true,
                         m if m.starts_with("cmcGE") => {
                             // Parse cmcGE4 -> min_cmc = 4 (Disdainful Stroke)
                             if let Ok(n) = m.trim_start_matches("cmcGE").parse::<u8>() {
                                 min_cmc = Some(n);
+                            }
+                        }
+                        m if m.starts_with("cmcLE") => {
+                            // Parse cmcLE3 -> max_cmc = 3 (Consume the Meek, Past in Flames)
+                            if let Ok(n) = m.trim_start_matches("cmcLE").parse::<u8>() {
+                                max_cmc = Some(n);
+                            }
+                        }
+                        // `cmcEQX` — dynamic exact-CMC filter: CMC must equal SVar X at
+                        // resolution time (Ratchet Bomb: charge-counter count). Mark the
+                        // flag; the caller resolves X and populates `exact_cmc` before use.
+                        // MUST precede the numeric `cmcEQ<N>` arm because "cmcEQX" also
+                        // starts with "cmcEQ" (and "X" is not a number).
+                        "cmcEQX" => cmc_eq_svar = true,
+                        m if m.starts_with("cmcEQ") => {
+                            // Parse cmcEQ2 -> exact_cmc = 2 (static literal form)
+                            if let Ok(n) = m.trim_start_matches("cmcEQ").parse::<u8>() {
+                                exact_cmc = Some(n);
                             }
                         }
                         // Set-origin qualifier `set<CODE>` (e.g. `setARN`):
@@ -1074,6 +1345,7 @@ impl TargetRestriction {
             power_le,
             requires_nontoken,
             requires_remembered,
+            requires_not_remembered,
             requires_nonartifact,
             required_color,
             required_set,
@@ -1082,6 +1354,10 @@ impl TargetRestriction {
             power_le_source,
             requires_noncreature,
             min_cmc,
+            max_cmc,
+            requires_defender,
+            exact_cmc,
+            cmc_eq_svar,
         }
     }
 
@@ -1323,6 +1599,12 @@ pub enum Effect {
         restriction: TargetRestriction,
         /// If true, destroyed permanents can't be regenerated (CR 701.15)
         no_regenerate: bool,
+        /// Source card for dynamic SVar resolution (Ratchet Bomb: `cmcEQX`
+        /// where X = charge-counter count on the Bomb itself). Set by
+        /// `resolve_self_target` to the resolving card's `CardId`; `None` if
+        /// the restriction needs no SVar resolution.
+        #[serde(default)]
+        cmc_eq_source: Option<CardId>,
     },
 
     /// Each player sacrifices all permanents matching a filter
@@ -1354,6 +1636,19 @@ pub enum Effect {
         count: u8,
     },
 
+    /// Sacrifice the source card itself ("sacrifice CARDNAME").
+    ///
+    /// Used for `DB$ Sacrifice` with no `SacValid$` — the card sacrifices
+    /// itself, optionally wrapped in `UnlessCostWrapper` (Stasis, Aura Flux,
+    /// Arcades Sabboth: "at the beginning of your upkeep, sacrifice CARDNAME
+    /// unless you pay {cost}"). The `source` field is a placeholder
+    /// (`CardId::new(0)`) when stored on the trigger; the phase-trigger
+    /// executor resolves it to the actual source `CardId` at fire time.
+    SacrificeSelf {
+        /// The card to sacrifice (placeholder until resolved at trigger time)
+        source: crate::core::CardId,
+    },
+
     /// Tap all permanents matching a filter
     /// Example: "Tap all creatures your opponents control" (Cryptic Command)
     TapAll { restriction: TargetRestriction },
@@ -1361,6 +1656,11 @@ pub enum Effect {
     /// Untap all permanents matching a filter
     /// Example: "Untap all creatures you control"
     UntapAll { restriction: TargetRestriction },
+
+    /// Untap exactly one (the first tapped) permanent matching a filter.
+    /// Used for Hokori, Dust Drinker's upkeep trigger: "that player untaps a
+    /// land they control" — one land, player's choice resolved as first tapped.
+    UntapOne { restriction: TargetRestriction },
 
     /// Set a player's life total to a specific value
     /// Example: "Target opponent's life total becomes 10" (Sorin Markov)
@@ -1407,6 +1707,28 @@ pub enum Effect {
     /// Example: "Tap target creature"
     TapPermanent { target: CardId },
 
+    /// Tap N untapped permanents matching a filter controlled by a player.
+    ///
+    /// Corresponds to Tangle Wire's forced-tap trigger:
+    ///   `DB$ ChooseCard | Defined$ TriggeredPlayer | Choices$ <filter> | Amount$ X | SubAbility$ DBTap`
+    ///   `DB$ Tap | Defined$ ChosenCard`
+    ///
+    /// The converter collapses the ChooseCard→Tap→Cleanup sub-ability chain into
+    /// a single effect. The AI heuristic taps the least-valuable permanents first
+    /// (same as the discard heuristic: prefer to tap things that are already
+    /// somewhat restricted, e.g., tap creatures before lands).
+    TapPermanentsMatchingFilter {
+        /// The player who must tap permanents (placeholder: resolved to active player at trigger time).
+        player: PlayerId,
+        /// Combined filter string from `Choices$` (e.g. `"Artifact,Creature,Land"`).
+        /// Each comma-separated segment is a type that qualifies.
+        choices_filter: String,
+        /// Number of permanents to tap (`Amount$ X` = fade counter count at fire time;
+        /// stored as 0 at parse time and resolved to a concrete count by the
+        /// trigger executor before calling execute_effect).
+        count: u8,
+    },
+
     /// Untap a permanent
     /// Example: "Untap target land"
     UntapPermanent { target: CardId },
@@ -1423,8 +1745,16 @@ pub enum Effect {
         target: CardId,
         power_bonus: i32,
         toughness_bonus: i32,
-        /// Keywords to grant (e.g., Double Strike from KW$ parameter)
+        /// Simple keywords to grant (e.g., Double Strike from `KW$ Double Strike`).
         keywords_granted: smallvec::SmallVec<[Keyword; 2]>,
+        /// Complex (parameterized) keywords to grant, e.g., `Landwalk:Forest`
+        /// from `KW$ Landwalk:Forest`. Stored separately because they need both
+        /// the keyword bit and the land-type (or other) parameter to correctly
+        /// enforce blocking restrictions and to be removed on cleanup.
+        /// Serde-defaulted so existing serialized data without this field
+        /// deserializes correctly (empty = no complex keywords).
+        #[serde(default)]
+        keyword_args_granted: smallvec::SmallVec<[KeywordArgs; 2]>,
     },
 
     /// Debuff: Remove keywords from a creature (inverse of Pump keyword granting)
@@ -1457,8 +1787,11 @@ pub enum Effect {
         power: Option<i32>,
         /// Base toughness to set (None = don't change)
         toughness: Option<i32>,
-        /// Keywords to grant (e.g., Flying, Trample)
+        /// Simple keywords to grant (e.g., Flying, Trample)
         keywords_granted: smallvec::SmallVec<[Keyword; 2]>,
+        /// Complex (parameterized) keywords to grant (e.g., Landwalk:Island)
+        #[serde(default)]
+        keyword_args_granted: smallvec::SmallVec<[KeywordArgs; 2]>,
     },
 
     /// Pump with variable bonus based on counting game state
@@ -1471,8 +1804,11 @@ pub enum Effect {
         power_count: CountExpression,
         /// Count expression for toughness bonus
         toughness_count: CountExpression,
-        /// Keywords to grant (optional)
+        /// Simple keywords to grant (optional)
         keywords_granted: smallvec::SmallVec<[Keyword; 2]>,
+        /// Complex (parameterized) keywords to grant (e.g., Landwalk:Forest)
+        #[serde(default)]
+        keyword_args_granted: smallvec::SmallVec<[KeywordArgs; 2]>,
     },
 
     /// Mill cards from library to graveyard
@@ -1488,8 +1824,21 @@ pub enum Effect {
     /// Example: "Scry 1" or "Scry 2"
     /// Corresponds to: DB$ Scry | ScryNum$ N
     ///
+    /// `only_if_bargained` — when true (produced by `Condition$ Bargain` in the
+    /// card script), the scry is skipped unless the source spell was bargained
+    /// (i.e. `Card.bargain_paid == true`). Used by Torch the Tower's rider:
+    /// "If this spell was bargained, ... you scry 1."
+    ///
     /// AI heuristic: Keep spells, put excess lands on bottom
-    Scry { player: PlayerId, count: u8 },
+    Scry {
+        player: PlayerId,
+        count: u8,
+        /// Only execute if the source spell was bargained (CR 702.162).
+        /// Defaults to `false` (unconditional scry) for all cards except
+        /// those with `Condition$ Bargain` in their scry sub-ability.
+        #[serde(default)]
+        only_if_bargained: bool,
+    },
 
     /// Take an extra turn after this one (CR 500.7)
     /// Example: "Take an extra turn after this one" (Time Walk)
@@ -1584,6 +1933,37 @@ pub enum Effect {
         counter_type: Option<crate::core::CounterType>,
         /// Multiplier (default 2 = double)
         multiplier: u8,
+    },
+
+    /// Grant a player the ability to cast spells matching `valid_card` as though
+    /// they had flash, until end of turn.
+    ///
+    /// Corresponds to:
+    ///   `AB$ Effect | StaticAbilities$ STPlay | Duration$ UntilYourNextTurn`
+    ///   where `SVar:STPlay:Mode$ CastWithFlash | ValidCard$ <filter>`.
+    ///
+    /// Creates a `PersistentEffectKind::GrantCastWithFlash` for the spell's
+    /// controller. The priority loop checks this alongside `StaticAbility::CastWithFlash`
+    /// on battlefield permanents.
+    GrantCastWithFlash {
+        /// Player who may cast the affected spells with flash. Placeholder until resolved.
+        player: PlayerId,
+        /// Filter for which cards may be cast with flash (e.g. `Sorcery`).
+        valid_card: TargetRestriction,
+    },
+
+    /// Return a permanent to its owner's hand (bounce).
+    ///
+    /// Corresponds to: `AB$ ChangeZone | Origin$ Battlefield | Destination$ Hand | ValidTgts$ <filter>`
+    /// Examples: Teferi −3 (artifact/creature/enchantment), Petty Theft (nonland opponent-controlled).
+    ///
+    /// `target` is `CardId::placeholder()` until targeting resolves. `restriction` encodes
+    /// the `ValidTgts$` filter so target-validation and AI target-selection can apply it.
+    ReturnPermanentToHand {
+        /// The permanent to return. Placeholder until targeting resolves.
+        target: CardId,
+        /// Filter from the card's `ValidTgts$` (e.g. Artifact,Creature,Enchantment).
+        restriction: TargetRestriction,
     },
 
     /// Exile a permanent
@@ -1703,6 +2083,42 @@ pub enum Effect {
         player: PlayerId,
     },
 
+    /// Put `count` cards from a player's hand on top of their library (mandatory
+    /// self-selection).  The controller chooses which cards; in non-interactive
+    /// fallback mode the lowest-value cards are picked deterministically.
+    ///
+    /// Corresponds to `DB$ ChangeZone | Origin$ Hand | Destination$ Library |
+    /// ChangeNum$ <N> | Mandatory$ True | Reorder$ True` (Brainstorm's sub-ability
+    /// that puts two cards from your hand on top of your library in any order).
+    ///
+    /// MTG CR 701.19: when an effect says to put one or more cards from a player's
+    /// hand on top of that player's library, the player chooses which card(s) to put
+    /// back and the order.  The effect is mandatory — the controller MUST put the
+    /// specified number of cards back (if available).
+    PutCardsFromHandOnTopOfLibrary { player: PlayerId, count: u8 },
+
+    /// Reveal any number of matching cards from a player's hand, optionally
+    /// storing the count in `GameState::remembered_amount` for use by
+    /// chained sub-abilities (e.g. Metalworker: "reveal artifact cards; add
+    /// {C}{C} for each").
+    ///
+    /// Corresponds to `AB$ Reveal | RevealValid$ <filter> | AnyNumber$ True |
+    /// RememberRevealed$ True | SubAbility$ DBMana`.
+    ///
+    /// MTG CR 701.15 (Reveal): a player reveals a card by showing it to all
+    /// other players.  The effect is mandatory if `AnyNumber$ False`; with
+    /// `AnyNumber$ True` the controller chooses how many to reveal (≥ 0).
+    RevealCardsFromHand {
+        /// Player whose hand to reveal from.
+        player: PlayerId,
+        /// Card filter string (e.g. `"Card.Artifact+YouCtrl"`).
+        filter: String,
+        /// If true, the player chooses how many to reveal (≥ 0).
+        any_number: bool,
+        /// If true, store the revealed count in `GameState::remembered_amount`.
+        remember_count: bool,
+    },
+
     /// Return exactly one card matching a type filter from a player's graveyard
     /// to their hand.  The AI picks the highest-value matching card.
     ///
@@ -1716,6 +2132,99 @@ pub enum Effect {
         /// Comma-separated card type filter (e.g. `"Instant,Sorcery"`).
         /// Empty string means any card.
         type_filter: String,
+    },
+
+    /// Return exactly one card matching a `ValidTgts$` filter from a player's
+    /// graveyard to any destination zone (Library, Battlefield, etc.).
+    ///
+    /// Generalises `ReturnGraveyardCardToHand` for non-Hand destinations.
+    ///
+    /// Corresponds to `SP$/DB$ ChangeZone | Origin$ Graveyard |
+    /// Destination$ <Library|Battlefield|…> | ValidTgts$ <filter>` without
+    /// `ChangeNum$`. Examples:
+    ///   - Reclaim: `Origin$ Graveyard | Destination$ Library | ValidTgts$ Card.YouCtrl`
+    ///   - Goryo's Vengeance: `Origin$ Graveyard | Destination$ Battlefield |
+    ///                         ValidTgts$ Creature.Legendary+YouCtrl | GainControl$ True`
+    ///   - Debtors' Knell trigger: `Origin$ Graveyard | Destination$ Battlefield |
+    ///                              ValidTgts$ Creature | GainControl$ True`
+    ///
+    /// `gain_control` mirrors `GainControl$ True` — puts the card under the
+    /// caster's control (reanimation) rather than its owner's. MTG CR 701.3:
+    /// a player puts a card onto the battlefield under their control unless
+    /// stated otherwise.
+    ///
+    /// The `player` is a placeholder until resolution (bound to the spell/
+    /// trigger's controller). The AI picks the highest-value matching card from
+    /// the graveyard of `player` (for `YouCtrl` effects) or any player's
+    /// graveyard (for `ValidTgts$ Creature` without ownership restriction).
+    ReturnGraveyardCardToZone {
+        /// Controller of the spell/ability that triggered this effect.
+        /// `PlayerId::placeholder()` until resolved at spell resolution time.
+        player: PlayerId,
+        /// Comma-separated card type filter (e.g. `"Creature.Legendary"`, `"Card"`).
+        /// Empty string means any card.
+        type_filter: String,
+        /// Destination zone (Library, Battlefield, Hand — anything except Graveyard).
+        destination: crate::zones::Zone,
+        /// If true, the card enters the battlefield under the caster's control
+        /// regardless of who owns it (`GainControl$ True`). Used for reanimation.
+        gain_control: bool,
+        /// Library position for `Destination$ Library`:
+        /// `0` = top (Reclaim puts the card on TOP of library, CR 401.4),
+        /// `1` = bottom.  Ignored for non-Library destinations.
+        library_position: u8,
+        /// Whether to push the moved card onto `remembered_cards` so chained
+        /// `Defined$ Remembered` sub-abilities (e.g. Goryo's Vengeance DBPump
+        /// haste grant) can find it. Corresponds to `RememberChanged$ True`.
+        #[serde(default)]
+        remember_changed: bool,
+    },
+
+    /// Put a creature card of matching type from the controller's hand onto the
+    /// battlefield directly (without paying mana cost).
+    ///
+    /// Used by Sneak Attack: `A:AB$ ChangeZone | Origin$ Hand | Destination$
+    /// Battlefield | ChangeType$ Creature.YouCtrl | RememberChanged$ True`.
+    /// The moved card is pushed onto `remembered_cards` when `remember_changed`
+    /// so the chained Animate sub-ability (`Defined$ Remembered`) can target it.
+    ///
+    /// CR 701.3: "put onto the battlefield" means the controller of the effect
+    /// controls the permanent; ownership stays with the card's owner.
+    PutCreatureFromHandOnBattlefield {
+        /// Controller of the ability (who puts the creature onto the battlefield).
+        /// `PlayerId::placeholder()` until resolved at activation time.
+        player: PlayerId,
+        /// Card type / filter string (e.g. `"Creature"` from `ChangeType$
+        /// Creature.YouCtrl`). Restricts which cards in hand are eligible.
+        type_filter: String,
+        /// Whether to push the moved card onto `remembered_cards`.
+        /// `RememberChanged$ True` → true; default false.
+        remember_changed: bool,
+    },
+
+    /// Return a card that just died from the graveyard to the battlefield,
+    /// but only as an enchantment (removing all creature types).
+    ///
+    /// Corresponds to Enduring Vitality's death trigger:
+    ///   `DB$ ChangeZone | Defined$ TriggeredNewCardLKICopy | Origin$ Graveyard
+    ///    | Destination$ Battlefield | StaticEffect$ Animate`
+    /// with Animate: `Mode$ Continuous | Affected$ Card.IsRemembered |
+    ///   AddType$ Enchantment | RemoveCardTypes$ True`
+    ///
+    /// Semantics (CR 400.7, CR 110.5c):
+    /// 1. Find the source card in the graveyard (by CardId).
+    /// 2. Move it from Graveyard → Battlefield under its owner's control.
+    /// 3. Remove all card types that are not Enchantment (strip Creature type etc.)
+    ///    and ensure it has the Enchantment card type — so the resulting permanent
+    ///    is purely an enchantment and will not re-trigger "when this creature dies."
+    ///
+    /// Cards using this:
+    ///   - Enduring Vitality: "When Enduring Vitality dies, if it was a creature,
+    ///     return it to the battlefield under its owner's control. It's an enchantment."
+    ReturnSelfAsEnchantment {
+        /// The card that died and should be returned. Resolved from the dying card's
+        /// CardId in `check_death_triggers`; placeholder (CardId::new(0)) until then.
+        source: CardId,
     },
 
     /// Execute an inner effect only if the source card currently satisfies a
@@ -1773,6 +2282,75 @@ pub enum Effect {
         token_script: String,
         /// Number of tokens to create
         amount: u8,
+        /// If true, each player creates the tokens (TokenOwner$ Player)
+        for_each_player: bool,
+    },
+
+    /// Create a token whose power and toughness equal the `stored_int` of a source card
+    /// (Phyrexian Processor: `{4},{T}: Create an X/X black Phyrexian Minion token where
+    /// X is the life paid as Phyrexian Processor entered`).
+    ///
+    /// At resolution the engine reads `source_card.stored_int` (the life paid on ETB),
+    /// uses it as both power and toughness, then creates the token from `token_script`.
+    /// If `stored_int` is `None` (Processor somehow entered without the ETB firing),
+    /// the token defaults to 0/0 — matching the pre-fix behavior so no new crash paths.
+    ///
+    /// Corresponds to:
+    ///   `A:AB$ Token | Cost$ 4 T | TokenScript$ b_x_x_phyrexian_minion |
+    ///    TokenPower$ LifePaidOnETB | TokenToughness$ LifePaidOnETB`
+    CreateTokenWithStoredPt {
+        /// The card whose `stored_int` supplies P/T (the Processor itself).
+        source_card: crate::core::CardId,
+        /// Controller of the new token (resolved from the placeholder at activation time).
+        controller: crate::core::PlayerId,
+        /// Token script name (e.g. `"b_x_x_phyrexian_minion"`).
+        token_script: String,
+    },
+
+    /// Create a planeswalker emblem and place it in the controller's command zone
+    /// (CR 113.2 — emblems are objects with abilities, placed in the command zone,
+    /// that persist for the rest of the game and can never be removed).
+    ///
+    /// Corresponds to: `AB$ Effect | StaticAbilities$ X | Duration$ Permanent` or
+    /// `AB$ Effect | Triggers$ X | Duration$ Permanent` (with `Planeswalker$ True`).
+    ///
+    /// At resolution the engine mints a synthetic Card in the controller's command
+    /// zone with the given static abilities and/or triggers. The existing continuous-
+    /// effects system and phase-trigger scanning already check the command zone, so
+    /// no further special-casing is needed — the emblem acts exactly like a permanent
+    /// with those abilities, except it lives in the command zone instead of the
+    /// battlefield (CR 113.4: emblems have no controller; we track the creating
+    /// player as the owner for scoping purposes).
+    CreateEmblem {
+        /// The player who created the emblem (becomes the "controller" for scoping
+        /// static abilities such as "creatures you control get …")
+        controller: PlayerId,
+        /// Human-readable emblem name (e.g. "Emblem — Elspeth, Sun's Champion")
+        emblem_name: String,
+        /// Static abilities on the emblem (e.g. +2/+2 + flying to your creatures)
+        static_abilities: Vec<StaticAbility>,
+        /// Triggered abilities on the emblem (e.g. "at the beginning of each
+        /// opponent's upkeep, that player sacrifices a creature")
+        triggers: Vec<Trigger>,
+    },
+
+    /// Create token(s) whose count is determined at trigger-resolution time from
+    /// a dynamic amount (e.g. the number of counters on the triggering card).
+    ///
+    /// Corresponds to: DB$ Token | TokenAmount$ Y | TokenScript$ c_1_1_a_thopter_flying
+    /// where SVar:Y:TriggeredCard$CardCounters.P1P1.
+    ///
+    /// This is the `CreateToken` shape with a `DynamicAmount` instead of a
+    /// static `u8`. `resolve_effect_placeholder` converts it to `CreateToken`
+    /// with the concrete amount filled in from the `TriggerContext`, after which
+    /// `execute_effect` processes it via the normal `CreateToken` path.
+    CreateTokenDynamic {
+        /// Player who will control the tokens (ignored if for_each_player is true)
+        controller: PlayerId,
+        /// Token script name (e.g., "c_1_1_a_thopter_flying" for Thopter token)
+        token_script: String,
+        /// Dynamic amount resolved at trigger-fire time
+        amount: DynamicAmount,
         /// If true, each player creates the tokens (TokenOwner$ Player)
         for_each_player: bool,
     },
@@ -1877,8 +2455,11 @@ pub enum Effect {
         target: CardId,
         power: Option<i32>,
         toughness: Option<i32>,
-        /// Keywords to grant (e.g., Trample from Keywords$ parameter)
+        /// Simple keywords to grant (e.g., Trample from Keywords$ parameter)
         keywords_granted: smallvec::SmallVec<[Keyword; 2]>,
+        /// Complex (parameterized) keywords to grant (e.g., Landwalk:Forest)
+        #[serde(default)]
+        keyword_args_granted: smallvec::SmallVec<[KeywordArgs; 2]>,
         /// Card types to add until end of turn (e.g. `Types$ Artifact,Creature`).
         /// Empty = don't change types.
         #[serde(default)]
@@ -1891,6 +2472,14 @@ pub enum Effect {
         /// the new ones (`RemoveCreatureTypes$ True`).
         #[serde(default)]
         remove_creature_subtypes: bool,
+        /// Optional end-of-turn action on the target (Sneak Attack: sacrifice;
+        /// Goryo's Vengeance: exile). When set, a phase-based delayed trigger
+        /// fires at the beginning of the next end step.
+        ///
+        /// Parsed from `AtEOT$ Sacrifice` / `AtEOT$ Exile` in Animate scripts.
+        /// The delayed trigger targets the same card as the Animate effect.
+        #[serde(default)]
+        at_eot: Option<AtEotAction>,
     },
 
     /// Airbend: Exile a permanent and grant its owner permission to cast it for {2}.
@@ -2178,6 +2767,32 @@ pub enum Effect {
     /// This effect clears the game.remembered_cards storage after ImmediateTrigger has checked it.
     ClearRemembered,
 
+    /// For each permanent type in `types`, choose one permanent of that type
+    /// controlled by the player in `remembered_players[0]` and push the chosen
+    /// permanents onto `game.remembered_cards`.
+    ///
+    /// Corresponds to Tragic Arrogance's `YouChoose` SVar:
+    ///   `DB$ ChooseCard | Defined$ You | ChooseEach$ Artifact & Creature & Enchantment & Planeswalker
+    ///    | ControlledByPlayer$ Remembered | RememberChosen$ True | Mandatory$ True`
+    ///
+    /// The CASTER (Defined$ You) makes each choice from among permanents
+    /// controlled by the current-loop player (`ControlledByPlayer$ Remembered`,
+    /// where Remembered = the player stored in `remembered_players[0]` by the
+    /// enclosing `RepeatEach | RepeatPlayers$ Player` loop).
+    ///
+    /// AI heuristic:
+    /// - When choosing for ITSELF (current loop player == caster): keep the
+    ///   highest-mana-value permanent of each type (save the best).
+    /// - When choosing for an OPPONENT: keep the lowest-mana-value permanent
+    ///   of each type (sacrifice the opponent's best).
+    /// - If a player controls no permanent of a given type, that type is
+    ///   silently skipped (nothing is remembered for it).
+    ChooseAndRememberOneOfEach {
+        /// The permanent types to iterate over (one choice per type).
+        /// Parsed from `ChooseEach$ Artifact & Creature & Enchantment & Planeswalker`.
+        types: Vec<TargetType>,
+    },
+
     /// Choose a color (WUBRG) and store it on the source card.
     ///
     /// Corresponds to: `AB$ ChooseColor | Cost$ ... | Defined$ You`
@@ -2246,6 +2861,92 @@ pub enum Effect {
         target_level: u8,
     },
 
+    /// Grant one-time permission to cast a targeted instant/sorcery from the
+    /// graveyard this turn (CR 400.7 + CR 614 replacement).
+    ///
+    /// Corresponds to `A:AB$ Play | TgtZone$ Graveyard | ...` on planeswalkers
+    /// such as Chandra, Acolyte of Flame (−2 loyalty).
+    ///
+    /// When executed:
+    /// 1. Creates a `PersistentEffectKind::CastTargetedSpellFromGraveyard` that
+    ///    tracks the chosen card and grants cast permission for the rest of the turn.
+    /// 2. If `exile_on_resolution` is true, also sets
+    ///    `Card::exile_if_would_go_to_graveyard_this_turn` on the targeted card,
+    ///    so that `resolve_spell_finalize` sends it to exile instead of the
+    ///    graveyard when it resolves (CR 614 zone-change replacement).
+    ///
+    /// The `target` is `CardId::placeholder()` until binding at cast time.
+    PlayFromGraveyard {
+        /// The graveyard card to cast. Placeholder until targeting binds it.
+        target: CardId,
+        /// If true, exile the card instead of putting it into the graveyard
+        /// when it would resolve (the `ReplaceGraveyard$ Exile` clause).
+        exile_on_resolution: bool,
+        /// Comma-separated card type filter (e.g. `"Instant,Sorcery"`).
+        /// The valid types come from the `ValidTgts$` parameter in the card script.
+        /// Empty string means any instant/sorcery (fallback).
+        type_filter: String,
+        /// Maximum mana value (CMC) for the targeted card, from `cmcLE<N>` in
+        /// the `ValidTgts$` qualifier. `None` = no maximum CMC restriction.
+        max_mana_value: Option<u8>,
+    },
+
+    /// Look at the top N cards of `player`'s library, then put them back in any
+    /// order (CR 701.22 — "look at"). In the AI-only path the order is
+    /// unchanged (keeping the current top order is always a legal choice per
+    /// the rules); the important effect is that the ability resolves without
+    /// emitting an `Unimplemented` warning.
+    ///
+    /// Sensei's Divining Top: `A:AB$ RearrangeTopOfLibrary | Defined$ You | NumCards$ 3`
+    RearrangeTopOfLibrary {
+        /// The player who looks at (and re-orders) the top of their library.
+        player: crate::core::PlayerId,
+        /// Number of cards to look at (default 3).
+        count: u8,
+    },
+
+    /// Cause `player` to skip their next untap step (CR 502.1).
+    ///
+    /// The skip flag is set on the player's `Player::skip_untap_next_turn` field
+    /// and cleared by the `untap_step` handler the next time that player
+    /// reaches their untap step.
+    ///
+    /// Yosei, the Morning Star: `DB$ SkipPhase | ValidTgts$ Player | Step$ Untap`
+    SkipUntapStep {
+        /// The player whose next untap step will be skipped.
+        player: crate::core::PlayerId,
+    },
+
+    /// For-each loop: execute `sub_effects` once for each member of `iterate_over`.
+    ///
+    /// Corresponds to: `DB$ RepeatEach | RepeatSubAbility$ <svar> | DefinedCards$ Targeted`
+    /// or: `A:SP$ RepeatEach | RepeatPlayers$ Player | RepeatSubAbility$ <svar>`
+    ///
+    /// CR 609.3: Effects that use "for each" repeat an action once per member of the
+    /// named set. Actions execute sequentially; state-based actions check between each.
+    ///
+    /// **Pattern A — iterate over cards** (`iterate_over = Cards { .. }`):
+    /// - Iterates over `targets` (the spell's chosen targets, resolved at spell-resolution time).
+    /// - If `require_in_graveyard` is true (`ChangeZoneTable$ True`), only includes cards
+    ///   that are currently in a graveyard or exiled zone (cards that were NOT actually
+    ///   destroyed — e.g., indestructible permanents — are skipped).
+    /// - For each qualifying card: sets `game.remembered_cards = [card_id]`, then executes
+    ///   each effect in `sub_effects`.
+    ///
+    /// **Pattern B — iterate over players** (`iterate_over = AllPlayers`):
+    /// - Iterates over all players in the current turn order.
+    /// - For each player: sets `game.remembered_players = [player_id]`, then executes
+    ///   each effect in `sub_effects`.
+    ///
+    /// Used by: Terastodon (token per destroyed permanent), Tragic Arrogance (player loop).
+    RepeatEach {
+        /// Effects to execute once per member (from `RepeatSubAbility$` chain,
+        /// including any `SubAbility$` chains chained off the RepeatEach itself)
+        sub_effects: Vec<Effect>,
+        /// What to iterate over (resolved at parse/resolve time)
+        iterate_over: RepeatEachIterate,
+    },
+
     /// Placeholder for a recognized but unimplemented effect
     /// Produced instead of silently dropping the effect, so that spell resolution
     /// can warn/error instead of silently no-op'ing.
@@ -2269,6 +2970,49 @@ pub enum Effect {
         /// The API type name, for debug logging only.
         api_type: String,
     },
+
+    /// Grant the player permission to play an additional land this turn.
+    ///
+    /// Corresponds to: `A:SP$ Effect | StaticAbilities$ Exploration` where
+    /// `SVar:Exploration:Mode$ Continuous | Affected$ You | AdjustLandPlays$ 1`
+    ///
+    /// The temporary grant (spell/trigger path) creates a `PersistentEffectKind::ExtraLandPlay`
+    /// cleaned up at end of turn. The permanent form (Oracle of Mul Daya, etc.) uses
+    /// `StaticAbility::ExtraLandPlay` on the on-battlefield card instead.
+    ///
+    /// `player` may be `PlayerId::new(0)` as a placeholder when created from a
+    /// `StaticAbilities$` SVar — resolved to the spell's controller at execution time
+    /// in `execute_effect`.
+    ExtraLandPlay {
+        /// The player who gains the additional land play.
+        player: PlayerId,
+        /// Number of extra land plays (usually 1).
+        amount: u8,
+    },
+}
+
+/// What a `RepeatEach` effect iterates over.
+///
+/// Resolved at parse time (for `AllPlayers`) or at spell-resolution time (for
+/// `Cards`). The distinction matters because chosen targets are known only when
+/// the spell resolves, whereas all-players is always available.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum RepeatEachIterate {
+    /// Iterate over the spell's chosen targets.
+    ///
+    /// `targets` is populated at `resolve_effect_target` time from `chosen_targets`.
+    /// `require_in_graveyard` is true when `ChangeZoneTable$ True` is set —
+    /// only cards currently in the graveyard (i.e., successfully destroyed) are
+    /// iterated; permanents that survived (indestructible, replaced, etc.) are skipped.
+    Cards {
+        /// The resolved chosen targets for this spell (filled in at resolution time)
+        targets: Vec<CardId>,
+        /// If true, only iterate over cards that are now in a graveyard zone
+        /// (`ChangeZoneTable$ True`).
+        require_in_graveyard: bool,
+    },
+    /// Iterate over all players in turn order (`RepeatPlayers$ Player`).
+    AllPlayers,
 }
 
 /// Condition for ImmediateTrigger effect
@@ -2445,6 +3189,8 @@ impl Effect {
             | Effect::AddMana { .. }
             | Effect::Balance { .. }
             | Effect::CreateToken { .. }
+            | Effect::CreateTokenDynamic { .. }
+            | Effect::CreateTokenWithStoredPt { .. }
             | Effect::Dig { .. }
             | Effect::SearchLibrary { .. }
             | Effect::Firebend { .. }
@@ -2465,6 +3211,8 @@ impl Effect {
             // card (Defined$ Self) — no cast-time target collection needed.
             | Effect::MoveSelfBetweenZones { .. }
             | Effect::ReturnCardsFromGraveyardToHand { .. }
+            | Effect::PutCardsFromHandOnTopOfLibrary { .. }
+            | Effect::RevealCardsFromHand { .. }
             | Effect::PreventAllCombatDamageThisTurn { .. }
             | Effect::ConditionalSelfCounter { .. }
             // Clone chooses which permanent to copy at resolution time (ETB
@@ -2479,8 +3227,28 @@ impl Effect {
             // cast-time target — the class_card_id is baked in at ability creation.
             | Effect::ClassLevelUp { .. }
             | Effect::ReturnGraveyardCardToHand { .. }
+            | Effect::ReturnGraveyardCardToZone { .. }
+            | Effect::PutCreatureFromHandOnBattlefield { .. }
+            | Effect::SacrificeSelf { .. }
+            | Effect::ReturnSelfAsEnchantment { .. }
+            | Effect::CreateEmblem { .. }
+            | Effect::RearrangeTopOfLibrary { .. }
+            | Effect::SkipUntapStep { .. }
             | Effect::Unimplemented { .. }
-            | Effect::NoOp { .. } => EffectTargetCategory::NoTargetNeeded,
+            | Effect::NoOp { .. }
+            // RepeatEach targets are consumed from chosen_targets at resolve_effect_target
+            // time (Pattern A) or iterates over all players (Pattern B).  Either way
+            // the targeting system does not need to separately collect targets for it.
+            | Effect::RepeatEach { .. }
+            // ExtraLandPlay grants a land-play permission to a specific player;
+            // no cast-time target is selected (player is the spell's controller).
+            | Effect::ExtraLandPlay { .. }
+            // ChooseAndRememberOneOfEach reads from remembered_players (set by RepeatEach);
+            // no cast-time target selection.
+            | Effect::ChooseAndRememberOneOfEach { .. }
+            // GrantCastWithFlash grants flash-casting permission to the spell's controller;
+            // no cast-time target is selected.
+            | Effect::GrantCastWithFlash { .. } => EffectTargetCategory::NoTargetNeeded,
 
             // Effects using filters (affect multiple permanents)
             Effect::PumpAllCreatures { .. }
@@ -2490,8 +3258,10 @@ impl Effect {
             | Effect::DamageAll { .. }
             | Effect::TapAll { .. }
             | Effect::UntapAll { .. }
+            | Effect::UntapOne { .. }
             | Effect::PutCounterAll { .. }
-            | Effect::ChangeZoneAll { .. } => EffectTargetCategory::UsesFilter,
+            | Effect::ChangeZoneAll { .. }
+            | Effect::TapPermanentsMatchingFilter { .. } => EffectTargetCategory::UsesFilter,
 
             // Modal spells have inner targeting
             Effect::ModalChoice { .. } => EffectTargetCategory::HasInnerTargeting,
@@ -2517,6 +3287,7 @@ impl Effect {
             | Effect::PutCounter { .. }
             | Effect::MultiplyCounter { .. }
             | Effect::RemoveCounter { .. }
+            | Effect::ReturnPermanentToHand { .. }
             | Effect::ExilePermanent { .. }
             | Effect::AttachEquipment { .. }
             | Effect::CopyPermanent { .. }
@@ -2528,7 +3299,9 @@ impl Effect {
             | Effect::PreventDamage { .. }
             | Effect::PreventDamageFromSource { .. }
             | Effect::CreateDelayedTrigger { .. }
-            | Effect::PumpCreatureVariable { .. } => EffectTargetCategory::RequiresTarget,
+            | Effect::PumpCreatureVariable { .. }
+            // PlayFromGraveyard targets the instant/sorcery card in the graveyard.
+            | Effect::PlayFromGraveyard { .. } => EffectTargetCategory::RequiresTarget,
         }
     }
 
@@ -2554,6 +3327,17 @@ pub struct ModalMode {
     pub description: String,
     /// SVar name for this mode (e.g., "DBDestroy") - used for targeting lookup
     pub svar_name: String,
+    /// Additional generic mana cost for choosing this mode (from ModeCost$ in the SVar).
+    /// Zero means no extra cost. Used by tiered modal spells like Fire Magic where each
+    /// tier (Fire/Fira/Firaga) has a different extra cost beyond the base mana cost.
+    pub mode_cost: u8,
+    /// Whether this mode requires player-chosen targeting (ValidTgts$ was
+    /// present in the SVar). When `true`, target selection must happen after
+    /// mode selection (e.g. Jitte's JitteCurse "Target creature gets -1/-1").
+    /// When `false`, the target is pre-defined (Defined$ Equipped/Self/etc.)
+    /// or no targeting is needed (GainLife, DrawCards, …).
+    #[serde(default)]
+    pub needs_targeting: bool,
 }
 
 /// Which combat-damage recipient class a `DealsCombatDamage` trigger watches.
@@ -2624,6 +3408,14 @@ pub enum TriggerEvent {
     /// When a creature attacks
     /// Corresponds to: T:Mode$ Attacks | ValidCard$ Card.Self
     Attacks,
+
+    /// When a creature attacks and is not blocked (fires at the end of the
+    /// declare-blockers step, after all blockers are assigned).
+    /// Corresponds to: T:Mode$ AttackerUnblocked | ValidCard$ Card.Self
+    /// Example: Eternal of Harsh Truths — "Whenever ~ attacks and isn't blocked, draw a card."
+    /// Floral Spuzzem — "Whenever ~ attacks and isn't blocked, you may destroy target
+    ///                  artifact defending player controls."
+    AttackerUnblocked,
 
     /// When a creature blocks
     /// Corresponds to: T:Mode$ Blocks | ValidCard$ Card.Self
@@ -2834,6 +3626,26 @@ pub struct Trigger {
     #[serde(default)]
     pub requires_instant_or_sorcery: bool,
 
+    /// When true, the SpellCast trigger fires if the cast spell is an instant
+    /// (but NOT necessarily a sorcery). Corresponds to `ValidCard$ Instant`.
+    /// Example: In the Eye of Chaos — "Whenever a player casts an instant spell"
+    #[serde(default)]
+    pub requires_instant: bool,
+
+    /// When true, the SpellCast trigger fires if the cast spell is an enchantment.
+    /// Corresponds to `ValidCard$ Enchantment`.
+    /// Example: Presence of the Master — "Whenever a player casts an enchantment spell"
+    #[serde(default)]
+    pub requires_enchantment: bool,
+
+    /// When true, the SpellCast trigger fires for ANY player's casts, not only
+    /// the trigger source's controller. Corresponds to "whenever a player casts"
+    /// (global world-enchantment triggers like In the Eye of Chaos or Presence
+    /// of the Master). When false (the default), only the source controller's
+    /// casts fire the trigger (Prowess, Storm, etc.).
+    #[serde(default)]
+    pub fires_for_any_caster: bool,
+
     /// When true, the trigger fires only when the event source is the
     /// permanent this trigger's card is *attached to* (`ValidSource$
     /// Card.AttachedBy`). Used by Auras/Equipment that watch the host's
@@ -2909,6 +3721,37 @@ pub struct Trigger {
     /// For TapsForMana triggers: activator restriction (You, Opponent, Player.NonActive, etc.)
     #[serde(default)]
     pub taps_for_mana_activator: Option<String>,
+
+    /// When true, trigger fires ONLY on opponents' turns, never on the
+    /// controller's own turn. Corresponds to `ValidPlayer$ Player.Opponent`
+    /// on upkeep/phase triggers. Example: Sorin, Solemn Visitor's emblem
+    /// "At the beginning of each opponent's upkeep, that player sacrifices a
+    /// creature." Without this flag the trigger would fire on ALL players'
+    /// upkeeps including the controller's own (wrong). Mutually exclusive with
+    /// `controller_turn_only` in practice — a trigger fires on your turns, the
+    /// opponent's turns, or all turns.
+    #[serde(default)]
+    pub opponent_turn_only: bool,
+
+    /// Mode gate for `DB$ GenericChoice`-style conditional triggers (Palace
+    /// Siege). When `Some("Khans")`, the trigger only fires if the source card's
+    /// `chosen_mode == Some("Khans")`; `None` means no gate (always fires).
+    /// Derived from `S:Mode$ Continuous | Affected$ Card.Self+ChosenMode<X> |
+    /// AddTrigger$ <SVar>` at load time.
+    #[serde(default)]
+    pub mode_gate: Option<String>,
+
+    /// Intervening-if condition: trigger only fires if the defending player has
+    /// more cards in hand than the attacking card's controller (CR 603.4).
+    ///
+    /// Corresponds to `CheckSVar$ X | SVarCompare$ GTY` where
+    /// `SVar:X:Count$ValidHand Card.DefenderCtrl` and
+    /// `SVar:Y:Count$ValidHand Card.YouOwn` on an Attacks trigger.
+    ///
+    /// Example: Robber of the Rich — "Whenever CARDNAME attacks, if defending
+    /// player has more cards in hand than you, exile the top card of their library."
+    #[serde(default)]
+    pub requires_defender_hand_gt_controller: bool,
 }
 
 impl Trigger {
@@ -2932,6 +3775,9 @@ impl Trigger {
             requires_opponent_cause: false,
             requires_noncreature: false,
             requires_instant_or_sorcery: false,
+            requires_instant: false,
+            requires_enchantment: false,
+            fires_for_any_caster: false,
             requires_attached_source: false,
             combat_damage_target: CombatDamageTarget::Any,
             requires_combat_damage: false,
@@ -2941,6 +3787,9 @@ impl Trigger {
             present_self_dealt_damage_to_opponent: false,
             taps_for_mana_valid_card: None,
             taps_for_mana_activator: None,
+            opponent_turn_only: false,
+            mode_gate: None,
+            requires_defender_hand_gt_controller: false,
         }
     }
 
@@ -2963,6 +3812,9 @@ impl Trigger {
             requires_opponent_cause: false,
             requires_noncreature: false,
             requires_instant_or_sorcery: false,
+            requires_instant: false,
+            requires_enchantment: false,
+            fires_for_any_caster: false,
             requires_attached_source: false,
             combat_damage_target: CombatDamageTarget::Any,
             requires_combat_damage: false,
@@ -2972,6 +3824,9 @@ impl Trigger {
             present_self_dealt_damage_to_opponent: false,
             taps_for_mana_valid_card: None,
             taps_for_mana_activator: None,
+            opponent_turn_only: false,
+            mode_gate: None,
+            requires_defender_hand_gt_controller: false,
         }
     }
 
@@ -3000,6 +3855,9 @@ impl Trigger {
             requires_opponent_cause: false,
             requires_noncreature: false,
             requires_instant_or_sorcery: false,
+            requires_instant: false,
+            requires_enchantment: false,
+            fires_for_any_caster: false,
             requires_attached_source: false,
             combat_damage_target: CombatDamageTarget::Any,
             requires_combat_damage: false,
@@ -3009,6 +3867,9 @@ impl Trigger {
             present_self_dealt_damage_to_opponent: false,
             taps_for_mana_valid_card: None,
             taps_for_mana_activator: None,
+            opponent_turn_only: false,
+            mode_gate: None,
+            requires_defender_hand_gt_controller: false,
         }
     }
 
@@ -3032,6 +3893,9 @@ impl Trigger {
             requires_opponent_cause: false,
             requires_noncreature: false,
             requires_instant_or_sorcery: false,
+            requires_instant: false,
+            requires_enchantment: false,
+            fires_for_any_caster: false,
             requires_attached_source: false,
             combat_damage_target: CombatDamageTarget::Any,
             requires_combat_damage: false,
@@ -3041,6 +3905,9 @@ impl Trigger {
             present_self_dealt_damage_to_opponent: false,
             taps_for_mana_valid_card: None,
             taps_for_mana_activator: None,
+            opponent_turn_only: false,
+            mode_gate: None,
+            requires_defender_hand_gt_controller: false,
         }
     }
 }
@@ -3123,8 +3990,10 @@ pub enum StaticAbility {
         /// Examples: "Card.nonCreature" = non-creature cards, "Card.Self" = only this card
         valid_card: CostReductionTarget,
 
-        /// Amount of generic mana to reduce
-        amount: u8,
+        /// How much generic mana to reduce: either a compile-time constant or a
+        /// `CountExpression` evaluated against the caster's game state at cast
+        /// time (e.g. Eddymurk Crab: number of instants/sorceries in graveyard).
+        amount: CostReductionAmount,
 
         /// Condition for when the reduction applies (presence checks)
         condition: Option<CostReductionCondition>,
@@ -3223,9 +4092,33 @@ pub enum StaticAbility {
     /// while the source is on the battlefield. Corresponds to
     /// `S:Mode$ CantBeCast | ValidCard$ <filter>` (City in a Bottle:
     /// `ValidCard$ Card.setARN`). General color/set/type-hoser machinery.
+    ///
+    /// The optional `caster_restriction` narrows who is prohibited:
+    /// - `None` / `CasterRestriction::Any` — applies to everyone (all players)
+    /// - `CasterRestriction::YouNonActive` — restricts the source's controller
+    ///   only while they are the **non-active** player (Fires of Invention line 1)
+    /// - `CasterRestriction::You` — restricts the source's controller only
+    ///   (Fires of Invention line 2: NumLimitEachTurn, Form of the Squirrel)
+    /// - `CasterRestriction::Opponent` — restricts opponents only
     CantBeCast {
         /// Which cards may not be cast (a card filter such as `Card.setARN`).
         valid_card: TargetRestriction,
+        /// Who is prohibited from casting matching cards.
+        caster_restriction: CasterRestriction,
+        /// If `Some(zone)`, the prohibition only applies when the card is being
+        /// cast from that specific zone (e.g. `Origin$ Hand` in Experimental
+        /// Frenzy: "you can't cast spells from your hand").
+        /// `None` means the restriction applies regardless of origin zone.
+        origin_restriction: Option<crate::zones::Zone>,
+        /// If `true`, the prohibition is lifted when the affected player IS in
+        /// a sorcery window (active player, main phase, empty stack). This
+        /// models Teferi, Time Raveler's static: "Each opponent can cast spells
+        /// only any time they could cast a sorcery." Corresponds to
+        /// `OnlySorcerySpeed$ True` in the Forge card script.
+        ///
+        /// Concretely: the prohibition fires if the caster_restriction matches
+        /// AND the caster is NOT currently in a sorcery window.
+        only_sorcery_speed: bool,
         /// Description for logging.
         description: String,
     },
@@ -3237,6 +4130,15 @@ pub enum StaticAbility {
     CantPlayLand {
         /// Which cards may not be played as lands (e.g. `Card.setARN`).
         valid_card: TargetRestriction,
+        /// Who is restricted from playing lands. Most uses restrict everyone
+        /// (`CasterRestriction::Any`), but Experimental Frenzy uses
+        /// `Player$ You` to restrict only the source's controller.
+        player_restriction: CasterRestriction,
+        /// If `Some(zone)`, the prohibition only applies when the land is
+        /// being played from that specific zone (e.g. `Origin$ Hand` in
+        /// Experimental Frenzy: "you can't play lands from your hand").
+        /// `None` means the restriction applies regardless of origin zone.
+        origin_restriction: Option<crate::zones::Zone>,
         /// Description for logging.
         description: String,
     },
@@ -3269,6 +4171,333 @@ pub enum StaticAbility {
         /// Description for logging
         description: String,
     },
+
+    /// Damage-increase replacement effect (CR 614.1a): when a qualifying red
+    /// source controlled by this permanent's controller would deal damage to an
+    /// opponent or opponent-controlled permanent, it deals that much plus
+    /// `bonus` instead.
+    ///
+    /// Corresponds to Torbran, Thane of Red Fell's static:
+    ///   `R:Event$ DamageDone | ValidSource$ Card.RedSource+YouCtrl
+    ///    | ValidTarget$ Player.Opponent,Permanent.OppCtrl | ReplaceWith$ DmgPlus2`
+    /// where `DmgPlus2` resolves to `ReplaceCount$DamageAmount/Plus.2`.
+    ///
+    /// This is deliberately narrow: it only models the "RedSource + YouCtrl →
+    /// Opponent/OppCtrl target → +N" shape (the shape Torbran has). Generalising
+    /// to arbitrary ValidSource/ValidTarget predicates can be done later when
+    /// another card requires it.
+    DamageIncrease {
+        /// Extra damage to add per damage event (e.g. 2 for Torbran).
+        bonus: u32,
+        /// Description for logging.
+        description: String,
+    },
+
+    /// Continuous damage-prevention replacement effect (CR 614.1e / 615.1):
+    /// prevent all damage from sources of the chosen color to the enchanted
+    /// creature.
+    ///
+    /// Corresponds to Prismatic Ward's static:
+    ///   `R:Event$ DamageDone | Prevent$ True | ValidTarget$ Creature.EnchantedBy
+    ///    | ValidSource$ Card.ChosenColor`
+    ///
+    /// The chosen color is stored on the Aura card at ETB time (via
+    /// `K:ETBReplacement:Other:ChooseColor`). At damage resolution, if the
+    /// source card's colors include the chosen color and the target creature is
+    /// the enchanted creature, the damage is prevented.
+    PreventDamageToEnchantedByChosenColor {
+        /// Description for logging.
+        description: String,
+    },
+
+    /// Attack prohibition conditional on the defending player's board state.
+    ///
+    /// Corresponds to Orgg's static:
+    ///   `S:Mode$ CantAttack | ValidCard$ Card.Self
+    ///    | UnlessDefender$ !controlsCreature.untapped+powerGE<N>`
+    ///
+    /// The source creature can't attack if the defending player controls at
+    /// least one untapped creature whose power is >= `min_power`. This models
+    /// the "can't attack unless defender has NO untapped creature with power ≥ N"
+    /// restriction from CR 508.1 (attack legality).
+    ///
+    /// Evaluated at declare-attackers time (CR 508.1c — "the creature can't attack").
+    CantAttackIfDefenderHasUntappedPowerGE {
+        /// Minimum power a defending creature must have to lock out the attacker.
+        min_power: i32,
+        /// Description for logging.
+        description: String,
+    },
+
+    /// Global attack/block prohibition for a set of creatures (CR 508.1c / 509.1b).
+    ///
+    /// Corresponds to `S:Mode$ CantAttack | ValidCard$ <filter>`,
+    /// `S:Mode$ CantBlock | ValidCard$ <filter>`, or the combined
+    /// `S:Mode$ CantAttack,CantBlock | ValidCard$ <filter>` (Light of Day).
+    ///
+    /// While the source permanent is on the battlefield, ALL battlefield
+    /// creatures matching `filter` (regardless of controller) are prohibited
+    /// from attacking (if `cant_attack`) and/or blocking (if `cant_block`).
+    /// This is distinct from `CantAttackIfDefenderHasUntappedPowerGE` (Orgg),
+    /// which restricts one specific creature conditionally.
+    CantAttackOrBlockMatching {
+        /// Attack prohibition: if true, matching creatures can't attack.
+        cant_attack: bool,
+        /// Block prohibition: if true, matching creatures can't block.
+        cant_block: bool,
+        /// Which creatures are restricted.
+        filter: TargetRestriction,
+        /// Description for logging.
+        description: String,
+    },
+
+    /// Activated-ability lock: while the source is on the battlefield, no
+    /// creature (matching `creature_filter`) may activate an activated ability.
+    ///
+    /// Corresponds to Cursed Totem:
+    ///   `S:Mode$ CantBeActivated | ValidCard$ Creature | ValidSA$ Activated`
+    ///
+    /// Evaluated at action-generation time: when collecting activated abilities
+    /// for a player, any activated ability on a card matching `creature_filter`
+    /// is suppressed.
+    CantBeActivated {
+        /// Creatures whose activated abilities are suppressed.
+        creature_filter: TargetRestriction,
+        /// Description for logging.
+        description: String,
+    },
+
+    /// Allows the controller to play additional lands per turn.
+    ///
+    /// Corresponds to: `S:Mode$ Continuous | Affected$ You | AdjustLandPlays$ N`
+    ///
+    /// Permanent form (on-battlefield static): Oracle of Mul Daya, Exploration enchantment,
+    /// Azusa Lost but Seeking, etc. The extra plays accumulate from all such statics
+    /// currently on the battlefield and controlled by the relevant player.
+    ///
+    /// Applied in `GameState::effective_max_lands()` which sums all `ExtraLandPlay`
+    /// statics on battlefield permanents plus `PersistentEffectKind::ExtraLandPlay`
+    /// for temporary grants (e.g. the Explore spell).
+    ExtraLandPlay {
+        /// Number of additional lands per turn (typically 1, 2 for Azusa).
+        amount: u8,
+        /// Description for logging.
+        description: String,
+    },
+
+    /// Life-floor replacement effect (CR 614.1e): while the source is on the
+    /// battlefield and the controller controls a creature, damage cannot reduce
+    /// the controller's life total below 1.
+    ///
+    /// Corresponds to Worship:
+    ///   `R:Event$ LifeReduced | ValidPlayer$ You.lifeGE1 | Result$ LT1
+    ///    | IsDamage$ True | IsPresent$ Creature.YouCtrl | ReplaceWith$ ReduceLoss`
+    ///
+    /// Applied in `GameState::deal_damage`: before dealing damage to the
+    /// controller, if they control a creature and their life is >= 1, cap
+    /// the damage so life stays at 1.
+    LifeFloor {
+        /// Description for logging.
+        description: String,
+    },
+
+    /// Damage-redirect: damage dealt to a player is replaced by that player
+    /// exiling that many cards from the top of their library instead
+    /// (CR 614.1a zone-change replacement).
+    ///
+    /// Corresponds to Crumbling Sanctuary:
+    ///   `R:Event$ DamageDone | ValidTarget$ Player | ReplaceWith$ ExileTop`
+    ///   `SVar:ExileTop:DB$ Dig | Defined$ ReplacedTarget | DigNum$ X
+    ///          | ChangeNum$ All | DestinationZone$ Exile`
+    ///
+    /// Applied in `GameState::deal_damage`: all damage to any player is
+    /// redirected — that player mills-to-exile that many cards instead.
+    /// NonStackingEffect: only the first Sanctuary's replacement fires.
+    DamageToExileLibrary {
+        /// Description for logging.
+        description: String,
+    },
+
+    /// Characteristic-defining P/T static (CR 613.4a, Layer 7a).
+    ///
+    /// Corresponds to Serra Avatar:
+    ///   `S:Mode$ Continuous | CharacteristicDefining$ True | SetPower$ X
+    ///    | SetToughness$ X`  with `SVar:X:Count$YourLifeTotal`
+    ///
+    /// The creature's power and toughness are each defined by `source`,
+    /// evaluated dynamically at the game layer (not at parse time) so life
+    /// total changes propagate immediately.
+    ///
+    /// Applied in `GameState::get_pt_breakdown`, layer 7a (characteristic_value).
+    CharacteristicDefiningPt {
+        /// What value to set power to.
+        power_source: CdaPtSource,
+        /// What value to set toughness to (often the same as `power_source`).
+        toughness_source: CdaPtSource,
+        /// Description for logging.
+        description: String,
+    },
+
+    /// Continuous effect that grants a "sacrifice unless you pay {N}" upkeep
+    /// trigger to all permanents matching `affected`.
+    ///
+    /// Corresponds to: `S:Mode$ Continuous | Affected$ X | AddTrigger$ UpkeepCostTrigger`
+    /// where `UpkeepCostTrigger` resolves to
+    ///   `Mode$ Phase | Phase$ Upkeep | ValidPlayer$ You | Execute$ TrigUpkeep`
+    /// and `TrigUpkeep` resolves to `DB$ Sacrifice | UnlessPayer$ You | UnlessCost$ N`.
+    ///
+    /// Example: Energy Flux ("All artifacts have 'At the beginning of your upkeep,
+    /// sacrifice this artifact unless you pay {2}.'").
+    /// Example: Aura Flux ("Other enchantments have 'At the beginning of your upkeep,
+    /// sacrifice this enchantment unless you pay {2}.'").
+    ///
+    /// While the source is on the battlefield, at the beginning of each player's
+    /// upkeep every affected permanent's controller must pay `unless_cost` generic
+    /// mana or sacrifice that permanent. Applied in `check_phase_triggers` by
+    /// scanning all `GrantUpkeepSacrificeUnlessPay` statics on the battlefield.
+    GrantUpkeepSacrificeUnlessPay {
+        /// Filter for which permanents are affected (e.g. `Artifact`, `Enchantment.Other`).
+        affected: AffectedSelector,
+        /// Generic mana cost to avoid sacrifice (e.g. 2 for Energy Flux / Aura Flux).
+        unless_cost: u8,
+        /// Description for logging.
+        description: String,
+    },
+
+    /// Alternative-cost static ability.
+    ///
+    /// Corresponds to: `S:Mode$ AlternativeCost | ValidSA$ Spell.Self | EffectZone$ All
+    ///   | Cost$ 0 | CheckSVar$ <var> | Description$ ...`
+    ///
+    /// Example: Summoning Trap — may be cast for {0} instead of its normal {5}{G}{G}
+    /// cost when a creature spell you cast was countered earlier this turn.
+    ///
+    /// `condition`: which runtime flag must be true on the casting player.
+    /// `alt_cost`: the alternative mana cost (e.g. {0} = `ManaCost::zero()`).
+    /// `description`: for logging/display.
+    ///
+    /// Applied in `push_castable_spells` (actions.rs): when the condition is met,
+    /// the spell is offered a second time with `override_cost = Some(alt_cost)`.
+    AlternativeCost {
+        /// Runtime condition that must be satisfied for the alt cost to be offered.
+        condition: AltCostCondition,
+        /// The alternative mana cost to use when condition is met.
+        alt_cost: crate::core::ManaCost,
+        /// Description for logging/display.
+        description: String,
+    },
+
+    /// Continuous static: while the source is on the battlefield, the controller
+    /// may cast nonland spells with CMC ≤ the value of `cmc_limit_svar` without
+    /// paying their mana costs (Fires of Invention, CR 702.25).
+    ///
+    /// Corresponds to:
+    ///   `S:Mode$ Continuous | Affected$ Card.nonLand+cmcLEX | MayPlay$ True
+    ///    | MayPlayWithoutManaCost$ True | AffectedZone$ Hand,...`
+    /// with `SVar:X:Count$Valid Land.YouCtrl`
+    ///
+    /// Applied in `push_castable_spells`: cards in hand whose CMC ≤ land count
+    /// are offered as `CastFromHandWithAltCost { alternative_cost: ManaCost::zero() }`.
+    MayPlayWithoutManaCost {
+        /// SVar name that holds the CMC limit expression (e.g. "X" →
+        /// "Count$Valid Land.YouCtrl").
+        cmc_limit_svar: String,
+        /// Description for logging/display.
+        description: String,
+    },
+
+    /// Continuous static: while the source is on the battlefield, the controller
+    /// may cast or play the top card of their library (Experimental Frenzy,
+    /// Future Sight, etc.; CR 702.150).
+    ///
+    /// Corresponds to:
+    ///   `S:Mode$ Continuous | Affected$ Card.TopLibrary+YouCtrl
+    ///    | AffectedZone$ Library | MayPlay$ True`
+    ///
+    /// Applied in `push_castable_from_library`: the top card of the controlling
+    /// player's library is offered as `SpellAbility::CastFromLibrary` (for
+    /// non-land spells) or `SpellAbility::PlayLandFromLibrary` (for land cards).
+    MayPlayFromLibrary {
+        /// Description for logging/display.
+        description: String,
+    },
+
+    /// Torpor Orb: while this permanent is on the battlefield, creatures entering
+    /// the battlefield don't cause triggered abilities to trigger (CR 603.6b).
+    ///
+    /// Corresponds to Torpor Orb's card script:
+    ///   `S:Mode$ DisableTriggers | ValidCause$ Creature | ValidMode$ ChangesZone,ChangesZoneAll
+    ///    | Destination$ Battlefield`
+    ///
+    /// Applied in `check_triggers_inner`: before firing any
+    /// `TriggerEvent::EntersBattlefield` trigger, we check whether any permanent
+    /// on the battlefield has this static and the entering card is a creature. If
+    /// so, the trigger is suppressed (the trigger still "technically" triggers per
+    /// CR 603.6b — it just doesn't go on the stack).
+    ///
+    /// MTG rules: CR 603.6b — "Some effects can turn off abilities. If an effect
+    /// states that abilities of a permanent are turned off, that permanent loses
+    /// all abilities for the duration of the effect."  Torpor Orb is the canonical
+    /// example of suppressing ETB triggers across ALL creatures while it's in play.
+    DisableCreatureEtbTriggers {
+        /// Description for logging.
+        description: String,
+    },
+
+    /// Opalescence-style continuous effect (CR 613, Layers 4 + 7b):
+    /// each other non-Aura enchantment on the battlefield becomes a creature
+    /// in addition to its other types, with base power and base toughness each
+    /// equal to its mana value.
+    ///
+    /// Corresponds to Opalescence:
+    ///   `S:Mode$ Continuous | Affected$ Enchantment.nonAura+Other
+    ///    | SetPower$ AffectedX | SetToughness$ AffectedX | AddType$ Creature`
+    ///   `SVar:AffectedX:Count$CardManaCost`
+    ///
+    /// Applied at two layers:
+    ///  - **Layer 4** (type): `GameState::is_opalescence_creature()` returns `true`
+    ///    for any non-aura enchantment while this static is in play; the attacker
+    ///    and blocker collectors treat such permanents as creatures.
+    ///  - **Layer 7b** (set P/T): `get_pt_breakdown()` applies `setpt_value =
+    ///    Some((cmc, cmc))` for affected permanents (mana value from printed cost).
+    ///
+    /// MTG rules: CR 613.1a (layer 4), CR 613.4b (layer 7b), CR 110.4 (creature types).
+    OpalescenceStyle {
+        /// Description for logging/display.
+        description: String,
+    },
+}
+
+/// Condition checked at cast time for an [`StaticAbility::AlternativeCost`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AltCostCondition {
+    /// True when one of the casting player's creature spells was countered
+    /// this turn by an opponent's effect (Summoning Trap condition).
+    HadCreatureCounteredThisTurn,
+}
+
+/// Source expression for a CharacteristicDefiningPt static ability.
+///
+/// Each variant evaluates to a single integer used as power or toughness.
+/// Evaluated dynamically at game-state layer-7a resolution.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CdaPtSource {
+    /// P/T = controller's current life total.
+    /// Serra Avatar: `SVar:X:Count$YourLifeTotal`
+    ControllerLifeTotal,
+
+    /// Count of creature cards across ALL players' graveyards, with an optional
+    /// arithmetic post-modifier.
+    ///
+    /// Lhurgoyf power: `SVar:X:Count$ValidGraveyard Creature` → modifier None.
+    /// Lhurgoyf toughness: `SVar:Y:Count$ValidGraveyard Creature/Plus.1` → modifier Plus(1).
+    ///
+    /// Graveyard contents are public (CR 400.2), so this is information-independent
+    /// and safe for network determinism.
+    AllGraveyardCreatures {
+        /// Arithmetic post-modifier applied to the raw count (`/Plus.N`, `/Minus.N`).
+        modifier: crate::core::CountModifier,
+    },
 }
 
 /// Target selector for cost reduction abilities
@@ -3283,6 +4512,13 @@ pub enum CostReductionTarget {
     /// All spells (no restriction)
     /// Corresponds to: `ValidCard$ Card` or no ValidCard parameter
     AllSpells,
+
+    /// Only this card itself, regardless of zone (EffectZone$ All).
+    /// Corresponds to: `ValidCard$ Card.Self | EffectZone$ All`.
+    /// The reduction is applied directly from the card being cast, not
+    /// from a battlefield permanent. Used by cards that reduce their own
+    /// casting cost based on game state (e.g. Eddymurk Crab).
+    SelfCard,
 
     /// Creature spells only
     /// Corresponds to: `ValidCard$ Creature`
@@ -3314,6 +4550,30 @@ pub struct CostReductionCondition {
 
     /// Minimum count required (from PresentCompare$ GE3 -> 3)
     pub min_count: u8,
+}
+
+/// Amount for a cost reduction — either a compile-time fixed generic count or
+/// a `CountExpression` evaluated against the caster at cast time.
+///
+/// Fixed: `Amount$ 2` → reduce by exactly 2.
+/// Dynamic: `Amount$ X` with `SVar:X:Count$ValidGraveyard Instant.YouOwn,Sorcery.YouOwn`
+/// → reduce by the number of instants/sorceries in your graveyard (e.g. Eddymurk Crab).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CostReductionAmount {
+    /// Reduce by a fixed number of generic mana.
+    Fixed(u8),
+    /// Reduce by a count evaluated at cast time (e.g. graveyard count).
+    Dynamic(CountExpression),
+}
+
+impl CostReductionAmount {
+    /// Return the fixed amount if known at load time, or `None` if dynamic.
+    pub fn fixed(&self) -> Option<u8> {
+        match self {
+            CostReductionAmount::Fixed(n) => Some(*n),
+            CostReductionAmount::Dynamic(_) => None,
+        }
+    }
 }
 
 /// Represents what additional cost is raised by a RaiseCost ability
@@ -4353,12 +5613,28 @@ pub struct AbilityCache {
     pub targets_creature: bool,
     pub targets_land: bool,
     pub requires_target: bool,
+    /// True when the ability targets a player (any player), e.g. "target player".
+    /// Used to enumerate all players as valid targets for effects like SetLife
+    /// that target a player (e.g. "Target player's life total becomes 10").
+    pub targets_player: bool,
+    /// True when the ability targets an opponent specifically, e.g. "target opponent".
+    /// Used to enumerate only opponents as valid targets for effects like Sorin
+    /// Markov's -3 ("Target opponent's life total becomes 10.").
+    pub targets_opponent: bool,
 }
 
 impl AbilityCache {
     /// Create a new cache from ability description
     pub fn new(description: &str) -> Self {
         let desc_lower = description.to_lowercase();
+
+        // Check for "target opponent" before "target player" to distinguish them.
+        // "target opponent" is a subset of "target player" semantically, but the
+        // engine enumerates different player sets for each.
+        let targets_opponent = desc_lower.contains("target opponent");
+        // "target player" catches abilities that target any player (including self),
+        // but exclude the opponent-only case to avoid double-counting.
+        let targets_player = !targets_opponent && desc_lower.contains("target player");
 
         AbilityCache {
             // Store lowercase version
@@ -4369,7 +5645,16 @@ impl AbilityCache {
             targets_untapped: desc_lower.contains("untapped"),
             targets_creature: desc_lower.contains("creature"),
             targets_land: desc_lower.contains("land"),
-            requires_target: desc_lower.contains("target") || desc_lower.starts_with("equip"),
+            // requires_target: true if this ability itself needs a target selected at activation.
+            // We check for "target" as a word in the description, but exclude cases where "target"
+            // appears only inside a token's sub-ability text (e.g. Tibalt's Devil token:
+            // "Create a 1/1 red Devil ... with 'deals 1 damage to any target.'").
+            // Heuristic: if the description starts with "Create" (token creation), the activation
+            // itself never needs a target — any "target" in the text belongs to the token's ability.
+            requires_target: (desc_lower.contains("target") && !desc_lower.starts_with("create"))
+                || desc_lower.starts_with("equip"),
+            targets_player,
+            targets_opponent,
         }
     }
 }
@@ -4668,8 +5953,35 @@ mod tests {
 
         let expr = CountExpression::parse("+X", &svars);
         assert!(
-            matches!(&expr, CountExpression::ValidPermanents { filter } if filter == "Artifact.OppCtrl"),
+            matches!(&expr, CountExpression::ValidPermanents { filter, .. } if filter == "Artifact.OppCtrl"),
             "Expected ValidPermanents with Artifact.OppCtrl filter, got {:?}",
+            expr
+        );
+    }
+
+    /// B1 fix regression: `Count$Valid Shrine.YouCtrl/Times.2` must parse the
+    /// `/Times.2` suffix as `CountModifier::Times(2)` and strip it from the filter.
+    ///
+    /// Before the fix the whole string was stored as the filter
+    /// (`"Shrine.YouCtrl/Times.2"`) with no modifier, causing:
+    ///   1. `count_permanents_matching` to warn "Unknown filter type" and
+    ///      count ALL permanents (wrong).
+    ///   2. The ×2 multiplier to never be applied (gain was 1× instead of 2×).
+    #[test]
+    fn test_count_expression_parse_valid_permanents_times_modifier() {
+        let mut svars = std::collections::HashMap::new();
+        svars.insert("X".to_string(), "Count$Valid Shrine.YouCtrl/Times.2".to_string());
+
+        let expr = CountExpression::parse("X", &svars);
+        assert!(
+            matches!(
+                &expr,
+                CountExpression::ValidPermanents {
+                    filter,
+                    modifier: CountModifier::Times(2)
+                } if filter == "Shrine.YouCtrl"
+            ),
+            "Expected ValidPermanents {{ filter: \"Shrine.YouCtrl\", modifier: Times(2) }}, got {:?}",
             expr
         );
     }
@@ -4716,10 +6028,13 @@ mod tests {
             | CountExpression::ValidPermanents { .. }
             | CountExpression::CardsDrawnThisTurn
             | CountExpression::XPaid
+            | CountExpression::TimesKicked
             | CountExpression::SpellsCastThisTurn
             | CountExpression::ValidGraveyard { .. }
             | CountExpression::Kicked { .. }
+            | CountExpression::Bargain { .. }
             | CountExpression::TargetedCardPower
+            | CountExpression::TriggeredCardPower
             | CountExpression::Compare { .. } => panic!("Expected CardsInHand, got {:?}", expr),
         }
 
@@ -4763,10 +6078,13 @@ mod tests {
             | CountExpression::CardsDrawnThisTurn
             | CountExpression::CardsInHand { .. }
             | CountExpression::XPaid
+            | CountExpression::TimesKicked
             | CountExpression::SpellsCastThisTurn
             | CountExpression::Compare { .. }
             | CountExpression::TargetedCardPower
-            | CountExpression::Kicked { .. } => {
+            | CountExpression::TriggeredCardPower
+            | CountExpression::Kicked { .. }
+            | CountExpression::Bargain { .. } => {
                 panic!("Expected ValidGraveyard, got {:?}", &svars["CT"])
             }
         }
@@ -4800,17 +6118,20 @@ mod tests {
             } => {
                 // Check the nested source was resolved
                 match source.as_ref() {
-                    CountExpression::ValidPermanents { filter } => {
+                    CountExpression::ValidPermanents { filter, .. } => {
                         assert_eq!(filter, "Creature.YouCtrl+powerGE4");
                     }
                     CountExpression::Fixed(_)
                     | CountExpression::CardsDrawnThisTurn
                     | CountExpression::CardsInHand { .. }
                     | CountExpression::XPaid
+                    | CountExpression::TimesKicked
                     | CountExpression::SpellsCastThisTurn
                     | CountExpression::ValidGraveyard { .. }
                     | CountExpression::Kicked { .. }
+                    | CountExpression::Bargain { .. }
                     | CountExpression::TargetedCardPower
+                    | CountExpression::TriggeredCardPower
                     | CountExpression::Compare { .. } => {
                         panic!("Expected ValidPermanents, got {:?}", source)
                     }
@@ -4826,10 +6147,13 @@ mod tests {
             | CountExpression::CardsDrawnThisTurn
             | CountExpression::CardsInHand { .. }
             | CountExpression::XPaid
+            | CountExpression::TimesKicked
             | CountExpression::SpellsCastThisTurn
             | CountExpression::ValidGraveyard { .. }
             | CountExpression::Kicked { .. }
-            | CountExpression::TargetedCardPower => panic!("Expected Compare, got {:?}", expr),
+            | CountExpression::Bargain { .. }
+            | CountExpression::TargetedCardPower
+            | CountExpression::TriggeredCardPower => panic!("Expected Compare, got {:?}", expr),
         }
     }
 

@@ -1151,6 +1151,7 @@ mod tests {
             power_bonus: 3,
             toughness_bonus: 3,
             keywords_granted: smallvec::SmallVec::new(),
+            keyword_args_granted: smallvec::SmallVec::new(),
         });
         game.cards.insert(pump_spell_id, pump_spell);
 
@@ -1544,6 +1545,7 @@ mod tests {
             power_bonus: 3,
             toughness_bonus: 3,
             keywords_granted: smallvec::SmallVec::new(),
+            keyword_args_granted: smallvec::SmallVec::new(),
         });
         game.cards.insert(pump_spell_id, pump_spell);
         game.stack.add(pump_spell_id);
@@ -1872,6 +1874,7 @@ mod tests {
         wrath.effects.push(Effect::DestroyAll {
             restriction: crate::core::TargetRestriction::from_types([crate::core::TargetType::Creature]),
             no_regenerate: true,
+            cmc_eq_source: None,
         });
         game.cards.insert(wrath_id, wrath);
         game.stack.add(wrath_id);
@@ -1925,6 +1928,7 @@ mod tests {
         wrath.effects.push(Effect::DestroyAll {
             restriction: crate::core::TargetRestriction::from_types([crate::core::TargetType::Creature]),
             no_regenerate: true,
+            cmc_eq_source: None,
         });
         game.cards.insert(wrath_id, wrath);
         game.stack.add(wrath_id);
@@ -2372,5 +2376,522 @@ mod tests {
 
         let p1 = game.get_player(p1_id).unwrap();
         assert_eq!(p1.life, 20, "P1's life should be restored to 20");
+    }
+
+    /// CR 614.1c + CR 107.3: X-cost permanents enter the battlefield with X
+    /// counters, where X is the amount paid when casting the spell.
+    ///
+    /// Regression test for B1 from the 2015 World Championship compat survey:
+    /// Hangarback Walker (K:etbCounter:P1P1:X) was entering as a 0/0 with NO
+    /// counters because `apply_etb_counters` did not resolve the symbolic "X"
+    /// amount via the card's `x_paid` field.
+    #[test]
+    fn test_etb_counter_x_cost_uses_x_paid() {
+        use crate::core::{CardType, CounterType, KeywordArgs, KeywordSet};
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+
+        // Build a minimal Hangarback Walker-like card:
+        //   ManaCost: X X (any generic); PT: 0/0; K:etbCounter:P1P1:X
+        let walker_id = game.next_entity_id();
+        let mut walker = Card::new(walker_id, "Hangarback Walker".to_string(), p1_id);
+        walker.add_type(CardType::Artifact);
+        walker.add_type(CardType::Creature);
+        walker.set_base_power(Some(0));
+        walker.set_base_toughness(Some(0));
+        walker.controller = p1_id;
+
+        // Attach K:etbCounter:P1P1:X keyword (the "X" amount is symbolic).
+        let mut kws = KeywordSet::default();
+        kws.insert_complex(KeywordArgs::EtbCounter {
+            counter_type: "P1P1".to_string(),
+            amount: "X".to_string(),
+            condition: String::new(),
+        });
+        walker.keywords = kws;
+
+        // Simulate X = 3 (player paid {3}{3} for the Walker).
+        walker.x_paid = 3;
+
+        // Place the card on the stack so `resolve_spell_finalize` can pick it up.
+        game.cards.insert(walker_id, walker);
+        game.stack.add(walker_id);
+
+        // Resolving a permanent spell moves it to the battlefield and calls
+        // `apply_etb_counters`.
+        game.resolve_spell(walker_id, &[]).unwrap();
+
+        // Walker should now be on the battlefield.
+        assert!(
+            game.battlefield.contains(walker_id),
+            "Hangarback Walker should be on the battlefield after resolving"
+        );
+
+        // The card must have exactly 3 +1/+1 counters (= x_paid).
+        let actual_counters = game
+            .cards
+            .get(walker_id)
+            .map(|c| c.get_counter(CounterType::P1P1))
+            .unwrap_or(0);
+        assert_eq!(
+            actual_counters, 3,
+            "Hangarback Walker should enter with 3 +1/+1 counters when X=3, \
+             but got {actual_counters}"
+        );
+
+        // P/T with counters: 0/0 base + 3/3 from counters = 3/3.
+        let card = game.cards.get(walker_id).unwrap();
+        assert_eq!(
+            card.current_power(),
+            3,
+            "Hangarback Walker should be 3/3 with 3 counters"
+        );
+        assert_eq!(
+            card.current_toughness(),
+            3,
+            "Hangarback Walker should be 3/3 with 3 counters"
+        );
+    }
+
+    /// Regression test for 2010 Compat Wave 2 B1: Everflowing Chalice
+    /// (K:etbCounter:CHARGE:XKicked, SVar:XKicked:Count$TimesKicked) was entering
+    /// with zero CHARGE counters because `apply_etb_counters` did not resolve
+    /// named SVar amounts via the card's own SVar dictionary.  After the fix,
+    /// `XKicked` resolves to `Count$TimesKicked` → `CountExpression::TimesKicked` →
+    /// `card.times_kicked`, and the Chalice enters with one counter per kick.
+    #[test]
+    fn test_etb_counter_xkicked_svar_uses_times_kicked() {
+        use crate::core::{CardType, CounterType, KeywordArgs, KeywordSet, ManaCost};
+        use std::collections::HashMap;
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+
+        // Build a minimal Everflowing Chalice-like card:
+        //   ManaCost: 0; K:Multikicker:2; K:etbCounter:CHARGE:XKicked
+        //   SVar:XKicked:Count$TimesKicked
+        let chalice_id = game.next_entity_id();
+        let mut chalice = Card::new(chalice_id, "Everflowing Chalice".to_string(), p1_id);
+        chalice.add_type(CardType::Artifact);
+        chalice.mana_cost = ManaCost::new(); // {0}
+        chalice.controller = p1_id;
+
+        // Attach the Multikicker and etbCounter keywords.
+        let mut kws = KeywordSet::default();
+        kws.insert_complex(KeywordArgs::Multikicker {
+            cost: ManaCost::from_string("2"),
+        });
+        kws.insert_complex(KeywordArgs::EtbCounter {
+            counter_type: "CHARGE".to_string(),
+            amount: "XKicked".to_string(),
+            condition: String::new(),
+        });
+        chalice.keywords = kws;
+
+        // Populate the SVar dictionary exactly as the card script specifies.
+        let mut svars: HashMap<String, String> = HashMap::new();
+        svars.insert("XKicked".to_string(), "Count$TimesKicked".to_string());
+        chalice.svars = svars;
+
+        // Simulate paying Multikicker 3 times.
+        chalice.times_kicked = 3;
+
+        // Place the card on the stack and resolve it.
+        game.cards.insert(chalice_id, chalice);
+        game.stack.add(chalice_id);
+        game.resolve_spell(chalice_id, &[]).unwrap();
+
+        // Chalice should be on the battlefield.
+        assert!(
+            game.battlefield.contains(chalice_id),
+            "Everflowing Chalice should be on the battlefield after resolving"
+        );
+
+        // Must have exactly 3 CHARGE counters (= times_kicked).
+        let actual_counters = game
+            .cards
+            .get(chalice_id)
+            .map(|c| c.get_counter(CounterType::Charge))
+            .unwrap_or(0);
+        assert_eq!(
+            actual_counters, 3,
+            "Everflowing Chalice should enter with 3 CHARGE counters when kicked 3 times, \
+             but got {actual_counters}"
+        );
+    }
+
+    /// CR 603.6c + CR 608.2g (LKI): Hangarback Walker's death trigger creates
+    /// one Thopter for EACH +1/+1 counter on the dying card.
+    ///
+    /// Regression test for the secondary B1 bug: the death trigger SVar
+    /// `DB$ Token | TokenAmount$ Y` (where `SVar:Y:TriggeredCard$CardCounters.P1P1`)
+    /// was falling back to `amount=1` because `params_to_effect` did not resolve
+    /// the variable `Y` through the card's SVars.  After the fix,
+    /// `extract_effects_from_svar` emits `Effect::CreateTokenDynamic` with
+    /// `DynamicAmount::TriggeredCardCounters(P1P1)`, which `check_death_triggers`
+    /// resolves to a concrete `CreateToken { amount: counter_count }` via the LKI
+    /// snapshot in `TriggerContext`.
+    ///
+    /// Test approach: load the real Hangarback Walker card script, verify that
+    /// the death trigger effect is `CreateTokenDynamic` (not `CreateToken` with a
+    /// fixed amount), and that `check_death_triggers` produces the correct number
+    /// of tokens using a fake token definition.
+    #[test]
+    fn test_hangarback_walker_thopter_count_uses_p1p1_counters() {
+        use crate::core::{CounterType, DynamicAmount, Effect};
+        use crate::loader::CardLoader;
+
+        // Load the real Hangarback Walker script to verify the parser produces
+        // CreateTokenDynamic for the death trigger.
+        let script = r#"Name:Hangarback Walker
+ManaCost:X X
+Types:Artifact Creature Construct
+PT:0/0
+K:etbCounter:P1P1:X
+T:Mode$ ChangesZone | Origin$ Battlefield | Destination$ Graveyard | ValidCard$ Card.Self | Execute$ TrigToken | TriggerDescription$ When CARDNAME dies, create a 1/1 colorless Thopter artifact creature token with flying for each +1/+1 counter on CARDNAME.
+SVar:TrigToken:DB$ Token | TokenAmount$ Y | TokenScript$ c_1_1_a_thopter_flying | TokenOwner$ You
+SVar:Y:TriggeredCard$CardCounters.P1P1
+A:AB$ PutCounter | Cost$ 1 T | CounterType$ P1P1 | CounterNum$ 1 | SpellDescription$ Put a +1/+1 counter on CARDNAME.
+SVar:X:Count$xPaid
+Oracle:Hangarback Walker enters with X +1/+1 counters on it.
+"#;
+        let def = CardLoader::parse(script).unwrap();
+        let p1_id = crate::core::PlayerId::new(0);
+        let card = def.instantiate(crate::core::CardId::new(1), p1_id);
+
+        // The death trigger must be a `CreateTokenDynamic` with
+        // `DynamicAmount::TriggeredCardCounters(CounterType::P1P1)`.
+        let death_trigger = card
+            .triggers
+            .iter()
+            .find(|t| t.event == crate::core::TriggerEvent::LeavesBattlefield)
+            .expect("Hangarback Walker must have a death trigger");
+
+        let dynamic_token_effect = death_trigger.effects.iter().find(|e| {
+            matches!(
+                e,
+                Effect::CreateTokenDynamic {
+                    amount: DynamicAmount::TriggeredCardCounters(CounterType::P1P1),
+                    ..
+                }
+            )
+        });
+        assert!(
+            dynamic_token_effect.is_some(),
+            "Hangarback Walker death trigger must emit CreateTokenDynamic with \
+             DynamicAmount::TriggeredCardCounters(P1P1), but found effects: {:?}",
+            death_trigger.effects
+        );
+    }
+
+    /// CR 702.52: Dredge replaces a draw.
+    ///
+    /// Setup: P1 has Life from the Loam (Dredge 3) in their graveyard, three
+    /// land cards in their library, and an empty hand. When P1 calls draw_card,
+    /// the dredge replacement should fire: the three library cards move to the
+    /// graveyard and Life from the Loam returns to hand.
+    #[test]
+    fn test_dredge_replaces_draw() {
+        use crate::core::KeywordArgs;
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+
+        // Create "Life from the Loam" with Dredge 3 in P1's graveyard.
+        let loam_id = game.next_card_id();
+        let mut loam = Card::new(loam_id, "Life from the Loam".to_string(), p1_id);
+        loam.add_type(CardType::Sorcery);
+        loam.keywords.insert_complex(KeywordArgs::Dredge { amount: 3 });
+        game.cards.insert(loam_id, loam);
+        if let Some(zones) = game.get_player_zones_mut(p1_id) {
+            zones.graveyard.add(loam_id);
+        }
+
+        // Put exactly 3 land cards in P1's library.
+        let mut library_ids = Vec::new();
+        for i in 0..3_u8 {
+            let land_id = game.next_card_id();
+            let mut land = Card::new(land_id, format!("Mountain {i}"), p1_id);
+            land.add_type(CardType::Land);
+            game.cards.insert(land_id, land);
+            if let Some(zones) = game.get_player_zones_mut(p1_id) {
+                zones.library.add(land_id);
+            }
+            library_ids.push(land_id);
+        }
+
+        // P1's hand is initially empty.
+        assert!(
+            game.get_player_zones(p1_id)
+                .map(|z| z.hand.cards.is_empty())
+                .unwrap_or(false),
+            "P1 hand should start empty"
+        );
+
+        // Trigger the draw — dredge should intercept it.
+        let (drawn_card, draw_count) = game.draw_card(p1_id).expect("draw_card should succeed");
+
+        // No card was "drawn" in the MTG sense (dredge replaced the draw).
+        assert_eq!(
+            drawn_card, None,
+            "Dredge should replace the draw: drawn_card should be None"
+        );
+        assert_eq!(draw_count, 0, "Dredge should not increment draw_count");
+
+        // Life from the Loam must now be in P1's hand.
+        let zones = game.get_player_zones(p1_id).expect("zones must exist");
+        assert!(
+            zones.hand.cards.contains(&loam_id),
+            "Life from the Loam should be in hand after dredge"
+        );
+
+        // The three library cards must now be in the graveyard.
+        for &land_id in &library_ids {
+            assert!(
+                zones.graveyard.cards.contains(&land_id),
+                "Milled land {land_id} should be in graveyard after dredge"
+            );
+        }
+
+        // Library must now be empty (all 3 cards were milled).
+        assert!(
+            zones.library.cards.is_empty(),
+            "Library should be empty after dredge milled all 3 cards"
+        );
+
+        // Life from the Loam must NOT be in the graveyard anymore.
+        assert!(
+            !zones.graveyard.cards.contains(&loam_id),
+            "Life from the Loam should no longer be in graveyard after dredge"
+        );
+    }
+
+    /// CR 702.52: Dredge does NOT fire if the library is too small.
+    ///
+    /// If the player has a Dredge 3 card but only 2 cards in library, the
+    /// dredge cannot fire and normal draw proceeds.
+    #[test]
+    fn test_dredge_skipped_when_library_too_small() {
+        use crate::core::KeywordArgs;
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+
+        // Life from the Loam (Dredge 3) in P1's graveyard.
+        let loam_id = game.next_card_id();
+        let mut loam = Card::new(loam_id, "Life from the Loam".to_string(), p1_id);
+        loam.add_type(CardType::Sorcery);
+        loam.keywords.insert_complex(KeywordArgs::Dredge { amount: 3 });
+        game.cards.insert(loam_id, loam);
+        if let Some(zones) = game.get_player_zones_mut(p1_id) {
+            zones.graveyard.add(loam_id);
+        }
+
+        // Only 2 cards in library — not enough for Dredge 3.
+        let mut library_ids = Vec::new();
+        for i in 0..2_u8 {
+            let card_id = game.next_card_id();
+            let mut card = Card::new(card_id, format!("Island {i}"), p1_id);
+            card.add_type(CardType::Land);
+            game.cards.insert(card_id, card);
+            if let Some(zones) = game.get_player_zones_mut(p1_id) {
+                zones.library.add(card_id);
+            }
+            library_ids.push(card_id);
+        }
+
+        // Draw should proceed normally (top card drawn, no dredge).
+        let (drawn_card, _draw_count) = game.draw_card(p1_id).expect("draw_card should succeed");
+
+        // The top library card (last pushed) should have been drawn.
+        let expected_drawn = library_ids.last().copied();
+        assert_eq!(
+            drawn_card, expected_drawn,
+            "Normal draw should happen when library is too small for dredge"
+        );
+
+        // Life from the Loam must still be in the graveyard.
+        let zones = game.get_player_zones(p1_id).expect("zones must exist");
+        assert!(
+            zones.graveyard.cards.contains(&loam_id),
+            "Life from the Loam should remain in graveyard (dredge did not fire)"
+        );
+    }
+
+    /// CR 702.52: draw_card_silent (opening hand) never triggers dredge.
+    ///
+    /// Even if a player somehow has a Dredge card in their graveyard at game
+    /// start (edge case), opening-hand setup must not activate dredge.
+    #[test]
+    fn test_dredge_not_triggered_by_draw_card_silent() {
+        use crate::core::KeywordArgs;
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+
+        // Life from the Loam (Dredge 3) in graveyard (edge case).
+        let loam_id = game.next_card_id();
+        let mut loam = Card::new(loam_id, "Life from the Loam".to_string(), p1_id);
+        loam.add_type(CardType::Sorcery);
+        loam.keywords.insert_complex(KeywordArgs::Dredge { amount: 3 });
+        game.cards.insert(loam_id, loam);
+        if let Some(zones) = game.get_player_zones_mut(p1_id) {
+            zones.graveyard.add(loam_id);
+        }
+
+        // 5 cards in library.
+        let mut library_ids = Vec::new();
+        for i in 0..5_u8 {
+            let card_id = game.next_card_id();
+            let mut card = Card::new(card_id, format!("Forest {i}"), p1_id);
+            card.add_type(CardType::Land);
+            game.cards.insert(card_id, card);
+            if let Some(zones) = game.get_player_zones_mut(p1_id) {
+                zones.library.add(card_id);
+            }
+            library_ids.push(card_id);
+        }
+
+        // draw_card_silent should NOT trigger dredge — top card drawn normally.
+        let (drawn_card, _draw_count) = game.draw_card_silent(p1_id).expect("draw_card_silent should succeed");
+
+        // The top library card should have been drawn.
+        let expected_drawn = library_ids.last().copied();
+        assert_eq!(
+            drawn_card, expected_drawn,
+            "draw_card_silent must not trigger dredge; top card should be drawn"
+        );
+
+        // Life from the Loam must still be in the graveyard.
+        let zones = game.get_player_zones(p1_id).expect("zones must exist");
+        assert!(
+            zones.graveyard.cards.contains(&loam_id),
+            "Life from the Loam should remain in graveyard (draw_card_silent never triggers dredge)"
+        );
+    }
+
+    // ==================== Annihilator Tests ====================
+
+    /// CR 702.86: Annihilator N — whenever this creature attacks, the defending
+    /// player sacrifices N permanents. Fires as part of declare_attacker.
+    #[test]
+    fn test_annihilator_trigger_sacrifices_permanents() {
+        use crate::core::KeywordArgs;
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        let p2_id = game.players[1].id;
+
+        // P1: Emrakul-like creature with Annihilator 3
+        let emrakul_id = game.next_card_id();
+        let mut eldrazi = Card::new(emrakul_id, "Test Eldrazi".to_string(), p1_id);
+        eldrazi.add_type(CardType::Creature);
+        eldrazi.set_base_power(Some(15));
+        eldrazi.set_base_toughness(Some(15));
+        eldrazi.controller = p1_id;
+        eldrazi.keywords.insert_complex(KeywordArgs::Annihilator { amount: 3 });
+        // Not tapped, not summoning sick
+        eldrazi.turn_entered_battlefield = Some(game.turn.turn_number - 1);
+        game.cards.insert(emrakul_id, eldrazi);
+        game.battlefield.add(emrakul_id);
+
+        // P2: 4 permanents (3 creatures + 1 land)
+        for name in ["Grizzly Bears", "Llanowar Elves", "Hill Giant", "Forest"] {
+            let id = game.next_card_id();
+            let mut card = Card::new(id, name.to_string(), p2_id);
+            if name == "Forest" {
+                card.add_type(CardType::Land);
+            } else {
+                card.add_type(CardType::Creature);
+                let (p, t) = match name {
+                    "Grizzly Bears" => (2, 2),
+                    "Llanowar Elves" => (1, 1),
+                    _ => (3, 3),
+                };
+                card.set_base_power(Some(p));
+                card.set_base_toughness(Some(t));
+            }
+            card.controller = p2_id;
+            game.cards.insert(id, card);
+            game.battlefield.add(id);
+        }
+
+        let p2_before = game
+            .battlefield
+            .cards
+            .iter()
+            .filter(|&&id| game.cards.try_get(id).is_some_and(|c| c.controller == p2_id))
+            .count();
+        assert_eq!(p2_before, 4, "P2 should have 4 permanents before attack");
+
+        // Declare attacker: this should fire the Annihilator 3 trigger
+        game.declare_attacker(p1_id, emrakul_id)
+            .expect("declare_attacker should succeed");
+
+        // P2 should now have 4 - 3 = 1 permanent
+        let p2_after = game
+            .battlefield
+            .cards
+            .iter()
+            .filter(|&&id| game.cards.try_get(id).is_some_and(|c| c.controller == p2_id))
+            .count();
+        assert_eq!(
+            p2_after, 1,
+            "P2 should have sacrificed 3 permanents (Annihilator 3); had {p2_before}, now has {p2_after}"
+        );
+    }
+
+    /// Annihilator N with fewer permanents than N: player sacrifices all they have (CR 702.86).
+    #[test]
+    fn test_annihilator_trigger_sacrifices_all_when_fewer_than_n() {
+        use crate::core::KeywordArgs;
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        let p2_id = game.players[1].id;
+
+        // P1: creature with Annihilator 6
+        let emrakul_id = game.next_card_id();
+        let mut eldrazi = Card::new(emrakul_id, "Test Emrakul".to_string(), p1_id);
+        eldrazi.add_type(CardType::Creature);
+        eldrazi.set_base_power(Some(15));
+        eldrazi.set_base_toughness(Some(15));
+        eldrazi.controller = p1_id;
+        eldrazi.keywords.insert_complex(KeywordArgs::Annihilator { amount: 6 });
+        eldrazi.turn_entered_battlefield = Some(game.turn.turn_number - 1);
+        game.cards.insert(emrakul_id, eldrazi);
+        game.battlefield.add(emrakul_id);
+
+        // P2: only 2 permanents (less than annihilator amount)
+        for name in ["Grizzly Bears", "Forest"] {
+            let id = game.next_card_id();
+            let mut card = Card::new(id, name.to_string(), p2_id);
+            if name == "Forest" {
+                card.add_type(CardType::Land);
+            } else {
+                card.add_type(CardType::Creature);
+                card.set_base_power(Some(2));
+                card.set_base_toughness(Some(2));
+            }
+            card.controller = p2_id;
+            game.cards.insert(id, card);
+            game.battlefield.add(id);
+        }
+
+        game.declare_attacker(p1_id, emrakul_id)
+            .expect("declare_attacker should succeed");
+
+        // P2 had 2 permanents, annihilator 6 means sacrifice all 2
+        let p2_after = game
+            .battlefield
+            .cards
+            .iter()
+            .filter(|&&id| game.cards.try_get(id).is_some_and(|c| c.controller == p2_id))
+            .count();
+        assert_eq!(
+            p2_after, 0,
+            "P2 should have lost all permanents to Annihilator 6 (only had 2)"
+        );
     }
 }

@@ -108,6 +108,12 @@ pub enum StaticAbilityMode {
     /// (CR 508.1a). Juggernaut: `Mode$ MustAttack | ValidCreature$ Card.Self`.
     MustAttack,
 
+    /// Mode$ CastWithFlash - grants target cards the ability to be cast as though
+    /// they had flash (CR 702.8a). Used by Teferi, Time Raveler's +1 ability
+    /// and Valley Floodcaller as a temporary continuous effect or a permanent
+    /// static on a battlefield card.
+    CastWithFlash,
+
     /// Unknown mode (for forward compatibility)
     Unknown(String),
 }
@@ -127,6 +133,7 @@ impl StaticAbilityMode {
             "LandPlayed" => Self::LandPlayed,
             "Sacrificed" => Self::Sacrificed,
             "MustAttack" => Self::MustAttack,
+            "CastWithFlash" => Self::CastWithFlash,
             other => Self::Unknown(other.to_string()),
         }
     }
@@ -145,6 +152,7 @@ impl StaticAbilityMode {
             Self::LandPlayed => "LandPlayed",
             Self::Sacrificed => "Sacrificed",
             Self::MustAttack => "MustAttack",
+            Self::CastWithFlash => "CastWithFlash",
             Self::Unknown(s) => s,
         }
     }

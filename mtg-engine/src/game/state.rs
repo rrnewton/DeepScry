@@ -159,6 +159,33 @@ pub struct GameState {
     #[serde(skip)]
     pub damage_dealt_by_source: Option<i32>,
 
+    /// Controller of the spell/ability whose effects are currently being
+    /// executed. Set at the start of `resolve_spell_execute_effects` and
+    /// cleared at the end; also set by priority.rs when executing activated
+    /// ability effects.  Like `current_damage_source` this is purely transient
+    /// resolution scratch (`#[serde(skip)]`) — snapshots and network state are
+    /// unaffected.
+    ///
+    /// Used by `execute_counter_spell` to set `had_creature_countered_this_turn`
+    /// on the owner of the countered spell when that owner is NOT the same player
+    /// as `current_spell_controller` (i.e. countered by an opponent).
+    #[serde(skip)]
+    pub current_spell_controller: Option<crate::core::PlayerId>,
+
+    /// Toughness of the creature most recently sacrificed as an activation cost,
+    /// captured BEFORE the card leaves the battlefield.
+    ///
+    /// Used by Diamond Valley's `AB$ GainLife | LifeAmount$ X` where
+    /// `SVar:X:Sacrificed$CardToughness`. The toughness is set in
+    /// `pay_ability_cost(Cost::SacrificePattern { .. })` and read in
+    /// `resolve_dynamic_amount(DynamicAmount::SacrificedToughness)`.
+    ///
+    /// Transient resolution scratch — always cleared back to `None` before
+    /// control returns to the game loop (or overwritten on the next sacrifice).
+    /// `#[serde(skip)]` so snapshots / network shadow state are unaffected.
+    #[serde(skip)]
+    pub last_sacrificed_toughness: Option<i32>,
+
     /// Delayed triggers waiting to fire on specific events.
     ///
     /// Delayed triggers are created by effects and fire when conditions are met:
@@ -383,6 +410,41 @@ pub struct SubActionScratch {
     /// `#[serde(skip)]`-on-GameState smell.
     pub pending_library_reorders: std::cell::RefCell<Vec<(PlayerId, u64)>>,
 
+    /// Pending Dig-effect decisions to broadcast (server side, mtg-677/mtg-908).
+    ///
+    /// When the SERVER runs `execute_dig` for a self-dig it pushes
+    /// `(digger, kept_card_ids, action_count)` here, where `kept_card_ids` is
+    /// the authoritative list of cards that were moved to `destination`, and
+    /// `action_count` is the undo-log position at the time of the decision.
+    /// The `NetworkController` drains this list (alongside
+    /// `pending_library_reorders`) and includes it in the `ChoiceRequest`,
+    /// so the server coordinator can broadcast it to BOTH clients before
+    /// forwarding the choice.
+    ///
+    /// The **shadow** does NOT push here; instead it pops from
+    /// `pending_dig_authoritative_decision` (populated by `apply_state_sync_at`
+    /// before the shadow runs `execute_dig`).
+    ///
+    /// Like `pending_library_reorders`, this is a network side-channel
+    /// (not suspended-stack residue) that lives in `SubActionScratch` for the
+    /// `#[serde(skip)]` behaviour.
+    // clippy::type_complexity: this is a compact internal queue type; factoring
+    // into a named type alias would only add indirection for a single use site.
+    #[allow(clippy::type_complexity)]
+    pub pending_dig_decisions:
+        std::cell::RefCell<Vec<(crate::core::PlayerId, smallvec::SmallVec<[crate::core::CardId; 8]>, u64)>>,
+
+    /// Authoritative Dig decision delivered to the SHADOW by the state-sync
+    /// log (mtg-677/mtg-908).
+    ///
+    /// Before the shadow runs `execute_dig`, `apply_state_sync_at` /
+    /// `apply_state_sync_up_to_frontier` sets this to the server's kept-list.
+    /// `execute_dig` on the shadow checks this field FIRST: if `Some`, it
+    /// uses those card IDs as the "kept" set and clears the field; if `None`
+    /// it falls back to the heuristic (only safe for non-network / local AI
+    /// games where hidden info is acceptable).
+    pub pending_dig_authoritative_decision: Option<smallvec::SmallVec<[crate::core::CardId; 8]>>,
+
     /// The permanent most recently sacrificed to pay an activated-ability cost
     /// (`Cost$ Sac<N/Type>`), recorded during cost payment and consumed by the
     /// SAME ability's effects, then cleared.
@@ -471,6 +533,8 @@ impl GameState {
             persistent_effects: PersistentEffectStore::new(),
             current_damage_source: None,
             damage_dealt_by_source: None,
+            current_spell_controller: None,
+            last_sacrificed_toughness: None,
             delayed_triggers: DelayedTriggerStore::new(),
             remembered_cards: smallvec::SmallVec::new(),
             remembered_players: smallvec::SmallVec::new(),
@@ -681,6 +745,7 @@ impl GameState {
                     prev_temp_animate_subtypes,
                     prev_temp_removed_subtypes,
                     granted_keywords,
+                    granted_keyword_args: Vec::new(),
                 },
                 prior_log_size,
             );
@@ -1756,6 +1821,103 @@ impl GameState {
                     );
                 }
             }
+
+            // Handle ETB "as ~ enters, choose a mode" replacement (Palace Siege:
+            // `K:ETBReplacement:Other:SiegeChoice` → `DB$ GenericChoice |
+            // Choices$ Khans,Dragons | AILogic$ Dragons`). The AI picks the
+            // mode specified by `AILogic$` (falling back to the first choice);
+            // the chosen mode is stored in `Card::chosen_mode` and gates which
+            // upkeep trigger fires (Khans = return creature from graveyard,
+            // Dragons = drain each opponent 2 life). CR 614 (ETB replacement).
+            if let Some(card) = self.cards.try_get(card_id) {
+                if card.definition.cache.etb_choose_mode {
+                    let ai_logic = card.definition.cache.etb_mode_ai_logic.clone();
+                    let choices = card.definition.cache.etb_mode_choices.clone();
+                    let card_name = card.name.clone();
+                    let prev_chosen_mode = card.chosen_mode.clone();
+
+                    // Pick the AI-designated choice, or fall back to the first.
+                    let chosen = ai_logic
+                        .as_deref()
+                        .filter(|m| choices.iter().any(|c| c.eq_ignore_ascii_case(m)))
+                        .map(|m| m.to_string())
+                        .or_else(|| choices.first().cloned())
+                        .unwrap_or_else(|| "unknown".to_string());
+
+                    let prior_log_size = self.logger.log_count();
+                    if let Ok(card_mut) = self.cards.get_mut(card_id) {
+                        card_mut.chosen_mode = Some(chosen.clone());
+                        self.logger
+                            .normal(&format!("{} ({}) — chose mode: {}", card_name, card_id, chosen));
+                    }
+                    self.undo_log.log(
+                        crate::undo::GameAction::SetChosenMode {
+                            card_id,
+                            prev: prev_chosen_mode,
+                        },
+                        prior_log_size,
+                    );
+                }
+            }
+
+            // Handle ETB "pay any amount of life" replacement (Phyrexian Processor,
+            // CR 614 replacement effect applied as the object enters).
+            // The AI heuristic: pay min(current_life - 1, 7) to aim for a 7/7 token
+            // while keeping at least 1 life.  The paid amount is stored in
+            // `Card::stored_int` and read later by the `{4},{T}: create X/X token`
+            // activated ability.
+            if let Some(card) = self.cards.try_get(card_id) {
+                if card.definition.cache.etb_pay_life {
+                    let controller = card.controller;
+                    let card_name = card.name.clone();
+                    let prev_stored_int = card.stored_int;
+                    let controller_life = self.get_player(controller).map(|p| p.life).unwrap_or(1);
+                    // Pay at most 7, but never reduce life below 1.
+                    let max_payable = (controller_life - 1).max(0);
+                    let pay_amount = max_payable.min(7) as u32;
+
+                    // Deduct life from the controller (drop the mutable borrow
+                    // before logging, to satisfy the borrow checker).
+                    let prior_log_size = self.logger.log_count();
+                    let log_msg = if let Ok(player) = self.get_player_mut(controller) {
+                        player.lose_life(pay_amount as i32);
+                        let new_life = player.life;
+                        Some(format!(
+                            "{} pays {} life as {} enters the battlefield (life: {})",
+                            player.name, pay_amount, card_name, new_life
+                        ))
+                    } else {
+                        None
+                    };
+                    if let Some(msg) = log_msg {
+                        self.logger.gamelog(&msg);
+                    }
+                    self.undo_log.log(
+                        crate::undo::GameAction::ModifyLife {
+                            player_id: controller,
+                            delta: pay_amount as i32,
+                        },
+                        prior_log_size,
+                    );
+
+                    // Store the paid amount on the card for later use by the token ability.
+                    let prior_log_size = self.logger.log_count();
+                    if let Ok(card_mut) = self.cards.get_mut(card_id) {
+                        card_mut.stored_int = Some(pay_amount);
+                        self.logger.verbose(&format!(
+                            "{} ({}) — stored {} life paid on ETB",
+                            card_name, card_id, pay_amount
+                        ));
+                    }
+                    self.undo_log.log(
+                        crate::undo::GameAction::SetStoredInt {
+                            card_id,
+                            prev: prev_stored_int,
+                        },
+                        prior_log_size,
+                    );
+                }
+            }
         }
 
         // Log the action with prior log size for undo synchronization
@@ -2027,7 +2189,17 @@ impl GameState {
     /// Emits a `"P draws CARD (id)"` gamelog entry on success. Use
     /// [`Self::draw_card_silent`] for setup paths (opening hands) where the
     /// per-card log noise is not desired.
+    ///
+    /// CR 702.52: Before drawing, checks whether the player has an eligible
+    /// Dredge card in their graveyard. If so, the draw is replaced by the
+    /// dredge action (mill N, return dredge card to hand). Dredge is never
+    /// applied in [`Self::draw_card_silent`] (opening-hand setup).
     pub fn draw_card(&mut self, player_id: PlayerId) -> Result<(Option<CardId>, u8)> {
+        // CR 702.52: Dredge replaces a draw. Check for eligible dredge cards
+        // before the normal draw. draw_card_silent (opening hands) is exempt.
+        if let Some(dredge_result) = self.try_dredge_instead_of_draw(player_id)? {
+            return Ok(dredge_result);
+        }
         self.draw_card_inner(player_id, /* log_gamelog = */ true)
     }
 
@@ -2143,6 +2315,100 @@ impl GameState {
         Ok((None, 0))
     }
 
+    /// CR 702.52: Dredge draw-replacement effect.
+    ///
+    /// If the drawing player has at least one card with Dredge N in their
+    /// graveyard AND their library contains at least N cards, the draw is
+    /// replaced: the top N cards are milled and the dredge card returns to
+    /// the player's hand. Returns `Some((None, 0))` when dredge fires (no
+    /// card is "drawn" in the MTG sense, so `draw_count` stays 0 and no
+    /// card-drawn triggers fire). Returns `None` when no eligible dredge
+    /// card exists (caller falls through to the normal draw).
+    ///
+    /// **Heuristic selection** (AI / no human controller): among all eligible
+    /// cards, prefer the one with the lowest Dredge N (mills the fewest
+    /// cards, preserving more of the library). If multiple candidates have
+    /// the same N, pick the one that appears earliest in the graveyard
+    /// (oldest in the yard). This heuristic is information-independent — it
+    /// uses only zone contents visible to any controller — satisfying the
+    /// network-determinism invariant in `NETWORK_ARCHITECTURE.md`.
+    fn try_dredge_instead_of_draw(&mut self, player_id: PlayerId) -> Result<Option<(Option<CardId>, u8)>> {
+        use crate::core::{Keyword, KeywordArgs};
+
+        // Snapshot graveyard card IDs and library length (immutable borrow).
+        let (graveyard_ids, lib_len) = {
+            let Some(zones) = self.get_player_zones(player_id) else {
+                return Ok(None);
+            };
+            let ids: SmallVec<[CardId; 8]> = zones.graveyard.cards.iter().copied().collect();
+            (ids, zones.library.cards.len())
+        };
+
+        // Find the best eligible dredge candidate:
+        // eligible = has Dredge N keyword AND library.len() >= N.
+        // Prefer lowest N (fewest mills), then earliest in graveyard.
+        let mut best: Option<(CardId, u8)> = None; // (card_id, dredge_amount)
+        for &cid in &graveyard_ids {
+            let Some(card) = self.cards.try_get(cid) else {
+                continue;
+            };
+            if let Some(KeywordArgs::Dredge { amount }) = card.keywords.get_args(Keyword::Dredge) {
+                let amount = *amount;
+                if lib_len >= amount as usize {
+                    let is_better = match best {
+                        None => true,
+                        Some((_, best_n)) => amount < best_n,
+                    };
+                    if is_better {
+                        best = Some((cid, amount));
+                    }
+                }
+            }
+        }
+
+        let Some((dredge_card_id, dredge_n)) = best else {
+            return Ok(None); // No eligible dredge card → normal draw proceeds.
+        };
+
+        // Dredge fires. Perform the replacement:
+        //   1. Mill dredge_n cards from the top of the library.
+        //   2. Move dredge_card_id from graveyard → hand.
+        //   3. Log the action.
+
+        // Step 1: mill dredge_n cards (reuses existing mill infrastructure).
+        self.mill_cards(player_id, dredge_n)?;
+
+        // Step 2: move the dredge card from graveyard to hand.
+        self.move_card(dredge_card_id, Zone::Graveyard, Zone::Hand, player_id)?;
+
+        // Step 3: emit a gamelog line visible to all (dredge is a public action).
+        let player_name = self
+            .get_player(player_id)
+            .map(|p| p.name.to_string())
+            .unwrap_or_else(|_| format!("Player {}", player_id.as_u32() + 1));
+        let card_name = self
+            .cards
+            .try_get(dredge_card_id)
+            .map(|c| c.name.to_string())
+            .unwrap_or_else(|| "a card".to_string());
+        self.logger.gamelog(&format!(
+            "{} dredges {} (mills {}, returns {} from graveyard to hand)",
+            player_name, card_name, dredge_n, card_name
+        ));
+
+        log::debug!(
+            "Dredge: player {} returned {} ({}) from graveyard to hand, milled {}",
+            player_id.as_u32(),
+            card_name,
+            dredge_card_id,
+            dredge_n,
+        );
+
+        // No card is "drawn" — return draw_count = 0 so card-drawn triggers
+        // do not fire (CR 702.52: dredge replaces the draw entirely).
+        Ok(Some((None, 0)))
+    }
+
     /// Mill cards from library to graveyard (used by mill effects)
     ///
     /// Returns SmallVec to avoid heap allocation for typical mill counts (up to 8 cards).
@@ -2182,6 +2448,101 @@ impl GameState {
         }
 
         Ok(milled_cards)
+    }
+
+    /// AI-heuristic draw replacement for the Dredge keyword (CR 702.52).
+    ///
+    /// "If you would draw a card, you may mill N cards instead. If you do,
+    /// return this card from your graveyard to your hand."
+    ///
+    /// This method implements the **automatic AI version**: the first Dredge card
+    /// found in `player_id`'s graveyard is used whenever the library has at least
+    /// N cards (so milling is possible). Returns `true` if the draw was replaced by
+    /// a dredge, `false` if the normal draw should proceed.
+    ///
+    /// Called from `draw_step` (and `execute_draw_cards`) before the actual
+    /// `draw_card` call. Because it resolves without controller interaction it is
+    /// safe to call from `GameState` context.
+    ///
+    /// MTG CR 702.52a: "Dredge N means 'As long as you have at least N cards in
+    /// your library, if you would draw a card, you may instead put N cards from
+    /// the top of your library into your graveyard and return this card from your
+    /// graveyard to your hand.'"
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the mill or zone-move operation fails (e.g. invalid
+    /// card ID or zone state).
+    pub fn try_apply_dredge(&mut self, player_id: PlayerId) -> Result<bool> {
+        use crate::core::{Keyword, KeywordArgs};
+
+        // Collect (dredge_card_id, dredge_amount) pairs from the player's graveyard.
+        let dredge_candidates: smallvec::SmallVec<[(crate::core::CardId, u8); 4]> = {
+            let Some(zones) = self.get_player_zones(player_id) else {
+                return Ok(false);
+            };
+            zones
+                .graveyard
+                .cards
+                .iter()
+                .filter_map(|&cid| {
+                    self.cards.try_get(cid).and_then(|c| {
+                        c.keywords.get_args(Keyword::Dredge).and_then(|args| {
+                            if let KeywordArgs::Dredge { amount } = args {
+                                Some((cid, *amount))
+                            } else {
+                                None
+                            }
+                        })
+                    })
+                })
+                .collect()
+        };
+
+        if dredge_candidates.is_empty() {
+            return Ok(false);
+        }
+
+        // Check library size and pick the first usable dredge card.
+        let library_size = self
+            .get_player_zones(player_id)
+            .map(|z| z.library.cards.len())
+            .unwrap_or(0);
+
+        let Some((dredge_card_id, amount)) = dredge_candidates
+            .into_iter()
+            .find(|(_, amount)| library_size >= *amount as usize)
+        else {
+            return Ok(false);
+        };
+
+        // Apply dredge replacement: mill `amount` cards, return dredge card to hand.
+        let dredge_name = self
+            .cards
+            .try_get(dredge_card_id)
+            .map(|c| c.name.to_string())
+            .unwrap_or_else(|| "Dredge card".to_string());
+        let player_name = self
+            .get_player(player_id)
+            .map(|p| p.name.to_string())
+            .unwrap_or_else(|_| format!("Player {}", player_id.as_u32() + 1));
+
+        self.logger.gamelog(&format!(
+            "{player_name} dredges {dredge_name} (mills {amount}, returns to hand)"
+        ));
+
+        // Mill N from library.
+        self.mill_cards(player_id, amount)?;
+
+        // Return the dredge card from graveyard to hand.
+        self.move_card(
+            dredge_card_id,
+            crate::zones::Zone::Graveyard,
+            crate::zones::Zone::Hand,
+            player_id,
+        )?;
+
+        Ok(true)
     }
 
     /// Snapshot the top N cards of `player_id`'s library WITHOUT mutating
@@ -2839,13 +3200,59 @@ impl GameState {
     /// offered (City in a Bottle: ARN-origin cards can't be cast).
     ///
     /// General hoser machinery — works for any `S:Mode$ CantBeCast | ValidCard$ <filter>`.
-    pub fn is_cast_prohibited(&self, card: &crate::core::Card) -> bool {
-        use crate::core::StaticAbility;
+    /// True if some permanent on the battlefield has a `CantBeCast` static
+    /// whose `valid_card` matches `card` AND whose `caster_restriction` applies
+    /// to `caster_id` given the current turn's active player.
+    ///
+    /// - `CasterRestriction::Any`         — applies to all players.
+    /// - `CasterRestriction::You`         — applies only to the source's controller.
+    /// - `CasterRestriction::YouNonActive`— applies only to the source's controller
+    ///   while they are the non-active player.
+    /// - `CasterRestriction::Opponent`    — applies to all players who are NOT the
+    ///   source's controller.
+    pub fn is_cast_prohibited(&self, caster_id: crate::core::PlayerId, card: &crate::core::Card) -> bool {
+        use crate::core::{CasterRestriction, StaticAbility};
+        let active = self.turn.active_player;
+        // Pre-compute the caster's sorcery window: active player, main phase, empty stack.
+        // Used by OnlySorcerySpeed statics (Teferi, Time Raveler) which prohibit casting
+        // only when the player is OUTSIDE a sorcery window.
+        let caster_in_sorcery_window =
+            caster_id == active && self.turn.current_step.is_sorcery_speed() && self.stack.is_empty();
         self.battlefield.cards.iter().any(|&id| {
             self.cards.try_get(id).is_some_and(|src| {
                 src.static_abilities.iter().any(|sa| {
-                    if let StaticAbility::CantBeCast { valid_card, .. } = sa {
-                        valid_card.matches(card)
+                    if let StaticAbility::CantBeCast {
+                        valid_card,
+                        caster_restriction,
+                        origin_restriction,
+                        only_sorcery_speed,
+                        ..
+                    } = sa
+                    {
+                        // Origin-scoped prohibitions (e.g. Experimental Frenzy's
+                        // `CantBeCast | Origin$ Hand`) are handled by the
+                        // zone-specific callers (`has_hand_cast_prohibition`).
+                        // Skip them here so library-cast offers are not blocked.
+                        if origin_restriction.is_some() {
+                            return false;
+                        }
+                        // OnlySorcerySpeed statics (Teferi, Time Raveler): the
+                        // prohibition is lifted when the caster IS in a sorcery
+                        // window (active player, main phase, empty stack).
+                        if *only_sorcery_speed && caster_in_sorcery_window {
+                            return false;
+                        }
+                        // First check if the card matches the filter
+                        if !valid_card.matches(card) {
+                            return false;
+                        }
+                        // Then check if the caster restriction applies to this caster
+                        match caster_restriction {
+                            CasterRestriction::Any => true,
+                            CasterRestriction::You => caster_id == src.controller,
+                            CasterRestriction::YouNonActive => caster_id == src.controller && caster_id != active,
+                            CasterRestriction::Opponent => caster_id != src.controller,
+                        }
                     } else {
                         false
                     }
@@ -2854,12 +3261,89 @@ impl GameState {
         })
     }
 
-    /// True if some permanent on the battlefield has a `CastWithFlash` static
-    /// controlled by `player_id` whose filter matches `card`. Used to allow
-    /// casting noncreature spells as though they had flash (e.g. Valley Floodcaller).
+    /// True if some permanent on the battlefield has a `CantBeCast` static with
+    /// `origin_restriction == Some(Zone::Hand)` that prohibits `caster_id` from
+    /// casting `card` from their hand.
+    ///
+    /// Used by `push_castable_spells` and `push_castable_with_fires` (which both
+    /// enumerate hand cards) to enforce Experimental Frenzy's
+    /// `CantBeCast | ValidCard$ Card | Caster$ You | Origin$ Hand` line.
+    pub fn has_hand_cast_prohibition(&self, caster_id: crate::core::PlayerId, card: &crate::core::Card) -> bool {
+        use crate::core::{CasterRestriction, StaticAbility};
+        use crate::zones::Zone;
+        let active = self.turn.active_player;
+        self.battlefield.cards.iter().any(|&id| {
+            self.cards.try_get(id).is_some_and(|src| {
+                src.static_abilities.iter().any(|sa| {
+                    if let StaticAbility::CantBeCast {
+                        valid_card,
+                        caster_restriction,
+                        origin_restriction: Some(Zone::Hand),
+                        ..
+                    } = sa
+                    {
+                        if !valid_card.matches(card) {
+                            return false;
+                        }
+                        match caster_restriction {
+                            CasterRestriction::Any => true,
+                            CasterRestriction::You => caster_id == src.controller,
+                            CasterRestriction::YouNonActive => caster_id == src.controller && caster_id != active,
+                            CasterRestriction::Opponent => caster_id != src.controller,
+                        }
+                    } else {
+                        false
+                    }
+                })
+            })
+        })
+    }
+
+    /// True if some permanent on the battlefield has a `CantPlayLand` static with
+    /// `origin_restriction == Some(Zone::Hand)` that prohibits `player_id` from
+    /// playing a land from their hand.
+    ///
+    /// Used by the land-play enumeration loop in `populate_actions` to enforce
+    /// Experimental Frenzy's `CantPlayLand | Player$ You | Origin$ Hand` line.
+    pub fn has_hand_land_prohibition(&self, player_id: crate::core::PlayerId) -> bool {
+        use crate::core::{CasterRestriction, StaticAbility};
+        use crate::zones::Zone;
+        let active = self.turn.active_player;
+        self.battlefield.cards.iter().any(|&id| {
+            self.cards.try_get(id).is_some_and(|src| {
+                src.static_abilities.iter().any(|sa| {
+                    if let StaticAbility::CantPlayLand {
+                        player_restriction,
+                        origin_restriction: Some(Zone::Hand),
+                        ..
+                    } = sa
+                    {
+                        match player_restriction {
+                            CasterRestriction::Any => true,
+                            CasterRestriction::You => player_id == src.controller,
+                            CasterRestriction::YouNonActive => player_id == src.controller && player_id != active,
+                            CasterRestriction::Opponent => player_id != src.controller,
+                        }
+                    } else {
+                        false
+                    }
+                })
+            })
+        })
+    }
+
+    /// True if `player_id` currently has flash-casting permission for `card`.
+    ///
+    /// Two sources are checked:
+    /// 1. A battlefield permanent controlled by `player_id` with a
+    ///    `StaticAbility::CastWithFlash` whose filter matches `card`
+    ///    (e.g. Valley Floodcaller's permanent static).
+    /// 2. A temporary `PersistentEffectKind::GrantCastWithFlash` effect whose
+    ///    filter matches `card` (e.g. Teferi, Time Raveler's +1 ability grant).
     pub fn player_has_cast_with_flash(&self, player_id: PlayerId, card: &crate::core::Card) -> bool {
         use crate::core::StaticAbility;
-        self.battlefield.cards.iter().any(|&id| {
+        // Check permanent battlefield statics
+        let has_static = self.battlefield.cards.iter().any(|&id| {
             self.cards.try_get(id).is_some_and(|src| {
                 src.controller == player_id
                     && src.static_abilities.iter().any(|sa| {
@@ -2870,19 +3354,41 @@ impl GameState {
                         }
                     })
             })
-        })
+        });
+        if has_static {
+            return true;
+        }
+        // Check temporary GrantCastWithFlash persistent effects
+        self.persistent_effects
+            .player_has_grant_cast_with_flash(player_id, card)
     }
 
     /// True if some permanent on the battlefield has a `CantPlayLand` static
     /// whose filter matches `card`. Gates land plays (and, per Forge's
     /// CantPlayLand semantics, spell casts) for prohibited cards. City in a
     /// Bottle: "Players can't cast spells or play lands ... printed in ARN."
+    ///
+    /// Note: `CantPlayLand` statics with an `origin_restriction` (e.g.
+    /// Experimental Frenzy's `Origin$ Hand`) are SKIPPED here and handled by
+    /// zone-specific callers (`has_hand_land_prohibition`).
     pub fn is_land_play_prohibited(&self, card: &crate::core::Card) -> bool {
         use crate::core::StaticAbility;
         self.battlefield.cards.iter().any(|&id| {
             self.cards.try_get(id).is_some_and(|src| {
                 src.static_abilities.iter().any(|sa| {
-                    if let StaticAbility::CantPlayLand { valid_card, .. } = sa {
+                    if let StaticAbility::CantPlayLand {
+                        valid_card,
+                        origin_restriction,
+                        ..
+                    } = sa
+                    {
+                        // Origin-scoped prohibitions are handled by the
+                        // zone-specific callers. Skip them here so non-hand
+                        // land plays (e.g. from library via Experimental
+                        // Frenzy's MayPlay grant) are not blocked.
+                        if origin_restriction.is_some() {
+                            return false;
+                        }
                         valid_card.matches(card)
                     } else {
                         false
@@ -2896,8 +3402,140 @@ impl GameState {
     /// either a `CantBeCast` or a `CantPlayLand` static matches it. (Forge's
     /// `CantPlayLand` on City in a Bottle carries the "can't cast spells"
     /// clause too, so it applies to both lands and spells.)
-    pub fn is_play_prohibited(&self, card: &crate::core::Card) -> bool {
-        self.is_cast_prohibited(card) || self.is_land_play_prohibited(card)
+    ///
+    /// `caster_id` is the player attempting to cast or play the card; it is
+    /// forwarded to `is_cast_prohibited` to evaluate `CasterRestriction`.
+    pub fn is_play_prohibited(&self, caster_id: crate::core::PlayerId, card: &crate::core::Card) -> bool {
+        self.is_cast_prohibited(caster_id, card) || self.is_land_play_prohibited(card)
+    }
+
+    /// True if some permanent on the battlefield has a `CantAttackOrBlockMatching`
+    /// static with `cant_attack = true` whose filter matches `card` (CR 508.1c).
+    /// Used to exclude matching creatures from the legal-attackers list.
+    pub fn is_attack_prohibited(&self, card: &crate::core::Card) -> bool {
+        use crate::core::StaticAbility;
+        self.battlefield.cards.iter().any(|&id| {
+            self.cards.try_get(id).is_some_and(|src| {
+                src.static_abilities.iter().any(|sa| {
+                    if let StaticAbility::CantAttackOrBlockMatching {
+                        cant_attack, filter, ..
+                    } = sa
+                    {
+                        *cant_attack && filter.matches(card)
+                    } else {
+                        false
+                    }
+                })
+            })
+        })
+    }
+
+    /// True if some permanent on the battlefield has a `CantAttackOrBlockMatching`
+    /// static with `cant_block = true` whose filter matches `card` (CR 509.1b).
+    /// Used to exclude matching creatures from the legal-blockers list.
+    pub fn is_block_prohibited(&self, card: &crate::core::Card) -> bool {
+        use crate::core::StaticAbility;
+        self.battlefield.cards.iter().any(|&id| {
+            self.cards.try_get(id).is_some_and(|src| {
+                src.static_abilities.iter().any(|sa| {
+                    if let StaticAbility::CantAttackOrBlockMatching { cant_block, filter, .. } = sa {
+                        *cant_block && filter.matches(card)
+                    } else {
+                        false
+                    }
+                })
+            })
+        })
+    }
+
+    /// True if some permanent on the battlefield has a `CantBeActivated` static
+    /// whose `creature_filter` matches `card`. Used to suppress activated
+    /// abilities on matching creatures (Cursed Totem: "activated abilities of
+    /// creatures can't be activated", CR 602.1).
+    pub fn is_activated_ability_prohibited(&self, card: &crate::core::Card) -> bool {
+        use crate::core::StaticAbility;
+        self.battlefield.cards.iter().any(|&id| {
+            self.cards.try_get(id).is_some_and(|src| {
+                src.static_abilities.iter().any(|sa| {
+                    if let StaticAbility::CantBeActivated { creature_filter, .. } = sa {
+                        creature_filter.matches(card)
+                    } else {
+                        false
+                    }
+                })
+            })
+        })
+    }
+
+    /// True if some permanent on the battlefield carries a
+    /// `DisableCreatureEtbTriggers` static (i.e. Torpor Orb is in play).
+    ///
+    /// Used in `check_triggers_inner` to suppress `TriggerEvent::EntersBattlefield`
+    /// triggers when the entering permanent is a creature (CR 603.6b / Torpor Orb).
+    ///
+    /// `entering_card` is the card that just entered the battlefield; the check
+    /// only suppresses the trigger if that card is a creature, matching Torpor
+    /// Orb's `ValidCause$ Creature` clause.
+    pub fn is_creature_etb_trigger_suppressed(&self, entering_card: &crate::core::Card) -> bool {
+        if !entering_card.is_creature() {
+            return false;
+        }
+        use crate::core::StaticAbility;
+        self.battlefield.cards.iter().any(|&id| {
+            self.cards.try_get(id).is_some_and(|src| {
+                src.static_abilities
+                    .iter()
+                    .any(|sa| matches!(sa, StaticAbility::DisableCreatureEtbTriggers { .. }))
+            })
+        })
+    }
+
+    /// True if some permanent on the battlefield has an `OpalescenceStyle` static
+    /// and `card` is a non-Aura enchantment OTHER than that source permanent.
+    ///
+    /// Implements the Layer-4 part of the Opalescence continuous effect (CR 613.1a):
+    /// while Opalescence is on the battlefield, each other non-Aura enchantment is
+    /// a creature in addition to its other types.
+    ///
+    /// Used to include enchantments-as-creatures in the legal-attackers and
+    /// legal-blockers lists.  Does NOT check whether the card is already a creature
+    /// (callers handle the `card.is_creature()` fast path themselves).
+    pub fn is_opalescence_creature(&self, card: &crate::core::Card) -> bool {
+        use crate::core::StaticAbility;
+        // A card is only an "Opalescence creature" if it is an enchantment (but not
+        // an Aura — Auras are attached to permanents and can't be declared as
+        // attackers or blockers per CR 303.4g / 508.1a).
+        if !card.definition.cache.is_enchantment {
+            return false;
+        }
+        // Auras (enchantments with the subtype Aura) are excluded by Opalescence's
+        // Affected$ filter (`Enchantment.nonAura+Other`).
+        if card.subtypes.contains(&crate::core::Subtype::new("Aura")) {
+            return false;
+        }
+        // Check if any OpalescenceStyle permanent is on the battlefield (other than
+        // the card itself — Opalescence says "other non-Aura enchantments").
+        self.battlefield.cards.iter().any(|&src_id| {
+            if src_id == card.id {
+                return false;
+            }
+            self.cards.try_get(src_id).is_some_and(|src| {
+                src.static_abilities
+                    .iter()
+                    .any(|sa| matches!(sa, StaticAbility::OpalescenceStyle { .. }))
+            })
+        })
+    }
+
+    /// Returns the mana value (CMC) of `card` as an `i32` for use as Opalescence
+    /// P/T (Layer 7b, CR 613.4b).  Returns `None` when no OpalescenceStyle static
+    /// applies to `card` (i.e. when `is_opalescence_creature` would return `false`).
+    pub fn opalescence_pt(&self, card: &crate::core::Card) -> Option<i32> {
+        if self.is_opalescence_creature(card) {
+            Some(i32::from(card.mana_cost.cmc()))
+        } else {
+            None
+        }
     }
 
     /// Check state-based actions for aura attachment (MTG CR 704.5d)
@@ -3275,6 +3913,9 @@ impl GameState {
         // as the `regeneration_shields` reset.
         for card in self.cards.values_mut() {
             card.clear_temp_keywords_until_eot();
+            // CR 614: "exile instead of going to graveyard this turn" flag set by
+            // PlayFromGraveyard (Chandra −2). Clear at end-of-turn across all zones.
+            card.exile_if_would_go_to_graveyard_this_turn = false;
         }
 
         if any_mana_source_typeline_reverted {
@@ -3809,6 +4450,200 @@ impl GameState {
         Ok(fired_count)
     }
 
+    /// Scan each player's opening hand for cards with `K:MayEffectFromOpeningHand` and
+    /// process any that declare an upkeep-scry effect (e.g. Sphinx of Foresight).
+    ///
+    /// Called from `GameLoop::setup_game` immediately after opening hands are dealt,
+    /// before Turn 1 begins. For each card with the keyword, the AI unconditionally
+    /// reveals it (it is always beneficial — free scry) and registers a one-shot
+    /// `Phase=Upkeep` delayed trigger for the owner so that `upkeep_step`'s
+    /// `check_delayed_triggers_on_phase(TriggerPhase::Upkeep, ...)` fires it on the
+    /// player's first upkeep.
+    ///
+    /// The SVar chain is parsed with `AbilityParams` (no substring hacks) to confirm
+    /// the pattern really is "scry N on first upkeep" before registering the trigger.
+    ///
+    /// # Errors
+    ///
+    /// Propagates any `scry_apply_decision` errors (zone manipulation).
+    pub fn process_opening_hand_reveals(&mut self, player_ids: &[crate::core::PlayerId]) -> Result<()> {
+        use crate::core::{DelayedEffect, DelayedTrigger, DelayedTriggerCondition, Keyword, TriggerPhase};
+        use crate::loader::ability_parser::AbilityParams;
+        use smallvec::smallvec;
+
+        // Collect (card_id, player_id, scry_count) triples to avoid borrow issues.
+        let mut reveals: Vec<(crate::core::CardId, crate::core::PlayerId, u8)> = Vec::new();
+
+        for &player_id in player_ids {
+            let hand_card_ids: Vec<crate::core::CardId> = self
+                .get_player_zones(player_id)
+                .map(|z| z.hand.cards.to_vec())
+                .unwrap_or_default();
+
+            for card_id in hand_card_ids {
+                let Some(card) = self.cards.try_get(card_id) else {
+                    continue;
+                };
+                if !card.keywords.contains(Keyword::MayEffectFromOpeningHand) {
+                    continue;
+                }
+
+                // Retrieve the effect-name from the complex keyword args.
+                let effect_svar_name = match card.keywords.get_args(Keyword::MayEffectFromOpeningHand) {
+                    Some(crate::core::KeywordArgs::MayEffectFromOpeningHand { effect }) => effect.clone(),
+                    _ => continue,
+                };
+
+                // Parse the top-level SVar (e.g. "RevealCard") to find the SubAbility.
+                let sub_ability_name = {
+                    let top_body = match card.definition.svars.get(&effect_svar_name) {
+                        Some(b) => b.clone(),
+                        None => {
+                            log::debug!(
+                                target: "opening_hand",
+                                "MayEffectFromOpeningHand: SVar '{}' not found on {}",
+                                effect_svar_name,
+                                card.name,
+                            );
+                            continue;
+                        }
+                    };
+                    // The top-level SVar: "DB$ Reveal | RevealDefined$ Self | SubAbility$ ScryOnUpkeep"
+                    // We must find SubAbility$.
+                    let params = match AbilityParams::parse_svar_body(&top_body) {
+                        Some(p) => p,
+                        None => continue,
+                    };
+                    match params.get("SubAbility") {
+                        Some(s) => s.to_string(),
+                        None => continue,
+                    }
+                };
+
+                // Parse the SubAbility SVar (e.g. "ScryOnUpkeep") to find the Triggers$ SVar name.
+                let trigger_svar_name = {
+                    let sub_body = match card.definition.svars.get(&sub_ability_name) {
+                        Some(b) => b.clone(),
+                        None => continue,
+                    };
+                    // "DB$ Effect | Triggers$ TrigOpenScry | Duration$ Permanent"
+                    let params = match AbilityParams::parse_svar_body(&sub_body) {
+                        Some(p) => p,
+                        None => continue,
+                    };
+                    match params.get("Triggers") {
+                        Some(s) => s.to_string(),
+                        None => continue,
+                    }
+                };
+
+                // Parse the Trigger SVar (e.g. "TrigOpenScry") to find the Execute$ SVar name.
+                // Note: this SVar is a trigger definition, NOT a DB$/AB$ ability, so it has no
+                // record-type prefix. We parse the key=value pairs manually with | and $ splits.
+                let execute_svar_name = {
+                    let trig_body = match card.definition.svars.get(&trigger_svar_name) {
+                        Some(b) => b.clone(),
+                        None => continue,
+                    };
+                    // "Mode$ Phase | Phase$ Upkeep | ValidPlayer$ You | OneOff$ True | Execute$ DBScry"
+                    // Parse by splitting on '|' then each fragment on '$'.
+                    let mut trig_params: std::collections::HashMap<&str, &str> = std::collections::HashMap::new();
+                    for fragment in trig_body.split('|') {
+                        let fragment = fragment.trim();
+                        if let Some((k, v)) = fragment.split_once('$') {
+                            trig_params.insert(k.trim(), v.trim());
+                        }
+                    }
+                    // Only handle Phase=Upkeep, ValidPlayer=You patterns.
+                    if trig_params.get("Mode").copied() != Some("Phase") {
+                        continue;
+                    }
+                    if trig_params.get("Phase").copied() != Some("Upkeep") {
+                        continue;
+                    }
+                    match trig_params.get("Execute").copied() {
+                        Some(s) => s.to_string(),
+                        None => continue,
+                    }
+                };
+
+                // Parse the Execute SVar (e.g. "DBScry") to find the scry count.
+                let scry_count: u8 = {
+                    let exec_body = match card.definition.svars.get(&execute_svar_name) {
+                        Some(b) => b.clone(),
+                        None => continue,
+                    };
+                    // "DB$ Scry | ScryNum$ 3"
+                    let params = match AbilityParams::parse_svar_body(&exec_body) {
+                        Some(p) => p,
+                        None => continue,
+                    };
+                    if params.api_type != crate::loader::ability_parser::ApiType::Scry {
+                        continue;
+                    }
+                    match params.get_u8("ScryNum") {
+                        Ok(n) => n,
+                        Err(_) => continue,
+                    }
+                };
+
+                reveals.push((card_id, player_id, scry_count));
+            }
+        }
+
+        // Register one delayed trigger per reveal.
+        for (card_id, player_id, scry_count) in reveals {
+            let card_name = self
+                .cards
+                .try_get(card_id)
+                .map(|c| c.name.to_string())
+                .unwrap_or_else(|| "Unknown".to_string());
+
+            self.logger.gamelog(&format!(
+                "{} reveals {} from opening hand (will scry {} on first upkeep)",
+                self.get_player(player_id).map(|p| p.name.as_str()).unwrap_or("Player"),
+                card_name,
+                scry_count,
+            ));
+
+            let trigger = DelayedTrigger::new(
+                crate::core::DelayedTriggerId::new(0), // id assigned by store.add()
+                card_id,
+                card_id,
+                player_id,
+                DelayedTriggerCondition::Phase {
+                    phases: smallvec![TriggerPhase::Upkeep],
+                    whose_turn: crate::core::delayed_trigger::TurnOwner::You,
+                },
+                DelayedEffect::ExecuteEffect {
+                    effect: Box::new(crate::core::Effect::Scry {
+                        player: player_id,
+                        count: scry_count,
+                        only_if_bargained: false,
+                    }),
+                },
+            );
+
+            let prior_log_size = self.logger.log_count();
+            let trigger_id = self.delayed_triggers.add(trigger);
+            self.undo_log.log(
+                crate::undo::GameAction::RegisterDelayedTrigger { id: trigger_id },
+                prior_log_size,
+            );
+
+            log::debug!(
+                target: "opening_hand",
+                "Registered opening-hand upkeep-scry delayed trigger #{} for {} (card: {}, scry {})",
+                trigger_id.as_u32(),
+                player_id,
+                card_name,
+                scry_count,
+            );
+        }
+
+        Ok(())
+    }
+
     /// Fire a delayed trigger, executing its effect.
     ///
     /// # Errors
@@ -3820,6 +4655,26 @@ impl GameState {
         let card_id = trigger.tracked_card;
         let controller = trigger.controller;
         let remembered_amount = trigger.remembered_amount;
+        let repeating = trigger.repeating;
+
+        // CR 702.88c/d: snapshot for re-registration BEFORE the match consumes
+        // `trigger`. Epic upkeep triggers are repeating and must fire every
+        // subsequent upkeep for the rest of the game.
+        let re_trigger_snapshot: Option<crate::core::DelayedTrigger> = if repeating {
+            Some(crate::core::DelayedTrigger {
+                id: crate::core::DelayedTriggerId::new(0), // assigned by add()
+                tracked_card: trigger.tracked_card,
+                source_card: trigger.source_card,
+                controller: trigger.controller,
+                trigger_condition: trigger.trigger_condition.clone(),
+                effect: trigger.effect.clone(),
+                expiry: None,
+                remembered_amount: None,
+                repeating: true,
+            })
+        } else {
+            None
+        };
 
         match trigger.effect {
             DelayedEffect::ReturnToBattlefield { tapped, to_owner } => {
@@ -4095,6 +4950,151 @@ impl GameState {
                             }
                         }
                     }
+                    crate::core::Effect::Scry { player, count, .. } => {
+                        // Sphinx of Foresight: "scry 3 at the beginning of your first upkeep"
+                        // from opening-hand reveal. The delayed trigger was registered at game
+                        // start with a concrete player ID and count. Use the GameState-level
+                        // scry path (heuristic: keep all on top) since no controller reference
+                        // is available at delayed-trigger-fire time.
+                        let player_name = self.get_player(player).map(|p| p.name.to_string()).ok();
+                        self.logger.gamelog(&format!(
+                            "{} scrys {} (opening-hand reveal trigger)",
+                            player_name.as_deref().unwrap_or("Player"),
+                            count,
+                        ));
+                        // Inline the scry: snapshot top N, keep-all-on-top heuristic, apply.
+                        let revealed = self.scry_snapshot_top_n(player, count);
+                        if !revealed.is_empty() {
+                            let decision = crate::game::ScryDecision::keep_all_on_top(&revealed);
+                            self.scry_apply_decision(player, &revealed, &decision)?;
+                        }
+                    }
+
+                    // DestroyPermanent with placeholder target: the tracked card
+                    // IS the target (Berserk: "destroy that creature if it attacked
+                    // this turn"). card_id here is the `tracked_card` from the
+                    // delayed trigger registration — the Berserked creature.
+                    // We check the `attacked_this_turn` flag set when the
+                    // creature was declared as an attacker.
+                    crate::core::Effect::DestroyPermanent {
+                        target, no_regenerate, ..
+                    } if target.is_placeholder() => {
+                        // Only destroy if the creature attacked this turn
+                        let did_attack = self
+                            .cards
+                            .try_get(card_id)
+                            .map(|c| c.attacked_this_turn)
+                            .unwrap_or(false);
+
+                        if !did_attack {
+                            log::debug!(
+                                target: "delayed_triggers",
+                                "DestroyPermanent delayed trigger: card {:?} did not attack this turn — skipping",
+                                card_id
+                            );
+                        } else if self.battlefield.contains(card_id) {
+                            let no_regen = no_regenerate;
+                            let has_indestructible =
+                                self.cards.try_get(card_id).is_some_and(|c| c.has_indestructible());
+                            let has_regen_shield =
+                                self.cards.try_get(card_id).is_some_and(|c| c.regeneration_shields > 0);
+
+                            if has_indestructible {
+                                log::debug!(
+                                    target: "delayed_triggers",
+                                    "DestroyPermanent delayed trigger: card {:?} is indestructible — skipping",
+                                    card_id
+                                );
+                            } else if has_regen_shield && !no_regen {
+                                self.apply_regeneration_shield(card_id)?;
+                            } else {
+                                let owner = self.cards.get(card_id)?.owner;
+                                let dest = self.death_destination_for_card(card_id);
+                                let name = self
+                                    .cards
+                                    .try_get(card_id)
+                                    .map(|c| c.name.to_string())
+                                    .unwrap_or_default();
+                                log::debug!(
+                                    target: "delayed_triggers",
+                                    "DestroyPermanent delayed trigger: destroying {} ({:?})",
+                                    name, card_id
+                                );
+                                let _ = self.check_death_triggers(card_id);
+                                self.move_card(card_id, Zone::Battlefield, dest, owner)?;
+                            }
+                        } else {
+                            log::debug!(
+                                target: "delayed_triggers",
+                                "DestroyPermanent delayed trigger: card {:?} no longer on battlefield — skipping",
+                                card_id
+                            );
+                        }
+                    }
+
+                    crate::core::Effect::DestroyAll { restriction, .. } => {
+                        // DestroyAll in a delayed ExecuteEffect (e.g. Siren's Call:
+                        // "Destroy all attacking non-Wall creatures that aren't blocked").
+                        // Delegate to the standard execute_effect path; it already
+                        // handles TargetRestriction, indestructible, etc.
+                        let effect_clone = crate::core::Effect::DestroyAll {
+                            restriction,
+                            no_regenerate: false,
+                            cmc_eq_source: None,
+                        };
+                        self.execute_effect(&effect_clone)?;
+                    }
+
+                    crate::core::Effect::GainLifeDynamic {
+                        player,
+                        amount,
+                        reference,
+                    } => {
+                        // Delegate to the standard execute_effect path so the
+                        // dynamic amount is resolved consistently.
+                        let effect_clone = crate::core::Effect::GainLifeDynamic {
+                            player,
+                            amount,
+                            reference,
+                        };
+                        self.execute_effect(&effect_clone)?;
+                    }
+
+                    // CR 702.88c: Epic upkeep copy — re-execute the original
+                    // spell's SearchLibrary effect (search library for an
+                    // enchantment, put it onto the battlefield). This is the
+                    // Enduring Ideal case: every upkeep the trigger fires and
+                    // fetches the next enchantment from the library.
+                    crate::core::Effect::SearchLibrary {
+                        player: _player,
+                        ref card_type_filter,
+                        destination,
+                        enters_tapped,
+                        shuffle,
+                    } => {
+                        // Re-execute with controller as the searching player (the
+                        // trigger was registered with the Epic spell's owner as
+                        // `controller`). Cloning the string here is the same cost
+                        // as the spell's first resolution; no hot-path concern.
+                        let filter = card_type_filter.clone();
+                        let dest = destination;
+                        let tapped = enters_tapped;
+                        let do_shuffle = shuffle;
+                        let resolved_effect = crate::core::Effect::SearchLibrary {
+                            player: controller,
+                            card_type_filter: filter,
+                            destination: dest,
+                            enters_tapped: tapped,
+                            shuffle: do_shuffle,
+                        };
+                        let player_name = self.get_player(controller).map(|p| p.name.to_string()).ok();
+                        self.logger.gamelog(&format!(
+                            "{} copies Epic effect (search library → {:?})",
+                            player_name.as_deref().unwrap_or("Player"),
+                            dest,
+                        ));
+                        self.execute_effect(&resolved_effect)?;
+                    }
                     crate::core::Effect::DealDamage { .. }
                     | crate::core::Effect::DealDamageDivided { .. }
                     | crate::core::Effect::DealDamageDynamic { .. }
@@ -4115,7 +5115,6 @@ impl GameState {
                     | crate::core::Effect::AnimateAll { .. }
                     | crate::core::Effect::Mill { .. }
                     | crate::core::Effect::DrainMana { .. }
-                    | crate::core::Effect::Scry { .. }
                     | crate::core::Effect::Surveil { .. }
                     | crate::core::Effect::CounterSpell { .. }
                     | crate::core::Effect::PutCounter { .. }
@@ -4125,9 +5124,9 @@ impl GameState {
                     | crate::core::Effect::RemoveCounter { .. }
                     | crate::core::Effect::ExilePermanent { .. }
                     | crate::core::Effect::ExileIfWouldDieThisTurn { .. }
-                    | crate::core::Effect::SearchLibrary { .. }
                     | crate::core::Effect::AttachEquipment { .. }
                     | crate::core::Effect::CreateToken { .. }
+                    | crate::core::Effect::CreateTokenWithStoredPt { .. }
                     | crate::core::Effect::CopyPermanent { .. }
                     | crate::core::Effect::Balance { .. }
                     | crate::core::Effect::SetBasePowerToughness { .. }
@@ -4138,12 +5137,13 @@ impl GameState {
                     | crate::core::Effect::PreventDamage { .. }
                     | crate::core::Effect::PreventDamageFromSource { .. }
                     | crate::core::Effect::LoseLife { .. }
-                    | crate::core::Effect::DestroyAll { .. }
                     | crate::core::Effect::SacrificeAll { .. }
                     | crate::core::Effect::DamageAll { .. }
                     | crate::core::Effect::ForceSacrifice { .. }
+                    | crate::core::Effect::SacrificeSelf { .. }
                     | crate::core::Effect::TapAll { .. }
                     | crate::core::Effect::UntapAll { .. }
+                    | crate::core::Effect::UntapOne { .. }
                     | crate::core::Effect::SetLife { .. }
                     | crate::core::Effect::ModalChoice { .. }
                     | crate::core::Effect::Dig { .. }
@@ -4162,16 +5162,31 @@ impl GameState {
                     | crate::core::Effect::SelfExileFromStack { .. }
                     | crate::core::Effect::MoveSelfBetweenZones { .. }
                     | crate::core::Effect::ReturnCardsFromGraveyardToHand { .. }
+                    | crate::core::Effect::PutCardsFromHandOnTopOfLibrary { .. }
+                    | crate::core::Effect::RevealCardsFromHand { .. }
                     | crate::core::Effect::ReturnGraveyardCardToHand { .. }
+                    | crate::core::Effect::ReturnGraveyardCardToZone { .. }
+                    | crate::core::Effect::PutCreatureFromHandOnBattlefield { .. }
+                    | crate::core::Effect::ReturnSelfAsEnchantment { .. }
                     | crate::core::Effect::PreventAllCombatDamageThisTurn { .. }
                     | crate::core::Effect::ConditionalSelfCounter { .. }
+                    | crate::core::Effect::RearrangeTopOfLibrary { .. }
+                    | crate::core::Effect::SkipUntapStep { .. }
                     | crate::core::Effect::Unimplemented { .. }
                     | crate::core::Effect::NoOp { .. }
                     | crate::core::Effect::ClassLevelUp { .. }
                     | crate::core::Effect::DealDamageXPaid { .. }
                     | crate::core::Effect::DrawCardsXPaid { .. }
-                    | crate::core::Effect::GainLifeDynamic { .. }
-                    | crate::core::Effect::DiscardCardsXPaid { .. } => {
+                    | crate::core::Effect::DiscardCardsXPaid { .. }
+                    | crate::core::Effect::CreateTokenDynamic { .. }
+                    | crate::core::Effect::CreateEmblem { .. }
+                    | crate::core::Effect::PlayFromGraveyard { .. }
+                    | crate::core::Effect::GrantCastWithFlash { .. }
+                    | crate::core::Effect::ReturnPermanentToHand { .. }
+                    | crate::core::Effect::RepeatEach { .. }
+                    | crate::core::Effect::ExtraLandPlay { .. }
+                    | crate::core::Effect::TapPermanentsMatchingFilter { .. }
+                    | crate::core::Effect::ChooseAndRememberOneOfEach { .. } => {
                         // Other effect types not yet implemented for delayed triggers
                         // Note: CopySpellAbility inside ExecuteEffect is unusual;
                         // typically CopySpellAbility should be used with DelayedEffect::CopySpellAbility
@@ -4183,6 +5198,11 @@ impl GameState {
                     }
                 }
             }
+        }
+
+        // Re-register after firing if this is a repeating (Epic) trigger.
+        if let Some(re_trigger) = re_trigger_snapshot {
+            self.delayed_triggers.add(re_trigger);
         }
 
         Ok(())
@@ -4264,6 +5284,8 @@ impl Clone for GameState {
             persistent_effects: self.persistent_effects.clone(),
             current_damage_source: self.current_damage_source,
             damage_dealt_by_source: self.damage_dealt_by_source,
+            current_spell_controller: self.current_spell_controller,
+            last_sacrificed_toughness: self.last_sacrificed_toughness,
             delayed_triggers: self.delayed_triggers.clone(),
             remembered_cards: self.remembered_cards.clone(),
             remembered_players: self.remembered_players.clone(),

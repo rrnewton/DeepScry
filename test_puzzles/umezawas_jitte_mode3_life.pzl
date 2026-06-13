@@ -1,0 +1,24 @@
+[metadata]
+Name:Umezawa's Jitte — mode 3: gain 2 life (B3 verify, mtg-911)
+Goal:Win
+Turns:3
+Difficulty:Easy
+Description:P0 is at 1 life with Umezawa's Jitte (Id:5, 2 CHARGE counters) equipped to Isamaru, Hound of Konda (Id:6). P0 activates Jitte, chooses mode 3 (gain 2 life), bringing P0 to 3 life. P0 must survive the turn. Verifies B3 ModalChoice mode-dispatch fix: JitteLife sub-effect must execute and credit 2 life to the controller.
+
+[state]
+turn=3
+activeplayer=p0
+activephase=MAIN1
+p0life=1
+p0hand=
+p0battlefield=Plains; Plains; Plains; Umezawa's Jitte|Id:5|Counters:CHARGE=2|AttachedTo:6; Isamaru, Hound of Konda|Id:6
+p0library=Plains; Plains; Plains
+p0graveyard=
+p0exile=
+
+p1life=20
+p1hand=
+p1battlefield=Plains
+p1library=Plains; Plains; Plains
+p1graveyard=
+p1exile=

@@ -1143,6 +1143,7 @@ mod tests {
             power_bonus: 3,
             toughness_bonus: 3,
             keywords_granted: smallvec::SmallVec::new(),
+            keyword_args_granted: smallvec::SmallVec::new(),
         });
         game.cards.insert(pump_spell_id, pump_spell);
 

@@ -127,6 +127,14 @@ pub enum NetworkMessage {
         /// Game `action_count` of the search-resolution choice (mtg-752).
         action_count: u64,
     },
+    /// Server-authoritative record of the Dig-effect kept-list (mtg-677/mtg-908).
+    /// The shadow must adopt this in `execute_dig` instead of re-deriving from
+    /// hidden library contents.
+    DigDecision {
+        digger: PlayerId,
+        kept: Vec<CardId>,
+        action_count: u64,
+    },
 }
 
 impl NetworkMessage {
@@ -211,6 +219,15 @@ impl NetworkMessage {
             } => Some(NetworkMessage::SearchCandidates {
                 searcher,
                 cards,
+                action_count,
+            }),
+            ServerMessage::DigDecision {
+                digger,
+                kept,
+                action_count,
+            } => Some(NetworkMessage::DigDecision {
+                digger,
+                kept,
                 action_count,
             }),
             // Ignore connection/setup messages - handled during connection setup, not gameplay.
@@ -806,6 +823,17 @@ impl SharedNetworkState {
                     // re-expand into N synthetic reveals (that defeats true-ac keying).
                     self.push_state_sync_at(ac, StateSyncEntry::SearchCandidates { searcher, cards });
                 }
+                BufferedFact::DigDecision { digger, kept } => {
+                    // mtg-677/mtg-908: authoritative Dig kept-list via buffer.
+                    use smallvec::SmallVec;
+                    self.push_state_sync_at(
+                        ac,
+                        StateSyncEntry::DigDecision {
+                            digger,
+                            kept: SmallVec::from_vec(kept),
+                        },
+                    );
+                }
                 choice @ BufferedFact::Choice { .. } => choices.push((ac, choice)),
             }
         }
@@ -1015,6 +1043,16 @@ impl SharedNetworkState {
                     }
                 }
                 StateSyncEntry::LibraryReorder { .. } => {}
+                StateSyncEntry::DigDecision { digger: _, kept } => {
+                    // mtg-677/mtg-908: Deliver the server's authoritative kept-list to
+                    // the shadow. `execute_dig` consumes it from this field when it runs.
+                    log::debug!(
+                        "apply_state_sync (native): DigDecision ac={} kept={} cards",
+                        ac,
+                        kept.len()
+                    );
+                    game.sub_action_scratch.pending_dig_authoritative_decision = Some(kept);
+                }
             }
             applied += 1;
         }
@@ -2672,6 +2710,30 @@ async fn run_ws_reader_shared(
                                         StateSyncEntry::LibraryReorder { player, new_order },
                                     );
                                 }
+                            }
+                            NetworkMessage::DigDecision {
+                                digger,
+                                kept,
+                                action_count,
+                            } => {
+                                // mtg-677/mtg-908: server-authoritative Dig kept-list.
+                                // Key it in the reveal-class log by its action_count so
+                                // apply_state_sync_up_to_frontier delivers it to
+                                // execute_dig before the shadow catches up to the Dig.
+                                log::debug!(
+                                    "WsReaderShared: DigDecision for {:?} ({} kept) @ac={}",
+                                    digger,
+                                    kept.len(),
+                                    action_count,
+                                );
+                                use smallvec::SmallVec;
+                                shared_state.push_state_sync_at(
+                                    action_count,
+                                    StateSyncEntry::DigDecision {
+                                        digger,
+                                        kept: SmallVec::from_vec(kept),
+                                    },
+                                );
                             }
                         }
                     }

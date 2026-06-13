@@ -1,0 +1,23 @@
+[metadata]
+Name:Sorin Markov -3 sets opponent life to 10
+Goal:Win
+Turns:5
+Difficulty:Medium
+Description:P0 controls Sorin Markov with 6 loyalty counters (enough for -3). P1 has 20 life. P0 activates -3: target opponent's life total becomes 10. NOTE: -3 ability is currently BROKEN — it does not appear in available actions because SetLife (player-targeting) is not wired into get_valid_targets_for_ability, so requires_target=true but valid_targets is always empty. Verifies SetLife (-3) BROKEN status for 2010 WC tracker mtg-914 B5.
+
+[state]
+turn=2
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=
+p0library=Swamp; Swamp; Swamp; Swamp; Swamp
+p0graveyard=
+p0battlefield=Swamp; Swamp; Swamp; Swamp; Swamp; Swamp; Sorin Markov|Counters:LOYALTY=6
+
+p1life=20
+p1hand=
+p1library=Plains; Plains; Plains; Plains; Plains
+p1graveyard=
+p1battlefield=Plains; Plains
+p1exile=

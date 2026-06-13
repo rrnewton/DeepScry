@@ -25,6 +25,148 @@ struct TargetSnapshot {
     drain_cap: i32,
 }
 
+/// Collect all `Effect`s from an SVar body by following `SubAbility$` chains.
+///
+/// Used by [`GameState::fire_saga_chapter`] to convert a chapter SVar body (e.g.
+/// `"DB$ Mill | Defined$ Player | NumCards$ 3 | SubAbility$ DBExile"`) into a
+/// flat list of `Effect`s that can be executed by `execute_effect`.
+///
+/// This mirrors `CardDefinition::follow_sub_ability_chain` in the loader but
+/// operates at game-time rather than parse-time, so we can handle Saga chapter
+/// abilities that were stored as `K:Chapter` keywords rather than `A:SP$` effects.
+fn collect_svar_chain_effects(svar_body: &str, svars: &std::collections::HashMap<String, String>) -> Vec<Effect> {
+    use crate::loader::ability_parser::{AbilityParams, ApiType};
+    use crate::loader::effect_converter::params_to_effect_with_svars;
+
+    let mut effects = Vec::new();
+    let mut current_body = svar_body.to_string();
+
+    // Guard against infinite loops (e.g., malformed SubAbility cycles).
+    for _ in 0..20 {
+        let prefixed = format!("A:{}", current_body);
+        let params = match AbilityParams::parse(&prefixed) {
+            Ok(p) => p,
+            Err(e) => {
+                log::debug!("collect_svar_chain_effects: parse error '{}': {}", current_body, e);
+                break;
+            }
+        };
+
+        // Convert to an Effect using the SVar-aware converter.
+        #[allow(clippy::wildcard_enum_match_arm)]
+        let effect = match params.api_type {
+            ApiType::Charm => crate::loader::effect_converter::params_to_charm_effect_with_svars(&params, svars),
+            ApiType::DelayedTrigger => {
+                crate::loader::effect_converter::params_to_delayed_trigger_with_svars(&params, svars)
+            }
+            ApiType::ImmediateTrigger => {
+                crate::loader::effect_converter::params_to_immediate_trigger_with_svars(&params, svars)
+            }
+            _ => params_to_effect_with_svars(&params, svars),
+        };
+
+        if let Some(e) = effect {
+            effects.push(e);
+        }
+
+        // Follow SubAbility$ chain.
+        let sub_name = match params.get("SubAbility") {
+            Some(n) => n,
+            None => break,
+        };
+        let sub_body = match svars.get(sub_name) {
+            Some(b) => b.clone(),
+            None => {
+                log::debug!("collect_svar_chain_effects: SubAbility$ '{}' not in SVars", sub_name);
+                break;
+            }
+        };
+        current_body = sub_body;
+    }
+
+    effects
+}
+
+/// Resolve placeholder controller/owner fields in a chapter effect so that
+/// `execute_effect` sees the real `PlayerId` of the Saga's controller.
+///
+/// This mirrors the partial placeholder-resolution done by
+/// `resolve_effect_target` for spell effects but restricted to the simple
+/// You/Opponent cases needed by most Saga chapter abilities.
+#[allow(clippy::wildcard_enum_match_arm)]
+fn resolve_saga_effect_controller(effect: Effect, controller: PlayerId, opponent: Option<PlayerId>) -> Effect {
+    let opp = opponent.unwrap_or(controller);
+    // Patch PlayerId::placeholder() (== PlayerId(0) sentinel) to `controller`.
+    // For effects that address "each player" we leave them as-is; the
+    // `expand_all_players_effect` path handles those.
+    let resolve = |p: PlayerId| {
+        if p.is_placeholder() {
+            controller
+        } else {
+            p
+        }
+    };
+    match effect {
+        Effect::DrawCards { player, count } => Effect::DrawCards {
+            player: resolve(player),
+            count,
+        },
+        Effect::DrawCardsXPaid { player } => Effect::DrawCardsXPaid {
+            player: resolve(player),
+        },
+        Effect::GainLife { player, amount } => Effect::GainLife {
+            player: resolve(player),
+            amount,
+        },
+        Effect::LoseLife { player, amount } => Effect::LoseLife {
+            player: resolve(player),
+            amount,
+        },
+        Effect::DiscardCards {
+            player,
+            count,
+            remember_discarded,
+            optional,
+            remember_discarding_players,
+        } => Effect::DiscardCards {
+            player: resolve(player),
+            count,
+            remember_discarded,
+            optional,
+            remember_discarding_players,
+        },
+        Effect::Mill { player, count } => Effect::Mill {
+            player: resolve(player),
+            count,
+        },
+        Effect::ForceSacrifice {
+            player,
+            sac_type,
+            count,
+        } => Effect::ForceSacrifice {
+            player: resolve(player),
+            sac_type,
+            count,
+        },
+        Effect::SetLife { player, amount } => Effect::SetLife {
+            player: resolve(player),
+            amount,
+        },
+        // DealDamage targets a CardId (sentinel for player) — resolve the player-target sentinel.
+        Effect::DealDamage { target, amount } => {
+            let resolved_target = match target {
+                crate::core::TargetRef::Player(p) if p.is_placeholder() => crate::core::TargetRef::Player(opp),
+                other => other,
+            };
+            Effect::DealDamage {
+                target: resolved_target,
+                amount,
+            }
+        }
+        other => other,
+    }
+}
+
 /// Expand effects with `ALL_PLAYERS_ID` player target into one effect per player.
 /// For effects that don't use the all-players sentinel, returns the original effect unchanged.
 fn expand_all_players_effect(effect: &Effect, player_ids: &[PlayerId]) -> smallvec::SmallVec<[Effect; 4]> {
@@ -53,6 +195,7 @@ fn expand_all_players_effect(effect: &Effect, player_ids: &[PlayerId]) -> smallv
         | Effect::DamageAll { .. }
         | Effect::TapAll { .. }
         | Effect::UntapAll { .. }
+        | Effect::UntapOne { .. }
         | Effect::GainControl { .. }
         | Effect::Fight { .. }
         | Effect::TapPermanent { .. }
@@ -74,11 +217,14 @@ fn expand_all_players_effect(effect: &Effect, player_ids: &[PlayerId]) -> smallv
         | Effect::Proliferate
         | Effect::ChangeZoneAll { .. }
         | Effect::RemoveCounter { .. }
+        | Effect::GrantCastWithFlash { .. }
+        | Effect::ReturnPermanentToHand { .. }
         | Effect::ExilePermanent { .. }
         | Effect::ExileIfWouldDieThisTurn { .. }
         | Effect::SearchLibrary { .. }
         | Effect::AttachEquipment { .. }
         | Effect::CreateToken { .. }
+        | Effect::CreateTokenWithStoredPt { .. }
         | Effect::CopyPermanent { .. }
         | Effect::Balance { .. }
         | Effect::SetBasePowerToughness { .. }
@@ -95,6 +241,7 @@ fn expand_all_players_effect(effect: &Effect, player_ids: &[PlayerId]) -> smallv
         | Effect::CopySpellAbility { .. }
         | Effect::ImmediateTrigger { .. }
         | Effect::ClearRemembered
+        | Effect::ChooseAndRememberOneOfEach { .. }
         | Effect::AddTurn { .. }
         | Effect::AddPhase { .. }
         | Effect::ChooseColor { .. }
@@ -103,13 +250,27 @@ fn expand_all_players_effect(effect: &Effect, player_ids: &[PlayerId]) -> smallv
         | Effect::MoveSelfBetweenZones { .. }
         | Effect::ReturnCardsFromGraveyardToHand { .. }
         | Effect::ReturnGraveyardCardToHand { .. }
+        | Effect::ReturnGraveyardCardToZone { .. }
+        | Effect::PutCreatureFromHandOnBattlefield { .. }
+        | Effect::ReturnSelfAsEnchantment { .. }
         | Effect::PreventAllCombatDamageThisTurn { .. }
         | Effect::ConditionalSelfCounter { .. }
+        | Effect::RearrangeTopOfLibrary { .. }
+        | Effect::SkipUntapStep { .. }
         | Effect::Unimplemented { .. }
         | Effect::NoOp { .. }
         | Effect::GainLifeDynamic { .. }
         | Effect::ClassLevelUp { .. }
-        | Effect::UnlessCostWrapper { .. } => false,
+        | Effect::SacrificeSelf { .. }
+        | Effect::UnlessCostWrapper { .. }
+        | Effect::CreateTokenDynamic { .. }
+        | Effect::CreateEmblem { .. }
+        | Effect::PutCardsFromHandOnTopOfLibrary { .. }
+        | Effect::RevealCardsFromHand { .. }
+        | Effect::PlayFromGraveyard { .. }
+        | Effect::RepeatEach { .. }
+        | Effect::ExtraLandPlay { .. }
+        | Effect::TapPermanentsMatchingFilter { .. } => false,
     };
 
     if !is_all_players {
@@ -177,6 +338,7 @@ fn expand_all_players_effect(effect: &Effect, player_ids: &[PlayerId]) -> smallv
             | Effect::DamageAll { .. }
             | Effect::TapAll { .. }
             | Effect::UntapAll { .. }
+            | Effect::UntapOne { .. }
             | Effect::GainControl { .. }
             | Effect::Fight { .. }
             | Effect::TapPermanent { .. }
@@ -198,11 +360,14 @@ fn expand_all_players_effect(effect: &Effect, player_ids: &[PlayerId]) -> smallv
             | Effect::Proliferate
             | Effect::ChangeZoneAll { .. }
             | Effect::RemoveCounter { .. }
+            | Effect::GrantCastWithFlash { .. }
+            | Effect::ReturnPermanentToHand { .. }
             | Effect::ExilePermanent { .. }
             | Effect::ExileIfWouldDieThisTurn { .. }
             | Effect::SearchLibrary { .. }
             | Effect::AttachEquipment { .. }
             | Effect::CreateToken { .. }
+            | Effect::CreateTokenWithStoredPt { .. }
             | Effect::CopyPermanent { .. }
             | Effect::Balance { .. }
             | Effect::SetBasePowerToughness { .. }
@@ -219,6 +384,7 @@ fn expand_all_players_effect(effect: &Effect, player_ids: &[PlayerId]) -> smallv
             | Effect::CopySpellAbility { .. }
             | Effect::ImmediateTrigger { .. }
             | Effect::ClearRemembered
+            | Effect::ChooseAndRememberOneOfEach { .. }
             | Effect::AddTurn { .. }
             | Effect::AddPhase { .. }
             | Effect::ChooseColor { .. }
@@ -227,13 +393,27 @@ fn expand_all_players_effect(effect: &Effect, player_ids: &[PlayerId]) -> smallv
             | Effect::MoveSelfBetweenZones { .. }
             | Effect::ReturnCardsFromGraveyardToHand { .. }
             | Effect::ReturnGraveyardCardToHand { .. }
+            | Effect::ReturnGraveyardCardToZone { .. }
+            | Effect::PutCreatureFromHandOnBattlefield { .. }
+            | Effect::ReturnSelfAsEnchantment { .. }
             | Effect::PreventAllCombatDamageThisTurn { .. }
             | Effect::ConditionalSelfCounter { .. }
+            | Effect::RearrangeTopOfLibrary { .. }
+            | Effect::SkipUntapStep { .. }
             | Effect::Unimplemented { .. }
             | Effect::NoOp { .. }
             | Effect::GainLifeDynamic { .. }
             | Effect::ClassLevelUp { .. }
-            | Effect::UnlessCostWrapper { .. } => unreachable!(),
+            | Effect::SacrificeSelf { .. }
+            | Effect::UnlessCostWrapper { .. }
+            | Effect::CreateTokenDynamic { .. }
+            | Effect::CreateEmblem { .. }
+            | Effect::PutCardsFromHandOnTopOfLibrary { .. }
+            | Effect::RevealCardsFromHand { .. }
+            | Effect::PlayFromGraveyard { .. }
+            | Effect::RepeatEach { .. }
+            | Effect::ExtraLandPlay { .. }
+            | Effect::TapPermanentsMatchingFilter { .. } => unreachable!(),
         })
         .collect()
 }
@@ -250,6 +430,11 @@ pub(crate) fn spell_matches_cost_filter(
     use crate::core::CostReductionTarget;
     match valid_card {
         CostReductionTarget::AllSpells => true,
+        // SelfCard: only the card that CARRIES this ability (when cast from hand).
+        // The battlefield-scan loop should never match SelfCard because that path
+        // is for OTHER permanents granting reductions.  SelfCard is handled by the
+        // dedicated "self-ReduceCost" pass in calculate_effective_cost instead.
+        CostReductionTarget::SelfCard => false,
         CostReductionTarget::NonCreature => !card.is_creature(),
         CostReductionTarget::Creature => card.is_creature(),
         CostReductionTarget::Subtype(subtype) => card.subtypes.contains(subtype),
@@ -258,6 +443,49 @@ pub(crate) fn spell_matches_cost_filter(
 }
 
 impl GameState {
+    /// Compute the maximum number of lands the player may play this turn.
+    ///
+    /// Starts at 1 (the default rule per CR 305.2), then adds:
+    /// - `StaticAbility::ExtraLandPlay` on each battlefield permanent controlled by `player_id`
+    ///   (Oracle of Mul Daya, Exploration enchantment, Azusa, etc.)
+    /// - `PersistentEffectKind::ExtraLandPlay` for each temporary grant in effect
+    ///   (e.g., the Explore spell "you may play an additional land this turn")
+    pub fn effective_max_lands(&self, player_id: crate::core::PlayerId) -> u8 {
+        let mut extra: u8 = 0;
+
+        // Sum permanent statics on the battlefield
+        for &card_id in &self.battlefield.cards {
+            let Some(card) = self.cards.try_get(card_id) else {
+                continue;
+            };
+            if card.controller != player_id {
+                continue;
+            }
+            for sa in &card.static_abilities {
+                if let crate::core::StaticAbility::ExtraLandPlay { amount, .. } = sa {
+                    extra = extra.saturating_add(*amount);
+                }
+            }
+        }
+
+        // Sum temporary persistent effects (e.g., Explore)
+        extra = extra.saturating_add(self.persistent_effects.extra_land_plays_for_player(player_id));
+
+        1u8.saturating_add(extra)
+    }
+
+    /// Check whether `player_id` is still permitted to play a land this turn,
+    /// taking into account extra land-play grants (Oracle of Mul Daya, Explore, …).
+    ///
+    /// Replaces direct `player.can_play_land()` calls where extra-land-play
+    /// statics/effects must be respected.
+    pub fn can_play_land_effective(&self, player_id: crate::core::PlayerId) -> bool {
+        match self.get_player(player_id) {
+            Ok(player) => player.lands_played_this_turn < self.effective_max_lands(player_id),
+            Err(_) => false,
+        }
+    }
+
     /// Play a land from hand to battlefield
     ///
     /// Per NETWORK_ARCHITECTURE.md, cards are revealed to ALL players before moving
@@ -268,9 +496,8 @@ impl GameState {
     /// Returns an error if the player cannot play more lands, the card is not a land,
     /// or the card is not in hand.
     pub fn play_land(&mut self, player_id: PlayerId, card_id: CardId) -> Result<()> {
-        // Check if player can play a land
-        let player = self.get_player(player_id)?;
-        if !player.can_play_land() {
+        // Check if player can play a land (respecting extra land-play grants)
+        if !self.can_play_land_effective(player_id) {
             return Err(MtgError::InvalidAction("Cannot play more lands this turn".to_string()));
         }
 
@@ -333,6 +560,76 @@ impl GameState {
         self.apply_etb_counters(card_id)?;
 
         // Check ETB triggers (including landfall triggers on other permanents)
+        self.check_triggers(TriggerEvent::EntersBattlefield, card_id)?;
+
+        Ok(())
+    }
+
+    /// Play the top card of the library as a land (Experimental Frenzy, Future Sight).
+    ///
+    /// Mirrors `play_land` but sources the card from `Zone::Library` rather than
+    /// `Zone::Hand`.  The card must be both a land and the top card of the
+    /// controller's library.
+    ///
+    /// # Errors
+    ///
+    /// Returns `MtgError::InvalidAction` if the player cannot play a land, the
+    /// card is not a land, or the card is not at the top of the library.
+    pub fn play_land_from_library(&mut self, player_id: PlayerId, card_id: CardId) -> Result<()> {
+        if !self.can_play_land_effective(player_id) {
+            return Err(MtgError::InvalidAction("Cannot play more lands this turn".to_string()));
+        }
+
+        let card = self.cards.get(card_id)?;
+        if !card.is_land() {
+            return Err(MtgError::InvalidAction("Card is not a land".to_string()));
+        }
+
+        // Verify it is the top of the library.
+        let owner = card.owner;
+        let is_top = self
+            .get_player_zones(owner)
+            .and_then(|z| z.library.cards.last().copied())
+            == Some(card_id);
+        if !is_top {
+            return Err(MtgError::InvalidAction("Card is not the top of library".to_string()));
+        }
+
+        // Move card to battlefield (reveals automatically via move_card).
+        self.move_card(card_id, Zone::Library, Zone::Battlefield, player_id)?;
+
+        // Record turn entered battlefield.
+        if let Ok(card) = self.cards.get_mut(card_id) {
+            let old_value = card.turn_entered_battlefield;
+            let prior_log_size = self.logger.log_count();
+            let new_value = Some(self.turn.turn_number);
+            card.turn_entered_battlefield = new_value;
+            self.undo_log.log(
+                crate::undo::GameAction::SetTurnEnteredBattlefield {
+                    card_id,
+                    old_value,
+                    new_value,
+                },
+                prior_log_size,
+            );
+        }
+
+        // Increment lands played.
+        let old_value = self.get_player(player_id)?.lands_played_this_turn;
+        let prior_log_size = self.logger.log_count();
+        let player = self.get_player_mut(player_id)?;
+        player.play_land();
+        let new_value = player.lands_played_this_turn;
+        self.undo_log.log(
+            crate::undo::GameAction::SetLandsPlayedThisTurn {
+                player_id,
+                old_value,
+                new_value,
+            },
+            prior_log_size,
+        );
+
+        self.apply_etb_counters(card_id)?;
         self.check_triggers(TriggerEvent::EntersBattlefield, card_id)?;
 
         Ok(())
@@ -505,6 +802,11 @@ impl GameState {
             (card.owner, card.effects.len())
         };
 
+        // Set current_spell_controller so that execute_counter_spell can determine
+        // whether a countered creature spell was countered by an opponent (Summoning
+        // Trap condition). Cleared at the end of this function.
+        self.current_spell_controller = Some(card_owner);
+
         log::debug!(target: "resolve_spell", "resolve_spell card_id={}, chosen_targets={:?}, effects_len={}", card_id.as_u32(), chosen_targets.iter().map(|c| c.as_u32()).collect::<Vec<_>>(), effects_len);
 
         // Find opponent ID for untargeted damage (resolve once)
@@ -571,6 +873,7 @@ impl GameState {
                         card_owner,
                         opponent_id,
                         &mut last_resolved_target,
+                        Some(card_id),
                     );
                     log::debug!(target: "resolve_spell", "Effect[{}] after resolve: {:?}", effect_index, resolved);
 
@@ -624,6 +927,9 @@ impl GameState {
                 self.check_triggers_with_damage(TriggerEvent::DealsCombatDamage, card_id, Some(dealt))?;
             }
         }
+
+        // Clear transient spell-controller context now that effects are done.
+        self.current_spell_controller = None;
 
         Ok(())
     }
@@ -684,6 +990,18 @@ impl GameState {
     #[allow(clippy::wildcard_enum_match_arm)]
     fn resolve_self_target(effect: Effect, source_card_id: CardId) -> Effect {
         match effect {
+            // `DestroyAll` with a dynamic `cmcEQX` SVar (Ratchet Bomb): record the
+            // source CardId so execute_effect can read its charge-counter count at
+            // resolution time and set `exact_cmc` on the restriction.
+            Effect::DestroyAll {
+                restriction,
+                no_regenerate,
+                cmc_eq_source: None,
+            } if restriction.cmc_eq_svar => Effect::DestroyAll {
+                restriction,
+                no_regenerate,
+                cmc_eq_source: Some(source_card_id),
+            },
             Effect::DestroyPermanent {
                 target,
                 restriction,
@@ -800,6 +1118,97 @@ impl GameState {
             return self.finalize_adventure_spell(card_id);
         }
 
+        // CR 702.88: Epic — handle before determining the normal destination.
+        // If the resolving spell has the Epic keyword (e.g. Enduring Ideal):
+        //   (a) Exile the card instead of sending it to the graveyard.
+        //   (b) Register a repeating upkeep delayed trigger that re-executes the
+        //       spell's effects (excluding the Epic keyword itself) at the
+        //       beginning of each subsequent upkeep for the rest of the game.
+        //   (c) The controller can't cast spells for the rest of the game.
+        let has_epic = self
+            .cards
+            .get(card_id)
+            .map(|c| c.keywords.contains(crate::core::Keyword::Epic))
+            .unwrap_or(false);
+        if has_epic {
+            let owner = self.cards.get(card_id)?.owner;
+
+            // (c) CR 702.88b: controller can't cast spells for the rest of the game.
+            {
+                let old_value = self.get_player(owner).map(|p| p.cant_cast_spells).unwrap_or(false);
+                if let Ok(player) = self.get_player_mut(owner) {
+                    player.cant_cast_spells = true;
+                    log::debug!(target: "epic", "Epic: player {:?} can no longer cast spells", owner);
+                }
+                let prior_log_size = self.logger.log_count();
+                self.undo_log.log(
+                    crate::undo::GameAction::SetCantCastSpells {
+                        player_id: owner,
+                        old_value,
+                    },
+                    prior_log_size,
+                );
+            }
+
+            // (b) Register a repeating upkeep delayed trigger. The effect clones
+            // the card's spell effects so the library-search fires every upkeep.
+            // We use DelayedEffect::ExecuteEffect wrapping a ChangeZone (search
+            // library for enchantment → battlefield) — the exact effect list from
+            // the card is not yet available in a clone-free way, so we re-execute
+            // the card's effects by firing a "copy spell" approach:
+            // use DelayedEffect::CopySpellAbility on a saved card ref.
+            //
+            // Implementation: store the resolving card id as tracked_card so the
+            // trigger can re-execute its effects. Since the card will be in Exile
+            // after resolution (not the Stack), we store each effect of the spell
+            // body (the non-Epic part — all effects the parser produced) for
+            // replay by wrapping them in ExecuteEffect on the first one.
+            // For Enduring Ideal the single effect is ChangeZone(Library→Battlefield,Enchantment).
+            //
+            // CR 702.88c: "copy the spell except for its epic ability" — the
+            // copy doesn't have Epic (so it won't self-exile / re-trigger again
+            // from THIS copy; the original delayed trigger handles looping).
+            // We implement this by executing each effect from the card's effect
+            // list directly (using execute_effect) inside the trigger.
+            //
+            // For now we wrap the FIRST non-trivial effect as an ExecuteEffect.
+            // TODO(mtg-920): For spells with multiple non-Epic effects, wrap each
+            // one separately or extend to an EffectList variant.
+            {
+                use crate::core::{DelayedEffect, DelayedTrigger, DelayedTriggerCondition, TriggerPhase, TurnOwner};
+                use smallvec::smallvec;
+
+                // Collect the spell's effects (non-Epic body) to re-execute.
+                let spell_effects: Vec<crate::core::Effect> =
+                    self.cards.get(card_id).map(|c| c.effects.clone()).unwrap_or_default();
+
+                if let Some(first_effect) = spell_effects.into_iter().next() {
+                    let epic_trigger = DelayedTrigger::new(
+                        crate::core::DelayedTriggerId::new(0),
+                        card_id,
+                        card_id,
+                        owner,
+                        DelayedTriggerCondition::Phase {
+                            phases: smallvec![TriggerPhase::Upkeep],
+                            whose_turn: TurnOwner::You,
+                        },
+                        DelayedEffect::ExecuteEffect {
+                            effect: Box::new(first_effect),
+                        },
+                    )
+                    .repeating();
+                    self.delayed_triggers.add(epic_trigger);
+                    log::debug!(target: "epic", "Epic: registered repeating upkeep trigger for {:?}", card_id);
+                }
+            }
+
+            // (a) Exile the card instead of graveyard.
+            if self.stack.contains(card_id) {
+                self.move_card(card_id, Zone::Stack, Zone::Exile, owner)?;
+            }
+            return Ok(());
+        }
+
         // Determine destination based on card type
         let destination = {
             let card = self.cards.get(card_id)?;
@@ -851,6 +1260,26 @@ impl GameState {
             self.move_card(card_id, Zone::Stack, Zone::Exile, owner)?;
             return Ok(());
         }
+
+        // CR 614 replacement: if `exile_if_would_go_to_graveyard_this_turn` is
+        // set (from `Effect::PlayFromGraveyard` / Chandra −2's
+        // `ReplaceGraveyard$ Exile`), redirect graveyard → exile instead.
+        let destination = if destination == Zone::Graveyard
+            && self
+                .cards
+                .get(card_id)
+                .map(|c| c.exile_if_would_go_to_graveyard_this_turn)
+                .unwrap_or(false)
+        {
+            log::debug!(
+                target: "resolve_spell",
+                "resolve_spell_finalize: card {} has exile_if_would_go_to_graveyard flag — exiling instead",
+                card_id.as_u32()
+            );
+            Zone::Exile
+        } else {
+            destination
+        };
 
         // Move card from stack to destination
         let owner = self.cards.get(card_id)?.owner;
@@ -915,8 +1344,16 @@ impl GameState {
             // Apply etbCounter keyword (CR 614.1c self-replacement) before triggers fire
             self.apply_etb_counters(card_id)?;
 
+            // CR 714.2: Sagas get a lore counter on ETB, immediately firing chapter I.
+            // `advance_saga_lore_counter` is a no-op for non-Saga cards.
+            self.advance_saga_lore_counter(card_id)?;
+
             // Check for ETB triggers on all permanents (including the one that just entered)
             self.check_triggers(TriggerEvent::EntersBattlefield, card_id)?;
+
+            // CR 702.198: Offspring — if the caster paid the Offspring additional cost,
+            // create a 1/1 token copy of this creature on the battlefield.
+            self.create_offspring_token_if_paid(card_id)?;
         }
 
         Ok(())
@@ -1052,6 +1489,7 @@ impl GameState {
                     card_owner,
                     opponent_id,
                     &mut last_resolved_target,
+                    Some(card_id),
                 );
                 let resolved = Self::resolve_choose_color_source(resolved, card_id);
                 let resolved = Self::resolve_self_target(resolved, card_id);
@@ -1333,54 +1771,293 @@ impl GameState {
     fn apply_etb_counters(&mut self, card_id: CardId) -> Result<()> {
         use crate::core::{CounterType, Keyword, KeywordArgs};
 
-        let (counter_type, amount, card_name) = {
+        // --- EtbCounter keyword (generic: charge, P1P1, age, etc.) ---
+        let etb_grant: Option<(CounterType, u8, String)> = {
             let Some(card) = self.cards.try_get(card_id) else {
                 return Ok(());
             };
-            let Some(args) = card.keywords.get_args(Keyword::EtbCounter) else {
-                return Ok(());
-            };
-            let KeywordArgs::EtbCounter {
+            let card_name_str = card.name.to_string();
+            if let Some(KeywordArgs::EtbCounter {
                 counter_type,
                 amount,
                 condition: _,
-            } = args
-            else {
-                return Ok(());
-            };
-            let Some(ct) = CounterType::parse(counter_type) else {
-                log::warn!(
-                    "apply_etb_counters: unknown counter type '{}' on {}",
-                    counter_type,
-                    card.name
-                );
-                return Ok(());
-            };
-            let Ok(amt) = amount.parse::<u8>() else {
-                // TODO(mtg-400): symbolic amounts like "X" / "Y" require an
-                // evaluation context (caster's choice, X paid, etc.).
-                log::warn!(
-                    "apply_etb_counters: non-numeric amount '{}' on {} not yet supported",
-                    amount,
-                    card.name
-                );
-                return Ok(());
-            };
-            (ct, amt, card.name.clone())
+            }) = card.keywords.get_args(Keyword::EtbCounter)
+            {
+                let Some(ct) = CounterType::parse(counter_type) else {
+                    log::warn!(
+                        "apply_etb_counters: unknown counter type '{}' on {}",
+                        counter_type,
+                        card_name_str
+                    );
+                    return Ok(());
+                };
+                // Clone the fields we need before the borrow of `args` ends.
+                let amount_str = amount.clone();
+                let x_paid = card.x_paid;
+                let times_kicked = card.times_kicked;
+                // Clone SVars so we can look up SVar expressions without holding
+                // a borrow on `card` (which is borrowed through `args`).
+                let svars = card.svars.clone();
+                // Resolve the counter amount: numeric literal, the symbolic "X"/"Y"
+                // (X-cost spells, CR 107.3), or a named SVar (e.g. "XKicked" for
+                // Multikicker cards, CR 702.33a).  For X-cost permanents like
+                // Hangarback Walker, `x_paid` is set by the priority loop before the
+                // spell resolves.  For Multikicker permanents like Everflowing Chalice,
+                // `times_kicked` is set by the priority loop.
+                let amt = match amount_str.parse::<u8>() {
+                    Ok(n) => n,
+                    Err(_) if amount_str.eq_ignore_ascii_case("X") || amount_str.eq_ignore_ascii_case("Y") => x_paid,
+                    Err(_) => {
+                        // Try looking up `amount_str` as a named SVar on the card itself
+                        // (e.g. "XKicked" → SVar:XKicked:Count$TimesKicked).
+                        if let Some(svar) = svars.get(&amount_str) {
+                            let expr = crate::core::CountExpression::parse(&amount_str, &svars);
+                            match expr {
+                                crate::core::CountExpression::TimesKicked => times_kicked,
+                                crate::core::CountExpression::Fixed(n) => n.max(0) as u8,
+                                crate::core::CountExpression::ValidPermanents { .. }
+                                | crate::core::CountExpression::CardsDrawnThisTurn
+                                | crate::core::CountExpression::CardsInHand { .. }
+                                | crate::core::CountExpression::XPaid
+                                | crate::core::CountExpression::TargetedCardPower
+                                | crate::core::CountExpression::TriggeredCardPower
+                                | crate::core::CountExpression::SpellsCastThisTurn
+                                | crate::core::CountExpression::ValidGraveyard { .. }
+                                | crate::core::CountExpression::Compare { .. }
+                                | crate::core::CountExpression::Kicked { .. }
+                                | crate::core::CountExpression::Bargain { .. } => {
+                                    log::warn!(
+                                        "apply_etb_counters: SVar '{}' on {} resolves to unsupported \
+                                         expression '{}' — skipping",
+                                        amount_str,
+                                        card_name_str,
+                                        svar
+                                    );
+                                    return Ok(());
+                                }
+                            }
+                        } else {
+                            log::warn!(
+                                "apply_etb_counters: non-numeric amount '{}' on {} not yet supported",
+                                amount_str,
+                                card_name_str
+                            );
+                            return Ok(());
+                        }
+                    }
+                };
+                Some((ct, amt, card_name_str))
+            } else {
+                None
+            }
         };
 
-        if amount == 0 {
+        if let Some((counter_type, amount, card_name)) = etb_grant {
+            if amount > 0 {
+                self.logger.gamelog(&format!(
+                    "{} enters the battlefield with {} {} counter{}",
+                    card_name,
+                    amount,
+                    counter_type.display_name(),
+                    if amount == 1 { "" } else { "s" }
+                ));
+                self.add_counters(card_id, counter_type, amount)?;
+            }
+        }
+
+        // --- Fading / Vanishing: enter with N fade / time counters (CR 702.32 / CR 702.63) ---
+        // These keywords are parsed as KeywordArgs::Fading { counters } /
+        // KeywordArgs::Vanishing { counters } but have no EtbCounter entry, so
+        // we handle them here explicitly.
+        let fading_grant: Option<(CounterType, u8, String)> = {
+            let Some(card) = self.cards.try_get(card_id) else {
+                return Ok(());
+            };
+            if let Some(KeywordArgs::Fading { counters }) = card.keywords.get_args(Keyword::Fading) {
+                Some((CounterType::Fade, *counters, card.name.to_string()))
+            } else if let Some(KeywordArgs::Vanishing { counters }) = card.keywords.get_args(Keyword::Vanishing) {
+                Some((CounterType::Time, *counters, card.name.to_string()))
+            } else {
+                None
+            }
+        };
+
+        if let Some((counter_type, amount, card_name)) = fading_grant {
+            if amount > 0 {
+                self.logger.gamelog(&format!(
+                    "{} enters the battlefield with {} {} counter{}",
+                    card_name,
+                    amount,
+                    counter_type.display_name(),
+                    if amount == 1 { "" } else { "s" }
+                ));
+                self.add_counters(card_id, counter_type, amount)?;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Add one lore counter to a Saga and fire the corresponding chapter ability.
+    ///
+    /// Called (a) when a Saga enters the battlefield (fires chapter I) and (b) after
+    /// the active player's mandatory draw each turn (fires the next chapter).
+    ///
+    /// After firing the final chapter (`lore_count >= max_chapter_number`), the Saga
+    /// is sacrificed (CR 714.4).
+    ///
+    /// # Rules (CR 714)
+    /// - 714.1: A Saga has chapter abilities triggered by lore counters.
+    /// - 714.2: As a Saga enters the battlefield, its controller adds a lore counter.
+    /// - 714.3: After the active player's mandatory draw, if they control a Saga,
+    ///   they add a lore counter to it.
+    /// - 714.4: After a Saga's final chapter ability has left the stack, the Saga's
+    ///   controller sacrifices it.
+    ///
+    /// AI/network simplification: the chapter ability is executed immediately
+    /// (no stack push) so we avoid implementing a full chapter-ability stack entry.
+    /// This is consistent with how other triggered effects without target selection
+    /// are handled in the engine. Targeted chapter abilities may therefore miss
+    /// their targeting prompts and fizzle; this is a known limitation for the wave-4
+    /// compatibility pass (mtg-901).
+    pub(crate) fn advance_saga_lore_counter(&mut self, saga_id: CardId) -> Result<()> {
+        use crate::core::{CounterType, KeywordArgs};
+
+        // Guard: card must still be on battlefield.
+        if !self.battlefield.cards.contains(&saga_id) {
             return Ok(());
         }
 
+        // Collect chapter metadata before mutating the card.
+        let (max_chapter, card_name) = {
+            let card = match self.cards.try_get(saga_id) {
+                Some(c) => c,
+                None => return Ok(()),
+            };
+            // Sagas have exactly one Chapter keyword whose chapter_number is the
+            // total number of chapters (all abilities listed in that one keyword).
+            let mut max_chap = 0u8;
+            for kw_args in card.keywords.iter_args() {
+                if let KeywordArgs::Chapter { chapter_number, .. } = kw_args {
+                    max_chap = max_chap.max(*chapter_number);
+                }
+            }
+            if max_chap == 0 {
+                // Not a real Saga (no Chapter keyword); skip silently.
+                return Ok(());
+            }
+            (max_chap, card.name.to_string())
+        };
+
+        // Add 1 lore counter (CR 714.2 / 714.3).
+        self.add_counters(saga_id, CounterType::Lore, 1)?;
+
+        let lore_count = self
+            .cards
+            .try_get(saga_id)
+            .map(|c| c.get_counter(CounterType::Lore))
+            .unwrap_or(0);
+
         self.logger.gamelog(&format!(
-            "{} enters the battlefield with {} {} counter{}",
-            card_name,
-            amount,
-            counter_type.display_name(),
-            if amount == 1 { "" } else { "s" }
+            "{} gets a lore counter ({}/{})",
+            card_name, lore_count, max_chapter
         ));
-        self.add_counters(card_id, counter_type, amount)?;
+
+        // Fire the chapter ability for the current lore count.
+        self.fire_saga_chapter(saga_id, lore_count)?;
+
+        // CR 714.4: After the final chapter ability has left the stack (here:
+        // immediately after firing since we execute inline), sacrifice the Saga.
+        if lore_count >= max_chapter && self.battlefield.cards.contains(&saga_id) {
+            let owner = self
+                .cards
+                .try_get(saga_id)
+                .map(|c| c.owner)
+                .unwrap_or_else(|| self.players.first().map(|p| p.id).unwrap_or_else(|| PlayerId::new(0)));
+            let dest = self.death_destination_for_card(saga_id);
+            self.logger
+                .gamelog(&format!("{} is sacrificed (final chapter)", card_name));
+            self.move_card(saga_id, Zone::Battlefield, dest, owner)?;
+        }
+
+        Ok(())
+    }
+
+    /// Execute the chapter ability for a Saga at the given `lore_count`.
+    ///
+    /// Looks up the SVar name from the `K:Chapter` keyword abilities list (comma-
+    /// separated, 1-indexed by chapter number), then collects all `Effect`s from
+    /// that SVar body following any `SubAbility$` chain, and executes them in order.
+    fn fire_saga_chapter(&mut self, saga_id: CardId, lore_count: u8) -> Result<()> {
+        use crate::core::KeywordArgs;
+
+        // Collect the chapter abilities list and SVars before mutating.
+        let (chapter_svar_names, card_name, svars): (Vec<String>, String, std::collections::HashMap<String, String>) = {
+            let card = match self.cards.try_get(saga_id) {
+                Some(c) => c,
+                None => return Ok(()),
+            };
+            let mut abilities_str = None;
+            for kw_args in card.keywords.iter_args() {
+                if let KeywordArgs::Chapter { abilities, .. } = kw_args {
+                    abilities_str = Some(abilities.clone());
+                    break;
+                }
+            }
+            let Some(abilities) = abilities_str else {
+                return Ok(());
+            };
+            let svar_names: Vec<String> = abilities.split(',').map(|s| s.trim().to_string()).collect();
+            (svar_names, card.name.to_string(), card.definition.svars.clone())
+        };
+
+        // Chapter numbering is 1-indexed; SVars are stored in order.
+        let chapter_idx = lore_count.saturating_sub(1) as usize;
+        let Some(svar_name) = chapter_svar_names.get(chapter_idx) else {
+            log::debug!(
+                "fire_saga_chapter: no SVar for chapter {} on {} (only {} chapters)",
+                lore_count,
+                card_name,
+                chapter_svar_names.len()
+            );
+            return Ok(());
+        };
+        let Some(svar_body) = svars.get(svar_name.as_str()).cloned() else {
+            log::debug!("fire_saga_chapter: SVar '{}' not found on {}", svar_name, card_name);
+            return Ok(());
+        };
+
+        log::info!(
+            "fire_saga_chapter: {} chapter {} ({}): {}",
+            card_name,
+            lore_count,
+            svar_name,
+            svar_body
+        );
+
+        // Collect all effects from the SVar body following SubAbility$ chains.
+        let effects = collect_svar_chain_effects(&svar_body, &svars);
+
+        if effects.is_empty() {
+            log::debug!(
+                "fire_saga_chapter: SVar '{}' on {} produced no executable effects (not yet supported)",
+                svar_name,
+                card_name
+            );
+        }
+
+        for effect in &effects {
+            // Resolve any self/controller placeholders using the Saga's controller.
+            let resolved = if let Some(card) = self.cards.try_get(saga_id) {
+                let ctrl = card.controller;
+                let opp = self.players.iter().map(|p| p.id).find(|&id| id != ctrl);
+                resolve_saga_effect_controller(effect.clone(), ctrl, opp)
+            } else {
+                effect.clone()
+            };
+            self.execute_effect(&resolved)?;
+        }
+
         Ok(())
     }
 
@@ -1703,6 +2380,54 @@ impl GameState {
             }
         }
 
+        // Self-ReduceCost: apply ReduceCost static abilities carried on the card
+        // being cast itself (ValidCard$ Card.Self | EffectZone$ All).
+        // These reduce the card's own casting cost based on game state, and fire
+        // even though the card is still in the hand (not yet on the battlefield).
+        // Example: Eddymurk Crab — "costs {1} less for each instant/sorcery in
+        // your graveyard" (SVar:X:Count$ValidGraveyard Instant.YouOwn,Sorcery.YouOwn).
+        // CR 601.2e: cost reductions from the spell itself are applied first.
+        for self_ability in &card.static_abilities {
+            if let StaticAbility::ReduceCost {
+                valid_card: crate::core::CostReductionTarget::SelfCard,
+                amount,
+                condition,
+                description,
+            } = self_ability
+            {
+                // Condition check (if any)
+                let condition_met = if let Some(cond) = condition {
+                    self.count_cards_matching_filter(player_id, &cond.is_present, cond.present_zone)
+                        >= cond.min_count as usize
+                } else {
+                    true
+                };
+
+                if condition_met {
+                    let reduce_by = match amount {
+                        crate::core::CostReductionAmount::Fixed(n) => *n,
+                        crate::core::CostReductionAmount::Dynamic(expr) => {
+                            self.evaluate_count_expression(expr, player_id).unwrap_or(0).max(0) as u8
+                        }
+                    };
+
+                    let old_generic = effective_cost.generic;
+                    effective_cost.generic = effective_cost.generic.saturating_sub(reduce_by);
+
+                    if old_generic != effective_cost.generic {
+                        log::debug!(
+                            "Self-ReduceCost on {}: {} (reducing generic by {}, was {}, now {})",
+                            card.name,
+                            description,
+                            reduce_by,
+                            old_generic,
+                            effective_cost.generic
+                        );
+                    }
+                }
+            }
+        }
+
         // Check for ReduceCost / RaiseCost static abilities from permanents.
         //
         // Polarity rules (CR 601.2f):
@@ -1746,15 +2471,26 @@ impl GameState {
                     };
 
                     if condition_met {
+                        // Resolve the reduction amount: fixed constant or dynamic
+                        // CountExpression evaluated against the caster's game state.
+                        // Dynamic example: Eddymurk Crab (`Amount$X` with
+                        // `SVar:X:Count$ValidGraveyard Instant.YouOwn,Sorcery.YouOwn`).
+                        let reduce_by = match amount {
+                            crate::core::CostReductionAmount::Fixed(n) => *n,
+                            crate::core::CostReductionAmount::Dynamic(expr) => {
+                                self.evaluate_count_expression(expr, player_id).unwrap_or(0).max(0) as u8
+                            }
+                        };
+
                         let old_generic = effective_cost.generic;
-                        effective_cost.generic = effective_cost.generic.saturating_sub(*amount);
+                        effective_cost.generic = effective_cost.generic.saturating_sub(reduce_by);
 
                         if old_generic != effective_cost.generic {
                             log::debug!(
                                 "ReduceCost from {}: {} (reducing generic by {}, was {}, now {})",
                                 source_card.name,
                                 description,
-                                amount,
+                                reduce_by,
                                 old_generic,
                                 effective_cost.generic
                             );
@@ -1805,6 +2541,47 @@ impl GameState {
             effective_cost = effective_cost.with_x_value(card.x_paid);
         }
 
+        // Add Multikicker cost: times_kicked × kick_cost (CR 702.33a).
+        // times_kicked is set by the priority loop (Step 2c) before this is called.
+        if card.times_kicked > 0 {
+            if let Some(crate::core::KeywordArgs::Multikicker { cost }) =
+                card.keywords.get_args(crate::core::Keyword::Multikicker)
+            {
+                let kick_generic = cost.generic * card.times_kicked;
+                let kick_white = cost.white * card.times_kicked;
+                let kick_blue = cost.blue * card.times_kicked;
+                let kick_black = cost.black * card.times_kicked;
+                let kick_red = cost.red * card.times_kicked;
+                let kick_green = cost.green * card.times_kicked;
+                effective_cost.generic = effective_cost.generic.saturating_add(kick_generic);
+                effective_cost.white = effective_cost.white.saturating_add(kick_white);
+                effective_cost.blue = effective_cost.blue.saturating_add(kick_blue);
+                effective_cost.black = effective_cost.black.saturating_add(kick_black);
+                effective_cost.red = effective_cost.red.saturating_add(kick_red);
+                effective_cost.green = effective_cost.green.saturating_add(kick_green);
+            }
+        }
+
+        // Add Kicker cost (CR 702.32) when kicker_paid is set by Step 2c.5.
+        if card.kicker_paid {
+            if let Some(crate::core::KeywordArgs::Kicker { cost }) =
+                card.keywords.get_args(crate::core::Keyword::Kicker)
+            {
+                effective_cost.generic = effective_cost.generic.saturating_add(cost.generic);
+                effective_cost.white = effective_cost.white.saturating_add(cost.white);
+                effective_cost.blue = effective_cost.blue.saturating_add(cost.blue);
+                effective_cost.black = effective_cost.black.saturating_add(cost.black);
+                effective_cost.red = effective_cost.red.saturating_add(cost.red);
+                effective_cost.green = effective_cost.green.saturating_add(cost.green);
+            }
+        }
+
+        // Add ModeCost extra (tiered modal spells like Fire Magic: Fire={0}/Fira={2}/Firaga={5}).
+        // mode_cost_paid is set by apply_selected_modes after mode selection in the priority loop.
+        if card.mode_cost_paid > 0 {
+            effective_cost.generic = effective_cost.generic.saturating_add(card.mode_cost_paid);
+        }
+
         effective_cost
     }
 
@@ -1819,6 +2596,105 @@ impl GameState {
         zone: crate::zones::Zone,
     ) -> usize {
         use crate::zones::Zone;
+
+        // Comma-separated filter (e.g. "Instant.YouOwn,Sorcery.YouOwn"): a card
+        // matches if it matches ANY of the comma-separated parts. Sum across
+        // distinct parts (a card can only match once — we count distinct cards).
+        // Implementation: collect into a set of matching card ids, then count.
+        // Simple/fast: iterate zone cards once per part, use a HashSet to dedup.
+        if filter.contains(',') {
+            let mut matched: std::collections::HashSet<crate::core::CardId> = std::collections::HashSet::new();
+            for part in filter.split(',') {
+                let part = part.trim();
+                if part.is_empty() {
+                    continue;
+                }
+                // Re-use single-filter logic by calling ourselves recursively.
+                // To count unique matching cards across all parts we can't just
+                // sum, so instead we collect matching card ids per part.
+                // As an approximation (good enough for dedup), rebuild per-zone
+                // ids here and re-check the single-part filter via a local closure.
+                let zone_cards: &[crate::core::CardId] = match zone {
+                    Zone::Graveyard => {
+                        if let Some(zones) = self.get_player_zones(player_id) {
+                            zones.graveyard.cards.as_slice()
+                        } else {
+                            continue;
+                        }
+                    }
+                    Zone::Hand => {
+                        if let Some(zones) = self.get_player_zones(player_id) {
+                            zones.hand.cards.as_slice()
+                        } else {
+                            continue;
+                        }
+                    }
+                    Zone::Battlefield => self.battlefield.cards.as_slice(),
+                    Zone::Exile => {
+                        if let Some(zones) = self.get_player_zones(player_id) {
+                            zones.exile.cards.as_slice()
+                        } else {
+                            continue;
+                        }
+                    }
+                    Zone::Library => {
+                        if let Some(zones) = self.get_player_zones(player_id) {
+                            zones.library.cards.as_slice()
+                        } else {
+                            continue;
+                        }
+                    }
+                    Zone::Stack | Zone::Command => continue,
+                };
+                // Build a temporary single-filter count and collect matching ids.
+                // We recurse with the single part to reuse all the type-matching
+                // logic; then track which cards match via a secondary scan.
+                let single_count = self.count_cards_matching_filter(player_id, part, zone);
+                if single_count == 0 {
+                    continue;
+                }
+                // To get the actual card ids, re-scan with the same single-filter.
+                // parse the single-part filter inline (mirrors the logic below).
+                let mut sections = part.splitn(2, '.');
+                let type_filter = sections.next().unwrap_or("");
+                let quals: Vec<&str> = sections.next().map(|q| q.split('+').collect()).unwrap_or_default();
+                let ownership = quals
+                    .iter()
+                    .copied()
+                    .find(|q| matches!(*q, "YouOwn" | "OppOwn" | "YouCtrl" | "OppCtrl"))
+                    .unwrap_or("YouOwn");
+                for &cid in zone_cards {
+                    let Some(c) = self.cards.try_get(cid) else {
+                        continue;
+                    };
+                    let ownership_ok = match ownership {
+                        "YouOwn" => c.owner == player_id,
+                        "OppOwn" => c.owner != player_id,
+                        "YouCtrl" => c.controller == player_id,
+                        "OppCtrl" => c.controller != player_id,
+                        _ => true,
+                    };
+                    if !ownership_ok {
+                        continue;
+                    }
+                    let type_ok = match type_filter {
+                        "" | "Card" | "Permanent" => true,
+                        "Land" => c.is_land(),
+                        "Artifact" => c.is_artifact(),
+                        "Creature" => c.is_creature(),
+                        "Enchantment" => c.is_enchantment(),
+                        "Instant" => c.types.contains(&crate::core::CardType::Instant),
+                        "Sorcery" => c.types.contains(&crate::core::CardType::Sorcery),
+                        "Planeswalker" => c.types.contains(&crate::core::CardType::Planeswalker),
+                        other => c.subtypes.contains(&crate::core::Subtype::new(other)),
+                    };
+                    if type_ok {
+                        matched.insert(cid);
+                    }
+                }
+            }
+            return matched.len();
+        }
 
         // Parse filter: "Lesson.YouOwn" -> type="Lesson", quals=["YouOwn"].
         // Qualifiers after the first '.' are '+'-joined, e.g.
@@ -1914,14 +2790,16 @@ impl GameState {
                 }
 
                 // Check the base type filter. "Card"/"Permanent" are wildcards;
-                // card types (Land/Artifact/Creature/Enchantment/...) match
-                // c.types; otherwise treat as a creature subtype.
+                // card types (Land/Artifact/Creature/Enchantment/Instant/Sorcery/…)
+                // match c.types; otherwise treat as a creature subtype.
                 let type_ok = match type_filter {
                     "" | "Card" | "Permanent" => true,
                     "Land" => c.is_land(),
                     "Artifact" => c.is_artifact(),
                     "Creature" => c.is_creature(),
                     "Enchantment" => c.is_enchantment(),
+                    "Instant" => c.types.contains(&crate::core::CardType::Instant),
+                    "Sorcery" => c.types.contains(&crate::core::CardType::Sorcery),
                     "Planeswalker" => c.types.contains(&crate::core::CardType::Planeswalker),
                     other => c.subtypes.contains(&crate::core::Subtype::new(other)),
                 };
@@ -2205,7 +3083,19 @@ impl GameState {
                     }
                 }
             }
-            Zone::Library | Zone::Battlefield | Zone::Graveyard | Zone::Stack => {
+            Zone::Library => {
+                // Casting from the top of library (Experimental Frenzy, Future Sight).
+                // The card must be the top card of the controller's library.
+                let owner = self.cards.get(card_id).map(|c| c.owner).unwrap_or(player_id);
+                let is_top = self
+                    .get_player_zones(owner)
+                    .and_then(|z| z.library.cards.last().copied())
+                    == Some(card_id);
+                if !is_top {
+                    return Err(MtgError::InvalidAction("Card is not the top of library".to_string()));
+                }
+            }
+            Zone::Battlefield | Zone::Graveyard | Zone::Stack => {
                 return Err(MtgError::InvalidAction(format!(
                     "Cannot cast spell from {:?}",
                     source_zone
@@ -2428,6 +3318,7 @@ impl GameState {
     /// resolution needs.
     #[inline]
     #[allow(clippy::wildcard_enum_match_arm)]
+    #[allow(clippy::too_many_arguments)]
     fn resolve_effect_target(
         &self,
         effect: &Effect,
@@ -2436,6 +3327,7 @@ impl GameState {
         card_owner: PlayerId,
         opponent_id: Option<PlayerId>,
         last_resolved_target: &mut Option<CardId>,
+        source_card_id: Option<CardId>,
     ) -> Effect {
         match effect {
             // DealDamage with a player placeholder (`Defined$ You`) → the
@@ -2491,14 +3383,18 @@ impl GameState {
 
             // DealDamageDynamic: resolve the chosen target AND evaluate the
             // CountExpression (e.g. Combustion Technique's
-            // `Count$ValidGraveyard Lesson.YouOwn/Plus.2`) against the caster's
-            // controller right now, then produce a concrete DealDamage so
-            // execute_effect can run without needing the controller context.
+            // `Count$ValidGraveyard Lesson.YouOwn/Plus.2`, or Torch the Tower's
+            // `Count$Bargain.3.2`) against the caster's controller right now,
+            // then produce a concrete DealDamage so execute_effect can run
+            // without needing the controller context.
             Effect::DealDamageDynamic {
                 target: TargetRef::None,
                 count,
             } => {
-                let amount = self.evaluate_count_expression(count, card_owner).unwrap_or(0).max(0);
+                let amount = self
+                    .evaluate_count_with_source(count, card_owner, source_card_id)
+                    .unwrap_or(0)
+                    .max(0);
                 if *target_index < chosen_targets.len() {
                     let raw = chosen_targets[*target_index];
                     *target_index += 1;
@@ -2518,7 +3414,10 @@ impl GameState {
             }
             // DealDamageDynamic with a resolved target: just evaluate the count.
             Effect::DealDamageDynamic { target, count } => {
-                let amount = self.evaluate_count_expression(count, card_owner).unwrap_or(0).max(0);
+                let amount = self
+                    .evaluate_count_with_source(count, card_owner, source_card_id)
+                    .unwrap_or(0)
+                    .max(0);
                 Effect::DealDamage {
                     target: target.clone(),
                     amount,
@@ -2691,6 +3590,7 @@ impl GameState {
                 power_bonus,
                 toughness_bonus,
                 keywords_granted,
+                keyword_args_granted,
             } if target.is_placeholder() => {
                 if *target_index < chosen_targets.len() {
                     let resolved_target = chosen_targets[*target_index];
@@ -2701,6 +3601,7 @@ impl GameState {
                         power_bonus: *power_bonus,
                         toughness_bonus: *toughness_bonus,
                         keywords_granted: keywords_granted.clone(),
+                        keyword_args_granted: keyword_args_granted.clone(),
                     }
                 } else {
                     effect.clone()
@@ -2715,6 +3616,7 @@ impl GameState {
                 power_count,
                 toughness_count,
                 keywords_granted,
+                keyword_args_granted,
             } if target.is_placeholder() => {
                 if *target_index < chosen_targets.len() {
                     let resolved_target = chosen_targets[*target_index];
@@ -2725,6 +3627,7 @@ impl GameState {
                         power_count: power_count.clone(),
                         toughness_count: toughness_count.clone(),
                         keywords_granted: keywords_granted.clone(),
+                        keyword_args_granted: keyword_args_granted.clone(),
                     }
                 } else {
                     effect.clone()
@@ -2932,6 +3835,21 @@ impl GameState {
                     effect.clone()
                 }
             }
+            Effect::ReturnPermanentToHand { target, restriction } if target.is_placeholder() => {
+                if *target_index < chosen_targets.len() {
+                    let resolved_target = chosen_targets[*target_index];
+                    *target_index += 1;
+                    // Record bounced permanent so chained SubAbilities (e.g. Teferi's draw)
+                    // can find it via last_resolved_target / Defined$ TargetedController.
+                    *last_resolved_target = Some(resolved_target);
+                    Effect::ReturnPermanentToHand {
+                        target: resolved_target,
+                        restriction: restriction.clone(),
+                    }
+                } else {
+                    effect.clone()
+                }
+            }
             Effect::ExilePermanent { target } if target.is_placeholder() => {
                 if *target_index < chosen_targets.len() {
                     let resolved_target = chosen_targets[*target_index];
@@ -2965,6 +3883,28 @@ impl GameState {
                     effect.clone()
                 }
             }
+            // PlayFromGraveyard: bind the chosen graveyard card to the effect's target.
+            Effect::PlayFromGraveyard {
+                target,
+                exile_on_resolution,
+                type_filter,
+                max_mana_value,
+            } if target.is_placeholder() => {
+                if *target_index < chosen_targets.len() {
+                    let resolved_target = chosen_targets[*target_index];
+                    *target_index += 1;
+                    *last_resolved_target = Some(resolved_target);
+                    Effect::PlayFromGraveyard {
+                        target: resolved_target,
+                        exile_on_resolution: *exile_on_resolution,
+                        type_filter: type_filter.clone(),
+                        max_mana_value: *max_mana_value,
+                    }
+                } else {
+                    effect.clone()
+                }
+            }
+
             // Player ID resolution for player-targeting effects
             Effect::DrawCards { player, count } if player.is_placeholder() => Effect::DrawCards {
                 player: card_owner,
@@ -3024,6 +3964,27 @@ impl GameState {
             Effect::ReturnCardsFromGraveyardToHand { player } if player.is_placeholder() => {
                 Effect::ReturnCardsFromGraveyardToHand { player: card_owner }
             }
+            // "Put N cards from your hand on top of your library" (Brainstorm sub-ability).
+            // Always targets the spell's controller. Resolve placeholder here.
+            Effect::PutCardsFromHandOnTopOfLibrary { player, count } if player.is_placeholder() => {
+                Effect::PutCardsFromHandOnTopOfLibrary {
+                    player: card_owner,
+                    count: *count,
+                }
+            }
+            // "Reveal any number of cards from your hand" (Metalworker-style Reveal ability).
+            // Always targets the ability's controller. Resolve placeholder here.
+            Effect::RevealCardsFromHand {
+                player,
+                filter,
+                any_number,
+                remember_count,
+            } if player.is_placeholder() => Effect::RevealCardsFromHand {
+                player: card_owner,
+                filter: filter.clone(),
+                any_number: *any_number,
+                remember_count: *remember_count,
+            },
             // "Return one matching card from your graveyard to hand" — also targets
             // the spell/trigger controller by default. Resolve placeholder.
             Effect::ReturnGraveyardCardToHand { player, type_filter } if player.is_placeholder() => {
@@ -3032,6 +3993,34 @@ impl GameState {
                     type_filter: type_filter.clone(),
                 }
             }
+            // "Return one matching card from graveyard to any zone" — resolve
+            // player placeholder to the spell/trigger controller.
+            Effect::ReturnGraveyardCardToZone {
+                player,
+                type_filter,
+                destination,
+                gain_control,
+                library_position,
+                remember_changed,
+            } if player.is_placeholder() => Effect::ReturnGraveyardCardToZone {
+                player: card_owner,
+                type_filter: type_filter.clone(),
+                destination: *destination,
+                gain_control: *gain_control,
+                library_position: *library_position,
+                remember_changed: *remember_changed,
+            },
+            // "Put a creature from your hand onto the battlefield" (Sneak Attack).
+            // Resolve player placeholder to the ability's controller.
+            Effect::PutCreatureFromHandOnBattlefield {
+                player,
+                type_filter,
+                remember_changed,
+            } if player.is_placeholder() => Effect::PutCreatureFromHandOnBattlefield {
+                player: card_owner,
+                type_filter: type_filter.clone(),
+                remember_changed: *remember_changed,
+            },
             // Maze of Ith's "prevent all combat damage": the target creature is the
             // same creature targeted by the preceding UntapPermanent effect in the
             // sub-ability chain. Reuse `last_resolved_target` (set by UntapPermanent).
@@ -3087,11 +4076,29 @@ impl GameState {
                 sac_type: sac_type.clone(),
                 count: *count,
             },
-            Effect::SetLife { player, amount } if player.is_placeholder() => Effect::SetLife {
-                // SetLife defaults to self (Angel of Grace: "Your life total becomes 10")
-                player: card_owner,
-                amount: *amount,
-            },
+            Effect::SetLife { player, amount } if player.is_placeholder() => {
+                // If a target was chosen (Sorin Markov -3: "target opponent's life total
+                // becomes 10"), consume the chosen target from the list and decode the
+                // player sentinel. If no target was chosen, default to card_owner
+                // (Angel of Grace: "your life total becomes 10"). (CR 119.5)
+                let resolved_player = if *target_index < chosen_targets.len() {
+                    let raw = chosen_targets[*target_index];
+                    if let Some(pid) = crate::core::player_target_from_sentinel(raw) {
+                        *target_index += 1;
+                        *last_resolved_target = Some(raw);
+                        pid
+                    } else {
+                        // Target is a permanent, not a player — fall back to card_owner
+                        card_owner
+                    }
+                } else {
+                    card_owner
+                };
+                Effect::SetLife {
+                    player: resolved_player,
+                    amount: *amount,
+                }
+            }
             Effect::Mill { player, count } if player.is_placeholder() => Effect::Mill {
                 player: card_owner,
                 count: *count,
@@ -3116,13 +4123,30 @@ impl GameState {
                 };
                 Effect::DrainMana { player: resolved }
             }
-            Effect::Scry { player, count } if player.is_placeholder() => Effect::Scry {
+            Effect::Scry {
+                player,
+                count,
+                only_if_bargained,
+            } if player.is_placeholder() => Effect::Scry {
                 player: card_owner,
                 count: *count,
+                only_if_bargained: *only_if_bargained,
             },
             Effect::Surveil { player, count } if player.is_placeholder() => Effect::Surveil {
                 player: card_owner,
                 count: *count,
+            },
+            // RearrangeTopOfLibrary — Defined$ You → controller (card_owner).
+            Effect::RearrangeTopOfLibrary { player, count } if player.is_placeholder() => {
+                Effect::RearrangeTopOfLibrary {
+                    player: card_owner,
+                    count: *count,
+                }
+            }
+            // SkipUntapStep — ValidTgts$ Player → opponent; Defined$ You → self.
+            Effect::SkipUntapStep { player } if player.is_placeholder() => Effect::SkipUntapStep { player: card_owner },
+            Effect::SkipUntapStep { player } if player.is_target_opponent() => Effect::SkipUntapStep {
+                player: opponent_id.unwrap_or(card_owner),
             },
             Effect::AddTurn { player, num_turns } if player.is_placeholder() => Effect::AddTurn {
                 player: card_owner,
@@ -3317,6 +4341,7 @@ impl GameState {
                     card_owner,
                     opponent_id,
                     last_resolved_target,
+                    source_card_id,
                 );
 
                 // Resolve payer reference to concrete PlayerId
@@ -3393,6 +4418,107 @@ impl GameState {
                     token_script: token_script.clone(),
                     amount: *amount,
                     for_each_player: *for_each_player,
+                }
+            }
+
+            // Resolve CreateTokenWithStoredPt placeholders.  The loader emits
+            // `source_card: CardId::placeholder()` and `controller:
+            // PlayerId::new(0)` since the activating card is not known at parse
+            // time.  At resolution we substitute the actual source card (the
+            // Phyrexian Processor) and its controller.
+            Effect::CreateTokenWithStoredPt {
+                source_card,
+                controller,
+                token_script,
+            } => {
+                let resolved_source = if source_card.is_placeholder() {
+                    source_card_id.unwrap_or(*source_card)
+                } else {
+                    *source_card
+                };
+                let resolved_controller = if controller.is_placeholder() {
+                    card_owner
+                } else {
+                    *controller
+                };
+                Effect::CreateTokenWithStoredPt {
+                    source_card: resolved_source,
+                    controller: resolved_controller,
+                    token_script: token_script.clone(),
+                }
+            }
+
+            // Resolve CreateEmblem controller placeholder to the actual caster.
+            // The loader sets controller to PlayerId::new(0) as placeholder;
+            // at runtime we resolve it to the spell's owner (the planeswalker's
+            // controller who activated the ultimate).
+            Effect::CreateEmblem {
+                controller,
+                emblem_name,
+                static_abilities,
+                triggers,
+            } if controller.is_placeholder() => Effect::CreateEmblem {
+                controller: card_owner,
+                emblem_name: emblem_name.clone(),
+                static_abilities: static_abilities.clone(),
+                triggers: triggers.clone(),
+            },
+
+            // RepeatEach (Pattern A): fill in the chosen targets so execute_effect
+            // can iterate over them.  The targets list starts empty at parse time
+            // and is populated here once we know the spell's chosen_targets.
+            // Pattern B (AllPlayers) carries no targets so it passes through unchanged.
+            Effect::RepeatEach {
+                sub_effects,
+                iterate_over:
+                    crate::core::RepeatEachIterate::Cards {
+                        targets,
+                        require_in_graveyard,
+                    },
+            } if targets.is_empty() && !chosen_targets.is_empty() => {
+                // Determine which chosen targets belong to this RepeatEach.
+                // Two cases:
+                // (a) RepeatEach appears BEFORE the Destroy/ChangeZone effects in
+                //     the chain (unusual): take remaining chosen targets
+                //     (chosen_targets[target_index..]).
+                // (b) RepeatEach appears AFTER the consuming effects (Terastodon):
+                //     the Destroy effects already advanced target_index past all
+                //     chosen targets, so chosen_targets[target_index..] is empty.
+                //     In this case, iterate over ALL chosen targets (0..target_index),
+                //     since RepeatEach with DefinedCards$ Targeted means "for each of
+                //     the targets we chose at cast time", not "new targets". target_index
+                //     is not advanced (RepeatEach does not consume additional targets).
+                let remaining = &chosen_targets[*target_index..];
+                let resolved_targets = if remaining.is_empty() {
+                    // Terastodon case: consuming effects ran first; re-use all chosen targets.
+                    chosen_targets.to_vec()
+                } else {
+                    // Standard case: take remaining targets and mark them consumed.
+                    let v = remaining.to_vec();
+                    *target_index = chosen_targets.len();
+                    v
+                };
+                Effect::RepeatEach {
+                    sub_effects: sub_effects.clone(),
+                    iterate_over: crate::core::RepeatEachIterate::Cards {
+                        targets: resolved_targets,
+                        require_in_graveyard: *require_in_graveyard,
+                    },
+                }
+            }
+
+            // ExtraLandPlay: resolve placeholder player to the spell's controller.
+            // Explore / similar spells encode `Defined$ You` (player 0) here.
+            Effect::ExtraLandPlay { player, amount } if player.is_placeholder() => Effect::ExtraLandPlay {
+                player: card_owner,
+                amount: *amount,
+            },
+
+            // GrantCastWithFlash: resolve placeholder player to the spell's controller.
+            Effect::GrantCastWithFlash { player, valid_card } if player.is_placeholder() => {
+                Effect::GrantCastWithFlash {
+                    player: card_owner,
+                    valid_card: valid_card.clone(),
                 }
             }
 
@@ -3583,6 +4709,11 @@ impl GameState {
             } => self.execute_gain_control(*target, *new_controller, *untap, duration, *source)?,
             Effect::Fight { fighter, target } => self.execute_fight(*fighter, *target)?,
             Effect::TapPermanent { target } => self.execute_tap_permanent(*target)?,
+            Effect::TapPermanentsMatchingFilter {
+                player,
+                choices_filter,
+                count,
+            } => self.execute_tap_permanents_matching_filter(*player, choices_filter, *count)?,
             Effect::UntapPermanent { target } => self.execute_untap_permanent(*target)?,
             Effect::TapOrUntapPermanent { target } => self.execute_tap_or_untap_permanent(*target)?,
             Effect::PumpCreature {
@@ -3590,13 +4721,27 @@ impl GameState {
                 power_bonus,
                 toughness_bonus,
                 keywords_granted,
-            } => self.execute_pump_creature(*target, *power_bonus, *toughness_bonus, keywords_granted)?,
+                keyword_args_granted,
+            } => self.execute_pump_creature(
+                *target,
+                *power_bonus,
+                *toughness_bonus,
+                keywords_granted,
+                keyword_args_granted,
+            )?,
             Effect::PumpCreatureVariable {
                 target,
                 power_count,
                 toughness_count,
                 keywords_granted,
-            } => self.execute_pump_creature_variable(*target, power_count, toughness_count, keywords_granted)?,
+                keyword_args_granted,
+            } => self.execute_pump_creature_variable(
+                *target,
+                power_count,
+                toughness_count,
+                keywords_granted,
+                keyword_args_granted,
+            )?,
             Effect::DebuffCreature {
                 target,
                 keywords_removed,
@@ -3613,10 +4758,40 @@ impl GameState {
                 power,
                 toughness,
                 keywords_granted,
-            } => self.execute_animate_all(*controller, filter, *power, *toughness, keywords_granted)?,
+                keyword_args_granted,
+            } => self.execute_animate_all(
+                *controller,
+                filter,
+                *power,
+                *toughness,
+                keywords_granted,
+                keyword_args_granted,
+            )?,
             Effect::Mill { player, count } => self.execute_mill(*player, *count)?,
             Effect::DrainMana { player } => self.execute_drain_mana(*player)?,
-            Effect::Scry { player, count } => self.execute_scry(*player, *count)?,
+            Effect::Scry {
+                player,
+                count,
+                only_if_bargained,
+            } => {
+                // Condition$ Bargain: only scry if the source spell was bargained
+                // (CR 702.162). We use current_damage_source as the source card
+                // reference because the scry fires as a SubAbility of DealDamage
+                // (Torch the Tower) while the damage source is still set.
+                if *only_if_bargained {
+                    let is_bargained = self
+                        .current_damage_source
+                        .and_then(|id| self.cards.try_get(id))
+                        .is_some_and(|c| c.bargain_paid);
+                    if !is_bargained {
+                        // Condition not met — skip the scry silently.
+                    } else {
+                        self.execute_scry(*player, *count)?;
+                    }
+                } else {
+                    self.execute_scry(*player, *count)?;
+                }
+            }
             Effect::Surveil { player, count } => self.execute_surveil(*player, *count)?,
             Effect::AddTurn { player, num_turns } => self.execute_add_turn(*player, *num_turns)?,
             Effect::CounterSpell {
@@ -3657,8 +4832,14 @@ impl GameState {
                 counter_type,
                 amount,
             } => self.execute_remove_counter(*target, *counter_type, *amount)?,
+            Effect::ReturnPermanentToHand { target, .. } => self.execute_return_permanent_to_hand(*target)?,
             Effect::ExilePermanent { target } => self.execute_exile_permanent(*target)?,
             Effect::ExileIfWouldDieThisTurn { target } => self.execute_exile_if_would_die_this_turn(*target)?,
+            Effect::PlayFromGraveyard {
+                target,
+                exile_on_resolution,
+                ..
+            } => self.execute_play_from_graveyard(*target, *exile_on_resolution)?,
             Effect::SelfExileFromStack {
                 source,
                 remember_changed,
@@ -3671,9 +4852,56 @@ impl GameState {
             Effect::ReturnCardsFromGraveyardToHand { player } => {
                 self.execute_return_cards_from_graveyard_to_hand(*player)?
             }
+            Effect::PutCardsFromHandOnTopOfLibrary { player, count } => {
+                // Non-interactive fallback: pick the lowest-CMC cards from hand.
+                // The interactive path (priority.rs) overrides this with
+                // controller-chosen cards before calling
+                // execute_put_cards_from_hand_on_top_of_library directly.
+                let hand: smallvec::SmallVec<[CardId; 8]> = self
+                    .get_player_zones(*player)
+                    .map(|z| z.hand.cards.iter().copied().collect())
+                    .unwrap_or_default();
+                let chosen = self.pick_cards_to_put_back_heuristic(&hand, *count as usize);
+                self.execute_put_cards_from_hand_on_top_of_library(*player, &chosen)?;
+            }
+            Effect::RevealCardsFromHand {
+                player,
+                filter,
+                any_number: _,
+                remember_count,
+            } => {
+                // Count matching cards in hand, reveal them (log), and optionally
+                // store the count in remembered_amount for chained sub-abilities.
+                // Non-interactive: we reveal ALL matching cards (the heuristic equivalent
+                // of "reveal as many as possible to maximise the Mana sub-ability").
+                self.execute_reveal_cards_from_hand(*player, filter, *remember_count)?;
+            }
             Effect::ReturnGraveyardCardToHand { player, type_filter } => {
                 self.execute_return_graveyard_card_to_hand(*player, type_filter)?
             }
+            Effect::ReturnGraveyardCardToZone {
+                player,
+                type_filter,
+                destination,
+                gain_control,
+                library_position,
+                remember_changed,
+            } => self.execute_return_graveyard_card_to_zone(
+                *player,
+                type_filter,
+                *destination,
+                *gain_control,
+                *library_position,
+                *remember_changed,
+            )?,
+
+            Effect::PutCreatureFromHandOnBattlefield {
+                player,
+                type_filter,
+                remember_changed,
+            } => self.execute_put_creature_from_hand_on_battlefield(*player, type_filter, *remember_changed)?,
+
+            Effect::ReturnSelfAsEnchantment { source } => self.execute_return_self_as_enchantment(*source)?,
 
             Effect::ConditionalSelfCounter {
                 source,
@@ -3685,17 +4913,21 @@ impl GameState {
                 power,
                 toughness,
                 keywords_granted,
+                keyword_args_granted,
                 types_added,
                 subtypes_added,
                 remove_creature_subtypes,
+                at_eot,
             } => self.execute_set_base_power_toughness(
                 *target,
                 *power,
                 *toughness,
                 keywords_granted,
+                keyword_args_granted,
                 types_added,
                 subtypes_added,
                 *remove_creature_subtypes,
+                *at_eot,
             )?,
             Effect::SearchLibrary {
                 player,
@@ -3728,6 +4960,12 @@ impl GameState {
                 for_each_player,
             } => self.execute_create_token(*controller, token_script, *amount, *for_each_player)?,
 
+            Effect::CreateTokenWithStoredPt {
+                source_card,
+                controller,
+                token_script,
+            } => self.execute_create_token_with_stored_pt(*source_card, *controller, token_script)?,
+
             Effect::Airbend { target } => self.execute_airbend(*target)?,
 
             Effect::Earthbend { target, num_counters } => self.execute_earthbend(*target, *num_counters)?,
@@ -3735,6 +4973,11 @@ impl GameState {
             Effect::Firebend { controller, amount } => self.execute_firebend(*controller, *amount)?,
 
             Effect::GrantCantBeBlocked { target } => self.execute_grant_cant_be_blocked(*target)?,
+
+            Effect::ExtraLandPlay { player, amount } => self.execute_extra_land_play(*player, *amount)?,
+            Effect::GrantCastWithFlash { player, valid_card } => {
+                self.execute_grant_cast_with_flash(*player, valid_card.clone())?
+            }
 
             Effect::Regenerate { target } => self.execute_regenerate(*target)?,
 
@@ -3753,7 +4996,32 @@ impl GameState {
             Effect::DestroyAll {
                 restriction,
                 no_regenerate,
-            } => self.execute_destroy_all(restriction, *no_regenerate)?,
+                cmc_eq_source,
+            } => {
+                // Resolve dynamic `cmcEQX` SVar from the source card's charge-counter
+                // count (Ratchet Bomb). If `cmc_eq_svar` is set and a source is known,
+                // materialise `exact_cmc` on the restriction clone before matching.
+                let resolved_restriction;
+                let effective_restriction = if restriction.cmc_eq_svar {
+                    if let Some(source_id) = cmc_eq_source {
+                        let charge_count = self
+                            .cards
+                            .try_get(*source_id)
+                            .map(|c| c.get_counter(crate::core::CounterType::Charge))
+                            .unwrap_or(0);
+                        let mut r = restriction.clone();
+                        r.exact_cmc = Some(charge_count);
+                        r.cmc_eq_svar = false; // resolved; no further SVar lookup needed
+                        resolved_restriction = r;
+                        &resolved_restriction
+                    } else {
+                        restriction
+                    }
+                } else {
+                    restriction
+                };
+                self.execute_destroy_all(effective_restriction, *no_regenerate)?
+            }
 
             Effect::SacrificeAll { restriction } => self.execute_sacrifice_all(restriction)?,
 
@@ -3769,8 +5037,28 @@ impl GameState {
                 count,
             } => self.execute_force_sacrifice(*player, sac_type, *count)?,
 
+            // SacrificeSelf: sacrifice the source card itself.
+            // Resolved from placeholder at phase-trigger fire time; if the
+            // source has already left the battlefield (removed in response),
+            // silently skip (CR 603.10 / 608.2c fizzle rule).
+            Effect::SacrificeSelf { source } => {
+                if self.battlefield.cards.contains(source) {
+                    let owner = self
+                        .cards
+                        .get(*source)
+                        .map(|c| c.owner)
+                        .unwrap_or_else(|_| self.players.first().map(|p| p.id).unwrap_or_else(|| PlayerId::new(0)));
+                    let dest = self.death_destination_for_card(*source);
+                    self.move_card(*source, Zone::Battlefield, dest, owner)?;
+                    log::debug!("SacrificeSelf: {:?} moved to {:?}", source, dest);
+                } else {
+                    log::debug!("SacrificeSelf: {:?} not on battlefield — fizzle", source);
+                }
+            }
+
             Effect::TapAll { restriction } => self.execute_tap_all(restriction)?,
             Effect::UntapAll { restriction } => self.execute_untap_all(restriction)?,
+            Effect::UntapOne { restriction } => self.execute_untap_one(restriction)?,
 
             Effect::SetLife { player, amount } => self.execute_set_life(*player, *amount)?,
 
@@ -3833,6 +5121,20 @@ impl GameState {
                 self.execute_immediate_trigger(condition, sub_effects)?
             }
             Effect::ClearRemembered => self.execute_clear_remembered()?,
+
+            // ChooseAndRememberOneOfEach: for each type in the list, choose one
+            // permanent of that type controlled by the current loop player
+            // (remembered_players[0]) and push it onto remembered_cards.
+            Effect::ChooseAndRememberOneOfEach { types } => self.execute_choose_and_remember_one_of_each(types)?,
+
+            // RepeatEach: for each member of iterate_over, set it as the
+            // remembered card/player, then execute each sub-effect once.
+            // CR 609.3: actions repeat sequentially for each member.
+            Effect::RepeatEach {
+                sub_effects,
+                iterate_over,
+            } => self.execute_repeat_each(sub_effects, iterate_over)?,
+
             Effect::UnlessCostWrapper {
                 inner_effect,
                 unless_cost,
@@ -3842,6 +5144,10 @@ impl GameState {
 
             Effect::AddPhase { count } => self.execute_add_phase(*count)?,
             Effect::Clone { .. } => self.execute_clone_fallback()?,
+            Effect::RearrangeTopOfLibrary { player, count } => {
+                self.execute_rearrange_top_of_library(*player, *count)?
+            }
+            Effect::SkipUntapStep { player } => self.execute_skip_untap_step(*player)?,
             Effect::Unimplemented { api_type } => self.execute_unimplemented(api_type)?,
             Effect::NoOp { api_type } => self.execute_noop(api_type)?,
 
@@ -3881,6 +5187,48 @@ impl GameState {
                 target_level,
             } => {
                 self.execute_class_level_up(*class_card_id, *target_level)?;
+            }
+
+            // CreateTokenDynamic should be resolved to CreateToken by
+            // resolve_effect_placeholder() in the trigger-fire path before
+            // reaching execute_effect.  If it arrives here unresolved (e.g.
+            // a non-death-trigger path that doesn't call
+            // resolve_effect_placeholder), fall back to amount=1 so the card
+            // does something visible rather than silently no-op.
+            Effect::CreateTokenDynamic {
+                controller,
+                token_script,
+                amount: crate::core::DynamicAmount::Count(expr),
+                for_each_player,
+            } => {
+                // Count$… expression (e.g. Avenger of Zendikar: TokenAmount$ X,
+                // SVar:X:Count$Valid Land.YouCtrl). Evaluate the count expression
+                // against the controller's current game state at resolution time.
+                let n = self.evaluate_count_expression(expr, *controller).unwrap_or(0).max(0) as u8;
+                self.execute_create_token(*controller, token_script, n, *for_each_player)?;
+            }
+
+            Effect::CreateTokenDynamic {
+                controller,
+                token_script,
+                for_each_player,
+                ..
+            } => {
+                log::warn!(
+                    "CreateTokenDynamic reached execute_effect unresolved — \
+                     falling back to amount=1 (token: {})",
+                    token_script
+                );
+                self.execute_create_token(*controller, token_script, 1, *for_each_player)?;
+            }
+
+            Effect::CreateEmblem {
+                controller,
+                emblem_name,
+                static_abilities,
+                triggers,
+            } => {
+                self.execute_create_emblem(*controller, emblem_name, static_abilities, triggers)?;
             }
         }
         Ok(())
@@ -4321,18 +5669,13 @@ impl GameState {
 
                     // Check each pattern option (OR logic)
                     for p in &patterns {
-                        let mut matches = false;
+                        // Strip ".Other" modifier for base type matching
+                        let base_pattern = p.trim_end_matches(".Other");
 
-                        // Check card type
-                        if p.contains("Artifact") && card.is_artifact() {
-                            matches = true;
-                        }
-                        if p.contains("Creature") && card.is_creature() {
-                            matches = true;
-                        }
-                        if p.contains("Land") && card.is_land() {
-                            matches = true;
-                        }
+                        // Use the shared type-filter helper which handles both
+                        // main types (Land, Creature, Artifact) and subtypes
+                        // (Forest, Island, Mountain, etc.)
+                        let mut matches = Self::card_matches_type_filter_static(card, base_pattern);
 
                         // Check "Other" modifier - can't sacrifice self
                         if p.contains(".Other") && card_id == source_card_id {
@@ -4821,6 +6164,27 @@ impl GameState {
         let source_card_is_land = self.cards.try_get(source_card_id).is_some_and(|c| c.is_land());
         let source_card_controller = self.cards.try_get(source_card_id).map(|c| c.controller);
 
+        // Torpor Orb check (CR 603.6b): if a DisableCreatureEtbTriggers static is in
+        // play and the triggering event is a creature entering the battlefield, ALL
+        // EntersBattlefield triggers are suppressed for that creature. We pre-compute
+        // this flag so the Phase 1 filter can short-circuit without re-scanning the
+        // battlefield for every candidate trigger.
+        let creature_etb_suppressed = event == TriggerEvent::EntersBattlefield
+            && self
+                .cards
+                .try_get(source_card_id)
+                .is_some_and(|c| self.is_creature_etb_trigger_suppressed(c));
+
+        if creature_etb_suppressed {
+            if let Some(c) = self.cards.try_get(source_card_id) {
+                log::info!(
+                    "Torpor Orb: suppressing all ETB triggers for creature {} (CR 603.6b)",
+                    c.name
+                );
+            }
+            return Ok(());
+        }
+
         // Phase 1: Collect matching triggers with their metadata
         // Use flat_map to avoid inner Vec allocation per card - most cards have no matching triggers
         let candidate_triggers: Vec<TriggerInfo> = self
@@ -5028,6 +6392,14 @@ impl GameState {
             // where the Pump must apply to the same creature the Attach picked.
             let mut last_chosen_target: Option<CardId> = None;
 
+            // Accumulate all DestroyPermanent targets chosen during this trigger's
+            // effect chain. Used by RepeatEach with DefinedCards$ Targeted to iterate
+            // over every permanent the Destroy effect picked — e.g. Terastodon's ETB
+            // destroys up to 3 permanents then creates one 3/3 Elephant token per
+            // destroyed permanent for its controller. (mtg-914 B2 fix: RepeatEach
+            // iterates over trigger_destroy_targets when its own targets list is empty.)
+            let mut trigger_destroy_targets: smallvec::SmallVec<[CardId; 4]> = smallvec::SmallVec::new();
+
             // Execute all trigger effects with placeholder resolution
             for effect in trigger_to_exec.effects {
                 // Step 1: Apply shared placeholder resolution for simple cases
@@ -5099,6 +6471,9 @@ impl GameState {
                                 restriction: restriction.clone(),
                                 no_regenerate: *no_regenerate,
                             };
+                            // Record for RepeatEach (DefinedCards$ Targeted / ChangeZoneTable$ True)
+                            // so Terastodon's token sub-ability can iterate over all destroyed targets.
+                            trigger_destroy_targets.push(target_id);
                         }
                     }
                     // AttachEquipment: target_creature placeholder → find a creature
@@ -5146,6 +6521,7 @@ impl GameState {
                         power_bonus,
                         toughness_bonus,
                         keywords_granted,
+                        keyword_args_granted,
                     } if target.is_placeholder() => {
                         // If a previous effect in this trigger chain (e.g. Attach) chose a
                         // target, reuse it — this models Defined$ Targeted in SubAbility
@@ -5156,6 +6532,7 @@ impl GameState {
                                 power_bonus: *power_bonus,
                                 toughness_bonus: *toughness_bonus,
                                 keywords_granted: keywords_granted.clone(),
+                                keyword_args_granted: keyword_args_granted.clone(),
                             };
                         } else {
                             // Find a valid target (any creature on battlefield),
@@ -5181,6 +6558,7 @@ impl GameState {
                                     power_bonus: *power_bonus,
                                     toughness_bonus: *toughness_bonus,
                                     keywords_granted: keywords_granted.clone(),
+                                    keyword_args_granted: keyword_args_granted.clone(),
                                 };
                             }
                         }
@@ -5327,6 +6705,31 @@ impl GameState {
                         }
                     }
                     _ => {}
+                }
+
+                // RepeatEach (Pattern A — DefinedCards$ Targeted) in a trigger: if the
+                // targets list is empty and DestroyPermanent already picked targets in
+                // this same trigger chain, fill in those targets now. This covers
+                // Terastodon's ETB: "destroy up to 3 noncreature permanents; for each,
+                // its controller creates a 3/3 Elephant token" (mtg-914 B2 fix).
+                if let Effect::RepeatEach {
+                    sub_effects,
+                    iterate_over:
+                        crate::core::RepeatEachIterate::Cards {
+                            ref targets,
+                            require_in_graveyard,
+                        },
+                } = effect.clone()
+                {
+                    if targets.is_empty() && !trigger_destroy_targets.is_empty() {
+                        effect = Effect::RepeatEach {
+                            sub_effects,
+                            iterate_over: crate::core::RepeatEachIterate::Cards {
+                                targets: trigger_destroy_targets.to_vec(),
+                                require_in_graveyard,
+                            },
+                        };
+                    }
                 }
 
                 // A discard FORCED by this triggered ability (Hypnotic Specter's
@@ -5483,6 +6886,9 @@ impl GameState {
             };
 
             let mut last_chosen_target: Option<CardId> = None;
+            // Accumulate DestroyPermanent targets for RepeatEach (DefinedCards$ Targeted).
+            // See check_triggers for detailed comments; same logic applies here.
+            let mut trigger_destroy_targets: smallvec::SmallVec<[CardId; 4]> = smallvec::SmallVec::new();
 
             for effect in trigger_to_exec.effects {
                 let mut effect = resolve_effect_placeholder(&effect, &ctx);
@@ -5529,6 +6935,9 @@ impl GameState {
                                 &trigger_source_colors,
                             ) {
                                 *target_id = chosen_id;
+                                // Record for RepeatEach (DefinedCards$ Targeted / ChangeZoneTable$ True)
+                                // so Terastodon's token sub-ability can iterate over all destroyed targets.
+                                trigger_destroy_targets.push(chosen_id);
                             }
                         }
                     }
@@ -5602,6 +7011,33 @@ impl GameState {
                                 .filter(|&card_id| {
                                     if let Some(card) = self.cards.try_get(*card_id) {
                                         card.is_creature()
+                                            && targeting::is_legal_target(card, controller, &trigger_source_colors)
+                                    } else {
+                                        false
+                                    }
+                                })
+                                .copied()
+                                .collect();
+                            candidates.sort_by_key(|id| id.as_u32());
+                            if let Some(&chosen_id) = candidates.first() {
+                                *target_id = chosen_id;
+                            }
+                        }
+                    }
+                    Effect::ReturnPermanentToHand {
+                        target: ref mut target_id,
+                        restriction: ref restr,
+                    } => {
+                        if target_id.is_placeholder() {
+                            let restr_clone = restr.clone();
+                            let mut candidates: smallvec::SmallVec<[CardId; 8]> = self
+                                .battlefield
+                                .cards
+                                .iter()
+                                .filter(|&card_id| {
+                                    if let Some(card) = self.cards.try_get(*card_id) {
+                                        card.controller != controller
+                                            && restr_clone.matches(card)
                                             && targeting::is_legal_target(card, controller, &trigger_source_colors)
                                     } else {
                                         false
@@ -5702,6 +7138,29 @@ impl GameState {
                         }
                     }
                     _ => {}
+                }
+
+                // RepeatEach (Pattern A — DefinedCards$ Targeted) in a trigger: populate
+                // targets from what DestroyPermanent picked in this same trigger chain.
+                // See check_triggers for detailed comments (mtg-914 B2 fix).
+                if let Effect::RepeatEach {
+                    sub_effects,
+                    iterate_over:
+                        crate::core::RepeatEachIterate::Cards {
+                            ref targets,
+                            require_in_graveyard,
+                        },
+                } = effect.clone()
+                {
+                    if targets.is_empty() && !trigger_destroy_targets.is_empty() {
+                        effect = Effect::RepeatEach {
+                            sub_effects,
+                            iterate_over: crate::core::RepeatEachIterate::Cards {
+                                targets: trigger_destroy_targets.to_vec(),
+                                require_in_graveyard,
+                            },
+                        };
+                    }
                 }
 
                 self.execute_effect(&effect)?;
@@ -5841,6 +7300,13 @@ impl GameState {
                             return false;
                         }
                     }
+                    // Mode gate (Palace Siege): only fire if the source card's
+                    // chosen_mode matches the gate string.
+                    if let Some(gate) = &trigger.mode_gate {
+                        if card.chosen_mode.as_deref() != Some(gate.as_str()) {
+                            return false;
+                        }
+                    }
                     true
                 })
                 .flat_map(|trigger| trigger.effects.clone())
@@ -5849,7 +7315,12 @@ impl GameState {
 
         // Build trigger context for placeholder resolution
         let controller = self.cards.get(card_id)?.controller;
+        let opponent = self.get_other_player_id(controller);
         let mut ctx = TriggerContext::new(card_id, controller);
+        // Populate the opponent so that `Defined$ Player.Opponent` effects
+        // (e.g. Palace Siege Dragons drain: `DB$ LoseLife | Defined$ Player.Opponent`)
+        // resolve to the correct player rather than defaulting to the controller.
+        ctx.opponent = opponent;
         // For a beginning-of-draw-step phase trigger (Howling Mine:
         // `Phase$ Draw | ValidPlayer$ Player`), the "triggered player" is the
         // player whose draw step fired the trigger — the active player — NOT the
@@ -5981,6 +7452,72 @@ impl GameState {
                         },
                     };
                 }
+                // SacrificeSelf stored on a phase trigger has a placeholder
+                // source (`CardId::new(0)`). Resolve it to the actual trigger
+                // source card so the executor can move the right card to the
+                // graveyard. The UnlessCost payer (UnlessPayer$ You = controller)
+                // is also resolved here to a concrete numeric string, mirroring
+                // the Paralyze/UntapPermanent pattern.
+                // Pattern: Stasis / Aura Flux / Arcades Sabboth
+                //   "At the beginning of your upkeep, sacrifice CARDNAME unless you pay {cost}."
+                Effect::UnlessCostWrapper {
+                    inner_effect,
+                    unless_cost,
+                } if matches!(
+                    inner_effect.as_ref(),
+                    Effect::SacrificeSelf { source } if source.is_placeholder()
+                ) =>
+                {
+                    effect = Effect::UnlessCostWrapper {
+                        inner_effect: Box::new(Effect::SacrificeSelf { source: card_id }),
+                        unless_cost: crate::core::effects::UnlessCost {
+                            cost: unless_cost.cost.clone(),
+                            payer: controller.as_u32().to_string(),
+                            switched: unless_cost.switched,
+                        },
+                    };
+                }
+                // SacrificeSelf without an UnlessCost wrapper (bare self-sacrifice
+                // trigger). Also resolve the placeholder to the actual card.
+                Effect::SacrificeSelf { source } if source.is_placeholder() => {
+                    effect = Effect::SacrificeSelf { source: card_id };
+                }
+
+                // Tangle Wire: "that player taps N permanents" where N = fade
+                // counter count on Tangle Wire (Count$CardCounters.FADE) and the
+                // player is the one whose upkeep fired (Defined$ TriggeredPlayer).
+                // Both are stored as placeholders at parse time and resolved here.
+                Effect::TapPermanentsMatchingFilter {
+                    player,
+                    choices_filter,
+                    count,
+                } => {
+                    // Resolve player placeholder (0) to active_player
+                    let resolved_player = if player.is_placeholder() {
+                        active_player
+                    } else {
+                        *player
+                    };
+                    // Resolve count placeholder (0) to the source card's FADE
+                    // counter count (Count$CardCounters.FADE).
+                    let fade_count = self
+                        .cards
+                        .try_get(card_id)
+                        .map(|c| c.get_counter(crate::core::CounterType::Fade))
+                        .unwrap_or(0);
+                    let resolved_count = if *count == 0 { fade_count } else { *count };
+                    if resolved_count == 0 {
+                        // No fade counters left — Tangle Wire about to be
+                        // sacrificed by Fading; skip the tap obligation.
+                        continue;
+                    }
+                    effect = Effect::TapPermanentsMatchingFilter {
+                        player: resolved_player,
+                        choices_filter: choices_filter.clone(),
+                        count: resolved_count,
+                    };
+                }
+
                 _ => {}
             }
 
@@ -6008,6 +7545,98 @@ impl GameState {
                     _ => format!("{} trigger effect", card_name),
                 };
                 self.logger.normal(&message);
+            }
+
+            self.execute_effect(&effect)?;
+        }
+
+        Ok(())
+    }
+
+    /// Like [`check_triggers_for_controller`] but injects a known `opponent` into
+    /// the [`TriggerContext`] so effects that target the defending / opposing player
+    /// are resolved against the correct player.
+    ///
+    /// Used by `AttackerUnblocked` triggers (Floral Spuzzem) where the defending
+    /// player is the explicit opponent in the trigger context.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the source card or any effect execution fails.
+    pub fn check_triggers_for_controller_with_opponent(
+        &mut self,
+        event: TriggerEvent,
+        card_id: CardId,
+        active_player: PlayerId,
+        opponent: Option<PlayerId>,
+    ) -> Result<()> {
+        // Get the card's triggers
+        let effects_to_execute: Vec<Effect> = {
+            let card = self.cards.get(card_id)?;
+            card.triggers
+                .iter()
+                .filter(|trigger| trigger.event == event)
+                .flat_map(|trigger| trigger.effects.clone())
+                .collect()
+        };
+
+        if effects_to_execute.is_empty() {
+            return Ok(());
+        }
+
+        let controller = self.cards.get(card_id)?.controller;
+        let trigger_source_colors: smallvec::SmallVec<[crate::core::Color; 2]> =
+            self.cards.get(card_id)?.colors.clone();
+
+        let mut ctx = TriggerContext::new(card_id, controller);
+        if let Some(opp) = opponent {
+            ctx = ctx.with_opponent(opp);
+        }
+
+        for effect in effects_to_execute {
+            let mut effect = resolve_effect_placeholder(&effect, &ctx);
+
+            // Resolve DestroyPermanent placeholder against the defending player's
+            // permanents (OppCtrl means "controlled by the attacker's opponent"
+            // which is the defending player). We use `active_player` here as the
+            // "active player" for restriction evaluation, but pass `opponent` as the
+            // "target pool" player.
+            if let Effect::DestroyPermanent {
+                target,
+                ref restriction,
+                no_regenerate,
+            } = effect.clone()
+            {
+                if target.is_placeholder() {
+                    // For OppCtrl targets, the target pool is the defending player
+                    // (= the attacker's opponent).
+                    let pool_player = opponent.unwrap_or(active_player);
+                    if let Some(target_id) = self.choose_triggered_destroy_target(
+                        restriction,
+                        controller,
+                        pool_player,
+                        &trigger_source_colors,
+                    ) {
+                        effect = Effect::DestroyPermanent {
+                            target: target_id,
+                            restriction: restriction.clone(),
+                            no_regenerate,
+                        };
+                    } else {
+                        // No legal target — trigger fizzles
+                        log::debug!(
+                            target: "triggers",
+                            "AttackerUnblocked destroy trigger fizzled — no valid target for {:?}",
+                            restriction
+                        );
+                        continue;
+                    }
+                }
+            }
+
+            if let Some(card) = self.cards.try_get(card_id) {
+                self.logger
+                    .normal(&format!("{} AttackerUnblocked trigger effect", card.name));
             }
 
             self.execute_effect(&effect)?;
@@ -6066,15 +7695,28 @@ impl GameState {
             .get(cast_spell_id)
             .map(|c| c.is_instant() || c.is_sorcery())
             .unwrap_or(false);
+        let is_instant = self.cards.get(cast_spell_id).map(|c| c.is_instant()).unwrap_or(false);
+        let is_enchantment = self
+            .cards
+            .get(cast_spell_id)
+            .map(|c| c.is_enchantment())
+            .unwrap_or(false);
 
-        // Collect SpellCast triggers from permanents on the battlefield
-        // These triggers fire when their controller casts a spell
+        // Collect SpellCast triggers from permanents on the battlefield.
+        //
+        // Triggers with `fires_for_any_caster = false` (the default) only fire
+        // for their controller's spells (Prowess, Storm, etc.).
+        // Triggers with `fires_for_any_caster = true` fire for any player's
+        // spells (world enchantments: In the Eye of Chaos, Presence of the
+        // Master — "whenever A player casts ...").
         struct TriggerToExecute {
             source_card_id: CardId,
             controller: PlayerId,
             source_name: String,
             effects: Vec<Effect>,
             description: String,
+            /// True if this trigger fires for any caster (not just its controller).
+            fires_for_any_caster: bool,
         }
 
         let triggers_to_execute: Vec<TriggerToExecute> = self
@@ -6083,17 +7725,18 @@ impl GameState {
             .iter()
             .filter_map(|&card_id| {
                 if let Some(card) = self.cards.try_get(card_id) {
-                    // Only trigger for permanents controlled by the caster
-                    if card.controller != caster_id {
-                        return None;
-                    }
-
                     // Find SpellCast triggers on this permanent
                     let matching_triggers: Vec<&Trigger> = card
                         .triggers
                         .iter()
                         .filter(|trigger| {
                             if trigger.event != TriggerEvent::SpellCast {
+                                return false;
+                            }
+
+                            // Controller-scoped triggers only fire for the caster's own spells.
+                            // Global triggers (`fires_for_any_caster`) fire for everyone.
+                            if !trigger.fires_for_any_caster && card.controller != caster_id {
                                 return false;
                             }
 
@@ -6105,6 +7748,16 @@ impl GameState {
 
                             // Check instant-or-sorcery-only triggers
                             if trigger.requires_instant_or_sorcery && !is_instant_or_sorcery {
+                                return false;
+                            }
+
+                            // Check instant-only triggers (In the Eye of Chaos)
+                            if trigger.requires_instant && !is_instant {
+                                return false;
+                            }
+
+                            // Check enchantment-only triggers (Presence of the Master)
+                            if trigger.requires_enchantment && !is_enchantment {
                                 return false;
                             }
 
@@ -6124,6 +7777,7 @@ impl GameState {
                                     source_name: card.name.to_string(),
                                     effects: trigger.effects.clone(),
                                     description: trigger.description.clone(),
+                                    fires_for_any_caster: trigger.fires_for_any_caster,
                                 })
                                 .collect::<Vec<_>>(),
                         )
@@ -6141,8 +7795,19 @@ impl GameState {
             self.logger
                 .gamelog(&format!("Trigger: {} - {}", trigger.source_name, trigger.description));
 
-            // Build trigger context
-            let ctx = TriggerContext::new(trigger.source_card_id, trigger.controller);
+            // Build trigger context. For global ("any caster") triggers, thread
+            // through the cast_spell_id, caster_id, and the cast spell's mana
+            // value so that `Defined$ TriggeredSpellAbility`,
+            // `UnlessPayer$ TriggeredActivator`, and `UnlessCost$ X`
+            // (where X = `TriggeredCard$CardManaCost`) can be resolved.
+            let ctx = if trigger.fires_for_any_caster {
+                let mana_value = self.cards.get(cast_spell_id).map(|c| c.mana_cost.cmc()).unwrap_or(0);
+                TriggerContext::new(trigger.source_card_id, trigger.controller)
+                    .with_cast_spell(cast_spell_id, caster_id)
+                    .with_cast_spell_mana_value(mana_value)
+            } else {
+                TriggerContext::new(trigger.source_card_id, trigger.controller)
+            };
 
             // Execute effects with placeholder resolution
             for effect in trigger.effects {
@@ -6161,6 +7826,7 @@ impl GameState {
                     power_bonus,
                     toughness_bonus,
                     keywords_granted,
+                    keyword_args_granted,
                 } = &resolved_effect
                 {
                     if target.is_placeholder() {
@@ -6169,6 +7835,7 @@ impl GameState {
                             power_bonus: *power_bonus,
                             toughness_bonus: *toughness_bonus,
                             keywords_granted: keywords_granted.clone(),
+                            keyword_args_granted: keyword_args_granted.clone(),
                         };
                     }
                 }
@@ -6293,10 +7960,11 @@ impl GameState {
     /// Returns an error if the card cannot be found or effect execution fails.
     #[allow(clippy::wildcard_enum_match_arm)]
     pub fn check_death_triggers(&mut self, dying_card_id: CardId) -> Result<()> {
-        // Get the card's triggers, controller, and creature-ness while it's
-        // still on battlefield (the `is_creature` flag gates the broad
-        // "whenever a creature dies" scan below — mtg-913 B12).
-        let (effects_to_execute, controller, dying_is_creature): (Vec<Effect>, PlayerId, bool) = {
+        // Get the card's triggers, controller, creature-ness, and counter
+        // snapshot while it's still on battlefield (CR 608.2g — LKI).
+        // The `is_creature` flag gates the broad "whenever a creature dies"
+        // scan below — mtg-913 B12.
+        let (effects_to_execute, controller, dying_is_creature, counter_snapshot, dying_card_power) = {
             let card = self.cards.get(dying_card_id)?;
 
             // Collect LeavesBattlefield triggers (which we use for "dies" events)
@@ -6307,7 +7975,18 @@ impl GameState {
                 .flat_map(|trigger| trigger.effects.clone())
                 .collect();
 
-            (effects, card.controller, card.is_creature())
+            // Capture counter amounts for LKI (needed by CreateTokenDynamic /
+            // DynamicAmount::TriggeredCardCounters, e.g. Hangarback Walker).
+            let counters = card.counters.clone();
+
+            // Capture the dying card's current power for LKI (CR 608.2g).
+            // Used by CountExpression::TriggeredCardPower expressions — e.g.
+            // Anax, Hardened in the Forge: "create 2 Satyr tokens if the dying
+            // creature had power >= 4, else 1". Power is public (CR 613), so
+            // this is information-independent for network determinism.
+            let power = i32::from(card.current_power());
+
+            (effects, card.controller, card.is_creature(), counters, power)
         };
 
         if !effects_to_execute.is_empty() {
@@ -6321,12 +8000,24 @@ impl GameState {
                 }
             }
 
-            // Build trigger context for placeholder resolution
-            let ctx = TriggerContext::new(dying_card_id, controller);
+            // Build trigger context with LKI counter snapshot for
+            // DynamicAmount::TriggeredCardCounters resolution, and LKI power
+            // for CountExpression::TriggeredCardPower (Anax).
+            let ctx = TriggerContext::new(dying_card_id, controller)
+                .with_triggered_card_counters(counter_snapshot)
+                .with_triggered_card_power(dying_card_power);
 
             // Execute each effect with placeholder resolution
             for effect in effects_to_execute {
-                let effect = resolve_effect_placeholder(&effect, &ctx);
+                let mut effect = resolve_effect_placeholder(&effect, &ctx);
+
+                // Resolve ReturnSelfAsEnchantment placeholder — the dying card IS the source.
+                // This fires for Enduring Vitality's "when this dies, return it as enchantment" trigger.
+                if let Effect::ReturnSelfAsEnchantment { source } = &effect {
+                    if source.is_placeholder() {
+                        effect = Effect::ReturnSelfAsEnchantment { source: dying_card_id };
+                    }
+                }
 
                 // Log AddMana effects specially (Su-Chi death trigger)
                 if let Effect::AddMana { .. } = &effect {
@@ -6346,15 +8037,22 @@ impl GameState {
             }
         }
 
-        // Check equipment on the battlefield that was attached to the dying creature
-        // for EquippedCreatureDies triggers (e.g., Skullclamp "draw two cards")
+        // Check equipment and auras on the battlefield that were attached to the dying
+        // permanent for EquippedCreatureDies triggers.
+        // Equipment: Skullclamp — "Whenever equipped creature dies, draw two cards."
+        //   (ValidCard$ Card.EquippedBy)
+        // Auras: Pattern of Rebirth — "When enchanted creature dies, search library …"
+        //   (ValidCard$ Card.AttachedBy)
+        // Both are parsed as TriggerEvent::EquippedCreatureDies.
         let equipment_triggers: Vec<(CardId, PlayerId, Vec<Effect>, String)> = self
             .battlefield
             .cards
             .iter()
             .filter_map(|&equip_id| {
                 let equip = self.cards.try_get(equip_id)?;
-                if !equip.is_equipment() || equip.attached_to != Some(dying_card_id) {
+                // Accept both equipment (is_equipment()) and auras (is_aura()) as long
+                // as they are attached to the dying permanent.
+                if !(equip.is_equipment() || equip.is_aura()) || equip.attached_to != Some(dying_card_id) {
                     return None;
                 }
                 let effects: Vec<Effect> = equip
@@ -6628,6 +8326,7 @@ impl GameState {
                     power_bonus,
                     toughness_bonus,
                     keywords_granted,
+                    keyword_args_granted,
                 } = &resolved_effect
                 {
                     if target.is_placeholder() {
@@ -6636,6 +8335,7 @@ impl GameState {
                             power_bonus: *power_bonus,
                             toughness_bonus: *toughness_bonus,
                             keywords_granted: keywords_granted.clone(),
+                            keyword_args_granted: keyword_args_granted.clone(),
                         };
                     }
                 }
@@ -6799,6 +8499,7 @@ impl GameState {
             effects: SmallVec<[Effect; 2]>,
             optional: bool,
             cost: Option<crate::core::Cost>,
+            requires_defender_hand_gt_controller: bool,
         }
 
         let (controller, creature_power, triggers): (PlayerId, u8, SmallVec<[TriggerData; 1]>) = {
@@ -6814,6 +8515,7 @@ impl GameState {
                         effects: SmallVec::from_iter(trigger.effects.iter().cloned()),
                         optional: trigger.optional,
                         cost: trigger.cost.clone(),
+                        requires_defender_hand_gt_controller: trigger.requires_defender_hand_gt_controller,
                     });
                 }
             }
@@ -6823,6 +8525,35 @@ impl GameState {
 
         // Process each trigger - borrow is released, safe to call execute_effect
         for trigger_data in triggers {
+            // Evaluate intervening-if condition: defending player must have more cards in hand
+            // than the attacker's controller (CR 603.4).
+            // Robber of the Rich: CheckSVar$ X | SVarCompare$ GTY where
+            //   X = Count$ValidHand Card.DefenderCtrl (defender's hand)
+            //   Y = Count$ValidHand Card.YouOwn (controller's hand)
+            if trigger_data.requires_defender_hand_gt_controller {
+                let defending_player_opt = self.combat.get_defending_player(attacker_id);
+                let condition_met = if let Some(defending_player) = defending_player_opt {
+                    let defender_hand_size = self
+                        .get_player_zones(defending_player)
+                        .map(|zones| zones.hand.cards.len())
+                        .unwrap_or(0);
+                    let controller_hand_size = self
+                        .get_player_zones(controller)
+                        .map(|zones| zones.hand.cards.len())
+                        .unwrap_or(0);
+                    defender_hand_size > controller_hand_size
+                } else {
+                    false
+                };
+                if !condition_met {
+                    log::debug!(
+                        "Skipping attack trigger on {} — intervening-if condition not met (defender hand <= controller hand)",
+                        trigger_data.card_name
+                    );
+                    continue;
+                }
+            }
+
             // For optional triggers with costs, check if cost can be paid
             let mut sacrifice_target: Option<CardId> = None;
             let mut sacrificed_power: u8 = 0;
@@ -7003,6 +8734,106 @@ impl GameState {
         }
     }
 
+    /// Set a card's `times_kicked` (number of times Multikicker was paid, CR 702.33a),
+    /// snapshotting the prior value for undo first. Mirrors `set_x_paid_logged`.
+    /// No-op if the card is missing.
+    pub(crate) fn set_times_kicked_logged(&mut self, card_id: CardId, count: u8) {
+        let Some(prev) = self.cards.try_get(card_id).map(|c| c.times_kicked) else {
+            return;
+        };
+        let prior_log_size = self.logger.log_count();
+        self.undo_log.log(
+            crate::undo::GameAction::SetTimesKicked { card_id, prev },
+            prior_log_size,
+        );
+        if let Ok(card) = self.cards.get_mut(card_id) {
+            card.times_kicked = count;
+        }
+    }
+
+    /// Set a card's `kicker_paid` flag (CR 702.32 — Kicker optional additional cost),
+    /// snapshotting the prior value for undo first. Mirrors `set_bargain_paid_logged`.
+    /// No-op if the card is missing.
+    pub(crate) fn set_kicker_paid_logged(&mut self, card_id: CardId, paid: bool) {
+        let Some(prev) = self.cards.try_get(card_id).map(|c| c.kicker_paid) else {
+            return;
+        };
+        let prior_log_size = self.logger.log_count();
+        self.undo_log
+            .log(crate::undo::GameAction::SetKickerPaid { card_id, prev }, prior_log_size);
+        if let Ok(card) = self.cards.get_mut(card_id) {
+            card.kicker_paid = paid;
+        }
+    }
+
+    /// Set a card's `offspring_paid` flag (CR 702.198 — Offspring optional additional cost),
+    /// snapshotting the prior value for undo first. Mirrors `set_kicker_paid_logged`.
+    /// No-op if the card is missing.
+    pub(crate) fn set_offspring_paid_logged(&mut self, card_id: CardId, paid: bool) {
+        let Some(prev) = self.cards.try_get(card_id).map(|c| c.offspring_paid) else {
+            return;
+        };
+        let prior_log_size = self.logger.log_count();
+        self.undo_log.log(
+            crate::undo::GameAction::SetOffspringPaid { card_id, prev },
+            prior_log_size,
+        );
+        if let Ok(card) = self.cards.get_mut(card_id) {
+            card.offspring_paid = paid;
+        }
+    }
+
+    /// Set a card's `mode_cost_paid` value (extra generic mana cost for the chosen
+    /// mode of a tiered modal spell like Fire Magic), snapshotting the prior value
+    /// for undo first. Mirrors `set_offspring_paid_logged`. No-op if the card is missing.
+    pub(crate) fn set_mode_cost_paid_logged(&mut self, card_id: CardId, cost: u8) {
+        let Some(prev) = self.cards.try_get(card_id).map(|c| c.mode_cost_paid) else {
+            return;
+        };
+        let prior_log_size = self.logger.log_count();
+        self.undo_log.log(
+            crate::undo::GameAction::SetModeCostPaid { card_id, prev },
+            prior_log_size,
+        );
+        if let Ok(card) = self.cards.get_mut(card_id) {
+            card.mode_cost_paid = cost;
+        }
+    }
+
+    /// If this creature spell was cast with Offspring paid (CR 702.198), create a
+    /// 1/1 token copy of it on the battlefield under the same controller.
+    /// Called immediately after ETB triggers fire for `card_id`.
+    /// No-op if the card is not a creature, not on the battlefield, or `offspring_paid` is false.
+    pub(crate) fn create_offspring_token_if_paid(&mut self, card_id: CardId) -> crate::error::Result<()> {
+        let (paid, controller, is_creature) = match self.cards.try_get(card_id) {
+            Some(c) => (c.offspring_paid, c.controller, c.is_creature()),
+            None => return Ok(()),
+        };
+        if !paid || !is_creature || !self.battlefield.contains(card_id) {
+            return Ok(());
+        }
+        // Create a 1/1 token copy of the creature (CR 702.198a).
+        self.execute_copy_permanent(card_id, controller, Some(1), Some(1), &[], 1)?;
+        Ok(())
+    }
+
+    /// Set a card's `bargain_paid` flag (CR 702.162 — Bargain optional sacrifice cost),
+    /// snapshotting the prior value for undo first. Mirrors `set_times_kicked_logged`.
+    /// No-op if the card is missing.
+    pub(crate) fn set_bargain_paid_logged(&mut self, card_id: CardId, paid: bool) {
+        let Some(prev) = self.cards.try_get(card_id).map(|c| c.bargain_paid) else {
+            return;
+        };
+        let prior_log_size = self.logger.log_count();
+        self.undo_log.log(
+            crate::undo::GameAction::SetBargainPaid { card_id, prev },
+            prior_log_size,
+        );
+        if let Ok(card) = self.cards.get_mut(card_id) {
+            card.bargain_paid = paid;
+        }
+    }
+
     fn apply_source_prevention_shields(&mut self, target_id: PlayerId, source: Option<CardId>, amount: i32) -> i32 {
         let Some(source) = source else { return amount };
         if amount <= 0 {
@@ -7070,21 +8901,55 @@ impl GameState {
     pub fn get_noncombat_damage_modifier(&self, target_controller: PlayerId) -> i32 {
         let mut modifier = 0;
         if let Some(source_id) = self.current_damage_source {
-            if let Ok(source_card) = self.cards.get(source_id) {
-                let source_controller = source_card.controller;
-                if target_controller != source_controller {
-                    // Check for Artist's Talent level 3
-                    for &card_id in &self.battlefield.cards {
-                        if let Ok(card) = self.cards.get(card_id) {
-                            if card.name.as_str() == "Artist's Talent"
-                                && card.controller == source_controller
-                                && card.get_counter(crate::core::CounterType::Level) >= 3
-                            {
-                                modifier += 2;
-                            }
-                        }
+            modifier += self.get_damage_boost_for_source(source_id, target_controller);
+        }
+        modifier
+    }
+
+    /// Compute the total damage bonus granted by battlefield continuous effects
+    /// (CR 614.1a damage-increase replacements) when `source_id` deals damage to
+    /// a target whose controller is `target_controller`.
+    ///
+    /// Currently handles:
+    /// - Artist's Talent level 3: +2 when a YOUR source deals damage to an OPPONENT.
+    /// - Torbran, Thane of Red Fell (`StaticAbility::DamageIncrease`): +N when a
+    ///   RED source YOU control deals damage to an opponent or opponent permanent.
+    ///
+    /// Called from both the spell-damage path (via `get_noncombat_damage_modifier`)
+    /// and the combat-damage path (directly, since `current_damage_source` is not
+    /// set during combat assignments).
+    pub fn get_damage_boost_for_source(&self, source_id: CardId, target_controller: PlayerId) -> i32 {
+        let Ok(source_card) = self.cards.get(source_id) else {
+            return 0;
+        };
+        let source_controller = source_card.controller;
+        // Damage-increase effects only apply when the source damages an OPPONENT
+        // (a player/permanent controlled by someone other than the source's controller).
+        if target_controller == source_controller {
+            return 0;
+        }
+        let source_is_red = source_card.colors.contains(&crate::core::Color::Red);
+        let mut modifier = 0;
+        for &card_id in &self.battlefield.cards {
+            let Ok(card) = self.cards.get(card_id) else {
+                continue;
+            };
+            // Only effects controlled by the source's controller matter here
+            // (Torbran boosts YOUR red sources; Artist's Talent boosts YOUR sources).
+            if card.controller != source_controller {
+                continue;
+            }
+            for static_ability in &card.static_abilities {
+                if let crate::core::StaticAbility::DamageIncrease { bonus, .. } = static_ability {
+                    // DamageIncrease (Torbran shape): requires source to be red.
+                    if source_is_red {
+                        modifier += *bonus as i32;
                     }
                 }
+            }
+            // Artist's Talent level 3 (name-based, pre-existing).
+            if card.name.as_str() == "Artist's Talent" && card.get_counter(crate::core::CounterType::Level) >= 3 {
+                modifier += 2;
             }
         }
         modifier
@@ -7134,17 +8999,48 @@ impl GameState {
                 return Ok(());
             }
 
+            // --- Crumbling Sanctuary replacement (CR 614.1a) ---
+            // If any battlefield permanent carries DamageToExileLibrary, damage
+            // to the player is redirected: that player exiles that many cards from
+            // the top of their library instead of losing life.
+            if self.has_damage_to_exile_library() {
+                let player_name = self.get_player(target_id)?.name.clone();
+                self.logger.normal(&format!(
+                    "{} would take {} damage — Crumbling Sanctuary redirects: exile {} cards from library",
+                    player_name, actual_amount, actual_amount
+                ));
+                // Exile cards from the top of the player's library.
+                self.exile_top_of_library(target_id, actual_amount as usize)?;
+                // Accumulate for source-damage triggers (Spirit Link etc.) even
+                // when the damage is redirected — the damage "was dealt" (CR 119.6).
+                self.accumulate_source_damage(actual_amount);
+                return Ok(());
+            }
+
+            // --- Worship life-floor replacement (CR 614.1e) ---
+            // If the damaged player controls a creature and has a LifeFloor
+            // static on the battlefield (from Worship), damage cannot reduce
+            // their life below 1.
+            let capped_amount = self.apply_life_floor(target_id, actual_amount);
+            if capped_amount < actual_amount {
+                let player_name = self.get_player(target_id)?.name.clone();
+                self.logger.normal(&format!(
+                    "Worship: {} damage to {} capped to {} (life cannot go below 1 while you control a creature)",
+                    actual_amount, player_name, capped_amount
+                ));
+            }
+
             // Capture log size before life change
             let prior_log_size = self.logger.log_count();
 
             let player = self.get_player_mut(target_id)?;
-            player.lose_life(actual_amount);
+            player.lose_life(capped_amount);
 
             // Log the life change for undo system
             self.undo_log.log(
                 crate::undo::GameAction::ModifyLife {
                     player_id: target_id,
-                    delta: -actual_amount,
+                    delta: -capped_amount,
                 },
                 prior_log_size,
             );
@@ -7158,6 +9054,126 @@ impl GameState {
         }
 
         Err(MtgError::InvalidAction("Invalid damage target".to_string()))
+    }
+
+    /// Check whether any battlefield permanent carries a `DamageToExileLibrary`
+    /// static ability (Crumbling Sanctuary).
+    fn has_damage_to_exile_library(&self) -> bool {
+        use crate::core::StaticAbility;
+        self.battlefield.cards.iter().any(|&id| {
+            self.cards.try_get(id).is_some_and(|c| {
+                c.static_abilities
+                    .iter()
+                    .any(|sa| matches!(sa, StaticAbility::DamageToExileLibrary { .. }))
+            })
+        })
+    }
+
+    /// Exile `count` cards from the top of `player_id`'s library.
+    ///
+    /// Used by Crumbling Sanctuary's damage-redirect replacement
+    /// (CR 614.1a: damage to a player is replaced by that player exiling
+    /// that many cards from the top of their library).
+    fn exile_top_of_library(&mut self, player_id: PlayerId, count: usize) -> Result<()> {
+        use crate::zones::Zone;
+        for _ in 0..count {
+            // Top of library is at the end of the vec.
+            let card_id = self
+                .get_player_zones(player_id)
+                .and_then(|z| z.library.cards.last().copied());
+            let Some(card_id) = card_id else {
+                break; // Library exhausted — game-loss is handled by state-based actions.
+            };
+            self.move_card(card_id, Zone::Library, Zone::Exile, player_id)?;
+        }
+        Ok(())
+    }
+
+    /// Apply the Worship life-floor replacement (CR 614.1e).
+    ///
+    /// If the player has a `LifeFloor` static on the battlefield (from Worship),
+    /// they control at least one creature, and their current life >= 1, cap
+    /// `amount` so that `life - amount >= 1` (i.e., return `life - 1` if
+    /// unmodified damage would go below 1).
+    ///
+    /// Returns the (possibly capped) damage amount to deal.
+    /// Caller is responsible for logging if the returned amount differs.
+    fn apply_life_floor(&self, player_id: PlayerId, amount: i32) -> i32 {
+        use crate::core::StaticAbility;
+
+        // Check if a LifeFloor static is active (any battlefield permanent
+        // controlled by player_id carries it — Worship is enchantment so
+        // controller check matches the enchantment's owner).
+        let has_life_floor = self.battlefield.cards.iter().any(|&id| {
+            self.cards.try_get(id).is_some_and(|c| {
+                c.controller == player_id
+                    && c.static_abilities
+                        .iter()
+                        .any(|sa| matches!(sa, StaticAbility::LifeFloor { .. }))
+            })
+        });
+        if !has_life_floor {
+            return amount;
+        }
+
+        // Does the player currently control a creature?
+        let controls_creature = self.battlefield.cards.iter().any(|&id| {
+            self.cards
+                .try_get(id)
+                .is_some_and(|c| c.controller == player_id && c.is_creature())
+        });
+        if !controls_creature {
+            return amount;
+        }
+
+        // Current life must be >= 1 for the floor to apply.
+        let current_life = self
+            .players
+            .iter()
+            .find(|p| p.id == player_id)
+            .map(|p| p.life)
+            .unwrap_or(0);
+        if current_life < 1 {
+            return amount;
+        }
+
+        // Cap: life - capped_amount >= 1 ⟹ capped_amount <= life - 1.
+        amount.min(current_life - 1).max(0)
+    }
+
+    /// Check whether damage from `source_id` to `target_id` (a creature) is
+    /// prevented by an attached Aura's `PreventDamageToEnchantedByChosenColor`
+    /// static ability (CR 615.1 — Prismatic Ward shape).
+    ///
+    /// Returns `true` if the damage should be fully prevented (source has the
+    /// chosen color of an attached prevention Aura), `false` otherwise.
+    /// Information-independent: only reads the source's public color identity.
+    pub fn is_color_prevented_by_aura(&self, target_id: CardId, source_id: CardId) -> bool {
+        let source_colors: smallvec::SmallVec<[crate::core::Color; 2]> =
+            self.cards.get(source_id).map(|c| c.colors.clone()).unwrap_or_default();
+        if source_colors.is_empty() {
+            return false;
+        }
+        for aura_id in self.get_attached_auras(target_id) {
+            let Ok(aura) = self.cards.get(aura_id) else {
+                continue;
+            };
+            let has_prevent_static = aura.static_abilities.iter().any(|a| {
+                matches!(
+                    a,
+                    crate::core::StaticAbility::PreventDamageToEnchantedByChosenColor { .. }
+                )
+            });
+            if !has_prevent_static {
+                continue;
+            }
+            if let Some(chosen_color) = aura.chosen_color {
+                if source_colors.contains(&chosen_color) {
+                    return true;
+                }
+            }
+        }
+        false
     }
 
     /// Deal damage to a creature
@@ -7176,6 +9192,38 @@ impl GameState {
         };
 
         if is_creature {
+            // Check Prismatic Ward / color-prevention Aura statics (CR 615.1):
+            // If any attached Aura has StaticAbility::PreventDamageToEnchantedByChosenColor
+            // AND the damage source has the chosen color, all damage is prevented.
+            if let Some(source_id) = self.current_damage_source {
+                if self.is_color_prevented_by_aura(target_id, source_id) {
+                    // Find the aura name for logging (use first matching aura).
+                    let aura_name = self
+                        .get_attached_auras(target_id)
+                        .into_iter()
+                        .find(|&aura_id| {
+                            self.cards
+                                .get(aura_id)
+                                .map(|a| {
+                                    a.static_abilities.iter().any(|s| {
+                                        matches!(
+                                            s,
+                                            crate::core::StaticAbility::PreventDamageToEnchantedByChosenColor { .. }
+                                        )
+                                    })
+                                })
+                                .unwrap_or(false)
+                        })
+                        .and_then(|aura_id| self.cards.get(aura_id).ok().map(|a| a.name.clone()))
+                        .unwrap_or_else(|| "Prevention Aura".into());
+                    self.logger.normal(&format!(
+                        "{} prevents {} damage to {} ({}) (chosen color prevention)",
+                        aura_name, amount, creature_name, target_id
+                    ));
+                    return Ok(());
+                }
+            }
+
             // Apply damage prevention shield (CR 615.1)
             let actual_amount = {
                 let card = self.cards.get_mut(target_id)?;
@@ -7431,12 +9479,10 @@ impl GameState {
                                 .gamelog(&format!("{} sacrifices {} to Balance", player_name, card.name));
                         }
 
-                        // Check death triggers BEFORE moving the card
-                        let _ = self.check_death_triggers(card_id);
-
-                        // Move to graveyard (or exile if finality counter)
+                        // Move to graveyard/exile FIRST (CR 704.3), then fire death triggers.
                         let dest = self.death_destination_for_card(card_id);
                         self.move_card(card_id, Zone::Battlefield, dest, owner)?;
+                        let _ = self.check_death_triggers(card_id);
 
                         // Check sacrifice triggers (e.g., Pirate Peddlers)
                         let _ = self.check_triggers(TriggerEvent::Sacrificed, card_id);
@@ -7619,7 +9665,63 @@ impl GameState {
                 .try_get(reference)
                 .map(|c| i32::from(c.current_toughness()).max(0))
                 .unwrap_or(0),
+            // TriggeredCardCounters is resolved via TriggerContext before this
+            // function is called (see resolve_effect_placeholder in triggers.rs).
+            // If it somehow reaches here, read the counter count from the
+            // reference card directly (last-known information fallback).
+            DynamicAmount::TriggeredCardCounters(counter_type) => self
+                .cards
+                .try_get(reference)
+                .map(|c| i32::from(c.get_counter(*counter_type)))
+                .unwrap_or(0),
         }
+    }
+
+    /// Evaluate a [`CountExpression`](crate::core::CountExpression) with optional
+    /// source-spell context for per-cast fields (`bargain_paid`, `kicker_paid`,
+    /// `times_kicked`).
+    ///
+    /// Wraps `evaluate_count_expression`; the difference is that
+    /// `CountExpression::Bargain` reads `source_card.bargain_paid` and
+    /// `CountExpression::Kicked` reads `source_card.kicker_paid` when
+    /// `source_card_id` is `Some`, rather than conservatively returning the
+    /// unbargained/unkicked value. Use this in spell-resolution paths
+    /// (DealDamageDynamic) where `card_id` (the resolving spell) is available.
+    fn evaluate_count_with_source(
+        &self,
+        expr: &crate::core::CountExpression,
+        controller: PlayerId,
+        source_card_id: Option<CardId>,
+    ) -> Result<i32> {
+        use crate::core::CountExpression;
+        if let CountExpression::Bargain {
+            bargained_value,
+            unbargained_value,
+        } = expr
+        {
+            // Use the actual bargain_paid state on the resolving spell when available.
+            let is_bargained = source_card_id
+                .and_then(|id| self.cards.try_get(id))
+                .is_some_and(|c| c.bargain_paid);
+            return Ok(if is_bargained {
+                *bargained_value
+            } else {
+                *unbargained_value
+            });
+        }
+        if let CountExpression::Kicked {
+            kicked_value,
+            unkicked_value,
+        } = expr
+        {
+            // Use the actual kicker_paid state on the resolving spell when available.
+            // Firebending Lesson: SVar:X:Count$Kicked.5.2 — deals 5 if kicked, 2 if not.
+            let is_kicked = source_card_id
+                .and_then(|id| self.cards.try_get(id))
+                .is_some_and(|c| c.kicker_paid);
+            return Ok(if is_kicked { *kicked_value } else { *unkicked_value });
+        }
+        self.evaluate_count_expression(expr, controller)
     }
 
     /// Evaluate a [`CountExpression`](crate::core::CountExpression) to a
@@ -7632,9 +9734,10 @@ impl GameState {
         use crate::core::CountExpression;
         match expr {
             CountExpression::Fixed(n) => Ok(*n),
-            CountExpression::ValidPermanents { filter } => {
+            CountExpression::ValidPermanents { filter, modifier } => {
                 let count = self.count_permanents_matching(filter, controller);
-                Ok(i32::try_from(count).unwrap_or(i32::MAX))
+                let raw = i32::try_from(count).unwrap_or(i32::MAX);
+                Ok(modifier.apply(raw))
             }
             CountExpression::CardsDrawnThisTurn => {
                 if let Ok(player) = self.get_player(controller) {
@@ -7665,6 +9768,13 @@ impl GameState {
                 // return 0 as fallback (the card's x_paid isn't accessible here
                 // without knowing which card to look at).
                 log::debug!("evaluate_count_expression: XPaid evaluated as 0 (no card context)");
+                Ok(0)
+            }
+            CountExpression::TimesKicked => {
+                // TimesKicked is resolved via apply_etb_counters which passes the
+                // card's times_kicked directly. This path (called from the mana-
+                // ability / pump evaluators) has no card context, so returns 0.
+                log::debug!("evaluate_count_expression: TimesKicked evaluated as 0 (no card context)");
                 Ok(0)
             }
             CountExpression::SpellsCastThisTurn => {
@@ -7703,10 +9813,25 @@ impl GameState {
                 kicked_value: _,
                 unkicked_value,
             } => {
-                // Kicker state is not yet tracked at resolution time (mtg-820).
-                // Conservatively evaluate as unkicked (the lower/safer damage value).
-                // TODO: Once kicker tracking is implemented, resolve the actual state.
+                // No source card available here — conservatively return unkicked value.
+                // Call evaluate_count_with_source() when the resolving spell's card_id
+                // is available (e.g. from DealDamageDynamic resolution) to get the
+                // correct kicked_value when kicker_paid is true.
                 Ok(*unkicked_value)
+            }
+            CountExpression::Bargain {
+                bargained_value: _,
+                unbargained_value,
+            } => {
+                // Bargain (CR 702.162) is an optional additional cost: sacrifice an
+                // artifact, enchantment, or token when casting. We don't yet track
+                // whether the optional sacrifice was paid at resolution time, so we
+                // conservatively evaluate as unbargained (the base damage value).
+                // This ensures Torch the Tower always deals at least its printed
+                // base damage (2) instead of 0.
+                // TODO(mtg-863): track bargain-paid state per spell on the stack so
+                // the bargained_value (3) is used when the player actually sacrificed.
+                Ok(*unbargained_value)
             }
             CountExpression::TargetedCardPower => {
                 // TargetedCardPower needs the effect's target card, which this
@@ -7716,6 +9841,18 @@ impl GameState {
                 // arm is reached, the expression escaped that path — evaluate to
                 // 0 rather than silently mis-counting.
                 log::debug!("evaluate_count_expression: TargetedCardPower has no target context here; evaluated as 0");
+                Ok(0)
+            }
+            CountExpression::TriggeredCardPower => {
+                // TriggeredCardPower (SVar:Z:TriggeredCard$CardPower — Anax,
+                // Hardened in the Forge) must be resolved before this function
+                // is called, by patching the Compare expression to Fixed in
+                // `resolve_effect_placeholder` using the captured last-known
+                // power from `TriggerContext::triggered_card_power`. If this
+                // arm is reached the patching did not happen; evaluate to 0 to
+                // avoid a panic. The token count will silently default to the
+                // false-value branch of the enclosing Compare (1 token).
+                log::debug!("evaluate_count_expression: TriggeredCardPower reached without context; evaluated as 0");
                 Ok(0)
             }
         }
@@ -7751,14 +9888,27 @@ impl GameState {
                         "Island" => card.definition.cache.has_island_subtype,
                         "Mountain" => card.definition.cache.has_mountain_subtype,
                         "Forest" => card.definition.cache.has_forest_subtype,
-                        _ => {
-                            // Unknown type, assume it matches if we can't parse
-                            log::warn!(target: "count", "Unknown filter type in count expression: {}", filter);
-                            true
+                        other => {
+                            // Fall back to a subtype check (e.g. "Shrine", "Sliver",
+                            // "Goblin"). Subtypes are stored as `Subtype` wrappers
+                            // whose `as_str()` returns the raw string. CR 205.3
+                            // (enchantment subtypes), 205.2 (creature types), etc.
+                            card.subtypes.iter().any(|st| st.as_str().eq_ignore_ascii_case(other))
+                                || card
+                                    .temp_animate_subtypes
+                                    .iter()
+                                    .any(|st| st.as_str().eq_ignore_ascii_case(other))
                         }
                     };
 
                     if !type_matches {
+                        return false;
+                    }
+
+                    // Check `withDefender` qualifier (CR 702.6). The keyword
+                    // filter appears as `Creature.withDefender+YouCtrl` in SVars
+                    // like Overgrown Battlement / Axebane Guardian.
+                    if filter.contains("withDefender") && !card.has_keyword(crate::core::Keyword::Defender) {
                         return false;
                     }
 

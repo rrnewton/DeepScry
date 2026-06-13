@@ -1,0 +1,23 @@
+[metadata]
+Name:Sorin Markov +2 deals 2 damage and gains 2 life; -3 sets opponent life to 10
+Goal:Win
+Turns:5
+Difficulty:Medium
+Description:P0 controls Sorin Markov (4 loyalty at start). Activates +2: Sorin should deal 2 damage to P1 and P0 should gain 2 life (P0 life goes 20→22, P1 life goes 20→18). Then activates -3 on a second turn: P1's life total should become 10 regardless of starting amount. Verifies DealDamage+GainLife (+2) and SetLife (-3) for 2010 WC tracker mtg-914 B5.
+
+[state]
+turn=2
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=
+p0library=Swamp; Swamp; Swamp; Swamp; Swamp
+p0graveyard=
+p0battlefield=Swamp; Swamp; Swamp; Swamp; Swamp; Swamp; Sorin Markov|Counters:LOYALTY=4
+
+p1life=20
+p1hand=
+p1library=Plains; Plains; Plains; Plains; Plains
+p1graveyard=
+p1battlefield=Plains; Plains; Grizzly Bears
+p1exile=

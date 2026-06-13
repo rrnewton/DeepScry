@@ -1,0 +1,24 @@
+[metadata]
+Name:Firebending Lesson deals 5 damage when kicked
+Goal:Win
+Turns:3
+Difficulty:Easy
+Description:Firebending Lesson (SVar:X:Count$Kicked.5.2) deals 5 damage when kicked ({4} additional cost) and 2 damage when not kicked. P0 controls 6 lands and holds Firebending Lesson. P1 controls a 6/4 Craw Wurm — survives 2 damage but dies from 5. The AI should pay kicker (has sufficient mana), dealing 5 damage. Before the wave-5 fix, Count$Kicked.5.2 always evaluated to 2 (unkicked) even when kicker was paid, leaving the 6/4 alive.
+
+[state]
+turn=3
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Firebending Lesson
+p0library=Mountain; Mountain; Mountain; Mountain; Mountain
+p0graveyard=
+p0battlefield=Mountain; Mountain; Mountain; Mountain; Mountain; Island
+p0exile=
+
+p1life=20
+p1hand=
+p1library=Plains; Plains; Plains; Plains; Plains
+p1graveyard=
+p1battlefield=Craw Wurm
+p1exile=

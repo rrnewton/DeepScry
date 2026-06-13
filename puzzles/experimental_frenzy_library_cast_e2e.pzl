@@ -1,0 +1,20 @@
+[metadata]
+Name:Experimental Frenzy Library Play E2E
+Goal:Win
+Turns:5
+Difficulty:Easy
+Description:Experimental Frenzy is on the battlefield. P0 should be able to play lands and cast spells from the top of their library. The top card (Mountain) should be offered as a PlayLandFromLibrary action, and if a spell were on top it would be offered as CastFromLibrary.
+
+[state]
+turn=3
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=
+p0battlefield=Mountain; Mountain; Mountain; Experimental Frenzy
+p0library=Mountain; Bonecrusher Giant; Mountain; Mountain; Mountain
+
+p1life=20
+p1hand=
+p1battlefield=Mountain; Mountain
+p1library=Mountain; Mountain; Mountain; Mountain; Mountain

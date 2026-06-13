@@ -1,0 +1,28 @@
+[metadata]
+Name:Eddymurk Crab ReduceCost Amount$X E2E Test
+Goal:Win
+Difficulty:Medium
+
+# Eddymurk Crab has ManaCost:5 U U (7 mana total, or 5 generic + UU).
+# Its ReduceCost static says "costs {1} less for each instant/sorcery in graveyard".
+# With 5 instants/sorceries in graveyard, it costs {0}{U}{U} = 2 mana.
+# P0 has 3 blue mana sources (1 Island for each U) + 1 Island for generic = 4 lands,
+# so effective cost after 5 reductions: max(5-5,0) + UU = 0+UU = 2 mana (2 Islands).
+
+[state]
+turn=3
+activeplayer=p0
+activephase=MAIN1
+
+p0life=20
+# Hand: just the Eddymurk Crab to cast
+p0hand=Eddymurk Crab
+# 2 Islands for the UU cost (after 5 reductions generic goes to 0)
+p0battlefield=Island; Island
+# Graveyard: 5 instants/sorceries to enable full cost reduction
+p0graveyard=Lightning Bolt; Lightning Bolt; Opt; Negate; Counterspell
+p0library=Island; Island; Island; Island; Island
+
+p1life=20
+p1battlefield=Forest; Forest; Forest
+p1library=Forest; Forest; Forest

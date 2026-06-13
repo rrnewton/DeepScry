@@ -68,36 +68,78 @@ impl HeuristicController {
                     // Reference: PumpAi.java:98-105 (Main1), PumpAi.java:74, 358 (DeclareBlockers)
                     let current_step = view.current_step();
 
+                    // For Equipment like Umezawa's Jitte (the source is not a creature
+                    // but the pump targets the equipped creature), evaluate the equipped
+                    // creature instead of the equipment card itself. This allows the
+                    // heuristic to decide to activate Jitte's Charm during Main1/combat.
+                    // MTG CR 301.5c: equipment abilities are activated at instant speed,
+                    // but the AI activates them at sorcery-speed decision points for
+                    // simplicity.
+                    let pump_source: &Card = if !source.is_creature() {
+                        // If this card is attached to a creature, use that creature as
+                        // the pump target for heuristic evaluation.
+                        source.attached_to.and_then(|id| view.get_card(id)).unwrap_or(source)
+                    } else {
+                        source
+                    };
+
+                    let is_main1 = current_step == crate::game::Step::Main1;
+                    let is_main2 = current_step == crate::game::Step::Main2;
+
+                    log::debug!(
+                        target: "heuristic",
+                        "Pump ability eval: source={} is_creature={} step={:?} is_main1={} is_main2={}",
+                        source.name, source.is_creature(), current_step, is_main1, is_main2
+                    );
+
                     // Phase 1: Main1 - Enable better attacks
-                    if current_step == crate::game::Step::Main1 {
+                    if is_main1 {
                         // Check if pumping would enable better attacks
-                        if self.would_pump_enable_attack(source, view, power, toughness) {
+                        if self.would_pump_enable_attack(pump_source, view, power, toughness) {
                             return true;
                         }
+                    }
+
+                    // For modal abilities classified as Pump (e.g., Jitte's Charm
+                    // whose modes include GainLife and -1/-1 curse in addition to +2/+2
+                    // pump), activate during our main phases or End step when the source
+                    // is a non-creature (equipment/artifact) — the curse and life-gain
+                    // modes are valuable regardless of equipped status.
+                    // End step timing lets the AI burn counters after combat resolves.
+                    let is_end_step = current_step == crate::game::Step::End;
+                    if (is_main1 || is_main2 || is_end_step) && !source.is_creature() {
+                        log::debug!(
+                            target: "heuristic",
+                            "Modal pump on non-creature source {} (step={:?}): activating",
+                            source.name, current_step
+                        );
+                        return true;
                     }
 
                     // Phase 2: Declare Blockers - Combat pump evaluation
                     // Reference: PumpAi.java:74, 358 - pump abilities are most valuable during
                     // declare blockers when we can save creatures or kill blockers
                     if current_step == crate::game::Step::DeclareBlockers
-                        && self.should_activate_pump_during_combat(source, view, power, toughness)
+                        && self.should_activate_pump_during_combat(pump_source, view, power, toughness)
                     {
                         return true;
                     }
                 }
-                ActivatedAbilityType::Destroy => {
-                    // Destroy abilities (Royal Assassin, etc.)
+                ActivatedAbilityType::Destroy { requires_tapped_target } => {
+                    // Destroy abilities (Royal Assassin, Chaos Orb, etc.)
                     // Reference: DestroyAi.java in forge-ai
                     //
-                    // Royal Assassin specifically targets "tapped creatures", so this ability
-                    // is most valuable during/after opponent's combat when attackers are tapped.
+                    // When `requires_tapped_target` is true (Royal Assassin), the ability
+                    // targets only tapped creatures — most valuable after opponent attacks.
+                    // When false (Chaos Orb — any nontoken permanent), any opponent permanent
+                    // is a valid target so we are more permissive about when to fire it.
                     //
                     // Strategy:
                     // 1. Only use when we have a valid target (handled by game loop)
                     // 2. Prioritize high-value targets
                     // 3. Use during opponent's declare attackers or after blockers declared
+                    //    (tapped-target abilities); during main phases for general destroy.
 
-                    // Check timing - best used after opponent declares attackers
                     let current_step = view.current_step();
                     let is_combat = matches!(
                         current_step,
@@ -106,13 +148,20 @@ impl HeuristicController {
                             | crate::game::Step::CombatDamage
                     );
                     let is_end_phase = current_step == crate::game::Step::End;
+                    let is_main1 = current_step == crate::game::Step::Main1;
                     let is_main2 = current_step == crate::game::Step::Main2;
 
-                    // During combat or end phase - good time to destroy attackers
-                    // Reference: DestroyAi checks for phase restrictions
-                    if is_combat || is_end_phase || is_main2 {
-                        // Check if there are valuable tapped creatures to destroy
-                        if self.has_valuable_destroy_target(view) {
+                    if requires_tapped_target {
+                        // Royal Assassin: best during/after opponent combat when
+                        // attackers are tapped.
+                        if (is_combat || is_end_phase || is_main2) && self.has_valuable_destroy_target(view, true) {
+                            return true;
+                        }
+                    } else {
+                        // General destroy (Chaos Orb, etc.): any opponent permanent
+                        // is a valid target; prefer main phases to avoid tapping
+                        // mana/artefact needed for combat tricks.
+                        if (is_main1 || is_main2 || is_end_phase) && self.has_valuable_destroy_target(view, false) {
                             return true;
                         }
                     }
@@ -242,6 +291,39 @@ impl HeuristicController {
                         return true;
                     }
                 }
+                ActivatedAbilityType::Charm => {
+                    // Modal (Charm) abilities like Umezawa's Jitte: activate at
+                    // sorcery speed during main phase when stack is empty.
+                    // Charge-counter Jitte removal is always profitable when
+                    // counters are available (the mode-choice AI picks the best
+                    // option). Activate in Main2 to keep Main1 mana for combat.
+                    // (mtg-911 B3)
+                    let current_step = view.current_step();
+                    if current_step == crate::game::Step::Main2 && self.is_stack_empty(view) {
+                        return true;
+                    }
+                    // Also activate in Main1 (e.g. Jitte pump before combat)
+                    if current_step == crate::game::Step::Main1 && self.is_stack_empty(view) {
+                        return true;
+                    }
+                }
+                ActivatedAbilityType::LevelUp => {
+                    // Level Up abilities (Joraga Treespeaker, etc.): place a LEVEL
+                    // counter on self to unlock stat / ability thresholds (CR 702.87).
+                    // Activate at sorcery speed in Main2 when the stack is empty,
+                    // so we spend leftover mana after our main-phase plays.
+                    let current_step = view.current_step();
+                    if current_step == crate::game::Step::Main2 && self.is_stack_empty(view) {
+                        return true;
+                    }
+                    // Also activate in Main1 if we have plenty of mana (at least
+                    // 2 × the ability cost available after paying), so we don't
+                    // cost ourselves a better play. For simplicity: always allow
+                    // in Main1 too — the leveler itself is usually the key card.
+                    if current_step == crate::game::Step::Main1 && self.is_stack_empty(view) {
+                        return true;
+                    }
+                }
                 ActivatedAbilityType::Other => {
                     // For now, don't activate other types
                     // Will expand as we implement more ability types
@@ -267,94 +349,108 @@ impl HeuristicController {
         })
     }
 
-    /// Classify the type of activated ability based on its effects
+    /// Classify the type of activated ability based on its effects.
+    ///
+    /// Priority order (top wins): DealDamage → PumpCreature → DestroyPermanent
+    /// → Regenerate → PreventDamage → DebuffCreature → TapPermanent →
+    /// MoveSelfBetweenZones → AttachEquipment → DrawCards → LevelUp (sorcery
+    /// speed self-counter) → ModalChoice → Other.
+    ///
+    /// References: DestroyAi.java, TapAi.java, DamageDealAi.java (forge-ai).
+    /// CR 701.4a (mtg-911 B3 fix), CR 702.87 (Level Up).
+    #[allow(clippy::wildcard_enum_match_arm)] // catch-all `_ => {}` intentional: Effect variants not handled here fall through to `Other`
     pub(crate) fn classify_activated_ability(&self, ability: &crate::core::ActivatedAbility) -> ActivatedAbilityType {
-        // Check for damage-dealing effects (ping abilities)
         for effect in &ability.effects {
-            if let crate::core::Effect::DealDamage { amount, .. } = effect {
-                return ActivatedAbilityType::Ping { damage: *amount };
-            }
-        }
+            match effect {
+                // Damage-dealing effects (ping abilities).
+                crate::core::Effect::DealDamage { amount, .. } => {
+                    return ActivatedAbilityType::Ping { damage: *amount };
+                }
 
-        // Check for pump effects
-        for effect in &ability.effects {
-            if let crate::core::Effect::PumpCreature {
-                power_bonus,
-                toughness_bonus,
-                ..
-            } = effect
-            {
-                return ActivatedAbilityType::Pump {
-                    power: *power_bonus,
-                    toughness: *toughness_bonus,
-                };
-            }
-        }
+                // Pump effects (firebreathing, etc.).
+                crate::core::Effect::PumpCreature {
+                    power_bonus,
+                    toughness_bonus,
+                    ..
+                } => {
+                    return ActivatedAbilityType::Pump {
+                        power: *power_bonus,
+                        toughness: *toughness_bonus,
+                    };
+                }
 
-        // Check for destroy effects (Royal Assassin, Atog, etc.)
-        // Reference: DestroyAi.java in forge-ai
-        for effect in &ability.effects {
-            if matches!(effect, crate::core::Effect::DestroyPermanent { .. }) {
-                return ActivatedAbilityType::Destroy;
-            }
-        }
+                // Destroy effects (Royal Assassin, Chaos Orb, etc.).
+                // Carry `requires_tapped_target` so the heuristic can restrict
+                // its target search to tapped creatures when appropriate.
+                crate::core::Effect::DestroyPermanent { .. } => {
+                    return ActivatedAbilityType::Destroy {
+                        requires_tapped_target: ability.cache.targets_tapped,
+                    };
+                }
 
-        // Check for regeneration effects (Drudge Skeletons, Sedge Troll, etc.)
-        for effect in &ability.effects {
-            if matches!(effect, crate::core::Effect::Regenerate { .. }) {
-                return ActivatedAbilityType::Regenerate;
-            }
-        }
+                // Regeneration (Drudge Skeletons, Sedge Troll, etc.).
+                crate::core::Effect::Regenerate { .. } => return ActivatedAbilityType::Regenerate,
 
-        // Check for damage prevention effects (Militant Monk, Master Healer,
-        // and the source-filtered Circles of Protection).
-        for effect in &ability.effects {
-            if matches!(
-                effect,
-                crate::core::Effect::PreventDamage { .. } | crate::core::Effect::PreventDamageFromSource { .. }
-            ) {
-                return ActivatedAbilityType::PreventDamage;
-            }
-        }
+                // Damage prevention (Militant Monk, Master Healer, Circles of Protection).
+                crate::core::Effect::PreventDamage { .. } | crate::core::Effect::PreventDamageFromSource { .. } => {
+                    return ActivatedAbilityType::PreventDamage;
+                }
 
-        // Check for debuff effects (Grozoth, Gargoyle Sentinel - lose Defender, etc.)
-        for effect in &ability.effects {
-            if matches!(effect, crate::core::Effect::DebuffCreature { .. }) {
-                return ActivatedAbilityType::Debuff;
-            }
-        }
+                // Debuff effects (Gargoyle Sentinel — lose Defender, etc.).
+                crate::core::Effect::DebuffCreature { .. } => return ActivatedAbilityType::Debuff,
 
-        // Check for tap-target effects (Icy Manipulator, etc.)
-        // Reference: TapAi.java in forge-ai
-        for effect in &ability.effects {
-            if matches!(effect, crate::core::Effect::TapPermanent { .. }) {
-                return ActivatedAbilityType::TapTarget;
-            }
-        }
+                // Tap-target effects (Icy Manipulator, etc.).
+                crate::core::Effect::TapPermanent { .. } => return ActivatedAbilityType::TapTarget,
 
-        // Check for zone-return self-move (graveyard→hand, etc.)
-        // E.g. Earthquake Dragon's ActivationZone$ Graveyard ability.
-        for effect in &ability.effects {
-            if matches!(effect, crate::core::Effect::MoveSelfBetweenZones { .. }) {
-                return ActivatedAbilityType::ZoneReturn;
-            }
-        }
+                // Zone-return self-move (graveyard→hand, e.g. Earthquake Dragon).
+                crate::core::Effect::MoveSelfBetweenZones { .. } => return ActivatedAbilityType::ZoneReturn,
 
-        // Check for equip (attach this Equipment to a creature you control).
-        // E.g. Trusty Boomerang's `K:Equip:1`. (mtg-721)
-        for effect in &ability.effects {
-            if matches!(effect, crate::core::Effect::AttachEquipment { .. }) {
-                return ActivatedAbilityType::Equip;
-            }
-        }
+                // Equip (attach Equipment to a creature — e.g. Trusty Boomerang). (mtg-721)
+                crate::core::Effect::AttachEquipment { .. } => return ActivatedAbilityType::Equip,
 
-        // Check for card-draw abilities (crack a Clue token, etc.). (mtg-721)
-        for effect in &ability.effects {
-            if matches!(
-                effect,
-                crate::core::Effect::DrawCards { .. } | crate::core::Effect::DrawCardsXPaid { .. }
-            ) {
-                return ActivatedAbilityType::DrawCard;
+                // Card-draw (crack a Clue token, etc.). (mtg-721)
+                crate::core::Effect::DrawCards { .. } | crate::core::Effect::DrawCardsXPaid { .. } => {
+                    return ActivatedAbilityType::DrawCard;
+                }
+
+                // Level Up / self-counter-placement (CR 702.87).
+                // Sorcery-speed PutCounter targeting Self distinguishes leveler
+                // creatures (Joraga Treespeaker) from planeswalker loyalty / other
+                // counter abilities.
+                crate::core::Effect::PutCounter { target, .. } if target.is_self_target() && ability.sorcery_speed => {
+                    return ActivatedAbilityType::LevelUp;
+                }
+
+                // Modal (Charm) abilities — Umezawa's Jitte and similar (mtg-911 B3 fix).
+                // Classify as Pump if any mode is a positive pump (so combat timing
+                // fires); fall back to Charm so the ability is still activated at
+                // sorcery speed rather than never.
+                crate::core::Effect::ModalChoice { modes, .. } => {
+                    let mut best_power = 0i32;
+                    let mut best_toughness = 0i32;
+                    for mode in modes {
+                        if let crate::core::Effect::PumpCreature {
+                            power_bonus,
+                            toughness_bonus,
+                            ..
+                        } = mode.effect.as_ref()
+                        {
+                            if *power_bonus > best_power || *toughness_bonus > best_toughness {
+                                best_power = *power_bonus;
+                                best_toughness = *toughness_bonus;
+                            }
+                        }
+                    }
+                    if best_power > 0 || best_toughness > 0 {
+                        return ActivatedAbilityType::Pump {
+                            power: best_power,
+                            toughness: best_toughness,
+                        };
+                    }
+                    return ActivatedAbilityType::Charm;
+                }
+
+                _ => {}
             }
         }
 
@@ -399,49 +495,71 @@ impl HeuristicController {
         self.has_valuable_ping_target(view, damage)
     }
 
-    /// Check if there's a valuable tapped creature we can destroy
-    /// Reference: DestroyAi.java - targets "best creature" from valid targets
+    /// Check if there's a valuable target we can destroy.
     ///
-    /// For Royal Assassin specifically, targets must be tapped creatures.
-    /// We evaluate based on creature value - prefer destroying high-power/value targets.
-    pub(crate) fn has_valuable_destroy_target(&self, view: &GameStateView) -> bool {
-        // Look for opponent's tapped creatures
-        // Royal Assassin can only target tapped creatures per card text
+    /// `requires_tapped_target`:
+    /// - `true`  (Royal Assassin): only tapped creatures qualify.
+    /// - `false` (Chaos Orb, etc.): any non-indestructible opponent permanent
+    ///   qualifies; creatures score higher than non-creatures.
+    ///
+    /// Reference: DestroyAi.java - targets "best creature" from valid targets
+    pub(crate) fn has_valuable_destroy_target(&self, view: &GameStateView, requires_tapped_target: bool) -> bool {
         let mut best_value = 0i32;
 
         for opponent_id in view.opponents() {
             for &card_id in view.battlefield() {
                 if let Some(card) = view.get_card(card_id) {
-                    if card.controller == opponent_id && card.is_creature() && card.tapped {
-                        // Check if creature has indestructible (can't destroy it)
-                        if card.has_keyword(Keyword::Indestructible) {
-                            continue;
-                        }
+                    if card.controller != opponent_id {
+                        continue;
+                    }
 
-                        // Evaluate this creature's value
-                        // Use power + toughness as a simple heuristic
+                    // For tapped-only abilities (Royal Assassin), skip untapped or non-creature.
+                    if requires_tapped_target && !(card.is_creature() && card.tapped) {
+                        continue;
+                    }
+
+                    // Check if permanent has indestructible (can't destroy it)
+                    if card.has_keyword(Keyword::Indestructible) {
+                        continue;
+                    }
+
+                    if card.is_creature() {
+                        // Evaluate creature value: power + toughness heuristic
                         let power = i32::from(card.current_power());
                         let toughness = i32::from(card.current_toughness());
                         let value = power * 10 + toughness * 5;
 
                         // Add bonus for dangerous keywords
-                        if card.has_keyword(Keyword::Deathtouch) {
-                            best_value = best_value.max(value + 50);
+                        let adjusted = if card.has_keyword(Keyword::Deathtouch) {
+                            value + 50
                         } else if card.has_keyword(Keyword::Lifelink) {
-                            best_value = best_value.max(value + 30);
+                            value + 30
                         } else if card.has_keyword(Keyword::FirstStrike) || card.has_keyword(Keyword::DoubleStrike) {
-                            best_value = best_value.max(value + 20);
+                            value + 20
                         } else {
-                            best_value = best_value.max(value);
-                        }
+                            value
+                        };
+                        best_value = best_value.max(adjusted);
+                    } else if !requires_tapped_target {
+                        // Non-creature permanent (land, artifact, enchantment):
+                        // only considered by general-destroy abilities (Chaos Orb).
+                        // Assign a flat "worth destroying" score of 25 — below the
+                        // creature threshold of 30, so creatures are preferred but
+                        // non-creature permanents are not ignored entirely.
+                        best_value = best_value.max(25);
                     }
                 }
             }
         }
 
-        // Only activate if there's a target worth destroying
-        // Threshold: at least a 2/2 creature (value 30)
-        best_value >= 30
+        // Threshold: at least a 2/2 creature value (power=2→20, toughness=2→10 → 30)
+        // or a non-creature permanent (25) for general-destroy.
+        // For tapped-creature-only abilities the original 30 is kept.
+        if requires_tapped_target {
+            best_value >= 30
+        } else {
+            best_value >= 25
+        }
     }
 
     /// Check if pumping this creature would enable better attacks

@@ -1,0 +1,24 @@
+[metadata]
+Name:Stormchaser's Talent Class L3 Test
+Goal:Win
+Turns:5
+Difficulty:Easy
+Description:Tests Stormchaser's Talent Class L3 ability. P0 has the enchantment at level 3 with 4 mana, casts Lightning Bolt (instant). The L3 trigger should create a 1/1 blue-red Otter token. Validates that AddTrigger$ TriggerCast fires correctly at L3.
+
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Lightning Bolt
+p0battlefield=Mountain; Mountain; Mountain; Mountain; Stormchaser's Talent@L3
+p0library=Mountain; Mountain; Mountain
+p0graveyard=
+p0exile=
+
+p1life=20
+p1hand=
+p1battlefield=Forest
+p1library=Forest; Forest; Forest
+p1graveyard=
+p1exile=

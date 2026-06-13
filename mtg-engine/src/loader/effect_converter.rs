@@ -4,7 +4,9 @@
 
 use super::ability_parser::{AbilityParams, ApiType};
 use super::svar_parser::{parse_svar, ParsedSVar, StaticAbilityMode};
-use crate::core::{CardId, Effect, Keyword, PlayerId, TargetRef, TargetRestriction};
+use crate::core::{
+    CardId, Effect, Keyword, KeywordArgs, PlayerId, RepeatEachIterate, TargetRef, TargetRestriction, TargetType,
+};
 use smallvec::SmallVec;
 use std::collections::HashMap;
 
@@ -17,6 +19,35 @@ use std::collections::HashMap;
 /// `<Color>Source` qualifier, mapping the colour word to a [`Color`]. Returns
 /// `None` for any other `ChooseSource` shape (Martyr's Cause' `Card,Emblem`,
 /// colourless choosers, …) so only the CoP family is converted here.
+/// Parse a `KW$` / `Keywords$` parameter string into (simple_keywords, complex_keyword_args).
+///
+/// The parameter may contain multiple keywords separated by ` & ` (Forge-Java convention).
+/// Each token is either:
+/// - A simple keyword: `"Flying"`, `"Trample"`, etc. → `Keyword::from_string` hit
+/// - A parameterized keyword: `"Landwalk:Forest"`, `"Protection:Red"`, etc. → `KeywordArgs::from_string_parameterized` hit
+///
+/// Unrecognized tokens are silently skipped (consistent with prior behaviour for unknown simple keywords).
+fn parse_kw_param(kw_str: Option<&str>) -> (SmallVec<[Keyword; 2]>, SmallVec<[KeywordArgs; 2]>) {
+    let mut simple: SmallVec<[Keyword; 2]> = SmallVec::new();
+    let mut complex: SmallVec<[KeywordArgs; 2]> = SmallVec::new();
+    if let Some(s) = kw_str {
+        for token in s.split(" & ") {
+            let token = token.trim();
+            if token.is_empty() {
+                continue;
+            }
+            // Try parameterized form first (has a colon separator)
+            if let Some(args) = KeywordArgs::from_string_parameterized(token) {
+                complex.push(args);
+            } else if let Some(kw) = Keyword::from_string(token) {
+                simple.push(kw);
+            }
+            // else: unrecognized, skip
+        }
+    }
+    (simple, complex)
+}
+
 fn choose_source_color(params: &AbilityParams) -> Option<crate::core::Color> {
     use crate::core::Color;
     let choices = params.get("Choices")?;
@@ -120,6 +151,10 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
         ApiType::Draw => {
             // Defined$ Player = each player (Wheel of Fortune)
             // Defined$ Remembered = draw for remembered players only (Raphael's Technique)
+            // ValidTgts$ Player = target player draws (Ancestral Recall). The caster
+            //   can choose self or opponent; until full player-targeting UI lands (mtg-564)
+            //   we default the placeholder to the controller (self-draw), which is by far
+            //   the most common usage. Opponent targeting remains unimplemented.
             // otherwise controller placeholder
             let player = match params.get("Defined") {
                 Some("Player") => PlayerId::all_players(),
@@ -243,27 +278,26 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
             }
 
             // Extract keywords to grant (KW$) - optional
-            // Format: "KW$ Double Strike" or "KW$ Flying & Haste" (multiple separated by &)
-            let keywords_granted: SmallVec<[Keyword; 2]> = params
-                .get("KW")
-                .map(|kw_str| {
-                    kw_str
-                        .split(" & ")
-                        .filter_map(|kw| Keyword::from_string(kw.trim()))
-                        .collect()
-                })
-                .unwrap_or_default();
+            // Format: "KW$ Double Strike" or "KW$ Flying & Haste" or "KW$ Landwalk:Forest"
+            // (multiple separated by " & "; parameterized forms use colon notation)
+            let (keywords_granted, keyword_args_granted) = parse_kw_param(params.get("KW"));
 
             // Create effect if at least one bonus is non-zero, keywords are granted,
             // or a SubAbility$ chain needs target resolution (e.g., Prey Upon uses
             // SP$ Pump with +0/+0 purely as a targeting vehicle for DB$ Fight)
             let has_sub_ability = params.contains_key("SubAbility");
-            if power_bonus != 0 || toughness_bonus != 0 || !keywords_granted.is_empty() || has_sub_ability {
+            if power_bonus != 0
+                || toughness_bonus != 0
+                || !keywords_granted.is_empty()
+                || !keyword_args_granted.is_empty()
+                || has_sub_ability
+            {
                 Some(Effect::PumpCreature {
                     target: CardId::new(0), // Placeholder - filled in at cast time
                     power_bonus,
                     toughness_bonus,
                     keywords_granted,
+                    keyword_args_granted,
                 })
             } else {
                 None
@@ -298,6 +332,7 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
         ApiType::PumpAll => {
             // Mass pump: "Creatures you control get +1/+0 until end of turn"
             // Example: DB$ PumpAll | ValidCards$ Creature.YouCtrl | NumAtt$ +1
+            // Also handles keyword grants: AB$ PumpAll | KW$ Trample & Haste
             let mut power_bonus = 0;
             let mut toughness_bonus = 0;
 
@@ -311,11 +346,38 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
                 toughness_bonus = def;
             }
 
+            // Extract keyword grants (KW$) - optional, e.g. "Trample & Haste"
+            let keywords_granted: smallvec::SmallVec<[Keyword; 2]> = params
+                .get("KW")
+                .map(|kw_str| {
+                    kw_str
+                        .split(" & ")
+                        .filter_map(|kw| Keyword::from_string(kw.trim()))
+                        .collect()
+                })
+                .unwrap_or_default();
+
             // Get the filter (ValidCards$) - defaults to "Creature"
             let filter = params.get("ValidCards").unwrap_or("Creature").to_string();
 
-            // Only create effect if at least one bonus is non-zero
-            if power_bonus != 0 || toughness_bonus != 0 {
+            if !keywords_granted.is_empty() {
+                // Keyword-only (or keyword + P/T) grant: use AnimateAll which supports keywords.
+                // For pure keyword grants, power/toughness are None (unchanged).
+                let power = if power_bonus != 0 { Some(power_bonus) } else { None };
+                let toughness = if toughness_bonus != 0 {
+                    Some(toughness_bonus)
+                } else {
+                    None
+                };
+                Some(Effect::AnimateAll {
+                    controller: PlayerId::new(0), // Placeholder
+                    filter,
+                    power,
+                    toughness,
+                    keywords_granted,
+                    keyword_args_granted: smallvec::SmallVec::new(),
+                })
+            } else if power_bonus != 0 || toughness_bonus != 0 {
                 Some(Effect::PumpAllCreatures {
                     controller: PlayerId::new(0), // Placeholder - filled in at effect execution
                     filter,
@@ -367,10 +429,13 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
         ApiType::Scry => {
             // Scry N - look at top N cards, put any on bottom
             // Example: "DB$ Scry | ScryNum$ 1"
+            // Example with condition: "DB$ Scry | ScryNum$ 1 | Condition$ Bargain"
             let count = params.get_u8("ScryNum").unwrap_or(1);
+            let only_if_bargained = params.get("Condition") == Some("Bargain");
             Some(Effect::Scry {
                 player: PlayerId::new(0), // Placeholder - filled in at trigger execution
                 count,
+                only_if_bargained,
             })
         }
 
@@ -397,14 +462,74 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
             // RememberCounteredCMC$ True (Mana Drain): record the countered
             // spell's mana value so a chained delayed trigger can use it.
             let remember_mana_value = params.get("RememberCounteredCMC") == Some("True");
+            // Defined$ TriggeredSpellAbility (In the Eye of Chaos, Presence of
+            // the Master): counter the spell that caused the SpellCast trigger
+            // to fire. Use the TRIGGERED_SPELL_ID sentinel; resolved to the
+            // actual cast_spell_id from TriggerContext at resolution time.
+            let target = if params.get("Defined") == Some("TriggeredSpellAbility") {
+                CardId::triggered_spell()
+            } else {
+                CardId::new(0) // Placeholder — resolved from chosen_targets
+            };
             Some(Effect::CounterSpell {
-                target: CardId::new(0), // Placeholder
+                target,
                 spell_restriction,
                 remember_mana_value,
             })
         }
 
+        ApiType::Reveal => {
+            // "Reveal any number of <type> cards from your hand" — Metalworker,
+            // Tolarian Academy-adjacent effects, etc.
+            //
+            //   AB$ Reveal | Cost$ T | RevealValid$ Card.Artifact+YouCtrl
+            //              | AnyNumber$ True | RememberRevealed$ True
+            //              | SubAbility$ DBMetalWorkerMana
+            //
+            // The filter is `RevealValid$`; `AnyNumber$ True` means the controller
+            // may reveal zero or more; `RememberRevealed$ True` stores the count in
+            // `GameState::remembered_amount` for use by the chained Mana sub-ability.
+            let filter = params.get("RevealValid").unwrap_or("Card").to_string();
+            let any_number = params.get("AnyNumber") == Some("True");
+            let remember_count = params.get("RememberRevealed") == Some("True");
+            Some(Effect::RevealCardsFromHand {
+                player: PlayerId::placeholder(),
+                filter,
+                any_number,
+                remember_count,
+            })
+        }
+
         ApiType::ChangeZone => {
+            // Enduring Vitality death trigger:
+            //   DB$ ChangeZone | Defined$ TriggeredNewCardLKICopy | Origin$ Graveyard
+            //   | Destination$ Battlefield | StaticEffect$ Animate
+            // "Return it to the battlefield... It's an enchantment."
+            // The `Animate` SVar strips creature types and adds Enchantment.
+            if params.get("Defined") == Some("TriggeredNewCardLKICopy")
+                && params.get("Origin") == Some("Graveyard")
+                && params.get("Destination") == Some("Battlefield")
+                && params.get("StaticEffect").is_some()
+            {
+                return Some(Effect::ReturnSelfAsEnchantment {
+                    source: CardId::new(0), // Placeholder — resolved in check_death_triggers
+                });
+            }
+            // Bounce: return a permanent from battlefield to its owner's hand.
+            // Covers Teferi −3, Petty Theft, and any other
+            // `Origin$ Battlefield | Destination$ Hand | ValidTgts$ <filter>` ability.
+            // TargetMin$ 0 means the target is optional (up-to-one); we emit a
+            // placeholder — resolution fizzles cleanly when no legal target exists.
+            if params.get("Origin") == Some("Battlefield") && params.get("Destination") == Some("Hand") {
+                let restriction = params
+                    .get("ValidTgts")
+                    .map(TargetRestriction::parse)
+                    .unwrap_or_else(TargetRestriction::any);
+                return Some(Effect::ReturnPermanentToHand {
+                    target: CardId::new(0), // Placeholder — resolved at targeting time
+                    restriction,
+                });
+            }
             // Check for exile effects: Origin$ Battlefield + Destination$ Exile
             if params.get("Origin") == Some("Battlefield") && params.get("Destination") == Some("Exile") {
                 Some(Effect::ExilePermanent {
@@ -440,8 +565,8 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
             // and from the battlefield→exile ExilePermanent special-case above.
             else if params.get("Defined") == Some("Self")
                 && params.get("Origin") != Some("Stack")
-                && params.get("Origin").is_some()
-                && params.get("Destination").is_some()
+                && params.contains_key("Origin")
+                && params.contains_key("Destination")
             {
                 let origin = params.get("Origin").and_then(crate::zones::Zone::from_str_lenient);
                 let destination = params.get("Destination").and_then(crate::zones::Zone::from_str_lenient);
@@ -494,15 +619,8 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
                     player: PlayerId::placeholder(),
                 })
             }
-            // Return-self from a non-battlefield, non-stack zone to another zone.
-            // E.g. A:AB$ ChangeZone | Origin$ Graveyard | Destination$ Hand
-            //        | ActivationZone$ Graveyard
-            // (Earthquake Dragon: "Return CARDNAME from your graveyard to your hand.")
-            // The card source is implicit (the ability's host card); use self_target()
-            // so MoveSelfBetweenZones patches it to the real CardId at resolve time.
-            // Targeted return: graveyard → hand for a card matching ValidTgts$
-            // (e.g. Stormchaser's Talent level-2 trigger: return target instant
-            //  or sorcery from your graveyard to hand).
+            // Targeted graveyard → hand (e.g. Stormchaser's Talent level-2,
+            // Recollect): `Origin$ Graveyard | Destination$ Hand | ValidTgts$`.
             else if params.get("Origin") == Some("Graveyard")
                 && params.get("Destination") == Some("Hand")
                 && params.get("ValidTgts").is_some()
@@ -521,7 +639,100 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
                     player: PlayerId::placeholder(),
                     type_filter,
                 })
-            } else if matches!(params.get("Origin"), Some("Graveyard" | "Hand" | "Exile"))
+            }
+            // Targeted graveyard → non-Hand zone (Reclaim: gy→library;
+            // Goryo's Vengeance / Debtors' Knell: gy→battlefield).
+            // `Origin$ Graveyard | Destination$ <Library|Battlefield|…> |
+            //  ValidTgts$ <filter>` without ChangeNum$ (or ChangeNum$ 1,
+            //  which is still "pick one card").
+            // GainControl$ True means reanimation (card enters under the
+            // caster's control). LibraryPosition$ 0 = top, 1 = bottom.
+            // RememberChanged$ True → push moved card onto remembered_cards so
+            // a chained Animate (Goryo's Vengeance DBPump) can target it.
+            else if params.get("Origin") == Some("Graveyard")
+                && params.get("ValidTgts").is_some()
+                && params.get("Defined").is_none()
+                && params.get("Destination") != Some("Hand")
+                // ChangeNum$ absent or explicitly 1 (= "pick one").
+                // Multi-card returns use ReturnCardsFromGraveyardToHand path.
+                && params.get("ChangeNum").is_none_or(|v| v == "1")
+            {
+                let destination = params
+                    .get("Destination")
+                    .and_then(crate::zones::Zone::from_str_lenient)
+                    .unwrap_or(crate::zones::Zone::Hand);
+                let valid_tgts = params.get("ValidTgts").unwrap_or("Card");
+                // Strip controller/ownership qualifiers — keep base type only.
+                let type_filter: String = valid_tgts
+                    .split(',')
+                    .filter_map(|part| part.split('.').next())
+                    .collect::<Vec<_>>()
+                    .join(",");
+                let gain_control = params.get("GainControl") == Some("True");
+                let library_position: u8 = params.get("LibraryPosition").and_then(|v| v.parse().ok()).unwrap_or(0);
+                let remember_changed = params.get("RememberChanged") == Some("True");
+                Some(Effect::ReturnGraveyardCardToZone {
+                    player: PlayerId::placeholder(),
+                    type_filter,
+                    destination,
+                    gain_control,
+                    library_position,
+                    remember_changed,
+                })
+            }
+            // Sneak Attack / put-from-hand-onto-battlefield:
+            //   A:AB$ ChangeZone | Origin$ Hand | Destination$ Battlefield
+            //   | ChangeType$ Creature.YouCtrl | RememberChanged$ True
+            // The card to move is chosen from the controller's hand by
+            // type/filter; it is NOT the ability source (the enchantment).
+            // `RememberChanged$ True` pushes the moved card onto
+            // remembered_cards so chained Animate (DBPump) targets it.
+            else if params.get("Origin") == Some("Hand")
+                && params.get("Destination") == Some("Battlefield")
+                && params.contains_key("ChangeType")
+                && params.get("Defined").is_none()
+            {
+                let change_type = params.get("ChangeType").unwrap_or("Creature");
+                // Strip ".YouCtrl" / ownership qualifiers — keep base type.
+                let type_filter: String = change_type
+                    .split(',')
+                    .filter_map(|part| part.split('.').next())
+                    .collect::<Vec<_>>()
+                    .join(",");
+                let remember_changed = params.get("RememberChanged") == Some("True");
+                Some(Effect::PutCreatureFromHandOnBattlefield {
+                    player: PlayerId::placeholder(),
+                    type_filter,
+                    remember_changed,
+                })
+            }
+            // Put N cards from the CONTROLLER's own hand on top of their library
+            // (Brainstorm / Brainstone / Cavalier of Gales sub-ability).
+            // `DB$ ChangeZone | Origin$ Hand | Destination$ Library | ChangeNum$ N |
+            //  Mandatory$ True | Reorder$ True`
+            //
+            // Guards: no Defined$ (that would be a self-move), no ValidTgts$ (cards
+            // like Agonizing Memories / Chittering Rats target an opponent's hand
+            // and are excluded here — they require a separate targeted-hand handler).
+            // MTG CR 401.4: when an effect puts two or more cards in a specific
+            // position at the same time, the owner arranges them in any order.
+            else if params.get("Origin") == Some("Hand")
+                && params.get("Destination") == Some("Library")
+                && params.contains_key("ChangeNum")
+                && params.get("Defined").is_none()
+                && params.get("ValidTgts").is_none()
+            {
+                let count = params.get_u8("ChangeNum").unwrap_or(1);
+                Some(Effect::PutCardsFromHandOnTopOfLibrary {
+                    player: PlayerId::placeholder(),
+                    count,
+                })
+            }
+            // Self-return from a non-battlefield, non-stack zone to another zone.
+            // E.g. A:AB$ ChangeZone | Origin$ Graveyard | Destination$ Hand
+            //        | ActivationZone$ Graveyard (Earthquake Dragon)
+            // No ValidTgts$ → the source card itself is the subject.
+            else if matches!(params.get("Origin"), Some("Graveyard" | "Hand" | "Exile"))
                 && params.get("Destination").is_some()
                 && params.get("Defined").is_none()
             {
@@ -804,21 +1015,8 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
             let toughness = params.get_i32("Toughness").ok();
 
             // Parse keywords (optional) - e.g., "Keywords$ Trample" or "Keywords$ Flying & First Strike"
-            let keywords_granted = if let Some(kw_str) = params.get("Keywords") {
-                // Parse keyword string (may be single or "&" separated)
-                use crate::core::Keyword;
-                let mut keywords = smallvec::SmallVec::new();
-                for kw_part in kw_str.split('&').map(|s| s.trim()) {
-                    if !kw_part.is_empty() {
-                        if let Some(kw) = Keyword::from_string(kw_part) {
-                            keywords.push(kw);
-                        }
-                    }
-                }
-                keywords
-            } else {
-                smallvec::smallvec![]
-            };
+            // Parse Keywords$ using parse_kw_param so parameterized forms (e.g. Landwalk:Forest) work
+            let (keywords_granted, keyword_args_granted) = parse_kw_param(params.get("Keywords"));
 
             // Parse Types$ parameter — e.g. "Artifact,Creature,Assembly-Worker"
             // for Mishra's Factory. Per Forge-Java conventions, this is a
@@ -859,20 +1057,43 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
             if power.is_none()
                 && toughness.is_none()
                 && keywords_granted.is_empty()
+                && keyword_args_granted.is_empty()
                 && types_added.is_empty()
                 && subtypes_added.is_empty()
             {
                 return None;
             }
 
+            // `Defined$ Remembered` means the target is the card in
+            // `remembered_cards` (pushed there by the preceding
+            // RememberChanged$ True zone-change). Use the dedicated sentinel
+            // so `execute_set_base_power_toughness` can expand it.
+            let target = if params.get("Defined") == Some("Remembered") {
+                CardId::remembered_card()
+            } else {
+                CardId::new(0) // Placeholder - filled in at activation time
+            };
+
+            // `AtEOT$ Sacrifice` / `AtEOT$ Exile` — schedule a delayed trigger
+            // that fires at the beginning of the next end step (CR 603.7a).
+            // Used by Sneak Attack (AtEOT$ Sacrifice) and Goryo's Vengeance
+            // (AtEOT$ Exile).
+            let at_eot = match params.get("AtEOT") {
+                Some("Sacrifice") => Some(crate::core::effects::AtEotAction::Sacrifice),
+                Some("Exile") => Some(crate::core::effects::AtEotAction::Exile),
+                _ => None,
+            };
+
             Some(Effect::SetBasePowerToughness {
-                target: CardId::new(0), // Placeholder - filled in at activation time
+                target,
                 power,
                 toughness,
                 keywords_granted,
+                keyword_args_granted,
                 types_added,
                 subtypes_added,
                 remove_creature_subtypes,
+                at_eot,
             })
         }
 
@@ -888,23 +1109,12 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
 
             let filter = params.get("ValidCards").unwrap_or("Creature").to_string();
 
-            let keywords_granted = if let Some(kw_str) = params.get("Keywords") {
-                use crate::core::Keyword;
-                let mut keywords = smallvec::SmallVec::new();
-                for kw_part in kw_str.split('&').map(|s| s.trim()) {
-                    if !kw_part.is_empty() {
-                        if let Some(kw) = Keyword::from_string(kw_part) {
-                            keywords.push(kw);
-                        }
-                    }
-                }
-                keywords
-            } else {
-                smallvec::smallvec![]
-            };
+            // Parse Keywords$ using parse_kw_param so parameterized forms work
+            let (keywords_granted, keyword_args_granted) = parse_kw_param(params.get("Keywords"));
 
             // At least one of power, toughness, or keywords must be set
-            if power.is_none() && toughness.is_none() && keywords_granted.is_empty() {
+            if power.is_none() && toughness.is_none() && keywords_granted.is_empty() && keyword_args_granted.is_empty()
+            {
                 return None;
             }
 
@@ -914,6 +1124,7 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
                 power,
                 toughness,
                 keywords_granted,
+                keyword_args_granted,
             })
         }
 
@@ -1121,6 +1332,10 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
                     }), // Placeholder
                     description: format!("Mode: {}", name),
                     svar_name: name.to_string(),
+                    mode_cost: 0,
+                    // Without SVar resolution we don't know targeting needs;
+                    // params_to_charm_effect_with_svars will set this correctly.
+                    needs_targeting: false,
                 })
                 .collect();
 
@@ -1146,19 +1361,43 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
             // - TokenOwner$: Who controls the token (You, Opponent, etc.)
             // - TokenAmount$: Number of tokens to create (default 1)
             //
+            // Special case: Phyrexian Processor
+            //   A:AB$ Token | TokenPower$ LifePaidOnETB | TokenToughness$ LifePaidOnETB
+            //   The token's P/T comes from the source card's `stored_int` (life paid on ETB).
+            //   Detected structurally: TokenPower$ LifePaidOnETB (no substring matching).
+            //
             // Examples:
             // - Cunning Maneuver: creates Clue token (c_a_clue_draw)
             // - Canyon Crawler: creates Food token (c_a_food_sac)
+            // - Phyrexian Processor: creates X/X Phyrexian Minion where X = life paid
             let token_script = params.get("TokenScript")?.to_string();
             let amount = params.get_u8("TokenAmount").unwrap_or(1);
 
-            // TokenOwner$ parsing - default to controller (You)
-            // "Player" means each player creates tokens
+            // Detect the Phyrexian Processor shape: TokenPower$ LifePaidOnETB.
+            // In this shape the token amount is always 1 and P/T are read from
+            // the source card's stored_int at execution time.
+            if params.get("TokenPower") == Some("LifePaidOnETB")
+                || params.get("TokenToughness") == Some("LifePaidOnETB")
+            {
+                let controller = PlayerId::new(0); // placeholder — resolved at activation
+                return Some(Effect::CreateTokenWithStoredPt {
+                    source_card: crate::core::CardId::placeholder(),
+                    controller,
+                    token_script,
+                });
+            }
+
+            // TokenOwner$ parsing — default to controller (You)
+            // "Player"              → each player creates tokens
+            // "RememberedController"→ the controller of the currently-remembered card
+            //                        (Terastodon: token goes to destroyed permanent's owner)
+            // "Opponent"            → the opponent (placeholder resolved at runtime)
             let token_owner = params.get("TokenOwner");
             let for_each_player = token_owner == Some("Player");
             let controller = match token_owner {
                 Some("Opponent") => PlayerId::new(1), // Placeholder - will be resolved at runtime
-                _ => PlayerId::new(0),                // Placeholder - controller
+                Some("RememberedController") => PlayerId::remembered_controller(),
+                _ => PlayerId::new(0), // Placeholder - controller
             };
 
             Some(Effect::CreateToken {
@@ -1492,11 +1731,21 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
             // filter (tokenized, NOT substring-matched), generalizing across all
             // five Circles of Protection. The chosen source CardId is a
             // placeholder resolved from the ability's target at activation.
-            let color = choose_source_color(params)?;
-            Some(Effect::PreventDamageFromSource {
-                protected: PlayerId::new(0), // Placeholder - resolved to controller at activation
-                color,
-                source: CardId::new(0), // Placeholder - resolved from chosen target
+            if let Some(color) = choose_source_color(params) {
+                return Some(Effect::PreventDamageFromSource {
+                    protected: PlayerId::new(0), // Placeholder - resolved to controller at activation
+                    color,
+                    source: CardId::new(0), // Placeholder - resolved from chosen target
+                });
+            }
+            // Non-CoP ChooseSource shapes (e.g. Reverse Damage's `Choices$ Card,Emblem`):
+            // choose any damage source, then prevent that damage and gain life.
+            // Full prevention replacement is not yet implemented (TODO(mtg-713):
+            // B15 — non-CoP ChooseSource damage prevention + life gain).
+            // Emit a NoOp so the spell is at least castable rather than silently
+            // uncastable (empty effects list).
+            Some(Effect::NoOp {
+                api_type: "ChooseSource(non-CoP)".to_string(),
             })
         }
 
@@ -1533,6 +1782,7 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
             Some(Effect::DestroyAll {
                 restriction,
                 no_regenerate,
+                cmc_eq_source: None,
             })
         }
 
@@ -1833,6 +2083,129 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
             }
         }
 
+        // `AB$ Play | TgtZone$ Graveyard` — cast a targeted instant/sorcery from
+        // the graveyard this turn. Corresponds to Chandra, Acolyte of Flame −2:
+        //   "You may cast target instant or sorcery card with mana value 3 or less
+        //    from your graveyard. If that card would be put into your graveyard this
+        //    turn, exile it instead."
+        //
+        // `ValidTgts$`: Instant.YouCtrl+cmcLE3,Sorcery.YouCtrl+cmcLE3
+        //   → type_filter = "Instant,Sorcery", max_mana_value = Some(3)
+        // `TgtZone$ Graveyard`: targets graveyard (handled in targeting.rs)
+        // `ReplaceGraveyard$ Exile`: exile instead of graveyard on resolution
+        ApiType::Play if params.get("TgtZone") == Some("Graveyard") => {
+            // Parse ValidTgts to derive type_filter and max_mana_value
+            let valid_tgts = params.get("ValidTgts").unwrap_or("");
+            // Extract unique card types (before the first '.' per token)
+            let mut types_seen: std::collections::BTreeSet<&str> = Default::default();
+            let mut max_cmc: Option<u8> = None;
+            for token in valid_tgts.split(',') {
+                let token = token.trim();
+                // First segment before '.' is the base type (e.g. "Instant")
+                let base_type = token.split('.').next().unwrap_or(token);
+                if !base_type.is_empty() {
+                    types_seen.insert(base_type);
+                }
+                // Look for cmcLE<N> qualifier in any segment
+                for part in token.split('.') {
+                    if let Some(rest) = part.strip_prefix("cmcLE") {
+                        if let Ok(n) = rest.parse::<u8>() {
+                            max_cmc = Some(match max_cmc {
+                                Some(prev) => prev.min(n), // take the strictest bound
+                                None => n,
+                            });
+                        }
+                    }
+                }
+            }
+            let type_filter = types_seen.into_iter().collect::<Vec<_>>().join(",");
+            let exile_on_resolution =
+                params.get("ReplaceGraveyard") == Some("Exile") || params.get("ExileOnMoved") == Some("Graveyard");
+            Some(Effect::PlayFromGraveyard {
+                target: CardId::new(0), // Placeholder — bound at targeting time
+                exile_on_resolution,
+                type_filter,
+                max_mana_value: max_cmc,
+            })
+        }
+
+        // `ChooseCard` — select N permanents matching a filter, then take an action
+        // (currently: tap each chosen card — Tangle Wire's forced-tap pattern).
+        //
+        // Tangle Wire script:
+        //   DB$ ChooseCard | Defined$ TriggeredPlayer | Choices$ Artifact.untapped+…,Creature.untapped+…,Land.untapped+… | Amount$ X | SubAbility$ DBTap
+        //   DB$ Tap | Defined$ ChosenCard
+        //   DB$ Cleanup | ClearChosenCard$ True
+        //
+        // We collapse the entire ChooseCard→Tap→Cleanup sub-ability chain into a
+        // single `Effect::TapPermanentsMatchingFilter`. The `SubAbility$` chain is
+        // NOT followed separately — the Tap and Cleanup steps are consumed here.
+        //
+        // The `Choices$` filter is normalised to a comma-separated list of base
+        // card types (stripping `.untapped+…` qualifiers) since the executor
+        // independently enforces "untapped" — only untapped permanents can be
+        // tapped. `Amount$ X` is stored as 0; the trigger executor resolves the
+        // fade-counter count at fire time.
+        ApiType::ChooseCard => {
+            // Two sub-patterns of ChooseCard:
+            //
+            // A) `ChooseEach$ T1 & T2 & ...` — Tragic Arrogance pattern:
+            //    choose one permanent of EACH listed type from among the
+            //    remembered player's permanents, then remember them all.
+            //    → Produces `Effect::ChooseAndRememberOneOfEach { types }`.
+            //
+            // B) `Choices$ T1,T2,...` with `Amount$ X | SubAbility$ DBTap` —
+            //    Tangle Wire pattern: tap N permanents of the listed types.
+            //    → Produces `Effect::TapPermanentsMatchingFilter`.
+            if let Some(choose_each_raw) = params.get("ChooseEach") {
+                // Parse "Artifact & Creature & Enchantment & Planeswalker"
+                // into a Vec<TargetType>.
+                let types: Vec<TargetType> = choose_each_raw
+                    .split('&')
+                    .filter_map(|s| {
+                        let s = s.trim();
+                        match s {
+                            "Artifact" => Some(TargetType::Artifact),
+                            "Creature" => Some(TargetType::Creature),
+                            "Enchantment" => Some(TargetType::Enchantment),
+                            "Planeswalker" => Some(TargetType::Planeswalker),
+                            "Land" => Some(TargetType::Land),
+                            _ => {
+                                log::warn!(
+                                    target: "effect_converter",
+                                    "ChooseCard ChooseEach$: unrecognised type '{}', skipping",
+                                    s
+                                );
+                                None
+                            }
+                        }
+                    })
+                    .collect();
+                if types.is_empty() {
+                    return Some(Effect::Unimplemented {
+                        api_type: format!("ChooseCard(ChooseEach-empty:{choose_each_raw})"),
+                    });
+                }
+                return Some(Effect::ChooseAndRememberOneOfEach { types });
+            }
+
+            // Pattern B: "tap chosen cards" (Tangle Wire).
+            // The sub-ability chain must end in DB$ Tap | Defined$ ChosenCard.
+            let choices_raw = params.get("Choices").unwrap_or("");
+            // Normalise: strip per-segment qualifiers, keep base types only.
+            // "Artifact.untapped+ActivePlayerCtrl" → "Artifact"
+            let choices_filter = choices_raw
+                .split(',')
+                .map(|seg| seg.trim().split('.').next().unwrap_or_else(|| seg.trim()).to_string())
+                .collect::<Vec<_>>()
+                .join(",");
+            Some(Effect::TapPermanentsMatchingFilter {
+                player: PlayerId::new(0), // placeholder → resolved to active player at trigger time
+                choices_filter,
+                count: 0, // placeholder → resolved from fade counters at trigger time
+            })
+        }
+
         // `StoreSVar` (Forge pseudo-API: stash a computed value into a card SVar
         // for a later effect to read) is an INTENTIONAL no-op in this engine.
         // Drain Life uses a StoreSVar chain only to compute its life-gain cap
@@ -1843,6 +2216,36 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
         ApiType::Unknown(ref s) if s == "StoreSVar" => Some(Effect::NoOp {
             api_type: "StoreSVar".to_string(),
         }),
+
+        // `RearrangeTopOfLibrary` — look at the top N cards, put them back in any
+        // order (CR 701.22). In the AI path we keep the same order (always legal).
+        // Sensei's Divining Top: `A:AB$ RearrangeTopOfLibrary | Defined$ You | NumCards$ 3`
+        ApiType::RearrangeTopOfLibrary => {
+            // `Defined$ You` → controller (placeholder); other Defined$ values
+            // also resolve to the controller for this ability type.
+            let player = match params.get("Defined") {
+                Some("You") | None => PlayerId::placeholder(),
+                // Opponent-targeted variant (not currently used by any card we support)
+                _ => PlayerId::target_opponent(),
+            };
+            let count = params.get_u8("NumCards").unwrap_or(3);
+            Some(Effect::RearrangeTopOfLibrary { player, count })
+        }
+
+        // `SkipPhase` with `Step$ Untap` — cause target player to skip their
+        // next untap step (CR 502.1). Yosei, the Morning Star die trigger.
+        // `DB$ SkipPhase | ValidTgts$ Player | Step$ Untap | IsCurse$ True`
+        // Only the Untap step variant is handled; Phase$ (BeginCombat) falls
+        // through to Unimplemented (emits a warning but does not crash).
+        ApiType::SkipPhase if params.get("Step") == Some("Untap") => {
+            // ValidTgts$ Player → opponent (AI auto-target); Defined$ You → self.
+            let player = match (params.get("Defined"), params.get("ValidTgts")) {
+                (Some("You"), _) => PlayerId::placeholder(),
+                (_, Some(vt)) if vt.contains("Player") => PlayerId::target_opponent(),
+                _ => PlayerId::placeholder(),
+            };
+            Some(Effect::SkipUntapStep { player })
+        }
 
         // Recognized but not yet implemented API types produce an Unimplemented effect
         // so that spell resolution can warn instead of silently no-op'ing
@@ -1920,10 +2323,20 @@ pub fn params_to_charm_effect_with_svars(params: &AbilityParams, svars: &HashMap
                     .map(|s| s.to_string())
                     .unwrap_or_else(|| format!("Mode: {}", name));
 
+                // Extract ModeCost$ — extra generic mana required to choose this mode
+                // (used by tiered modal spells like Fire Magic: Fire={0}, Fira={2}, Firaga={5})
+                let mode_cost = mode_params.get_u8("ModeCost").unwrap_or(0);
+                // ValidTgts$ present → player must choose a target when this
+                // mode is selected (e.g. JitteCurse "ValidTgts$ Creature").
+                // Defined$ or absent ValidTgts → target is pre-resolved.
+                let needs_targeting = mode_params.contains_key("ValidTgts");
+
                 modes.push(crate::core::ModalMode {
                     effect: Box::new(effect),
                     description,
                     svar_name: name.to_string(),
+                    mode_cost,
+                    needs_targeting,
                 });
             } else {
                 log::warn!(
@@ -2015,14 +2428,45 @@ pub fn params_to_effect_with_svars(params: &AbilityParams, svars: &HashMap<Strin
                         StaticAbilityMode::Continuous => {
                             // Mode$ Continuous creates persistent continuous effects
                             // Common params:
+                            // - AdjustLandPlays$ N: extra land plays this turn (Explore, etc.)
                             // - MayPlay$ True: Permission to play from non-standard zone
                             // - AddPower$/AddToughness$: P/T modifications
                             // - AddKeyword$: Grant keywords
                             //
-                            // These are usually created as StaticAbility objects during parsing,
-                            // not through AB$ Effect. When they appear in AB$ Effect context,
-                            // it's typically for temporary/until-end-of-turn effects.
-                            if def.params.get("MayPlay") == Some(&"True".to_string()) {
+                            // Temporary extra land-play grant (e.g. Explore, Enter the Unknown).
+                            // The player placeholder (0) is resolved to the spell's controller
+                            // in GameState::resolve_effect_target.
+                            if let Some(amount_str) = def.params.get("AdjustLandPlays") {
+                                let amount: u8 = if amount_str.eq_ignore_ascii_case("Unlimited") {
+                                    7
+                                } else {
+                                    amount_str.parse().unwrap_or(1)
+                                };
+                                return Some(Effect::ExtraLandPlay {
+                                    player: PlayerId::new(0), // placeholder → resolved at runtime
+                                    amount,
+                                });
+                            } else if params.get("Duration") == Some("Permanent") {
+                                // When Duration$ Permanent is present on the *outer* AB$ Effect,
+                                // this is a planeswalker ultimate creating an emblem (CR 113.2).
+                                // We parse the SVar body into a StaticAbility and return
+                                // Effect::CreateEmblem (command-zone objects the existing
+                                // continuous_effects machinery scans automatically).
+                                let static_abilities =
+                                    super::card::CardDefinition::parse_static_abilities_from_svar_body(svar_body);
+                                if !static_abilities.is_empty() {
+                                    let emblem_name = params
+                                        .get("Name")
+                                        .map(|s| s.to_string())
+                                        .unwrap_or_else(|| "Emblem".to_string());
+                                    return Some(Effect::CreateEmblem {
+                                        controller: PlayerId::new(0), // placeholder — resolved at cast time
+                                        emblem_name,
+                                        static_abilities,
+                                        triggers: Vec::new(),
+                                    });
+                                }
+                            } else if def.params.get("MayPlay") == Some(&"True".to_string()) {
                                 // MayPlay effects grant permission to play cards from a zone
                                 // This is commonly used by Yawgmoth's Will, Future Sight effects
                                 // TODO(mtg-20): Add Effect::GrantMayPlay variant
@@ -2038,6 +2482,21 @@ pub fn params_to_effect_with_svars(params: &AbilityParams, svars: &HashMap<Strin
                                     static_ability_name
                                 );
                             }
+                        }
+                        StaticAbilityMode::CastWithFlash => {
+                            // Mode$ CastWithFlash: grant the controller flash-casting
+                            // permission for the matching cards until end of turn.
+                            // Example: Teferi, Time Raveler +1:
+                            //   SVar:STPlay:Mode$ CastWithFlash | ValidCard$ Sorcery
+                            let valid_card = def
+                                .params
+                                .get("ValidCard")
+                                .map(|v| crate::core::TargetRestriction::parse(v.as_str()))
+                                .unwrap_or_else(crate::core::TargetRestriction::any);
+                            return Some(Effect::GrantCastWithFlash {
+                                player: PlayerId::new(0), // placeholder → resolved to controller at runtime
+                                valid_card,
+                            });
                         }
                         // Trigger modes are handled by parse_triggers(), not effect conversion
                         StaticAbilityMode::MustAttack => {
@@ -2078,8 +2537,60 @@ pub fn params_to_effect_with_svars(params: &AbilityParams, svars: &HashMap<Strin
                 }
             }
         }
+
+        // Triggers$ X | Duration$ Permanent → planeswalker emblem with trigger ability
+        // Example: Sorin, Solemn Visitor ultimate
+        //   A:AB$ Effect | Triggers$ BOTTrig | Duration$ Permanent | ...
+        //   SVar:BOTTrig:Mode$ Phase | Phase$ Upkeep | ValidPlayer$ Player.Opponent |
+        //     TriggerZones$ Command | Execute$ SorinSac | TriggerDescription$ ...
+        //   SVar:SorinSac:DB$ Sacrifice | SacValid$ Creature | Defined$ TriggeredPlayer
+        if params.get("Duration") == Some("Permanent") {
+            if let Some(trig_svar_name) = params.get("Triggers") {
+                if let Some(trig_body) = svars.get(trig_svar_name) {
+                    // Resolve the Execute$ SVar body, if present
+                    let trig_params = super::card::tokenize_pipe_dollar(trig_body);
+                    let execute_body = trig_params
+                        .get("Execute")
+                        .and_then(|exec_name| svars.get(exec_name.as_str()))
+                        .map(|s| s.as_str());
+
+                    if let Some(trigger) =
+                        super::card::CardDefinition::parse_emblem_phase_trigger(trig_body, execute_body)
+                    {
+                        let emblem_name = params
+                            .get("Name")
+                            .map(|s| s.to_string())
+                            .unwrap_or_else(|| "Emblem".to_string());
+                        return Some(Effect::CreateEmblem {
+                            controller: PlayerId::new(0), // placeholder — resolved at cast time
+                            emblem_name,
+                            static_abilities: Vec::new(),
+                            triggers: vec![trigger],
+                        });
+                    }
+                }
+            }
+        }
+
         // Fall back to name-based detection if SVar lookup fails
         return params_to_effect(params);
+    }
+
+    // GainLife: when LifeAmount$ X refers to a Sacrificed$CardToughness SVar
+    // (Diamond Valley), emit GainLifeDynamic(SacrificedToughness) instead.
+    // `params_to_effect` can't do this because it has no SVar access.
+    if params.api_type == ApiType::GainLife {
+        if let Some(life_amount_str) = params.get("LifeAmount") {
+            if let Some(dyn_amount) = crate::core::DynamicAmount::parse(life_amount_str, svars) {
+                if !matches!(dyn_amount, crate::core::DynamicAmount::Fixed(_)) {
+                    return Some(Effect::GainLifeDynamic {
+                        player: crate::core::PlayerId::new(0), // Placeholder — filled at cast time
+                        amount: dyn_amount,
+                        reference: crate::core::CardId::placeholder(),
+                    });
+                }
+            }
+        }
     }
 
     // DealDamage: when NumDmg$ X refers to a Count$ValidGraveyard (or any other
@@ -2136,6 +2647,7 @@ pub fn params_to_effect_with_svars(params: &AbilityParams, svars: &HashMap<Strin
                     power_count,
                     toughness_count,
                     keywords_granted,
+                    keyword_args_granted: smallvec::SmallVec::new(),
                 });
             }
         }
@@ -2167,6 +2679,55 @@ pub fn params_to_effect_with_svars(params: &AbilityParams, svars: &HashMap<Strin
                 }
             }
         }
+    }
+
+    // ApiType::Mana with a variable Amount$ that resolves to Remembered$Amount (with
+    // optional multiplier): e.g. Metalworker's
+    //   SVar:MetalWorkerX:Remembered$Amount/Twice
+    //   DB$ Mana | Produced$ C | Amount$ MetalWorkerX
+    // The Amount$ SVar body carries the multiplier suffix ("/Twice" = ×2).
+    // We encode it as `amount_var = "remembered*<N>"` so the executor can read
+    // `GameState::remembered_amount * N` at runtime.
+    if params.api_type == ApiType::Mana {
+        if let Some(amount_str) = params.get("Amount") {
+            // Only check when Amount$ is not a plain integer or "X" (those are
+            // handled by the base converter).
+            if amount_str.parse::<u8>().is_err() && amount_str != "X" {
+                if let Some(svar_body) = svars.get(amount_str) {
+                    // Recognised patterns: "Remembered$Amount" and "Remembered$Amount/Twice"
+                    let multiplier: Option<u32> = if svar_body.starts_with("Remembered$Amount") {
+                        let suffix = svar_body.trim_start_matches("Remembered$Amount");
+                        match suffix {
+                            "" => Some(1),
+                            "/Twice" => Some(2),
+                            _ => None,
+                        }
+                    } else {
+                        None
+                    };
+                    if let Some(mult) = multiplier {
+                        let produced_str = params.get("Produced").unwrap_or("C");
+                        use crate::core::ManaCost;
+                        // Base ManaCost = 1 of the produced type (multiplied at runtime by remembered*mult)
+                        let unit_mana = ManaCost::from_string(produced_str);
+                        let produces_chosen_color = produced_str.contains("Chosen");
+                        // Encode the dynamic amount as "remembered*<mult>" for the executor.
+                        let amount_var = format!("remembered*{mult}");
+                        return Some(Effect::AddMana {
+                            player: PlayerId::placeholder(),
+                            mana: unit_mana,
+                            produces_chosen_color,
+                            amount_var: Some(amount_var),
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    // RepeatEach needs SVars to resolve RepeatSubAbility$ and optional SubAbility$
+    if params.api_type == ApiType::RepeatEach {
+        return build_repeat_each_effect(params, svars);
     }
 
     // For all other types, delegate to the base function
@@ -2450,6 +3011,158 @@ pub fn wrap_with_unless_cost(effect: Effect, params: &AbilityParams) -> Effect {
     } else {
         effect
     }
+}
+
+/// Build a `RepeatEach` effect from `DB$ RepeatEach` / `A:SP$ RepeatEach` params.
+///
+/// # Patterns handled
+///
+/// **Pattern A — iterate over chosen targets (Terastodon):**
+/// ```text
+/// DB$ RepeatEach | RepeatSubAbility$ DBToken | DefinedCards$ Targeted | ChangeZoneTable$ True
+/// SVar:DBToken:DB$ Token | TokenOwner$ RememberedController | ...
+/// ```
+///
+/// **Pattern B — iterate over players (Tragic Arrogance):**
+/// ```text
+/// A:SP$ RepeatEach | RepeatPlayers$ Player | RepeatSubAbility$ YouChoose | SubAbility$ SacAllOthers
+/// SVar:YouChoose:DB$ ChooseCard | ...
+/// SVar:SacAllOthers:DB$ SacrificeAll | ...
+/// ```
+///
+/// The `RepeatSubAbility$` SVar is resolved into `sub_effects` (all its effects
+/// including its own sub-ability chain). Any `SubAbility$` on the RepeatEach
+/// itself is also resolved and appended (Pattern B: SacAllOthers after YouChoose).
+fn build_repeat_each_effect(params: &AbilityParams, svars: &HashMap<String, String>) -> Option<Effect> {
+    debug_assert_eq!(params.api_type, ApiType::RepeatEach);
+
+    // --- Determine what to iterate over ---
+    let iterate_over = if let Some(repeat_players) = params.get("RepeatPlayers") {
+        if repeat_players == "Player" {
+            RepeatEachIterate::AllPlayers
+        } else {
+            // Unrecognized RepeatPlayers$ value; default to all players
+            log::warn!(
+                target: "effect_converter",
+                "RepeatEach: unknown RepeatPlayers$ '{}', defaulting to AllPlayers",
+                repeat_players
+            );
+            RepeatEachIterate::AllPlayers
+        }
+    } else if params.get("DefinedCards") == Some("Targeted") {
+        let require_in_graveyard = params
+            .get("ChangeZoneTable")
+            .is_some_and(|v| v.eq_ignore_ascii_case("True"));
+        // targets are empty at parse time; they will be filled in at
+        // resolve_effect_target time when the spell's chosen_targets are known.
+        RepeatEachIterate::Cards {
+            targets: Vec::new(),
+            require_in_graveyard,
+        }
+    } else {
+        // Fallback: unknown iteration target
+        log::warn!(
+            target: "effect_converter",
+            "RepeatEach: no RepeatPlayers$ or DefinedCards$ Targeted found; producing Unimplemented"
+        );
+        return Some(Effect::Unimplemented {
+            api_type: "RepeatEach(unknown-iterate-over)".to_string(),
+        });
+    };
+
+    // --- Resolve RepeatSubAbility$ into sub_effects ---
+    let mut sub_effects: Vec<Effect> = Vec::new();
+
+    let repeat_sub_name = match params.get("RepeatSubAbility") {
+        Some(name) => name,
+        None => {
+            log::warn!(
+                target: "effect_converter",
+                "RepeatEach: missing RepeatSubAbility$ parameter"
+            );
+            return Some(Effect::Unimplemented {
+                api_type: "RepeatEach(no-RepeatSubAbility)".to_string(),
+            });
+        }
+    };
+
+    let repeat_sub_body = match svars.get(repeat_sub_name) {
+        Some(body) => body.clone(),
+        None => {
+            log::warn!(
+                target: "effect_converter",
+                "RepeatEach: SVar '{}' not found for RepeatSubAbility$",
+                repeat_sub_name
+            );
+            return Some(Effect::Unimplemented {
+                api_type: format!("RepeatEach(missing-svar:{repeat_sub_name})"),
+            });
+        }
+    };
+
+    let ability_line = format!("A:{}", repeat_sub_body);
+    let sub_params = match AbilityParams::parse(&ability_line) {
+        Ok(p) => p,
+        Err(e) => {
+            log::warn!(
+                target: "effect_converter",
+                "RepeatEach: failed to parse RepeatSubAbility$ '{}': {}",
+                repeat_sub_name, e
+            );
+            return Some(Effect::Unimplemented {
+                api_type: format!("RepeatEach(parse-error:{repeat_sub_name})"),
+            });
+        }
+    };
+
+    // Convert the sub-ability effect (SVar-aware for nested chaining)
+    if let Some(sub_effect) = params_to_effect_with_svars(&sub_params, svars) {
+        sub_effects.push(wrap_with_unless_cost(sub_effect, &sub_params));
+    }
+    // Follow any sub-ability chain from the RepeatSubAbility$ svar
+    follow_sub_ability_chain_into(&sub_params, svars, &mut sub_effects);
+
+    // --- Also resolve any SubAbility$ on the RepeatEach itself ---
+    // (Pattern B: SacAllOthers runs after YouChoose for each player)
+    if let Some(sub_ability_name) = params.get("SubAbility") {
+        if let Some(sa_body) = svars.get(sub_ability_name) {
+            let sa_line = format!("A:{}", sa_body);
+            if let Ok(sa_params) = AbilityParams::parse(&sa_line) {
+                if let Some(sa_effect) = params_to_effect_with_svars(&sa_params, svars) {
+                    sub_effects.push(wrap_with_unless_cost(sa_effect, &sa_params));
+                }
+                follow_sub_ability_chain_into(&sa_params, svars, &mut sub_effects);
+            }
+        }
+    }
+
+    Some(Effect::RepeatEach {
+        sub_effects,
+        iterate_over,
+    })
+}
+
+/// Recursively follow the `SubAbility$` chain from `params` and push each
+/// resolved effect into `out`. Mirrors `CardLoader::follow_sub_ability_chain`
+/// but operates on a flat `Vec<Effect>` rather than a card's effects list.
+fn follow_sub_ability_chain_into(params: &AbilityParams, svars: &HashMap<String, String>, out: &mut Vec<Effect>) {
+    let sub_ability_name = match params.get("SubAbility") {
+        Some(name) => name,
+        None => return,
+    };
+    let svar_body = match svars.get(sub_ability_name) {
+        Some(body) => body,
+        None => return,
+    };
+    let ability_line = format!("A:{}", svar_body);
+    let sub_params = match AbilityParams::parse(&ability_line) {
+        Ok(p) => p,
+        Err(_) => return,
+    };
+    if let Some(effect) = params_to_effect_with_svars(&sub_params, svars) {
+        out.push(wrap_with_unless_cost(effect, &sub_params));
+    }
+    follow_sub_ability_chain_into(&sub_params, svars, out);
 }
 
 #[cfg(test)]
@@ -3753,18 +4466,25 @@ Oracle:Target creature gets +3/+1 until end of turn. Create a Clue token.
     }
 
     #[test]
-    fn test_convert_choose_source_non_cop_returns_none() {
-        // Martyr's Cause-style multi-filter chooser (`Choices$ Card,Emblem`) is
-        // NOT the single-colour CoP shape, so this arm declines to convert it
-        // (returns None) rather than mis-modelling it.
+    fn test_convert_choose_source_non_cop_returns_noop() {
+        // Martyr's Cause / Reverse Damage-style multi-filter chooser
+        // (`Choices$ Card,Emblem`) is NOT the single-colour CoP shape, so this
+        // arm emits a NoOp rather than PreventDamageFromSource. The NoOp makes
+        // the spell castable (non-empty effects list) even though the prevention
+        // replacement is not yet fully implemented (TODO: mtg-713 B15).
         let params = AbilityParams::parse(
             "A:AB$ ChooseSource | Cost$ Sac<1/Creature> | Choices$ Card,Emblem | SubAbility$ DBEffect",
         )
         .unwrap();
+        let effect = params_to_effect(&params);
         assert!(
-            params_to_effect(&params).is_none(),
-            "non-CoP ChooseSource shapes should not convert to PreventDamageFromSource"
+            effect.is_some(),
+            "non-CoP ChooseSource should produce a NoOp (not None) so the spell is castable"
         );
+        match effect.unwrap() {
+            Effect::NoOp { .. } => {}
+            other => panic!("Expected NoOp for non-CoP ChooseSource, got {:?}", other),
+        }
     }
 
     #[test]
@@ -3819,6 +4539,46 @@ Oracle:Target creature gets +3/+1 until end of turn. Create a Clue token.
         assert!(effect.is_some(), "DestroyAll should produce a DestroyAll effect");
 
         assert!(matches!(effect.unwrap(), Effect::DestroyAll { .. }));
+    }
+
+    #[test]
+    fn test_ratchet_bomb_cmceq_restriction() {
+        // Ratchet Bomb: "AB$ DestroyAll | ValidCards$ Permanent.nonLand+cmcEQX"
+        // `cmcEQX` is a dynamic exact-CMC filter: at resolution, X = number of
+        // charge counters on Ratchet Bomb. At parse time, only `cmc_eq_svar` is
+        // set; `exact_cmc` remains None until the caller resolves the SVar.
+        let params =
+            AbilityParams::parse("A:AB$ DestroyAll | Cost$ T Sac<1/CARDNAME> | ValidCards$ Permanent.nonLand+cmcEQX")
+                .unwrap();
+        let effect = params_to_effect(&params);
+        assert!(effect.is_some(), "DestroyAll should produce an effect");
+
+        match effect.unwrap() {
+            Effect::DestroyAll { restriction, .. } => {
+                assert!(
+                    restriction.cmc_eq_svar,
+                    "cmcEQX in ValidCards$ should set cmc_eq_svar = true"
+                );
+                assert!(
+                    restriction.exact_cmc.is_none(),
+                    "exact_cmc should be None at parse time (resolved at runtime)"
+                );
+                // Verify a card with CMC 2 matches when we materialise exact_cmc = 2.
+                use crate::core::{Card, CardId, ManaCost};
+                use crate::game::GameState;
+                let game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+                let p1 = game.players[0].id;
+                let mut card = Card::new(CardId::new(1), "Test", p1);
+                card.mana_cost = ManaCost::from_string("1G"); // CMC = 2
+                let mut r = restriction;
+                r.exact_cmc = Some(2);
+                r.cmc_eq_svar = false;
+                assert!(r.matches(&card), "CMC-2 card should match exact_cmc=2");
+                r.exact_cmc = Some(3);
+                assert!(!r.matches(&card), "CMC-2 card should NOT match exact_cmc=3");
+            }
+            _ => panic!("Expected DestroyAll"),
+        }
     }
 
     #[test]
@@ -3987,9 +4747,9 @@ Oracle:Target creature gets +3/+1 until end of turn. Create a Clue token.
 
     #[test]
     fn test_unimplemented_effect_produces_variant() {
-        // Unknown effect types should produce Unimplemented, not None
-        // Use a truly unimplemented API type (not LoseLife, which is now implemented)
-        let params = AbilityParams::parse("A:SP$ RearrangeTopOfLibrary | NumCards$ 3").unwrap();
+        // Unknown effect types should produce Unimplemented, not None.
+        // Use a truly unrecognized API type string (not one that is now implemented).
+        let params = AbilityParams::parse("A:SP$ UnknownFutureApi | SomeParam$ 3").unwrap();
         let effect = params_to_effect(&params);
         assert!(
             effect.is_some(),
@@ -3998,9 +4758,107 @@ Oracle:Target creature gets +3/+1 until end of turn. Create a Clue token.
 
         match effect.unwrap() {
             Effect::Unimplemented { api_type } => {
-                assert_eq!(api_type, "RearrangeTopOfLibrary", "Should record the API type name");
+                assert_eq!(api_type, "UnknownFutureApi", "Should record the API type name");
             }
             _ => panic!("Expected Unimplemented effect"),
         }
+    }
+
+    #[test]
+    fn test_rearrange_top_of_library_converts() {
+        // RearrangeTopOfLibrary (Sensei's Divining Top) should now produce the
+        // concrete Effect::RearrangeTopOfLibrary, not Effect::Unimplemented.
+        let params =
+            AbilityParams::parse("A:AB$ RearrangeTopOfLibrary | Cost$ 1 | Defined$ You | NumCards$ 3").unwrap();
+        let effect = params_to_effect(&params);
+        assert!(effect.is_some(), "RearrangeTopOfLibrary must produce Some(effect)");
+        match effect.unwrap() {
+            Effect::RearrangeTopOfLibrary { count, .. } => {
+                assert_eq!(count, 3, "NumCards$ 3 should produce count = 3");
+            }
+            other => panic!("Expected RearrangeTopOfLibrary, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_skip_phase_untap_converts() {
+        // SkipPhase with Step$ Untap (Yosei trigger) should produce Effect::SkipUntapStep.
+        let params = AbilityParams::parse("A:DB$ SkipPhase | ValidTgts$ Player | Step$ Untap | IsCurse$ True").unwrap();
+        let effect = params_to_effect(&params);
+        assert!(effect.is_some(), "SkipPhase/Untap must produce Some(effect)");
+        match effect.unwrap() {
+            Effect::SkipUntapStep { .. } => {}
+            other => panic!("Expected SkipUntapStep, got {:?}", other),
+        }
+    }
+
+    /// Tragic Arrogance's `YouChoose` SVar:
+    ///   `DB$ ChooseCard | ChooseEach$ Artifact & Creature & Enchantment & Planeswalker`
+    /// must produce `Effect::ChooseAndRememberOneOfEach { types }` with exactly
+    /// the four recognised permanent types.
+    #[test]
+    fn test_choose_card_choose_each_tragic_arrogance() {
+        use crate::core::{Effect, TargetType};
+        let params = AbilityParams::parse(
+            "A:DB$ ChooseCard | Defined$ You | Choices$ Permanent \
+             | ChooseEach$ Artifact & Creature & Enchantment & Planeswalker \
+             | ControlledByPlayer$ Remembered | RememberChosen$ True | Mandatory$ True | Reveal$ True",
+        )
+        .unwrap();
+        let effect = params_to_effect(&params);
+        assert!(
+            effect.is_some(),
+            "ChooseCard with ChooseEach$ must produce Some(effect)"
+        );
+        match effect.unwrap() {
+            Effect::ChooseAndRememberOneOfEach { types } => {
+                assert_eq!(types.len(), 4, "Expected 4 types, got {}: {:?}", types.len(), types);
+                assert!(types.contains(&TargetType::Artifact), "Artifact must be in types");
+                assert!(types.contains(&TargetType::Creature), "Creature must be in types");
+                assert!(types.contains(&TargetType::Enchantment), "Enchantment must be in types");
+                assert!(
+                    types.contains(&TargetType::Planeswalker),
+                    "Planeswalker must be in types"
+                );
+            }
+            other => panic!("Expected ChooseAndRememberOneOfEach, got {:?}", other),
+        }
+    }
+
+    /// Tangle Wire's `ChooseCard` (without `ChooseEach$`) must still produce
+    /// `Effect::TapPermanentsMatchingFilter` — regression guard.
+    #[test]
+    fn test_choose_card_tangle_wire_unaffected() {
+        let params = AbilityParams::parse(
+            "A:DB$ ChooseCard | Defined$ TriggeredPlayer \
+             | Choices$ Artifact.untapped+ActivePlayerCtrl,Creature.untapped+ActivePlayerCtrl,\
+               Land.untapped+ActivePlayerCtrl | Amount$ X | SubAbility$ DBTap",
+        )
+        .unwrap();
+        let effect = params_to_effect(&params);
+        assert!(effect.is_some(), "ChooseCard (Tangle Wire) must produce Some(effect)");
+        match effect.unwrap() {
+            Effect::TapPermanentsMatchingFilter { .. } => {}
+            other => panic!(
+                "Expected TapPermanentsMatchingFilter (Tangle Wire pattern), got {:?}",
+                other
+            ),
+        }
+    }
+
+    /// `TargetRestriction::parse` must recognise `!IsRemembered` as
+    /// `requires_not_remembered = true` (Tragic Arrogance SacAllOthers).
+    #[test]
+    fn test_target_restriction_parse_not_remembered() {
+        use crate::core::TargetRestriction;
+        let r = TargetRestriction::parse("Permanent.nonLand+!IsRemembered");
+        assert!(
+            r.requires_not_remembered,
+            "!IsRemembered must set requires_not_remembered = true"
+        );
+        assert!(
+            !r.requires_remembered,
+            "IsRemembered flag must NOT be set when only !IsRemembered is present"
+        );
     }
 }

@@ -61,6 +61,37 @@ impl<'a> GameLoop<'a> {
             return Ok(None);
         }
 
+        // Yosei / SkipUntapStep: the active player's `skip_untap_next_turn`
+        // flag was set by a `Effect::SkipUntapStep` effect (CR 502.1 —
+        // "skip their next untap step"). Consume the flag now: clear it,
+        // log it for undo, log for the gamelog, and return early without
+        // untapping anything (the entire untap step is skipped for this
+        // player's permanents).
+        let player_skips_this_untap = self
+            .game
+            .players
+            .iter()
+            .find(|p| p.id == active_player)
+            .is_some_and(|p| p.skip_untap_next_turn);
+        if player_skips_this_untap {
+            // Clear the flag (undo-logged so a mid-turn rewind restores it).
+            let prior_log_size = self.game.logger.log_count();
+            if let Some(player) = self.game.players.iter_mut().find(|p| p.id == active_player) {
+                player.skip_untap_next_turn = false;
+            }
+            self.game.undo_log.log(
+                crate::undo::GameAction::SetSkipUntapNextTurn {
+                    player_id: active_player,
+                    old_value: true,
+                    new_value: false,
+                },
+                prior_log_size,
+            );
+            let player_name = self.get_player_name(active_player);
+            self.log_normal(&format!("{} skips their untap step", player_name));
+            return Ok(None);
+        }
+
         // Winter Orb (CR 502 untap-restriction): while an UNTAPPED permanent
         // with the `UntapAdjust:Land:N` lock is on the battlefield, a player may
         // untap at most N lands during their untap step. The lock is re-derived
@@ -298,6 +329,12 @@ impl<'a> GameLoop<'a> {
                 if t.controller_turn_only && card.controller != active_player {
                     return false;
                 }
+                // ValidPlayer$ Player.Opponent (Sorin emblem): fire only on opponents'
+                // turns — never on the controller's own upkeep. This is the inverse of
+                // controller_turn_only: skip if the active player IS the controller.
+                if t.opponent_turn_only && card.controller == active_player {
+                    return false;
+                }
                 // ValidPlayer$ Player.Chosen (Black Vise): fire only on the
                 // chosen player's turn. If no player has been chosen yet (card
                 // not yet ETB'd through the ChoosePlayer replacement), it cannot
@@ -339,6 +376,16 @@ impl<'a> GameLoop<'a> {
                 if t.present_self_dealt_damage_to_opponent && !card.dealt_damage_to_opponent_this_turn {
                     return false;
                 }
+                // Mode gate (Palace Siege): trigger only fires if the source
+                // card's chosen_mode matches the gate string (e.g. "Khans" or
+                // "Dragons"). When `mode_gate` is None the trigger always fires
+                // (no gate). When the card hasn't chosen a mode yet, it cannot
+                // fire (shouldn't happen for a Battlefield trigger, but guarded).
+                if let Some(gate) = &t.mode_gate {
+                    if card.chosen_mode.as_deref() != Some(gate.as_str()) {
+                        return false;
+                    }
+                }
                 true
             })
         };
@@ -375,6 +422,23 @@ impl<'a> GameLoop<'a> {
             }
         }
 
+        // Command-zone triggers (emblems). Planeswalker ultimates place emblem
+        // objects in the command zone (CR 113.2). Only cards/emblems whose
+        // trigger explicitly opts into Command via `TriggerZones$ Command` are
+        // scanned here — games without emblems add nothing.
+        for (_, zones) in &self.game.player_zones {
+            for &card_id in &zones.command.cards {
+                if self
+                    .game
+                    .cards
+                    .try_get(card_id)
+                    .is_some_and(|card| matches_trigger(card, crate::zones::Zone::Command))
+                {
+                    triggered_cards.push(card_id);
+                }
+            }
+        }
+
         // For each card with a matching trigger, log and execute
         for card_id in triggered_cards {
             // Log trigger activation only if verbose (avoid String allocation in hot path)
@@ -387,7 +451,22 @@ impl<'a> GameLoop<'a> {
                     .map(|card| {
                         card.triggers
                             .iter()
-                            .filter(|t| t.event == trigger_event)
+                            .filter(|t| {
+                                if t.event != trigger_event {
+                                    return false;
+                                }
+                                // Suppress log lines for mode-gated triggers whose gate
+                                // doesn't match (e.g. Palace Siege Khans trigger when
+                                // Dragons mode is active). Mirrors the gate in
+                                // `check_triggers_for_controller` so the log only shows
+                                // triggers that will actually fire.
+                                if let Some(gate) = &t.mode_gate {
+                                    if card.chosen_mode.as_deref() != Some(gate.as_str()) {
+                                        return false;
+                                    }
+                                }
+                                true
+                            })
                             .map(|t| {
                                 let desc = t
                                     .description
@@ -408,11 +487,127 @@ impl<'a> GameLoop<'a> {
                 .check_triggers_for_controller(trigger_event, card_id, active_player)?;
         }
 
+        // GrantUpkeepSacrificeUnlessPay statics (Energy Flux, Aura Flux):
+        // At the beginning of each player's upkeep, each affected permanent
+        // controlled by the active player must be sacrificed unless its
+        // controller pays the generic mana cost (CR 603.7 / CR 701.17).
+        // We scan only on upkeep triggers; these statics have no effect
+        // during other phase-trigger events.
+        if trigger_event == TriggerEvent::BeginningOfUpkeep {
+            self.check_grant_upkeep_sacrifice_statics(active_player)?;
+        }
+
         // Push reveals after phase triggers for network mode (server-side)
         // Triggered abilities can draw cards, and clients need the card IDs
         self.push_reveals(active_player);
         if let Some(opponent) = self.game.get_other_player_id(active_player) {
             self.push_reveals(opponent);
+        }
+
+        Ok(())
+    }
+
+    /// Fire "sacrifice unless you pay {N}" upkeep obligations imposed by
+    /// [`crate::core::StaticAbility::GrantUpkeepSacrificeUnlessPay`] statics
+    /// (Energy Flux, Aura Flux).
+    ///
+    /// For each `GrantUpkeepSacrificeUnlessPay` static currently on the
+    /// battlefield:
+    /// 1. Determine which permanents controlled by `active_player` are affected
+    ///    (using the static's `affected` selector).
+    /// 2. For each affected permanent, execute an
+    ///    `Effect::UnlessCostWrapper { SacrificeSelf, unless_cost: N generic }`.
+    ///
+    /// The source of the static ability is excluded from "Other" selectors
+    /// (e.g., Aura Flux does not tax itself). Energy Flux uses `Affected$ Artifact`
+    /// which has no "Other" qualifier and correctly taxes ALL artifacts including
+    /// Energy Flux itself (Energy Flux is not an artifact, so this is moot).
+    ///
+    /// CR 614.5 / CR 701.17: the obligation fires even if the permanent entered
+    /// the battlefield this same upkeep.
+    fn check_grant_upkeep_sacrifice_statics(&mut self, active_player: PlayerId) -> Result<()> {
+        use crate::core::{Effect, StaticAbility};
+
+        // Snapshot the battlefield once to avoid borrow issues.
+        let battlefield_snapshot: SmallVec<[CardId; 16]> = self.game.battlefield.cards.iter().copied().collect();
+
+        // Collect (source_id, affected_selector, unless_cost) triples from all
+        // GrantUpkeepSacrificeUnlessPay statics currently on the battlefield.
+        let grant_statics: SmallVec<[(CardId, crate::core::AffectedSelector, u8); 4]> = battlefield_snapshot
+            .iter()
+            .filter_map(|&src_id| {
+                let card = self.game.cards.try_get(src_id)?;
+                let sa = card.static_abilities.iter().find_map(|sa| {
+                    if let StaticAbility::GrantUpkeepSacrificeUnlessPay {
+                        affected, unless_cost, ..
+                    } = sa
+                    {
+                        Some((affected.clone(), *unless_cost))
+                    } else {
+                        None
+                    }
+                })?;
+                Some((src_id, sa.0, sa.1))
+            })
+            .collect();
+
+        if grant_statics.is_empty() {
+            return Ok(());
+        }
+
+        for (source_id, affected, unless_cost) in &grant_statics {
+            // Collect affected permanents controlled by active_player.
+            // We use selector_applies_to_permanent for general card types
+            // (not just creatures); fall back to a simple artifact/enchantment
+            // type check based on the selector variant.
+            let affected_permanents: SmallVec<[CardId; 8]> = battlefield_snapshot
+                .iter()
+                .filter(|&&perm_id| {
+                    // Only affects permanents controlled by the active player.
+                    let Ok(perm) = self.game.cards.get(perm_id) else {
+                        return false;
+                    };
+                    if perm.controller != active_player {
+                        return false;
+                    }
+                    self.game
+                        .affected_selector_matches_card(affected.clone(), perm_id, *source_id)
+                })
+                .copied()
+                .collect();
+
+            for perm_id in affected_permanents {
+                let Ok(perm) = self.game.cards.get(perm_id) else {
+                    continue;
+                };
+                let perm_name = perm.name.to_string();
+                let Ok(src_card) = self.game.cards.get(*source_id) else {
+                    continue;
+                };
+                let src_name = src_card.name.to_string();
+                let _ = perm; // Release borrow before mutating
+
+                // Build a mana cost for `unless_cost` generic mana.
+                let mana_cost = crate::core::ManaCost {
+                    generic: *unless_cost,
+                    ..Default::default()
+                };
+                let effect = Effect::UnlessCostWrapper {
+                    inner_effect: Box::new(Effect::SacrificeSelf { source: perm_id }),
+                    unless_cost: crate::core::effects::UnlessCost {
+                        cost: crate::core::effects::UnlessCostType::Mana(mana_cost),
+                        payer: active_player.as_u32().to_string(),
+                        switched: false,
+                    },
+                };
+
+                self.game.logger.normal(&format!(
+                    "{} (from {}): sacrifice unless you pay {{{}}}",
+                    perm_name, src_name, unless_cost
+                ));
+
+                self.game.execute_effect(&effect)?;
+            }
         }
 
         Ok(())
@@ -505,14 +700,122 @@ impl<'a> GameLoop<'a> {
         Ok(())
     }
 
+    /// Check and fire AttackerUnblocked triggers after blockers are declared.
+    ///
+    /// For each attacker that has no assigned blocker, fire that creature's
+    /// `TriggerEvent::AttackerUnblocked` triggers (if any).
+    ///
+    /// Example: Floral Spuzzem — "Whenever CARDNAME attacks and isn't blocked,
+    /// you may destroy target artifact defending player controls."
+    pub(super) fn check_attacker_unblocked_triggers(&mut self, attacking_player: PlayerId) -> Result<()> {
+        use crate::core::TriggerEvent;
+        use smallvec::SmallVec;
+
+        // Collect attackers that are NOT blocked (no blockers in the reverse map).
+        let unblocked: SmallVec<[crate::core::CardId; 4]> = self
+            .game
+            .combat
+            .attackers
+            .iter()
+            .filter_map(|(&attacker_id, _defending_player)| {
+                // An attacker is unblocked if attacker_blockers has no entry or empty vec for it
+                let is_blocked = self
+                    .game
+                    .combat
+                    .attacker_blockers
+                    .get(&attacker_id)
+                    .is_some_and(|blockers| !blockers.is_empty());
+                if !is_blocked {
+                    Some(attacker_id)
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        if unblocked.is_empty() {
+            return Ok(());
+        }
+
+        // Collect which attackers have AttackerUnblocked triggers to fire
+        struct UnblockedTriggerInfo {
+            attacker_id: crate::core::CardId,
+            controller: crate::core::PlayerId,
+            defending_player: crate::core::PlayerId,
+        }
+
+        let trigger_infos: SmallVec<[UnblockedTriggerInfo; 2]> = unblocked
+            .iter()
+            .filter_map(|&attacker_id| {
+                let card = self.game.cards.try_get(attacker_id)?;
+                let has_trigger = card.triggers.iter().any(|t| t.event == TriggerEvent::AttackerUnblocked);
+                if !has_trigger {
+                    return None;
+                }
+                let controller = card.controller;
+                // The defending player is stored directly in the attackers map
+                let &defending_player = self.game.combat.attackers.get(&attacker_id)?;
+                Some(UnblockedTriggerInfo {
+                    attacker_id,
+                    controller,
+                    defending_player,
+                })
+            })
+            .collect();
+
+        // Fire each trigger
+        for info in trigger_infos {
+            if self.verbosity >= VerbosityLevel::Normal && !self.replaying {
+                let name = self
+                    .game
+                    .cards
+                    .try_get(info.attacker_id)
+                    .map(|c| c.name.as_str())
+                    .unwrap_or("Unknown");
+                self.game
+                    .logger
+                    .gamelog(&format!("{} attacks and isn't blocked — trigger fires", name));
+            }
+
+            // Fire triggers via check_triggers_for_controller with the attacker as the source.
+            // The `opponent` in TriggerContext is the defending player, which becomes the
+            // target for effects like "destroy target artifact DEFENDING PLAYER controls".
+            self.game.check_triggers_for_controller_with_opponent(
+                TriggerEvent::AttackerUnblocked,
+                info.attacker_id,
+                info.controller,
+                Some(info.defending_player),
+            )?;
+        }
+
+        // Push reveals
+        self.push_reveals(attacking_player);
+        if let Some(opponent) = self.game.get_other_player_id(attacking_player) {
+            self.push_reveals(opponent);
+        }
+
+        Ok(())
+    }
+
     /// Upkeep step - priority round for triggers and actions
     pub(super) fn upkeep_step(
         &mut self,
         controller1: &mut dyn PlayerController,
         controller2: &mut dyn PlayerController,
     ) -> Result<Option<GameResult>> {
-        // Check for beginning of upkeep triggers
+        // Check for beginning of upkeep triggers (permanent triggers on battlefield)
         self.check_phase_triggers(TriggerEvent::BeginningOfUpkeep)?;
+
+        // Fire `Mode$ Phase | Phase$ Upkeep` delayed triggers registered for the upkeep
+        // (e.g. Sphinx of Foresight's "scry 3 on your first upkeep" from opening-hand reveal).
+        // Mirrors the end-step and main-phase delayed-trigger firing sites: the call REMOVES
+        // + undo-logs each fired trigger so it fires exactly once per forward pass and is
+        // restored on rewind for replay (same net-determinism contract as mtg-519/mtg-610).
+        {
+            let active_player = self.game.turn.active_player;
+            self.game
+                .check_delayed_triggers_on_phase(crate::core::TriggerPhase::Upkeep, active_player)?;
+        }
 
         // Pass priority
         if let Some(result) = self.priority_round(controller1, controller2)? {
@@ -539,6 +842,42 @@ impl<'a> GameLoop<'a> {
             return Ok(None);
         }
 
+        // Island Sanctuary (CR 614 draw-replacement): while the active player
+        // controls an Island Sanctuary, they may skip their mandatory draw; if
+        // they do, they gain protection against non-flying, non-islandwalk
+        // creatures attacking them until their next turn.
+        //
+        // AI simplification: the AI always activates the replacement (skips
+        // draw + takes protection) because Island Sanctuary's AI:RemoveDeck:All
+        // means only human players will play it in practice, and an unconditional
+        // always-on activation is correct for the AI's defensive posture.
+        // TODO(mtg-917): offer the actual yes/no choice to human controllers.
+        let sanctuary_active = self.game.battlefield.cards.iter().any(|&id| {
+            self.game
+                .cards
+                .try_get(id)
+                .is_some_and(|c| c.controller == active_player && c.definition.cache.is_island_sanctuary)
+        });
+        if sanctuary_active {
+            if let Ok(player) = self.game.get_player_mut(active_player) {
+                player.island_sanctuary_protected = true;
+            }
+            self.log_normal(
+                "Island Sanctuary: skipping draw — you can only be attacked by creatures \
+                 with flying and/or islandwalk until your next turn.",
+            );
+            // Skip the mandatory draw entirely — the replacement consumed it.
+            // Still fire "beginning of draw step" triggers (CR 603.3).
+            self.check_phase_triggers(TriggerEvent::BeginningOfDraw)?;
+            if !self.replaying && self.verbosity >= VerbosityLevel::Normal {
+                self.print_battlefield_state();
+            }
+            if let Some(result) = self.priority_round(controller1, controller2)? {
+                return Ok(Some(result));
+            }
+            return Ok(None);
+        }
+
         // No re-entry guard needed (mtg-610): a WASM network re-entry rewinds to
         // the turn start and replays, so the mandatory draw runs exactly once per
         // turn from a clean turn-start state rather than being re-executed on a
@@ -556,11 +895,21 @@ impl<'a> GameLoop<'a> {
                 self.game.debug_log_state_hash(&draw_msg);
             }
 
-            // Draw a card
-            let (_, draw_count) = self.game.draw_card(active_player)?;
+            // Check for Dredge replacement (CR 702.52): if the active player has a
+            // Dredge card in their graveyard they may mill N instead of drawing.
+            // AI heuristic: always use dredge when available and library allows it.
+            let dredged = self.game.try_apply_dredge(active_player)?;
 
-            // Check for "second card drawn" triggers (e.g., Knowledge Seeker, Otter-Penguin)
-            self.game.check_card_drawn_triggers(active_player, draw_count)?;
+            if dredged {
+                // Dredge replaced the draw; no draw_count trigger fires (no card
+                // was drawn). The dredge log line is emitted inside try_apply_dredge.
+            } else {
+                // Draw a card
+                let (_, draw_count) = self.game.draw_card(active_player)?;
+
+                // Check for "second card drawn" triggers (e.g., Knowledge Seeker, Otter-Penguin)
+                self.game.check_card_drawn_triggers(active_player, draw_count)?;
+            }
 
             // Push reveals immediately for network mode (server-side)
             // This ensures clients receive the draw reveal before their GameLoop needs it
@@ -571,6 +920,28 @@ impl<'a> GameLoop<'a> {
             // step, activated abilities (e.g. Bazaar of Baghdad), spells (e.g.
             // Ancestral Recall), and Loot effects — produces a consistent draw
             // log.
+        }
+
+        // CR 714.3: After the active player's mandatory draw, add a lore counter to
+        // each Saga they control. This fires the matching chapter ability and
+        // sacrifices the Saga if it has reached its final chapter.
+        // Collect Saga ids first to avoid borrow issues while calling advance.
+        {
+            let saga_ids: Vec<crate::core::CardId> = self
+                .game
+                .battlefield
+                .cards
+                .iter()
+                .copied()
+                .filter(|&id| {
+                    self.game.cards.try_get(id).is_some_and(|c| {
+                        c.controller == active_player && c.keywords.contains(crate::core::Keyword::Chapter)
+                    })
+                })
+                .collect();
+            for saga_id in saga_ids {
+                self.game.advance_saga_lore_counter(saga_id)?;
+            }
         }
 
         // CR 504.1: the turn-based mandatory draw happens first; THEN any
@@ -816,6 +1187,9 @@ impl<'a> GameLoop<'a> {
                 // Disintegrate-style "exile instead of dying" lasts only this
                 // turn (CR 614, duration "this turn"); clear at cleanup.
                 card.exile_if_would_die_this_turn = false;
+                // Chandra-style "exile instead of going to graveyard" lasts only
+                // this turn (CR 614, duration "this turn"); clear at cleanup.
+                card.exile_if_would_go_to_graveyard_this_turn = false;
                 // Maze of Ith's "prevent all combat damage" lasts until end of
                 // turn (CR 615 replacement, duration "this turn"); clear at cleanup.
                 card.prevent_all_combat_damage_this_turn = false;
@@ -825,9 +1199,13 @@ impl<'a> GameLoop<'a> {
 
         // Clear player damage prevention shields at end of turn (CR 514.2),
         // including source-filtered shields (Circle of Protection).
+        // Also clear Island Sanctuary protection (duration "until your next turn").
+        // Also clear the Summoning Trap "creature was countered" flag (CR 702.36a).
         for player in &mut self.game.players {
             player.damage_prevention = 0;
             player.source_prevention_shields.clear();
+            player.island_sanctuary_protected = false;
+            player.had_creature_countered_this_turn = false;
         }
 
         Ok(None)

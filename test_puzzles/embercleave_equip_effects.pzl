@@ -1,0 +1,21 @@
+[metadata]
+Name=Embercleave Equip Effects Test
+Goal=Win
+Turns=3
+Difficulty=Medium
+Description=P1 has Embercleave equipped to Bonecrusher Giant. Verify that the equipped creature has double strike and trample (+1/+1). Attack for lethal.
+
+[state]
+turn=5
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=
+p0battlefield=Mountain;Mountain;Mountain;Mountain;Bonecrusher Giant;Embercleave
+p0library=Mountain;Mountain;Mountain
+p0graveyard=
+p1life=5
+p1hand=
+p1battlefield=Plains;Plains;Plains
+p1library=Plains;Plains;Plains
+p1graveyard=

@@ -1,0 +1,21 @@
+[metadata]
+Name=Experimental Frenzy Top of Library Cast Test
+Goal=Win
+Turns=5
+Difficulty=Medium
+Description=P1 has Experimental Frenzy in play. Verify P1 can cast spells from the top of library but not from hand. Also test self-destruct {3}{R} ability.
+
+[state]
+turn=2
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Bonecrusher Giant
+p0battlefield=Mountain;Mountain;Mountain;Mountain;Mountain;Experimental Frenzy
+p0library=Runaway Steam-Kin;Mountain;Mountain;Mountain
+p0graveyard=
+p1life=5
+p1hand=
+p1battlefield=Plains;Plains;Plains
+p1library=Plains;Plains;Plains
+p1graveyard=

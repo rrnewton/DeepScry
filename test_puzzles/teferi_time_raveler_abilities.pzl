@@ -1,0 +1,21 @@
+[metadata]
+Name=Teferi Time Raveler Abilities Test
+Goal=Win
+Turns=5
+Difficulty=Medium
+Description=P1 has Teferi, Time Raveler in play. Verify +1 (sorceries as flash), -3 (bounce+draw), and static (opponent sorcery speed only). P1 should bounce P2 creature with -3, draw a card, and attack for win.
+
+[state]
+turn=6
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=
+p0battlefield=Plains;Island;Plains;Island;Teferi, Time Raveler
+p0library=Island;Plains;Island;Plains;Island;Plains
+p0graveyard=
+p1life=5
+p1hand=
+p1battlefield=Plains;Plains;Plains;Mountain;Mountain;Bonecrusher Giant
+p1library=Plains;Plains;Plains
+p1graveyard=

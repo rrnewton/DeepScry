@@ -1,0 +1,21 @@
+[metadata]
+Name=Cavalier of Flame Dies Trigger Test
+Goal=Win
+Turns=5
+Difficulty=Medium
+Description=P1 has Cavalier of Flame (6/5) already on battlefield. P2 has a 7/7 creature that will block and kill it. P1 has 3 Mountain in GY so dies trigger should deal 3 to P2 (who has 20 life). Verify the dies trigger fires.
+
+[state]
+turn=3
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=
+p0battlefield=Mountain;Mountain;Mountain;Cavalier of Flame
+p0library=Mountain;Mountain;Mountain;Mountain;Mountain
+p0graveyard=Mountain;Mountain;Mountain
+p1life=20
+p1hand=
+p1battlefield=Plains;Plains;Plains;Bonecrusher Giant
+p1library=Plains;Plains;Plains
+p1graveyard=

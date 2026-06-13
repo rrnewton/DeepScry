@@ -839,6 +839,61 @@ pub enum KeywordArgs {
 }
 
 impl KeywordArgs {
+    /// Parse a keyword (with or without parameters) from a card-script string into a `KeywordArgs`.
+    ///
+    /// Handles both simple keywords like `"Flying"` and parameterized forms like
+    /// `"Landwalk:Forest"` (used in `KW$` / `Keywords$` fields of DB$ Pump / Animate effects).
+    ///
+    /// Simple keywords (no colon) are wrapped in a single-variant `KeywordArgs`-equivalent
+    /// by routing through `Keyword::from_string`; their `KeywordArgs` representation is
+    /// returned using the `SimpleKeyword` variant is intentionally NOT used here — instead
+    /// we store the simple-keyword bits through `Keyword::from_string` and then call
+    /// `KeywordSet::insert()` directly. For that reason this function only returns `Some(_)`
+    /// for parameterized keywords; callers should fall back to `Keyword::from_string` for
+    /// simple keywords.
+    ///
+    /// Recognized parameterized forms:
+    /// - `"Landwalk:Forest"`, `"Landwalk:Island"`, etc.
+    /// - `"Protection:Red"`, `"Protection:Green"`, etc.
+    ///
+    /// Returns `None` for unrecognized strings or simple keywords (use `Keyword::from_string`
+    /// for those).
+    ///
+    /// # Example
+    /// ```
+    /// use mtg_engine::core::{KeywordArgs, Subtype};
+    /// let args = KeywordArgs::from_string_parameterized("Landwalk:Forest").unwrap();
+    /// assert!(matches!(args, KeywordArgs::Landwalk { land_type } if land_type == Subtype::new("Forest")));
+    /// ```
+    pub fn from_string_parameterized(s: &str) -> Option<KeywordArgs> {
+        // Split on the first colon to separate keyword name from parameter
+        let (kw_name, param) = s.split_once(':')?;
+        match kw_name.trim() {
+            "Landwalk" => Some(KeywordArgs::Landwalk {
+                land_type: Subtype::new(param.trim()),
+            }),
+            "Protection" => Some(KeywordArgs::Protection {
+                from: Subtype::new(param.trim()),
+            }),
+            "Affinity" => Some(KeywordArgs::Affinity {
+                card_type: Subtype::new(param.trim()),
+            }),
+            "Enchant" => Some(KeywordArgs::Enchant {
+                card_type: Subtype::new(param.trim()),
+            }),
+            "BandsWithOther" => Some(KeywordArgs::BandsWithOther {
+                creature_type: Subtype::new(param.trim()),
+            }),
+            "Champion" => Some(KeywordArgs::Champion {
+                creature_type: Subtype::new(param.trim()),
+            }),
+            "Offering" => Some(KeywordArgs::Offering {
+                creature_type: Subtype::new(param.trim()),
+            }),
+            _ => None,
+        }
+    }
+
     /// Get the keyword that these args belong to
     pub fn keyword(&self) -> Keyword {
         match self {

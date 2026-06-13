@@ -479,6 +479,10 @@ pub enum BufferedFact {
         #[serde(flatten)]
         payload: ChoicePayload,
     },
+    /// Server-authoritative Dig-effect kept-list (mtg-677/mtg-908). Maps to
+    /// `StateSyncEntry::DigDecision`. Carried in the ChoiceRequest buffer so
+    /// the shadow applies the authoritative kept-list before running `execute_dig`.
+    DigDecision { digger: PlayerId, kept: Vec<CardId> },
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -814,6 +818,29 @@ pub enum ServerMessage {
         cards: Vec<CardReveal>,
         /// Game `action_count` of the search-resolution choice these candidates
         /// belong to (the single ac all N share).
+        #[serde(default)]
+        action_count: u64,
+    },
+
+    /// Server-authoritative record of the Dig-effect kept-list (mtg-677/mtg-908).
+    ///
+    /// Sent to BOTH clients by the coordinator BEFORE the `ChoiceRequest` that
+    /// follows a Dig effect whose decision was made server-side (e.g.
+    /// Thundertrap Trainer's ETB trigger). The shadow must adopt this kept-list
+    /// in `execute_dig` instead of re-deriving it from hidden library contents.
+    ///
+    /// Mirrors `ServerMessage::LibraryReordered`: broadcast to both players,
+    /// keyed by `action_count` for the state-sync log.
+    DigDecision {
+        /// The player whose library was dug.
+        digger: PlayerId,
+        /// The CardIds moved to `destination` (kept by the digger), in
+        /// server-decision order.
+        kept: Vec<CardId>,
+        /// Game `action_count` at which this decision was made on the server
+        /// (undo_log.len() at the moment `execute_dig` recorded the decision).
+        /// The shadow keys the `StateSyncEntry::DigDecision` at this `ac` in its
+        /// state-sync log.
         #[serde(default)]
         action_count: u64,
     },

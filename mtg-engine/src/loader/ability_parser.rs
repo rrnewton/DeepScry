@@ -214,6 +214,7 @@ pub enum ApiType {
     // === Targeting ===
     ChooseCard,
     ChoosePlayer,
+    GenericChoice,
     ChooseType,
     ChooseColor,
     ChooseDirection,
@@ -278,6 +279,23 @@ pub enum ApiType {
     ///   NumPhases$ 1 - number of extra combat phases
     AddPhase,
 
+    // === Library Manipulation ===
+    /// Look at the top N cards of a player's library, then put them back in any order.
+    /// Example: Sensei's Divining Top — "Look at the top three cards of your library,
+    ///   then put them back in any order."
+    /// Parameters:
+    ///   Defined$ You - who looks (usual: self)
+    ///   NumCards$ 3  - how many cards to look at (default 3)
+    RearrangeTopOfLibrary,
+
+    // === Step/Phase Skipping ===
+    /// Cause a player to skip their next untap step (CR 502.1).
+    /// Example: Yosei, the Morning Star — "target player skips their next untap step"
+    /// Parameters:
+    ///   ValidTgts$ Player / Defined$ - who skips
+    ///   Step$ Untap                  - which step to skip (only Untap handled so far)
+    SkipPhase,
+
     // === Avatar Set Mechanics ===
     /// Airbend: Exile target, owner may cast it for {2} from exile.
     /// CR 701.65b
@@ -297,6 +315,28 @@ pub enum ApiType {
     ///   CanRepeatModes$ - if present, same mode can be chosen twice
     /// Example: A:SP$ Charm | Choices$ Destroy,Remove
     Charm,
+
+    // === Loop / Iteration ===
+    /// RepeatEach: For each member of a set, execute a sub-ability once.
+    ///
+    /// Two patterns:
+    ///   Pattern A — iterate over cards:
+    ///     `DB$ RepeatEach | RepeatSubAbility$ DBToken | DefinedCards$ Targeted | ChangeZoneTable$ True`
+    ///     Iterates over the spell's chosen targets (DefinedCards$ Targeted).
+    ///     ChangeZoneTable$ True means only include cards that actually changed zones
+    ///     (e.g., ended up in the graveyard after being destroyed).
+    ///   Pattern B — iterate over players:
+    ///     `A:SP$ RepeatEach | RepeatPlayers$ Player | RepeatSubAbility$ YouChoose | SubAbility$ SacAllOthers`
+    ///     Iterates over all players in turn order.
+    ///
+    /// For each iteration, the current member is stored as the "Remembered" card/player
+    /// so sub-abilities can reference it with Defined$ Remembered / ControlledByPlayer$ Remembered.
+    ///
+    /// CR 609.3: Effects that use "for each" repeat an action once per set member,
+    /// sequentially, with state-based actions between repetitions.
+    ///
+    /// Examples: Terastodon (token per destroyed permanent), Tragic Arrogance (per-player keep).
+    RepeatEach,
 
     // === Catch-all for unknown types ===
     Unknown(String),
@@ -390,6 +430,7 @@ impl ApiType {
             // Targeting
             "ChooseCard" => Self::ChooseCard,
             "ChoosePlayer" => Self::ChoosePlayer,
+            "GenericChoice" => Self::GenericChoice,
             "ChooseType" => Self::ChooseType,
             "ChooseColor" => Self::ChooseColor,
             "ChooseDirection" => Self::ChooseDirection,
@@ -428,12 +469,21 @@ impl ApiType {
             // Extra Phases
             "AddPhase" => Self::AddPhase,
 
+            // Library Manipulation
+            "RearrangeTopOfLibrary" => Self::RearrangeTopOfLibrary,
+
+            // Step/Phase Skipping
+            "SkipPhase" => Self::SkipPhase,
+
             // Avatar Set Mechanics
             "Airbend" => Self::Airbend,
             "Earthbend" => Self::Earthbend,
 
             // Modal Spells
             "Charm" => Self::Charm,
+
+            // Loop / Iteration
+            "RepeatEach" => Self::RepeatEach,
 
             // Unknown type - preserve original string for debugging
             unknown => Self::Unknown(unknown.to_string()),
@@ -498,6 +548,7 @@ impl ApiType {
             Self::RevealHand => "RevealHand",
             Self::ChooseCard => "ChooseCard",
             Self::ChoosePlayer => "ChoosePlayer",
+            Self::GenericChoice => "GenericChoice",
             Self::ChooseType => "ChooseType",
             Self::ChooseColor => "ChooseColor",
             Self::ChooseDirection => "ChooseDirection",
@@ -521,9 +572,12 @@ impl ApiType {
             Self::FlipACoin => "FlipACoin",
             Self::Balance => "Balance",
             Self::AddPhase => "AddPhase",
+            Self::RearrangeTopOfLibrary => "RearrangeTopOfLibrary",
+            Self::SkipPhase => "SkipPhase",
             Self::Airbend => "Airbend",
             Self::Earthbend => "Earthbend",
             Self::Charm => "Charm",
+            Self::RepeatEach => "RepeatEach",
             Self::Discard => "Discard",
             Self::ImmediateTrigger => "ImmediateTrigger",
             Self::Cleanup => "Cleanup",

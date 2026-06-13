@@ -1,0 +1,21 @@
+[metadata]
+Name=Kenrith the Returned King All Abilities Test
+Goal=Win
+Turns=5
+Difficulty=Hard
+Description=P1 has Kenrith, the Returned King and all colors of mana. Test {R} trample/haste on all creatures, {1}{G} +1/+1 counter, {2}{W} gain 5 life, {3}{U} draw, {4}{B} reanimate from graveyard.
+
+[state]
+turn=8
+activeplayer=p0
+activephase=MAIN1
+p0life=5
+p0hand=
+p0battlefield=Plains;Island;Swamp;Mountain;Forest;Plains;Island;Swamp;Mountain;Forest;Kenrith, the Returned King
+p0library=Island;Plains;Island;Plains;Island
+p0graveyard=Bonecrusher Giant
+p1life=20
+p1hand=
+p1battlefield=Plains;Plains;Plains;Plains;Plains
+p1library=Plains;Plains;Plains
+p1graveyard=

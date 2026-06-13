@@ -1,0 +1,21 @@
+[metadata]
+Name=Dream Trawler Abilities Test
+Goal=Win
+Turns=5
+Difficulty=Medium
+Description=P1 has Dream Trawler. Test draw trigger on attack (+1/+0), draw trigger getting hexproof-eligible, lifelink. P2 has low life.
+
+[state]
+turn=2
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Teferi, Time Raveler
+p0battlefield=Plains;Plains;Island;Island;Island;Dream Trawler
+p0library=Plains;Island;Plains;Island;Plains
+p0graveyard=
+p1life=5
+p1hand=
+p1battlefield=Plains;Plains;Plains
+p1library=Plains;Plains;Plains
+p1graveyard=

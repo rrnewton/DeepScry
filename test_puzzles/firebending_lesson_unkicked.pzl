@@ -1,0 +1,24 @@
+[metadata]
+Name:Firebending Lesson deals 2 damage when not kicked (insufficient mana)
+Goal:Win
+Turns:3
+Difficulty:Easy
+Description:Firebending Lesson (SVar:X:Count$Kicked.5.2) deals 2 damage when not kicked. P0 controls only 1 land (not enough to pay {R}+{4} kicker), holds Firebending Lesson. P1 controls a 2/2 Grizzly Bears — dies from 2 damage. With only {R} available, the AI cannot pay the {4} kicker, so kicker_paid remains false and X=2. The Grizzly Bears should die.
+
+[state]
+turn=2
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Firebending Lesson
+p0library=Mountain; Mountain; Mountain; Mountain; Mountain
+p0graveyard=
+p0battlefield=Mountain
+p0exile=
+
+p1life=20
+p1hand=
+p1library=Plains; Plains; Plains; Plains; Plains
+p1graveyard=
+p1battlefield=Grizzly Bears
+p1exile=

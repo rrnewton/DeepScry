@@ -1,0 +1,22 @@
+[metadata]
+Name=Annihilator Combat Trigger
+Goal=Win
+Turns=3
+Difficulty=Hard
+Description=Tests Annihilator combat trigger (CR 702.86): Emrakul, the Aeons Torn has Annihilator 6. When Emrakul attacks, the defending player must sacrifice 6 permanents before blockers are declared. P0 has Emrakul and enough mana to attack. P1 has 7 permanents; after Annihilator fires P1 must sacrifice 6, leaving only 1 permanent. P0 should then win by attacking with the 15/15 Emrakul.
+
+[state]
+turn=3
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=
+p0battlefield=Forest;Forest;Forest;Forest;Forest;Forest;Forest;Forest;Forest;Forest;Forest;Forest;Forest;Forest;Forest;Emrakul, the Aeons Torn
+p0library=Forest;Forest;Forest
+p0graveyard=
+
+p1life=20
+p1hand=
+p1battlefield=Plains;Plains;Plains;Plains;Grizzly Bears;Llanowar Elves;Hill Giant
+p1library=Plains;Plains;Plains
+p1graveyard=

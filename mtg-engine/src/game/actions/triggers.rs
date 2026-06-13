@@ -18,6 +18,7 @@
 
 use crate::core::{CardId, Effect, PlayerId, TargetRef};
 use crate::game::GameState;
+use smallvec::SmallVec;
 
 /// Per-creature breakdown of combat damage dealt in a single combat-damage step,
 /// used to fire `DealsCombatDamage` triggers and select the amount each trigger
@@ -120,6 +121,42 @@ pub struct TriggerContext {
     /// amount of damage the event source just dealt this combat/resolution.
     /// `None` for triggers that carry no damage amount.
     pub damage_amount: Option<i32>,
+
+    /// Counter amounts on the triggering card at the time the trigger fired,
+    /// captured via last-known information (CR 608.2g / 603.6c). Used by death
+    /// triggers that scale on the dying card's counters — e.g. Hangarback
+    /// Walker's "create one Thopter for each +1/+1 counter" fired on death.
+    /// Populated by `check_death_triggers` before the card moves to the
+    /// graveyard. Empty if the trigger source carries no counters or if this
+    /// context was built for a non-death trigger.
+    pub triggered_card_counter_amounts: SmallVec<[(crate::core::CounterType, u8); 2]>,
+
+    /// Last-known power of the card that caused the trigger (captured before zone
+    /// change, CR 608.2g). Used to resolve `CountExpression::TriggeredCardPower`
+    /// in `resolve_effect_placeholder` — e.g. Anax, Hardened in the Forge creates
+    /// 2 Satyr tokens when a creature with power >= 4 dies, 1 otherwise.
+    /// `None` when the trigger was not fired by a card-zone-change event or when
+    /// the triggered card's power is not relevant.
+    pub triggered_card_power: Option<i32>,
+
+    /// For SpellCast triggers that fire for any player's casts
+    /// (`fires_for_any_caster = true`): the spell on the stack that caused
+    /// the trigger to fire. Corresponds to `Defined$ TriggeredSpellAbility`
+    /// in Counter effects (In the Eye of Chaos, Presence of the Master).
+    /// `None` for other trigger types.
+    pub cast_spell_id: Option<CardId>,
+
+    /// For SpellCast triggers that fire for any player's casts: the player
+    /// who cast the triggering spell. Corresponds to `UnlessPayer$ TriggeredActivator`
+    /// in UnlessCost effects (In the Eye of Chaos). `None` for other trigger types.
+    pub caster_id: Option<PlayerId>,
+
+    /// For SpellCast triggers that fire for any player's casts: the mana value
+    /// (converted mana cost) of the cast spell. Used to resolve `UnlessCost$ X`
+    /// where `SVar:X:TriggeredCard$CardManaCost` (In the Eye of Chaos: "counter
+    /// it unless that player pays {X}", where X = the instant's mana value).
+    /// `None` for triggers that don't need this.
+    pub cast_spell_mana_value: Option<u8>,
 }
 
 impl TriggerContext {
@@ -135,12 +172,33 @@ impl TriggerContext {
             sacrificed_power: 0,
             drawing_player: None,
             damage_amount: None,
+            triggered_card_counter_amounts: SmallVec::new(),
+            triggered_card_power: None,
+            cast_spell_id: None,
+            caster_id: None,
+            cast_spell_mana_value: None,
         }
     }
 
     /// Builder method to set the damage amount (for damage-dealt triggers)
     pub fn with_damage_amount(mut self, amount: i32) -> Self {
         self.damage_amount = Some(amount);
+        self
+    }
+
+    /// Builder method to record the counter amounts on the triggering card
+    /// (last-known information, captured before zone change). Used to resolve
+    /// `DynamicAmount::TriggeredCardCounters` in `resolve_effect_placeholder`.
+    pub fn with_triggered_card_counters(mut self, counters: SmallVec<[(crate::core::CounterType, u8); 2]>) -> Self {
+        self.triggered_card_counter_amounts = counters;
+        self
+    }
+
+    /// Builder method to record the last-known power of the triggering card
+    /// (captured before zone change, CR 608.2g). Used to resolve
+    /// `CountExpression::TriggeredCardPower` in `resolve_effect_placeholder`.
+    pub fn with_triggered_card_power(mut self, power: i32) -> Self {
+        self.triggered_card_power = Some(power);
         self
     }
 
@@ -171,6 +229,22 @@ impl TriggerContext {
     /// Builder method to set sacrificed creature power
     pub fn with_sacrificed_power(mut self, power: u8) -> Self {
         self.sacrificed_power = power;
+        self
+    }
+
+    /// Builder method to set the cast spell (for `fires_for_any_caster` SpellCast triggers).
+    /// Resolves `Defined$ TriggeredSpellAbility` in CounterSpell effects and
+    /// `UnlessPayer$ TriggeredActivator` in UnlessCost effects.
+    pub fn with_cast_spell(mut self, spell_id: CardId, caster: PlayerId) -> Self {
+        self.cast_spell_id = Some(spell_id);
+        self.caster_id = Some(caster);
+        self
+    }
+
+    /// Builder method to set the mana value of the cast spell (for `UnlessCost$ X`
+    /// where X = `TriggeredCard$CardManaCost`, i.e., In the Eye of Chaos).
+    pub fn with_cast_spell_mana_value(mut self, mana_value: u8) -> Self {
+        self.cast_spell_mana_value = Some(mana_value);
         self
     }
 }
@@ -261,6 +335,23 @@ pub fn resolve_effect_placeholder(effect: &Effect, ctx: &TriggerContext) -> Effe
             amount: *amount,
         },
 
+        // LoseLife with a placeholder player (from `DB$ LoseLife | Defined$
+        // Player.Opponent`): resolve to the trigger source's opponent. Follows the
+        // same convention as the spell-resolution path in mod.rs — "LoseLife
+        // defaults to opponent (most common: 'each opponent loses N life')". If no
+        // opponent is known (single-player edge case), falls back to the controller
+        // so the ability does not silently fizzle.
+        //
+        // Example: Palace Siege Dragons mode — "each opponent loses 2 life and you
+        // gain 2 life" — the SyphonLife SVar emits `LoseLife { player: placeholder,
+        // amount: 2 }` via params_to_effect and `GainLife { player: placeholder,
+        // amount: 2 }` via its SubAbility. Both must resolve correctly from the
+        // trigger context built in `check_triggers_for_controller`.
+        Effect::LoseLife { player, amount } if player.is_placeholder() => Effect::LoseLife {
+            player: ctx.opponent.unwrap_or(ctx.controller),
+            amount: *amount,
+        },
+
         // Damage-driven life gain fired from a trigger (Spirit Link: "you gain
         // that much life"). The trigger context carries the damage amount the
         // event source just dealt (TriggerCount$DamageAmount). Resolve to a
@@ -283,9 +374,33 @@ pub fn resolve_effect_placeholder(effect: &Effect, ctx: &TriggerContext) -> Effe
             count: *count,
         },
 
-        Effect::Scry { player, count } if player.is_placeholder() => Effect::Scry {
+        Effect::Scry {
+            player,
+            count,
+            only_if_bargained,
+        } if player.is_placeholder() => Effect::Scry {
             player: ctx.controller,
             count: *count,
+            only_if_bargained: *only_if_bargained,
+        },
+
+        // Library-search triggered abilities (e.g. Pattern of Rebirth: "when
+        // enchanted creature dies, search your library for a creature and put it
+        // onto the battlefield"). The converter emits PlayerId::new(0) as a
+        // placeholder; resolve it to the trigger context's controller so the search
+        // targets the right library.
+        Effect::SearchLibrary {
+            player,
+            card_type_filter,
+            destination,
+            enters_tapped,
+            shuffle,
+        } if player.is_placeholder() => Effect::SearchLibrary {
+            player: ctx.controller,
+            card_type_filter: card_type_filter.clone(),
+            destination: *destination,
+            enters_tapped: *enters_tapped,
+            shuffle: *shuffle,
         },
 
         Effect::Loot {
@@ -463,6 +578,110 @@ pub fn resolve_effect_placeholder(effect: &Effect, ctx: &TriggerContext) -> Effe
             for_each_player: *for_each_player,
         },
 
+        // Dynamic token creation: resolve the DynamicAmount using the trigger
+        // context, then emit a concrete CreateToken.
+        //
+        // The two most common shapes:
+        // 1. Placeholder controller + TriggeredCardCounters — death trigger on
+        //    the dying card itself (Hangarback Walker, Chasm Skulker).
+        // 2. Concrete controller + TriggeredCardCounters — trigger on a
+        //    different permanent watching another card die (Boss's Chauffeur).
+        //
+        // We resolve TriggeredCardCounters using the counter snapshot in
+        // `ctx.triggered_card_counter_amounts`, captured LKI before zone move
+        // (CR 608.2g / 603.6c). All other DynamicAmount variants fall through
+        // to the wildcard arm below (no-op clone), which means those shapes
+        // remain unresolved and create 0 tokens — a log-visible failure that
+        // is preferable to a panic.
+        Effect::CreateTokenDynamic {
+            controller,
+            token_script,
+            amount: crate::core::DynamicAmount::TriggeredCardCounters(counter_type),
+            for_each_player,
+        } => {
+            let resolved_controller = if controller.is_placeholder() {
+                ctx.controller
+            } else {
+                *controller
+            };
+            let count = ctx
+                .triggered_card_counter_amounts
+                .iter()
+                .find(|(ct, _)| ct == counter_type)
+                .map(|(_, n)| *n)
+                .unwrap_or(0);
+            Effect::CreateToken {
+                controller: resolved_controller,
+                token_script: token_script.clone(),
+                amount: count,
+                for_each_player: *for_each_player,
+            }
+        }
+
+        // Count$… token amount (e.g. Avenger of Zendikar: TokenAmount$ X,
+        // SVar:X:Count$Valid Land.YouCtrl).  The actual count is evaluated
+        // against the live game state in execute_effect, so we only need to
+        // resolve the controller placeholder here and leave the DynamicAmount
+        // intact for execute_effect to finish.
+        //
+        // Special case: `Count$Compare TriggeredCardPower GE4.2.1` (Anax,
+        // Hardened in the Forge — "create 2 tokens if the dying creature had
+        // power >= 4, else create 1"). The TriggeredCardPower source cannot be
+        // resolved in execute_effect because it requires last-known information
+        // captured here from `ctx.triggered_card_power`. Patch it to a Fixed
+        // amount now so execute_effect sees a concrete CreateToken.
+        Effect::CreateTokenDynamic {
+            controller,
+            token_script,
+            amount:
+                crate::core::DynamicAmount::Count(crate::core::CountExpression::Compare {
+                    source,
+                    condition,
+                    true_value,
+                    false_value,
+                }),
+            for_each_player,
+        } if matches!(source.as_ref(), crate::core::CountExpression::TriggeredCardPower) => {
+            let resolved_controller = if controller.is_placeholder() {
+                ctx.controller
+            } else {
+                *controller
+            };
+            // Resolve TriggeredCardPower from last-known information.
+            let power = ctx.triggered_card_power.unwrap_or(0);
+            let amount = if condition.evaluate(power) {
+                *true_value
+            } else {
+                *false_value
+            };
+            let amount = u8::try_from(amount.max(0)).unwrap_or(0);
+            Effect::CreateToken {
+                controller: resolved_controller,
+                token_script: token_script.clone(),
+                amount,
+                for_each_player: *for_each_player,
+            }
+        }
+
+        Effect::CreateTokenDynamic {
+            controller,
+            token_script,
+            amount: dynamic @ crate::core::DynamicAmount::Count(_),
+            for_each_player,
+        } => {
+            let resolved_controller = if controller.is_placeholder() {
+                ctx.controller
+            } else {
+                *controller
+            };
+            Effect::CreateTokenDynamic {
+                controller: resolved_controller,
+                token_script: token_script.clone(),
+                amount: dynamic.clone(),
+                for_each_player: *for_each_player,
+            }
+        }
+
         // =========================================================================
         // Mass pump: controller placeholder
         // =========================================================================
@@ -487,12 +706,100 @@ pub fn resolve_effect_placeholder(effect: &Effect, ctx: &TriggerContext) -> Effe
             power,
             toughness,
             keywords_granted,
+            keyword_args_granted,
         } if controller.is_placeholder() => Effect::AnimateAll {
             controller: ctx.controller,
             filter: filter.clone(),
             power: *power,
             toughness: *toughness,
             keywords_granted: keywords_granted.clone(),
+            keyword_args_granted: keyword_args_granted.clone(),
+        },
+
+        // =========================================================================
+        // RearrangeTopOfLibrary: resolve controller/opponent placeholder.
+        // Sensei's Divining Top: `Defined$ You` → placeholder → controller.
+        // =========================================================================
+        Effect::RearrangeTopOfLibrary { player, count } if player.is_placeholder() => Effect::RearrangeTopOfLibrary {
+            player: ctx.controller,
+            count: *count,
+        },
+        Effect::RearrangeTopOfLibrary { player, count } if player.is_target_opponent() => {
+            Effect::RearrangeTopOfLibrary {
+                player: ctx.opponent.unwrap_or(ctx.controller),
+                count: *count,
+            }
+        }
+
+        // =========================================================================
+        // SkipUntapStep: resolve the ValidTgts$ Player → opponent sentinel.
+        // Yosei, the Morning Star die trigger targets the opponent.
+        // =========================================================================
+        Effect::SkipUntapStep { player } if player.is_placeholder() => Effect::SkipUntapStep { player: ctx.controller },
+        Effect::SkipUntapStep { player } if player.is_target_opponent() => Effect::SkipUntapStep {
+            player: ctx.opponent.unwrap_or(ctx.controller),
+        },
+
+        // =========================================================================
+        // UnlessCostWrapper: resolve `UnlessPayer$ TriggeredActivator` to the
+        // player who cast the spell that fired the trigger (In the Eye of Chaos).
+        // Also recursively resolve the inner effect (e.g. CounterSpell with
+        // TriggeredSpellAbility). Only applies when the payer is still a named
+        // reference rather than a numeric ID string.
+        // =========================================================================
+        Effect::UnlessCostWrapper {
+            inner_effect,
+            unless_cost,
+        } if unless_cost.payer.parse::<u32>().is_err() => {
+            use crate::core::effects::UnlessCostType;
+            // Resolve the payer reference to a concrete PlayerId
+            let resolved_payer_id = match unless_cost.payer.as_str() {
+                "TriggeredActivator" => {
+                    // The player who cast the spell that triggered this (In the Eye of Chaos)
+                    ctx.caster_id.unwrap_or(ctx.controller)
+                }
+                "You" => ctx.controller,
+                _ => ctx.controller,
+            };
+            // Resolve X in mana cost if this is `UnlessCost$ X` and we know the
+            // triggering spell's mana value (In the Eye of Chaos: X = triggered instant's CMC).
+            let resolved_cost = match &unless_cost.cost {
+                UnlessCostType::Mana(mana_cost) if mana_cost.has_x() => {
+                    if let Some(mana_value) = ctx.cast_spell_mana_value {
+                        UnlessCostType::Mana(mana_cost.with_x_value(mana_value))
+                    } else {
+                        unless_cost.cost.clone()
+                    }
+                }
+                _ => unless_cost.cost.clone(),
+            };
+            // Recursively resolve the inner effect (handles TriggeredSpellAbility
+            // inside a CounterSpell inner effect)
+            let resolved_inner = resolve_effect_placeholder(inner_effect, ctx);
+            Effect::UnlessCostWrapper {
+                inner_effect: Box::new(resolved_inner),
+                unless_cost: crate::core::effects::UnlessCost {
+                    cost: resolved_cost,
+                    payer: resolved_payer_id.as_u32().to_string(),
+                    switched: unless_cost.switched,
+                },
+            }
+        }
+
+        // =========================================================================
+        // CounterSpell with Defined$ TriggeredSpellAbility: resolve to the spell
+        // that caused the SpellCast trigger to fire (In the Eye of Chaos, Presence
+        // of the Master). The `cast_spell_id` is set on the TriggerContext when
+        // `fires_for_any_caster` SpellCast triggers are executed.
+        // =========================================================================
+        Effect::CounterSpell {
+            target,
+            spell_restriction,
+            remember_mana_value,
+        } if target.is_triggered_spell() => Effect::CounterSpell {
+            target: ctx.cast_spell_id.unwrap_or_else(|| CardId::new(0)),
+            spell_restriction: spell_restriction.clone(),
+            remember_mana_value: *remember_mana_value,
         },
 
         // =========================================================================
@@ -555,6 +862,19 @@ impl GameState {
         // Backwards compatibility for description-based landfall
         if trigger.description.contains("[landfall]") && (!source_is_land || source_controller != trigger_controller) {
             return false;
+        }
+
+        // "[constellation]": fires only when an enchantment controlled by trigger owner enters.
+        // Archon of Sun's Grace and similar Constellation cards use this marker.
+        if trigger.description.contains("[constellation]") {
+            let source_is_enchantment = self
+                .cards
+                .get(event_source_id)
+                .map(|c| c.is_enchantment())
+                .unwrap_or(false);
+            if !source_is_enchantment || source_controller != trigger_controller {
+                return false;
+            }
         }
 
         // "[controller_only]" / controller_turn_only: fires only on controller's turn

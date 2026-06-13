@@ -32,6 +32,8 @@
 //! - [`zones`] — Dig + single-target removal/self-move (DestroyPermanent,
 //!   ExilePermanent, ExileIfWouldDieThisTurn, SelfExileFromStack,
 //!   MoveSelfBetweenZones); more zone-movement effects to follow.
+//! - [`repeat`] — RepeatEach (for-each loop mechanic: iterate over targets or
+//!   players, Terastodon token-per-destroyed / Tragic Arrogance player-loop).
 //! - [`bending`] — Airbend / Earthbend / Firebend (Avatar set mechanics).
 
 mod bending;
@@ -42,6 +44,7 @@ mod damage;
 mod life;
 mod misc;
 mod pump;
+mod repeat;
 mod stack;
 mod tapping;
 mod tokens;

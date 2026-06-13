@@ -113,14 +113,25 @@ impl GameState {
     pub(in crate::game::actions) fn execute_set_life(&mut self, player: PlayerId, amount: i32) -> Result<()> {
         // CR 119.5: "If an effect sets a player's life total, the player gains
         // or loses the necessary amount of life"
+        let prior_log_size = self.logger.log_count();
         let p = self.get_player_mut(player)?;
         let player_name = p.name.clone();
         let old_life = p.life;
+        let delta = amount - old_life;
         p.life = amount;
         self.logger.gamelog(&format!(
             "{}'s life total is set to {} (was {})",
             player_name, amount, old_life
         ));
+        // Record as a ModifyLife delta so rewind/replay restores the old life
+        // total correctly (matches how GainLife and LoseLife are logged).
+        self.undo_log.log(
+            crate::undo::GameAction::ModifyLife {
+                player_id: player,
+                delta,
+            },
+            prior_log_size,
+        );
         Ok(())
     }
 

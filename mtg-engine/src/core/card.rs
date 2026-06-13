@@ -202,6 +202,43 @@ pub struct CardCache {
     /// no per-turn flag). `N` is the per-untap-step land allowance (1 for
     /// Winter Orb).
     pub limits_land_untap: Option<u8>,
+
+    /// Precomputed: Island Sanctuary draw-replacement enchantment.
+    ///
+    /// While this permanent is on the battlefield and it is the controller's
+    /// draw step, the engine skips the mandatory draw and grants the controlling
+    /// player "Island Sanctuary protection" for the turn (only creatures with
+    /// flying or islandwalk may attack them). Derived from a replacement of the
+    /// shape `R:Event$ Draw | ActivePhases$ Draw | PlayerTurn$ True | Optional$
+    /// True | ...` (Island Sanctuary, 2nd Edition Alpha).
+    pub is_island_sanctuary: bool,
+
+    /// Precomputed: Does this card require choosing a named mode on ETB?
+    /// Derived from `K:ETBReplacement:Other:<SVar>` where the SVar body is
+    /// `DB$ GenericChoice | Choices$ <M1>,<M2>,...` (Palace Siege). When set,
+    /// the engine picks the first mode choice per `etb_mode_ai_logic` at ETB and
+    /// stores it in `Card::chosen_mode`.
+    #[serde(default)]
+    pub etb_choose_mode: bool,
+
+    /// AI default mode for `etb_choose_mode` cards (from `AILogic$` in the SVar).
+    /// `None` means pick the first choice listed. Palace Siege's SVar has
+    /// `AILogic$ Dragons`, so the AI always chooses "Dragons".
+    #[serde(default)]
+    pub etb_mode_ai_logic: Option<String>,
+
+    /// Ordered mode names for `etb_choose_mode` cards (from `Choices$` in the SVar).
+    /// Populated from the comma-separated list in the `DB$ GenericChoice` SVar so
+    /// `set_card_zone` can validate the AI choice without re-parsing the script.
+    #[serde(default)]
+    pub etb_mode_choices: Vec<String>,
+
+    /// Precomputed: Does this card have an ETB "pay any amount of life" replacement?
+    /// Derived from `R:Event$ Moved | Destination$ Battlefield | ReplaceWith$ PayLife`
+    /// (Phyrexian Processor). When set, `set_card_zone` prompts for a life payment
+    /// via AI heuristic, deducts it, and stores the amount in `Card::stored_int`.
+    #[serde(default)]
+    pub etb_pay_life: bool,
 }
 
 impl Default for CardCache {
@@ -276,6 +313,11 @@ impl CardCache {
             etb_exclude_colors: SmallVec::new(),
             etb_choose_player: false,
             limits_land_untap: None,
+            is_island_sanctuary: false,
+            etb_choose_mode: false,
+            etb_mode_ai_logic: None,
+            etb_mode_choices: Vec::new(),
+            etb_pay_life: false,
         }
     }
 
@@ -862,6 +904,21 @@ pub struct Card {
     #[serde(default)]
     pub chosen_player: Option<PlayerId>,
 
+    /// Mode chosen by `K:ETBReplacement:Other:<SVar>` + `DB$ GenericChoice` at ETB
+    /// time. Palace Siege chooses "Khans" or "Dragons"; the value is the raw
+    /// mode string from `Choices$` (e.g. `"Khans"` or `"Dragons"`). Stored as
+    /// serialized state so rewind/replay reconstruct the same trigger gating.
+    #[serde(default)]
+    pub chosen_mode: Option<String>,
+
+    /// Per-card integer stored by an ETB replacement (Phyrexian Processor: life paid
+    /// as it entered the battlefield). Read back by a later activated ability that
+    /// creates a token whose P/T equals this value (`TokenPower$ LifePaidOnETB`).
+    /// Serialized so snapshot/resume + undo + rewind reconstruct the amount identically.
+    /// `None` means no amount has been stored yet.
+    #[serde(default)]
+    pub stored_int: Option<u32>,
+
     /// Script variables (SVars) for SubAbility chaining
     /// Key: SVar name (e.g., "BalanceHands")
     /// Value: SVar body (e.g., "DB$ Balance | Zone$ Hand | SubAbility$ BalanceCreatures")
@@ -915,6 +972,48 @@ pub struct Card {
     #[serde(default)]
     pub x_paid: u8,
 
+    /// The number of times Multikicker was paid when casting this spell (CR 702.33a).
+    /// Set by the priority loop when the caster opts to pay the Multikicker additional
+    /// cost one or more times. Used at resolution to evaluate `Count$TimesKicked` SVars
+    /// (e.g. Everflowing Chalice `K:etbCounter:CHARGE:XKicked` where
+    /// `SVar:XKicked:Count$TimesKicked`).
+    #[serde(default)]
+    pub times_kicked: u8,
+
+    /// Whether the Bargain optional additional cost (CR 702.162) was paid when
+    /// casting this spell — i.e. the caster sacrificed an artifact, enchantment,
+    /// or token. Set by the priority loop just before `cast_spell_8_step`; cleared
+    /// in the cleanup step. Drives `CountExpression::Bargain` evaluation (Torch
+    /// the Tower `SVar:X:Count$Bargain.3.2`) and `Condition$ Bargain` sub-effects
+    /// (the "you scry 1" rider on Torch the Tower).
+    #[serde(default)]
+    pub bargain_paid: bool,
+
+    /// Set to `true` when the AI pays the Kicker additional cost (CR 702.32) for
+    /// this spell. Cleared in the cleanup step. Drives `CountExpression::Kicked`
+    /// evaluation (Firebending Lesson `SVar:X:Count$Kicked.5.2` — deals 5 when
+    /// kicked, 2 when not). Serialized so network-shadow + rewind reconstruct the
+    /// same decision. Distinct from `times_kicked` which tracks Multikicker
+    /// payment count; this tracks the simpler single-Kicker optional cost.
+    #[serde(default)]
+    pub kicker_paid: bool,
+
+    /// Extra generic mana cost paid when choosing a mode for a tiered modal spell
+    /// (from `ModeCost$` in the chosen mode's SVar). Set by `apply_selected_modes`
+    /// after mode selection in the priority loop, then added to effective cost in
+    /// `compute_effective_cost`. Zero when no extra mode cost applies.
+    /// Cleared in `reset_transient_state`. Serialized for rewind/replay.
+    #[serde(default)]
+    pub mode_cost_paid: u8,
+
+    /// Set to `true` when the caster pays the Offspring additional cost (CR 702.198)
+    /// for this creature spell. Cleared in the cleanup step. When `true` and the
+    /// creature enters the battlefield, the engine creates a 1/1 token copy of it
+    /// (CR 702.198a). Serialized so network-shadow + rewind reconstruct the same
+    /// decision. Mirrors `kicker_paid`.
+    #[serde(default)]
+    pub offspring_paid: bool,
+
     /// If set, a zone-change replacement applies: should this creature die this
     /// turn, it is exiled instead of going to the graveyard (CR 614). Set by
     /// `Effect::ExileIfWouldDieThisTurn` (Disintegrate's
@@ -922,6 +1021,14 @@ pub struct Card {
     /// the cleanup step. Honored by `GameState::death_destination_for_card`.
     #[serde(default)]
     pub exile_if_would_die_this_turn: bool,
+
+    /// If set, a zone-change replacement applies: should this card go to the
+    /// graveyard this turn (e.g. after resolving as an instant/sorcery), it is
+    /// exiled instead (CR 614). Set by `Effect::PlayFromGraveyard` (Chandra,
+    /// Acolyte of Flame's −2 `ReplaceGraveyard$ Exile` clause) and cleared at
+    /// the cleanup step. Honored by `resolve_spell_finalize`.
+    #[serde(default)]
+    pub exile_if_would_go_to_graveyard_this_turn: bool,
 
     /// Maze of Ith: prevent ALL combat damage this creature would deal OR receive
     /// this turn (CR 615 replacement effect, "prevent all combat damage dealt to
@@ -1037,13 +1144,32 @@ pub struct CardStateSnapshot {
     pub control_grant: Option<(CardId, PlayerId)>,
     pub chosen_color: Option<Color>,
     pub chosen_player: Option<PlayerId>,
+    /// Mode chosen by `K:ETBReplacement:Other:<SVar>` + `DB$ GenericChoice` at ETB
+    /// time. Palace Siege chooses "Khans" or "Dragons"; the value is the raw
+    /// mode string from `Choices$` (e.g. `"Khans"` or `"Dragons"`). Stored as
+    /// serialized state so rewind/replay reconstruct the same trigger gating.
+    #[serde(default)]
+    pub chosen_mode: Option<String>,
+    /// Per-card integer stored by an ETB replacement (Phyrexian Processor: life paid).
+    #[serde(default)]
+    pub stored_int: Option<u32>,
     pub svars: std::collections::HashMap<String, String>,
     pub is_legendary: bool,
     pub loyalty_activated_this_turn: bool,
     pub regeneration_shields: u8,
     pub damage_prevention: i32,
     pub x_paid: u8,
+    pub times_kicked: u8,
+    #[serde(default)]
+    pub bargain_paid: bool,
+    #[serde(default)]
+    pub kicker_paid: bool,
+    #[serde(default)]
+    pub offspring_paid: bool,
+    #[serde(default)]
+    pub mode_cost_paid: u8,
     pub exile_if_would_die_this_turn: bool,
+    pub exile_if_would_go_to_graveyard_this_turn: bool,
     pub prevent_all_combat_damage_this_turn: bool,
     pub dealt_damage_to_opponent_this_turn: bool,
     pub attacked_this_turn: bool,
@@ -1107,6 +1233,8 @@ impl Card {
             control_grant: None,
             chosen_color: None,
             chosen_player: None,
+            chosen_mode: None,
+            stored_int: None,
             svars: std::collections::HashMap::new(),
             revealed_to_mask: 0,
             is_legendary: false,
@@ -1116,7 +1244,13 @@ impl Card {
             regeneration_shields: 0,
             damage_prevention: 0,
             x_paid: 0,
+            times_kicked: 0,
+            bargain_paid: false,
+            kicker_paid: false,
+            offspring_paid: false,
+            mode_cost_paid: 0,
             exile_if_would_die_this_turn: false,
+            exile_if_would_go_to_graveyard_this_turn: false,
             prevent_all_combat_damage_this_turn: false,
             dealt_damage_to_opponent_this_turn: false,
             attacked_this_turn: false,
@@ -1160,13 +1294,21 @@ impl Card {
             control_grant: self.control_grant,
             chosen_color: self.chosen_color,
             chosen_player: self.chosen_player,
+            chosen_mode: self.chosen_mode.clone(),
+            stored_int: self.stored_int,
             svars: self.svars.clone(),
             is_legendary: self.is_legendary,
             loyalty_activated_this_turn: self.loyalty_activated_this_turn,
             regeneration_shields: self.regeneration_shields,
             damage_prevention: self.damage_prevention,
             x_paid: self.x_paid,
+            times_kicked: self.times_kicked,
+            bargain_paid: self.bargain_paid,
+            kicker_paid: self.kicker_paid,
+            offspring_paid: self.offspring_paid,
+            mode_cost_paid: self.mode_cost_paid,
             exile_if_would_die_this_turn: self.exile_if_would_die_this_turn,
+            exile_if_would_go_to_graveyard_this_turn: self.exile_if_would_go_to_graveyard_this_turn,
             prevent_all_combat_damage_this_turn: self.prevent_all_combat_damage_this_turn,
             dealt_damage_to_opponent_this_turn: self.dealt_damage_to_opponent_this_turn,
             attacked_this_turn: self.attacked_this_turn,
@@ -1209,13 +1351,21 @@ impl Card {
         self.control_grant = snapshot.control_grant;
         self.chosen_color = snapshot.chosen_color;
         self.chosen_player = snapshot.chosen_player;
+        self.chosen_mode = snapshot.chosen_mode;
+        self.stored_int = snapshot.stored_int;
         self.svars = snapshot.svars;
         self.is_legendary = snapshot.is_legendary;
         self.loyalty_activated_this_turn = snapshot.loyalty_activated_this_turn;
         self.regeneration_shields = snapshot.regeneration_shields;
         self.damage_prevention = snapshot.damage_prevention;
         self.x_paid = snapshot.x_paid;
+        self.times_kicked = snapshot.times_kicked;
+        self.bargain_paid = snapshot.bargain_paid;
+        self.kicker_paid = snapshot.kicker_paid;
+        self.offspring_paid = snapshot.offspring_paid;
+        self.mode_cost_paid = snapshot.mode_cost_paid;
         self.exile_if_would_die_this_turn = snapshot.exile_if_would_die_this_turn;
+        self.exile_if_would_go_to_graveyard_this_turn = snapshot.exile_if_would_go_to_graveyard_this_turn;
         self.prevent_all_combat_damage_this_turn = snapshot.prevent_all_combat_damage_this_turn;
         self.dealt_damage_to_opponent_this_turn = snapshot.dealt_damage_to_opponent_this_turn;
         self.attacked_this_turn = snapshot.attacked_this_turn;
@@ -1250,6 +1400,10 @@ impl Card {
             self.definition.cache.etb_choose_color = def.etb_choose_color;
             self.definition.cache.etb_exclude_colors = SmallVec::from_slice(&def.etb_exclude_colors);
             self.definition.cache.etb_choose_player = def.etb_choose_player;
+            self.definition.cache.etb_choose_mode = def.etb_choose_mode;
+            self.definition.cache.etb_mode_ai_logic = def.etb_mode_ai_logic.clone();
+            self.definition.cache.etb_mode_choices = def.etb_mode_choices.clone();
+            self.definition.cache.etb_pay_life = def.etb_pay_life;
             self.definition.cache.spell_relative_target_cost = def.has_relative_self_target_cost();
         } else {
             self.name = self.printed_name.clone();
@@ -1268,6 +1422,10 @@ impl Card {
         self.tapped = false;
         self.turn_entered_battlefield = None;
         self.counters = SmallVec::new();
+        // Clear the per-card stored integer (e.g. Phyrexian Processor's life-paid).
+        // The value is tied to a specific battlefield tenure; it resets when the card
+        // leaves so a future re-ETB starts fresh.
+        self.stored_int = None;
 
         if let Some(def) = original_def {
             self.keywords = def.parse_keywords();
@@ -1396,13 +1554,21 @@ impl Card {
         self.control_grant = None;
         self.chosen_color = None;
         self.chosen_player = None;
+        self.chosen_mode = None;
         self.loyalty_activated_this_turn = false;
         self.regeneration_shields = 0;
         self.damage_prevention = 0;
         self.x_paid = 0;
+        self.times_kicked = 0;
+        self.bargain_paid = false;
+        self.kicker_paid = false;
+        self.offspring_paid = false;
+        self.mode_cost_paid = 0;
         self.exile_if_would_die_this_turn = false;
+        self.exile_if_would_go_to_graveyard_this_turn = false;
         self.prevent_all_combat_damage_this_turn = false;
         self.dealt_damage_to_opponent_this_turn = false;
+        self.attacked_this_turn = false;
         self.exhausted_abilities = SmallVec::new();
         self.cast_as_adventure = false;
     }
@@ -1889,6 +2055,24 @@ impl Card {
             return false;
         }
         self.keywords.insert(keyword);
+        self.temp_keywords_until_eot.insert(keyword);
+        true
+    }
+
+    /// Grant a complex (parameterized) keyword (e.g., `Landwalk:Forest`) until end of turn.
+    ///
+    /// Uses `insert_complex` so both the keyword bit AND its parameter (land type,
+    /// protection color, etc.) are stored. The tracking set records the plain
+    /// `Keyword` bit for cleanup (removing the bit via `KeywordSet::remove` also
+    /// removes the associated `KeywordArgs` entry).
+    ///
+    /// Returns `true` if the keyword was newly added, `false` if already present.
+    pub fn grant_keyword_args_until_eot(&mut self, args: &crate::core::KeywordArgs) -> bool {
+        let keyword = args.keyword();
+        if self.keywords.contains(keyword) {
+            return false;
+        }
+        self.keywords.insert_complex(args.clone());
         self.temp_keywords_until_eot.insert(keyword);
         true
     }

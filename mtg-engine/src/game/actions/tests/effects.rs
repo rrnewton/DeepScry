@@ -91,6 +91,7 @@ mod tests {
             power_bonus: 3,
             toughness_bonus: 3,
             keywords_granted: smallvec::SmallVec::new(),
+            keyword_args_granted: smallvec::SmallVec::new(),
         });
         game.cards.insert(pump_spell_id, pump_spell);
 
@@ -996,6 +997,7 @@ mod tests {
                 power_bonus: 2,
                 toughness_bonus: 2,
                 keywords_granted: smallvec::SmallVec::new(),
+                keyword_args_granted: smallvec::SmallVec::new(),
             }],
             "When this enters, target creature gets +2/+2.".to_string(),
         ));
@@ -3060,7 +3062,22 @@ mod tests {
                 | StaticAbility::SacrificeMatchingPresent { .. }
                 | StaticAbility::CantBeCast { .. }
                 | StaticAbility::CantPlayLand { .. }
-                | StaticAbility::CastWithFlash { .. } => None,
+                | StaticAbility::CastWithFlash { .. }
+                | StaticAbility::DamageIncrease { .. }
+                | StaticAbility::PreventDamageToEnchantedByChosenColor { .. }
+                | StaticAbility::CantAttackIfDefenderHasUntappedPowerGE { .. }
+                | StaticAbility::CantAttackOrBlockMatching { .. }
+                | StaticAbility::CantBeActivated { .. }
+                | StaticAbility::ExtraLandPlay { .. }
+                | StaticAbility::LifeFloor { .. }
+                | StaticAbility::DamageToExileLibrary { .. }
+                | StaticAbility::CharacteristicDefiningPt { .. }
+                | StaticAbility::GrantUpkeepSacrificeUnlessPay { .. }
+                | StaticAbility::AlternativeCost { .. }
+                | StaticAbility::MayPlayWithoutManaCost { .. }
+                | StaticAbility::MayPlayFromLibrary { .. }
+                | StaticAbility::OpalescenceStyle { .. }
+                | StaticAbility::DisableCreatureEtbTriggers { .. } => None,
             })
             .expect("Ironclaw Orcs must produce a CantBlockMatching static ability");
 
@@ -6109,7 +6126,7 @@ mod tests {
             "Karma damages the triggered (active) player, not its own controller"
         );
         assert!(
-            matches!(count, CountExpression::ValidPermanents { filter } if filter == "Swamp.ActivePlayerCtrl"),
+            matches!(count, CountExpression::ValidPermanents { filter, .. } if filter == "Swamp.ActivePlayerCtrl"),
             "Karma's damage count must be Count$Valid Swamp.ActivePlayerCtrl. Got: {:?}",
             count
         );
@@ -7794,6 +7811,1983 @@ mod tests {
         assert!(
             !es_targets.contains(&artifact_spell),
             "Essence Scatter must NOT target artifact spells (non-creature)"
+        );
+    }
+
+    /// Regression test for B3 (mtg-914): Wurmcoil Engine comma-separated TokenScript$.
+    ///
+    /// Before the fix, `execute_create_token` treated "a,b" as a single key and
+    /// found nothing in `token_definitions`, silently creating zero tokens.
+    /// After the fix, the comma list is split and each name is looked up
+    /// individually, so both the deathtouch and lifelink Wurm tokens are minted.
+    ///
+    /// This test inserts both token definitions directly (no filesystem I/O),
+    /// calls `execute_create_token` with the comma-joined script string, and
+    /// asserts exactly two tokens land on the battlefield.
+    #[test]
+    fn test_execute_create_token_comma_separated_wurmcoil() {
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players.first().unwrap().id;
+
+        // Minimal token definition stubs (name is sufficient for the test).
+        let deathtouch_script = "c_3_3_a_phyrexian_wurm_deathtouch";
+        let lifelink_script = "c_3_3_a_phyrexian_wurm_lifelink";
+
+        // Load the real token definitions from the forge-java tokenscripts directory.
+        let db = CardDatabase::new(PathBuf::from("../cardsfolder"));
+        let mut dt_def = tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(async { db.get_token(deathtouch_script).await })
+            .expect("Deathtouch Wurm token should parse")
+            .expect("Deathtouch Wurm token file should exist");
+        dt_def.script_name = Some(deathtouch_script.to_string());
+
+        let mut ll_def = tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(async { db.get_token(lifelink_script).await })
+            .expect("Lifelink Wurm token should parse")
+            .expect("Lifelink Wurm token file should exist");
+        ll_def.script_name = Some(lifelink_script.to_string());
+
+        game.token_definitions
+            .insert(deathtouch_script.to_string(), std::sync::Arc::new(dt_def));
+        game.token_definitions
+            .insert(lifelink_script.to_string(), std::sync::Arc::new(ll_def));
+
+        let before = game.battlefield.cards.len();
+
+        // Call with the comma-separated composite string exactly as stored in the
+        // card script (SVar:TrigToken:DB$ Token | TokenScript$ <composite>).
+        game.execute_create_token(p1_id, &format!("{},{}", deathtouch_script, lifelink_script), 1, false)
+            .expect("execute_create_token should not fail");
+
+        let after = game.battlefield.cards.len();
+        assert_eq!(
+            after - before,
+            2,
+            "Wurmcoil Engine should create exactly 2 tokens (deathtouch + lifelink). \
+             before={before}, after={after}"
+        );
+    }
+
+    /// Card compat: Pattern of Rebirth — Card.AttachedBy dies trigger (mtg-913 B12 follow-up).
+    ///
+    /// When the enchanted creature dies, Pattern of Rebirth's trigger must fire
+    /// and search the controller's library for a creature to put onto the
+    /// battlefield (the library search behavior is exercised here).
+    ///
+    /// MTG Rules: CR 603.6a/b/c — triggered abilities on Auras watch for the
+    /// enchanted permanent dying. The Aura remains on the battlefield long enough
+    /// for its trigger to fire; state-based actions then move the Aura to the
+    /// graveyard. The search goes to the Aura controller's library (same player
+    /// who owned the enchanted creature in all typical Pattern-of-Rebirth cases).
+    #[test]
+    fn test_card_compat_pattern_of_rebirth_attached_by_trigger() {
+        use crate::core::{Card, CardType, TriggerEvent};
+        use std::path::PathBuf;
+
+        if !PathBuf::from("../cardsfolder/p/pattern_of_rebirth.txt").exists() {
+            eprintln!("Skipping: cardsfolder not present");
+            return;
+        }
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+
+        // Load Pattern of Rebirth from cardsfolder to get its real trigger.
+        let por_id = load_test_card(&mut game, "Pattern of Rebirth", p1_id).expect("Pattern of Rebirth should load");
+
+        // Verify the parser produces exactly one EquippedCreatureDies trigger.
+        let por_card = game.cards.get(por_id).unwrap();
+        assert_eq!(
+            por_card.triggers.len(),
+            1,
+            "Pattern of Rebirth should have exactly one trigger"
+        );
+        assert_eq!(
+            por_card.triggers[0].event,
+            TriggerEvent::EquippedCreatureDies,
+            "Pattern of Rebirth trigger should be EquippedCreatureDies"
+        );
+
+        // Place Pattern of Rebirth on the battlefield (as Aura).
+        game.cards.get_mut(por_id).unwrap().definition.cache.is_aura = true;
+        game.battlefield.add(por_id);
+
+        // Create a creature for p1 that Pattern of Rebirth is attached to.
+        let creature_id = game.next_card_id();
+        let mut creature = Card::new(creature_id, "Llanowar Elves".to_string(), p1_id);
+        creature.add_type(CardType::Creature);
+        creature.set_base_power(Some(1));
+        creature.set_base_toughness(Some(1));
+        game.cards.insert(creature_id, creature);
+        game.battlefield.add(creature_id);
+
+        // Attach Pattern of Rebirth to the creature.
+        game.cards.get_mut(por_id).unwrap().attached_to = Some(creature_id);
+
+        // Add a creature to p1's library so the search can find it.
+        let target_id = game.next_card_id();
+        let mut target = Card::new(target_id, "Grizzly Bears".to_string(), p1_id);
+        target.add_type(CardType::Creature);
+        target.set_base_power(Some(2));
+        target.set_base_toughness(Some(2));
+        game.cards.insert(target_id, target);
+        if let Some(zones) = game.player_zones.iter_mut().find(|(id, _)| *id == p1_id) {
+            zones.1.library.add(target_id);
+        }
+
+        // Simulate the creature dying: move it off the battlefield and fire death triggers.
+        game.battlefield.remove(creature_id);
+        game.check_death_triggers(creature_id)
+            .expect("death triggers should not error");
+
+        // After the trigger fires, Pattern of Rebirth should have put Grizzly Bears
+        // onto the battlefield (SearchLibrary puts the first matching creature there).
+        assert!(
+            game.battlefield.contains(target_id),
+            "Pattern of Rebirth trigger must put a creature from library onto the battlefield"
+        );
+    }
+
+    /// Card compat: Honden of Cleansing Fire — B1 fix.
+    ///
+    /// Script:
+    ///   SVar:X:Count$Valid Shrine.YouCtrl/Times.2
+    ///
+    /// The `/Times.2` suffix is Forge's compact encoding of "for each Shrine you
+    /// control, gain 2 life" (CR 700.4). Before the fix the filter was stored
+    /// verbatim (`"Shrine.YouCtrl/Times.2"`) in `ValidPermanents { filter }`:
+    ///
+    ///   1. `count_permanents_matching` hit the "Unknown filter type" fallback
+    ///      (because `"Shrine"` was not a recognised card type) and returned
+    ///      `true` for ALL permanents — so the life gain counted the entire
+    ///      battlefield, not just Shrines.
+    ///   2. The `/Times.2` multiplier was never applied, so the count was
+    ///      already wrong and un-multiplied.
+    ///
+    /// Fix (B1): split on `/Times.N` in `CountExpression::parse` to separate
+    /// the filter from the multiplier, add `modifier: CountModifier::Times(2)`
+    /// to `ValidPermanents`, and fall back to subtype-string matching in
+    /// `count_permanents_matching` for unknown card-type tokens (CR 205.3c
+    /// — enchantment subtypes like "Shrine", "Aura", etc. are valid).
+    #[test]
+    fn test_card_compat_honden_of_cleansing_fire_shrine_times_modifier() {
+        use crate::core::{CountExpression, CountModifier, TriggerEvent};
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("../cardsfolder/h/honden_of_cleansing_fire.txt");
+        if !path.exists() {
+            eprintln!("Skipping: cardsfolder not present at {:?}", path);
+            return;
+        }
+        let def = crate::loader::CardLoader::load_from_file(&path).expect("Honden of Cleansing Fire should load");
+
+        assert_eq!(def.name.as_str(), "Honden of Cleansing Fire");
+
+        let card = def.instantiate(CardId::new(1), PlayerId::new(0));
+
+        // Must have a BeginningOfUpkeep trigger.
+        let upkeep_trigger = card
+            .triggers
+            .iter()
+            .find(|t| t.event == TriggerEvent::BeginningOfUpkeep)
+            .expect("Honden of Cleansing Fire must have a BeginningOfUpkeep trigger");
+
+        // The trigger's GainLifeDynamic effect must carry the correct count expression.
+        // Honden: `LifeAmount$ X` with `SVar:X:Count$Valid Shrine.YouCtrl/Times.2`
+        // → GainLifeDynamic { amount: DynamicAmount::Count(ValidPermanents{…}) }
+        let gain_life = upkeep_trigger
+            .effects
+            .iter()
+            .find(|e| matches!(e, Effect::GainLifeDynamic { .. }))
+            .expect(
+                "Honden upkeep trigger must have a GainLifeDynamic effect. \
+                 If only GainLife (fixed) was found the SVar resolved to 0 (B1 bug).",
+            );
+
+        if let Effect::GainLifeDynamic { amount, .. } = gain_life {
+            use crate::core::effects::DynamicAmount;
+            let DynamicAmount::Count(count) = amount else {
+                panic!("Honden GainLifeDynamic must use DynamicAmount::Count, got {:?}", amount);
+            };
+            // B1 fix: filter must be "Shrine.YouCtrl" (split from "/Times.2"),
+            // and modifier must be CountModifier::Times(2).
+            assert!(
+                matches!(
+                    count,
+                    CountExpression::ValidPermanents {
+                        filter,
+                        modifier: CountModifier::Times(2)
+                    } if filter == "Shrine.YouCtrl"
+                ),
+                "Honden GainLifeDynamic count must be ValidPermanents {{ filter: \"Shrine.YouCtrl\", \
+                 modifier: Times(2) }}. Got: {:?}",
+                count
+            );
+        } else {
+            panic!("Expected GainLifeDynamic effect");
+        }
+    }
+
+    /// Card compat: Reclaim — B6 fix (graveyard-targeting ChangeZone).
+    ///
+    /// Script:
+    ///   A:SP$ ChangeZone | Origin$ Graveyard | Destination$ Library |
+    ///   LibraryPosition$ 0 | ValidTgts$ Card.YouCtrl
+    ///
+    /// Before the B6 fix the converter emitted `None` for this pattern (no arm
+    /// matched `Origin$ Graveyard | Destination$ Library | ValidTgts$`), so
+    /// Reclaim silently resolved with no effect. The fix adds a
+    /// `ReturnGraveyardCardToZone` arm that handles any
+    /// `Origin$ Graveyard | ValidTgts$ … | Destination$ <non-Hand>` combination.
+    ///
+    /// MTG CR 701.25a: "Return [a card] from your graveyard to [zone]" is a
+    /// zone-change from Graveyard to the named zone; the card is chosen on
+    /// resolution (a targeted effect). CR 401.4: putting a card on top of your
+    /// library (LibraryPosition 0) places it there face down.
+    #[test]
+    fn test_card_compat_reclaim_graveyard_to_library() {
+        use crate::core::Effect;
+        use crate::zones::Zone;
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("../cardsfolder/r/reclaim.txt");
+        if !path.exists() {
+            eprintln!("Skipping: cardsfolder not present at {:?}", path);
+            return;
+        }
+        let def = crate::loader::CardLoader::load_from_file(&path).expect("Reclaim should load");
+
+        assert_eq!(def.name.as_str(), "Reclaim");
+
+        let card = def.instantiate(CardId::new(1), PlayerId::new(0));
+
+        // Reclaim must have a ReturnGraveyardCardToZone effect.
+        let gy_effect = card
+            .effects
+            .iter()
+            .find(|e| matches!(e, Effect::ReturnGraveyardCardToZone { .. }))
+            .expect(
+                "Reclaim must have a ReturnGraveyardCardToZone effect (B6 fix). \
+                 If this fails the converter still emits None for Graveyard→Library \
+                 with ValidTgts$, so Reclaim is a silent no-op.",
+            );
+
+        if let Effect::ReturnGraveyardCardToZone {
+            destination,
+            library_position,
+            gain_control,
+            ..
+        } = gy_effect
+        {
+            assert_eq!(
+                *destination,
+                Zone::Library,
+                "Reclaim must return to Library, not {:?}",
+                destination
+            );
+            assert_eq!(
+                *library_position, 0,
+                "Reclaim puts the card on TOP (position 0) of the library (CR 401.4)"
+            );
+            assert!(!gain_control, "Reclaim returns to your own library — no GainControl");
+        } else {
+            panic!("Expected ReturnGraveyardCardToZone");
+        }
+    }
+
+    /// Card compat: Recollect — B6 fix (graveyard-targeting ChangeZone to Hand).
+    ///
+    /// Script:
+    ///   A:SP$ ChangeZone | Origin$ Graveyard | Destination$ Hand |
+    ///   ValidTgts$ Card.YouCtrl
+    ///
+    /// Recollect targets a card in YOUR graveyard and returns it to hand.
+    /// Before B6 this correctly mapped to ReturnGraveyardCardToHand (Destination$
+    /// Hand with ValidTgts$). This test pins that it still does after the refactor
+    /// (the new ReturnGraveyardCardToZone arm should NOT swallow Destination$ Hand
+    /// because that branch has a higher-priority check for Hand).
+    #[test]
+    fn test_card_compat_recollect_graveyard_to_hand() {
+        use crate::core::Effect;
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("../cardsfolder/r/recollect.txt");
+        if !path.exists() {
+            eprintln!("Skipping: cardsfolder not present at {:?}", path);
+            return;
+        }
+        let def = crate::loader::CardLoader::load_from_file(&path).expect("Recollect should load");
+
+        assert_eq!(def.name.as_str(), "Recollect");
+
+        let card = def.instantiate(CardId::new(1), PlayerId::new(0));
+
+        // Recollect with Destination$ Hand + ValidTgts$ must use
+        // ReturnGraveyardCardToHand (the existing hand-specific path),
+        // NOT ReturnGraveyardCardToZone.
+        assert!(
+            card.effects
+                .iter()
+                .any(|e| matches!(e, Effect::ReturnGraveyardCardToHand { .. })),
+            "Recollect must have ReturnGraveyardCardToHand (Destination$ Hand path). \
+             If this fails the new ReturnGraveyardCardToZone arm incorrectly swallowed \
+             the Hand destination."
+        );
+    }
+
+    /// Card compat: Umezawa's Jitte — B3 fix (ModalChoice activated ability).
+    ///
+    /// Script (activated ability):
+    ///   A:AB$ Charm | Cost$ SubCounter<1/CHARGE> | Choices$ JittePump,JitteCurse,JitteLife | Defined$ You
+    ///   SVar:JittePump:DB$ Pump | Defined$ Equipped | NumAtt$ +2 | NumDef$ +2 | SpellDescription$ Equipped creature gets +2/+2 until end of turn.
+    ///   SVar:JitteCurse:DB$ Pump | ValidTgts$ Creature | NumAtt$ -1 | NumDef$ -1 | IsCurse$ True | SpellDescription$ Target creature gets -1/-1 until end of turn.
+    ///   SVar:JitteLife:DB$ GainLife | LifeAmount$ 2 | SpellDescription$ You gain 2 life.
+    ///
+    /// Before the B3 fix the Charm AB$ produced a ModalChoice effect that fell
+    /// through to `execute_effect`, which logged "ModalChoice reached
+    /// execute_effect" and no-oped — so the chosen mode was never applied.  This
+    /// test pins that the activated ability parses into a ModalChoice with all
+    /// three modes present and with real (non-placeholder DrawCards) sub-effects.
+    ///
+    /// MTG CR 701.4a: modal spells and abilities let you choose a mode as part of
+    /// casting or activating.  CR 601.2b: for a modal spell cast from hand the
+    /// mode choice is made before targeting.  For an activated ability the
+    /// analogous choice happens on activation (before the ability resolves).
+    #[test]
+    fn test_card_compat_umezawas_jitte_modal_choice_parse() {
+        use crate::core::Effect;
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("../cardsfolder/u/umezawas_jitte.txt");
+        if !path.exists() {
+            eprintln!("Skipping: cardsfolder not present at {:?}", path);
+            return;
+        }
+        let def = crate::loader::CardLoader::load_from_file(&path).expect("Umezawa's Jitte should load");
+
+        assert_eq!(def.name.as_str(), "Umezawa's Jitte");
+
+        let card = def.instantiate(CardId::new(1), PlayerId::new(0));
+
+        // Jitte must have exactly one non-Equip activated ability (the Charm).
+        // The Equip ability is always the last one; the Charm comes before it.
+        let charm_ability = card
+            .activated_abilities
+            .iter()
+            .find(|ab| ab.effects.iter().any(|e| matches!(e, Effect::ModalChoice { .. })))
+            .expect(
+                "Umezawa's Jitte must have a ModalChoice activated ability (B3 fix). \
+                 If this fails the AB$ Charm was not converted to ModalChoice.",
+            );
+
+        let modal_effect = charm_ability
+            .effects
+            .iter()
+            .find(|e| matches!(e, Effect::ModalChoice { .. }))
+            .expect("ModalChoice effect must be present in charm ability");
+
+        if let Effect::ModalChoice {
+            modes, num_to_choose, ..
+        } = modal_effect
+        {
+            assert_eq!(
+                modes.len(),
+                3,
+                "Jitte Charm must have 3 modes (JittePump, JitteCurse, JitteLife). \
+                 Got {}",
+                modes.len()
+            );
+            assert_eq!(
+                *num_to_choose, 1,
+                "Jitte Charm chooses exactly 1 mode. Got {}",
+                num_to_choose
+            );
+            // Verify mode descriptions are present and non-empty.
+            for (i, mode) in modes.iter().enumerate() {
+                assert!(!mode.description.is_empty(), "Mode {} description must not be empty", i);
+                // Sub-effects must be real effects (not placeholder DrawCards{count:0}).
+                // Placeholder DrawCards{count:0} is what params_to_charm_effect emits
+                // when it can't resolve SVars — a signal that SVar resolution failed.
+                assert!(
+                    !matches!(mode.effect.as_ref(), Effect::DrawCards { count, .. } if *count == 0),
+                    "Mode {} ('{}') has a placeholder sub-effect; SVar resolution must \
+                     have failed during load. Got: {:?}",
+                    i,
+                    mode.description,
+                    mode.effect
+                );
+            }
+        } else {
+            panic!("Expected ModalChoice effect");
+        }
+    }
+
+    /// Regression test for B-token (mtg-914): Avenger of Zendikar `TokenAmount$ X`
+    /// where SVar:X:Count$Valid Land.YouCtrl must create one Plant token per land,
+    /// not a hard-coded 1 token.
+    ///
+    /// Before the fix, `create_token_dynamic_from_params` returned `None` for
+    /// `DynamicAmount::Count`, falling through to `params_to_effect` which called
+    /// `get_u8("TokenAmount")` on "X" — failing silently and defaulting to 1.
+    /// After the fix, `CreateTokenDynamic { amount: Count(ValidPermanents) }` is
+    /// emitted and resolved at execution time against the live battlefield.
+    ///
+    /// This test verifies that the card loader parses the SVar-token chain into a
+    /// `CreateTokenDynamic { amount: Count(_) }` effect (loader-shape check).
+    ///
+    /// See: mtg-914 (2010 WC tracker), mtg-915 (broken-card backlog).
+    #[test]
+    fn test_token_amount_count_expression_avenger_of_zendikar() {
+        use crate::core::CardId;
+        use crate::core::PlayerId;
+        use crate::loader::CardDatabase;
+        use std::path::PathBuf;
+
+        let cardsfolder = PathBuf::from("../cardsfolder");
+        if !cardsfolder.join("a/avenger_of_zendikar.txt").exists() {
+            eprintln!("Skipping: cardsfolder not present");
+            return;
+        }
+
+        let db = CardDatabase::new(cardsfolder);
+        let rt = tokio::runtime::Runtime::new().unwrap();
+
+        let card_def = rt
+            .block_on(async { db.get_card("Avenger of Zendikar").await })
+            .expect("DB lookup should not fail")
+            .expect("Avenger of Zendikar should exist in cardsfolder");
+
+        // Instantiate the card to get its parsed triggers.
+        let card_id = CardId::new(1);
+        let owner = PlayerId::new(0);
+        let card = card_def.instantiate(card_id, owner);
+
+        // The ETB trigger's Execute$ SVar (TrigToken) must parse to CreateTokenDynamic
+        // with a Count(...) DynamicAmount.  The loader calls
+        // create_token_dynamic_from_params which, after the fix, routes
+        // DynamicAmount::Count through instead of returning None.
+        let has_dynamic_count_token = card.triggers.iter().flat_map(|t| t.effects.iter()).any(|eff| {
+            matches!(
+                eff,
+                crate::core::Effect::CreateTokenDynamic {
+                    amount: crate::core::DynamicAmount::Count(_),
+                    ..
+                }
+            )
+        });
+
+        assert!(
+            has_dynamic_count_token,
+            "Avenger of Zendikar ETB trigger should produce CreateTokenDynamic {{ Count(...) }}. \
+             Check create_token_dynamic_from_params — DynamicAmount::Count must not fall through \
+             to the params_to_effect fixed-amount path. \
+             Trigger effects: {:?}",
+            card.triggers.iter().flat_map(|t| t.effects.iter()).collect::<Vec<_>>()
+        );
+    }
+
+    /// Card compat: Light of Day (cardsfolder/l/light_of_day.txt) — mtg-912 B7.
+    ///
+    /// Script:
+    ///   `S:Mode$ CantAttack,CantBlock | ValidCard$ Creature.Black`
+    ///
+    /// Verifies that with Light of Day on the battlefield, a black creature
+    /// (Drudge Skeletons) does NOT appear in the legal-attackers list and is
+    /// excluded from legal blockers (GameState::is_attack_prohibited /
+    /// is_block_prohibited). Without this fix the creature would appear in both
+    /// lists because the CantAttack,CantBlock combined-mode shape was previously
+    /// silently dropped (no match arm in the loader's mode dispatch).
+    #[test]
+    fn test_card_compat_light_of_day_prohibits_black_creatures() {
+        use std::path::PathBuf;
+
+        if !PathBuf::from("../cardsfolder/l/light_of_day.txt").exists() {
+            eprintln!("Skipping: cardsfolder not present");
+            return;
+        }
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        let p2_id = game.players[1].id;
+
+        // P2 controls Light of Day.
+        let lod_id = load_test_card(&mut game, "Light of Day", p2_id).expect("Light of Day should load");
+        game.battlefield.add(lod_id);
+
+        // P1 controls a black creature (Drudge Skeletons).
+        let skeletons_id = load_test_card(&mut game, "Drudge Skeletons", p1_id).expect("Drudge Skeletons should load");
+        game.battlefield.add(skeletons_id);
+        // Mark it as entered previous turn (no summoning sickness).
+        game.cards.get_mut(skeletons_id).unwrap().turn_entered_battlefield = Some(0);
+
+        let skeletons = game.cards.get(skeletons_id).unwrap();
+        assert!(
+            game.is_attack_prohibited(skeletons),
+            "is_attack_prohibited must return true for a black creature with Light of Day on the battlefield"
+        );
+        assert!(
+            game.is_block_prohibited(skeletons),
+            "is_block_prohibited must return true for a black creature with Light of Day on the battlefield"
+        );
+
+        // A non-black creature should NOT be prohibited.
+        let green_id = game.next_card_id();
+        let green_creature = {
+            let mut c = Card::new(green_id, "Grizzly Bears".to_string(), p1_id);
+            c.add_type(CardType::Creature);
+            c.colors.push(crate::core::Color::Green);
+            c
+        };
+        assert!(
+            !game.is_attack_prohibited(&green_creature),
+            "is_attack_prohibited must return false for a non-black creature"
+        );
+        assert!(
+            !game.is_block_prohibited(&green_creature),
+            "is_block_prohibited must return false for a non-black creature"
+        );
+    }
+
+    /// Card compat: Cursed Totem (cardsfolder/c/cursed_totem.txt) — mtg-912 B6.
+    ///
+    /// Script:
+    ///   `S:Mode$ CantBeActivated | ValidCard$ Creature | ValidSA$ Activated`
+    ///
+    /// Verifies that with Cursed Totem on the battlefield,
+    /// GameState::is_activated_ability_prohibited returns true for a creature
+    /// and false for a non-creature.
+    #[test]
+    fn test_card_compat_cursed_totem_suppresses_creature_abilities() {
+        use std::path::PathBuf;
+
+        if !PathBuf::from("../cardsfolder/c/cursed_totem.txt").exists() {
+            eprintln!("Skipping: cardsfolder not present");
+            return;
+        }
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        let p2_id = game.players[1].id;
+
+        // P2 controls Cursed Totem.
+        let totem_id = load_test_card(&mut game, "Cursed Totem", p2_id).expect("Cursed Totem should load");
+        game.battlefield.add(totem_id);
+
+        // P1 has a creature (Llanowar Elves — non-black so no Light of Day confusion).
+        let elves_id = load_test_card(&mut game, "Llanowar Elves", p1_id).expect("Llanowar Elves should load");
+        game.battlefield.add(elves_id);
+
+        let elves = game.cards.get(elves_id).unwrap();
+        assert!(
+            game.is_activated_ability_prohibited(elves),
+            "is_activated_ability_prohibited must be true for a creature with Cursed Totem on battlefield"
+        );
+
+        // Totem itself (an artifact, not a creature) should NOT be affected.
+        let totem = game.cards.get(totem_id).unwrap();
+        assert!(
+            !game.is_activated_ability_prohibited(totem),
+            "is_activated_ability_prohibited must be false for a non-creature artifact"
+        );
+    }
+
+    /// Card compat: Overgrown Battlement — `withDefender` filter in
+    /// `count_permanents_matching` (mtg-914/mtg-915, wave3).
+    ///
+    /// Overgrown Battlement: `{T}: Add {G} for each creature with defender
+    /// you control.` — `SVar:X:Count$Valid Creature.withDefender+YouCtrl`.
+    ///
+    /// Before this fix `count_permanents_matching` silently ignored the
+    /// `withDefender` qualifier and counted ALL your creatures. The fix adds a
+    /// `filter.contains("withDefender")` guard that checks
+    /// `card.has_keyword(Keyword::Defender)`, so only creatures that actually
+    /// have Defender are counted (CR 702.6).
+    ///
+    /// Also verifies that `TargetRestriction::parse("Creature.withDefender")`
+    /// sets `requires_defender = true` and that `TargetRestriction::matches`
+    /// rejects creatures without Defender.
+    #[test]
+    fn test_withdefender_filter_count_and_target_restriction() {
+        use crate::core::effects::TargetRestriction;
+        use crate::core::{CardType, EntityId, Keyword, PlayerId};
+        use crate::game::GameState;
+
+        // --- Part 1: TargetRestriction::parse handles "withDefender" ---
+        let tr = TargetRestriction::parse("Creature.withDefender");
+        assert!(
+            tr.requires_defender,
+            "TargetRestriction::parse('Creature.withDefender') must set requires_defender=true"
+        );
+        let tr2 = TargetRestriction::parse("Creature.withDefender+YouCtrl");
+        assert!(
+            tr2.requires_defender,
+            "TargetRestriction::parse('Creature.withDefender+YouCtrl') must set requires_defender=true"
+        );
+
+        // --- Part 2: TargetRestriction::matches enforces requires_defender ---
+        let p0 = PlayerId::new(0);
+        let mut creature_with_def = crate::core::Card::new(EntityId::new(1), "Wall of Stone", p0);
+        creature_with_def.add_type(CardType::Creature);
+        creature_with_def.keywords.insert(Keyword::Defender);
+
+        let mut creature_no_def = crate::core::Card::new(EntityId::new(2), "Grizzly Bears", p0);
+        creature_no_def.add_type(CardType::Creature);
+
+        let restriction = TargetRestriction::parse("Creature.withDefender");
+        assert!(
+            restriction.matches(&creature_with_def),
+            "Creature with Defender must match 'Creature.withDefender' restriction"
+        );
+        assert!(
+            !restriction.matches(&creature_no_def),
+            "Creature without Defender must NOT match 'Creature.withDefender' restriction"
+        );
+
+        // --- Part 3: count_permanents_matching counts only defender creatures ---
+        // Create a game with p0 controlling two defenders and one non-defender.
+        let mut game = GameState::new_two_player("P0".to_string(), "P1".to_string(), 20);
+        game.turn.active_player = p0;
+
+        let cid1 = EntityId::new(10);
+        let mut c1 = crate::core::Card::new(cid1, "Wall A", p0);
+        c1.add_type(CardType::Creature);
+        c1.keywords.insert(Keyword::Defender);
+        c1.controller = p0;
+        game.cards.insert(cid1, c1);
+        game.battlefield.cards.push(cid1);
+
+        let cid2 = EntityId::new(11);
+        let mut c2 = crate::core::Card::new(cid2, "Wall B", p0);
+        c2.add_type(CardType::Creature);
+        c2.keywords.insert(Keyword::Defender);
+        c2.controller = p0;
+        game.cards.insert(cid2, c2);
+        game.battlefield.cards.push(cid2);
+
+        let cid3 = EntityId::new(12);
+        let mut c3 = crate::core::Card::new(cid3, "Bear", p0);
+        c3.add_type(CardType::Creature);
+        // No Defender keyword
+        c3.controller = p0;
+        game.cards.insert(cid3, c3);
+        game.battlefield.cards.push(cid3);
+
+        // Overgrown Battlement's SVar: Count$Valid Creature.withDefender+YouCtrl
+        let filter = "Creature.withDefender+YouCtrl";
+        let count = game
+            .evaluate_count_expression(
+                &crate::core::CountExpression::ValidPermanents {
+                    filter: filter.to_string(),
+                    modifier: crate::core::effects::CountModifier::None,
+                },
+                p0,
+            )
+            .expect("evaluate_count_expression must succeed");
+
+        assert_eq!(
+            count, 2,
+            "count_permanents_matching('Creature.withDefender+YouCtrl') must count \
+             only the 2 Defender creatures, not the Bear without Defender. \
+             Got {} (withDefender fix not applied?)",
+            count
+        );
+    }
+
+    /// Card compat: Worship (cardsfolder/w/worship.txt) — mtg-912 B10.
+    ///
+    /// Script:
+    ///   `R:Event$ LifeReduced | ValidPlayer$ You.lifeGE1 | Result$ LT1
+    ///    | IsDamage$ True | IsPresent$ Creature.YouCtrl | ReplaceWith$ ReduceLoss`
+    ///
+    /// Verifies: with Worship + a creature on the battlefield, damage that
+    /// would reduce the controller's life below 1 is capped at life - 1.
+    /// Without a creature, the floor does not apply.
+    #[test]
+    fn test_card_compat_worship_life_floor() {
+        use std::path::PathBuf;
+
+        if !PathBuf::from("../cardsfolder/w/worship.txt").exists() {
+            eprintln!("Skipping: cardsfolder not present");
+            return;
+        }
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+
+        // Put P1 at life = 3 to make the floor clearly visible.
+        game.players[0].life = 3;
+
+        // P1 controls Worship.
+        let worship_id = load_test_card(&mut game, "Worship", p1_id).expect("Worship should load");
+        game.battlefield.add(worship_id);
+
+        // P1 controls a creature (Llanowar Elves).
+        let elves_id = load_test_card(&mut game, "Llanowar Elves", p1_id).expect("Llanowar Elves should load");
+        game.battlefield.add(elves_id);
+
+        // Deal 5 damage to P1 — would take life from 3 to -2 without Worship.
+        // With Worship the floor kicks in: life stays at 1.
+        game.deal_damage(p1_id, 5).expect("deal_damage should succeed");
+        assert_eq!(
+            game.players[0].life, 1,
+            "Worship: life should be floored at 1 (dealt 5 from 3, would be -2)"
+        );
+
+        // Now deal 0 damage — life stays at 1 (no-op).
+        game.deal_damage(p1_id, 0).expect("deal_damage with 0 should succeed");
+        assert_eq!(game.players[0].life, 1, "Life must not change on 0 damage");
+
+        // Remove the creature from the battlefield — Worship's floor no longer applies.
+        game.battlefield.remove(elves_id);
+        game.deal_damage(p1_id, 2).expect("deal_damage should succeed");
+        assert_eq!(
+            game.players[0].life, -1,
+            "Without a creature, Worship's floor should NOT apply (life goes below 1)"
+        );
+    }
+
+    /// Card compat: Serra Avatar (cardsfolder/s/serra_avatar.txt) — mtg-912 B4.
+    ///
+    /// Script:
+    ///   `S:Mode$ Continuous | CharacteristicDefining$ True | SetPower$ X
+    ///    | SetToughness$ X`  with `SVar:X:Count$YourLifeTotal`
+    ///
+    /// Verifies: Serra Avatar's power/toughness equals the controller's life total,
+    /// and updates dynamically when the life total changes.
+    #[test]
+    fn test_card_compat_serra_avatar_cda_pt() {
+        use std::path::PathBuf;
+
+        if !PathBuf::from("../cardsfolder/s/serra_avatar.txt").exists() {
+            eprintln!("Skipping: cardsfolder not present");
+            return;
+        }
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+
+        // P1 starts at 20 life.
+        assert_eq!(game.players[0].life, 20);
+
+        // P1 controls Serra Avatar.
+        let avatar_id = load_test_card(&mut game, "Serra Avatar", p1_id).expect("Serra Avatar should load");
+        game.battlefield.add(avatar_id);
+
+        // At 20 life: P/T should be 20/20.
+        let power = game.get_effective_power(avatar_id).expect("get_effective_power");
+        let toughness = game
+            .get_effective_toughness(avatar_id)
+            .expect("get_effective_toughness");
+        assert_eq!(power, 20, "Serra Avatar P should be 20 (life total) at 20 life");
+        assert_eq!(toughness, 20, "Serra Avatar T should be 20 (life total) at 20 life");
+
+        // Change life to 13 — P/T must track it immediately.
+        game.players[0].life = 13;
+        let power2 = game.get_effective_power(avatar_id).expect("get_effective_power");
+        let toughness2 = game
+            .get_effective_toughness(avatar_id)
+            .expect("get_effective_toughness");
+        assert_eq!(power2, 13, "Serra Avatar P should track life total: 13");
+        assert_eq!(toughness2, 13, "Serra Avatar T should track life total: 13");
+
+        // Life at 1 — P/T must be 1/1.
+        game.players[0].life = 1;
+        let power3 = game.get_effective_power(avatar_id).expect("get_effective_power");
+        assert_eq!(power3, 1, "Serra Avatar P must be 1 at life=1");
+
+        // Life at 0 — P/T must be 0/0.
+        game.players[0].life = 0;
+        let power4 = game.get_effective_power(avatar_id).expect("get_effective_power");
+        assert_eq!(power4, 0, "Serra Avatar P must be 0 at life=0");
+    }
+
+    /// Card compat: Lhurgoyf (cardsfolder/l/lhurgoyf.txt) — mtg-916 B2.
+    ///
+    /// Script:
+    ///   `S:Mode$ Continuous | CharacteristicDefining$ True | SetPower$ X | SetToughness$ Y`
+    ///   `SVar:X:Count$ValidGraveyard Creature`
+    ///   `SVar:Y:Count$ValidGraveyard Creature/Plus.1`
+    ///
+    /// Verifies: Lhurgoyf's power = creature cards in all graveyards; toughness = that + 1.
+    /// Also verifies the count updates when creatures die (enter the graveyard).
+    #[test]
+    fn test_card_compat_lhurgoyf_cda_pt() {
+        use std::path::PathBuf;
+
+        if !PathBuf::from("../cardsfolder/l/lhurgoyf.txt").exists() {
+            eprintln!("Skipping: cardsfolder not present");
+            return;
+        }
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        let p2_id = game.players[1].id;
+
+        // Load Lhurgoyf under P1's control.
+        let lhurgoyf_id = load_test_card(&mut game, "Lhurgoyf", p1_id).expect("Lhurgoyf should load");
+        game.battlefield.add(lhurgoyf_id);
+
+        // No creatures in any graveyard yet: 0/1.
+        let power = game.get_effective_power(lhurgoyf_id).expect("get_effective_power");
+        let toughness = game
+            .get_effective_toughness(lhurgoyf_id)
+            .expect("get_effective_toughness");
+        assert_eq!(power, 0, "Lhurgoyf P should be 0 with empty graveyards");
+        assert_eq!(toughness, 1, "Lhurgoyf T should be 1 (0+1) with empty graveyards");
+
+        // Add a creature card to P1's graveyard: 1/2.
+        let bear_id = load_test_card(&mut game, "Grizzly Bears", p1_id).expect("Grizzly Bears should load");
+        game.get_player_zones_mut(p1_id)
+            .expect("P1 zones")
+            .graveyard
+            .add(bear_id);
+
+        let power2 = game.get_effective_power(lhurgoyf_id).expect("get_effective_power");
+        let toughness2 = game
+            .get_effective_toughness(lhurgoyf_id)
+            .expect("get_effective_toughness");
+        assert_eq!(power2, 1, "Lhurgoyf P should be 1 with 1 creature in graveyards");
+        assert_eq!(
+            toughness2, 2,
+            "Lhurgoyf T should be 2 (1+1) with 1 creature in graveyards"
+        );
+
+        // Add a creature card to P2's graveyard: 2/3.
+        let bear2_id = load_test_card(&mut game, "Grizzly Bears", p2_id).expect("Grizzly Bears should load");
+        game.get_player_zones_mut(p2_id)
+            .expect("P2 zones")
+            .graveyard
+            .add(bear2_id);
+
+        let power3 = game.get_effective_power(lhurgoyf_id).expect("get_effective_power");
+        let toughness3 = game
+            .get_effective_toughness(lhurgoyf_id)
+            .expect("get_effective_toughness");
+        assert_eq!(power3, 2, "Lhurgoyf P should be 2 with creatures in both graveyards");
+        assert_eq!(
+            toughness3, 3,
+            "Lhurgoyf T should be 3 (2+1) with creatures in both graveyards"
+        );
+    }
+
+    /// Card compat: Crumbling Sanctuary (cardsfolder/c/crumbling_sanctuary.txt) — mtg-912 B9.
+    ///
+    /// Script:
+    ///   `R:Event$ DamageDone | ValidTarget$ Player | ReplaceWith$ ExileTop`
+    ///   `SVar:ExileTop:DB$ Dig | Defined$ ReplacedTarget | DigNum$ X
+    ///          | ChangeNum$ All | DestinationZone$ Exile`
+    ///
+    /// Verifies: with Crumbling Sanctuary on the battlefield, damage to a player
+    /// exiles cards from their library instead of reducing their life total.
+    #[test]
+    fn test_card_compat_crumbling_sanctuary_damage_to_exile() {
+        use std::path::PathBuf;
+
+        if !PathBuf::from("../cardsfolder/c/crumbling_sanctuary.txt").exists() {
+            eprintln!("Skipping: cardsfolder not present");
+            return;
+        }
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        let p2_id = game.players[1].id;
+
+        // P2 controls Crumbling Sanctuary.
+        let sanctuary_id =
+            load_test_card(&mut game, "Crumbling Sanctuary", p2_id).expect("Crumbling Sanctuary should load");
+        game.battlefield.add(sanctuary_id);
+
+        // Give P1 a known library (5 Plains).
+        for _ in 0..5 {
+            let land_id = load_test_card(&mut game, "Plains", p1_id).expect("Plains should load");
+            game.get_player_zones_mut(p1_id)
+                .expect("P1 zones")
+                .library
+                .cards
+                .push(land_id);
+        }
+        let initial_life = game.players[0].life;
+        let initial_library_size = game.get_player_zones(p1_id).map(|z| z.library.cards.len()).unwrap_or(0);
+        assert_eq!(initial_library_size, 5, "Setup: P1 library should have 5 cards");
+
+        // Deal 3 damage to P1 — with Crumbling Sanctuary on the battlefield,
+        // P1 exiles 3 cards from their library instead of losing 3 life.
+        game.deal_damage(p1_id, 3).expect("deal_damage should succeed");
+
+        let life_after = game.players[0].life;
+        assert_eq!(
+            life_after, initial_life,
+            "P1 life should be unchanged — damage was redirected to exile"
+        );
+
+        let library_size_after = game.get_player_zones(p1_id).map(|z| z.library.cards.len()).unwrap_or(0);
+        assert_eq!(
+            library_size_after,
+            initial_library_size - 3,
+            "P1 library should have shrunk by 3 (cards exiled instead of life loss)"
+        );
+
+        let exile_size = game
+            .player_zones
+            .iter()
+            .find(|(id, _)| *id == p1_id)
+            .map(|(_, z)| z.exile.cards.len())
+            .unwrap_or(0);
+        assert_eq!(
+            exile_size, 3,
+            "P1's exile zone should contain 3 cards (the redirected damage)"
+        );
+    }
+
+    /// Parser regression: Teferi, Time Raveler's static
+    /// `S:Mode$ CantBeCast | ValidCard$ Card | Caster$ Opponent | OnlySorcerySpeed$ True`
+    /// must load with `only_sorcery_speed = true` and `caster_restriction = Opponent`.
+    #[test]
+    fn test_card_compat_teferi_time_raveler_static_parses_only_sorcery_speed() {
+        use crate::core::{CasterRestriction, StaticAbility};
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("../cardsfolder/t/teferi_time_raveler.txt");
+        if !path.exists() {
+            eprintln!("Skipping: cardsfolder not present at {:?}", path);
+            return;
+        }
+        let def = crate::loader::CardLoader::load_from_file(&path).expect("Teferi, Time Raveler should load");
+        assert_eq!(def.name.as_str(), "Teferi, Time Raveler");
+
+        let card = def.instantiate(CardId::new(1), PlayerId::new(0));
+
+        // Find the CantBeCast static that encodes "opponents cast only at sorcery speed"
+        let teferi_static = card.static_abilities.iter().find_map(|sa| {
+            if let StaticAbility::CantBeCast {
+                caster_restriction,
+                only_sorcery_speed,
+                ..
+            } = sa
+            {
+                Some((*caster_restriction, *only_sorcery_speed))
+            } else {
+                None
+            }
+        });
+
+        let (caster_restriction, only_sorcery_speed) =
+            teferi_static.expect("Teferi should have a CantBeCast static ability");
+
+        assert_eq!(
+            caster_restriction,
+            CasterRestriction::Opponent,
+            "Teferi's static must restrict opponents (Caster$ Opponent)"
+        );
+        assert!(
+            only_sorcery_speed,
+            "Teferi's static must have only_sorcery_speed=true (OnlySorcerySpeed$ True)"
+        );
+    }
+
+    /// Runtime enforcement: Teferi, Time Raveler's static prevents opponents from
+    /// casting instants (or any spell) outside their own sorcery window.
+    ///
+    /// Scenario A: P2's instant in hand is NOT offered as a cast action during
+    ///   P1's main phase (P2 is opponent; not sorcery window for P2).
+    /// Scenario B: P2's instant IS offered during P2's own main phase with empty
+    ///   stack (sorcery window for P2, so Teferi's prohibition is lifted).
+    #[test]
+    fn test_teferi_time_raveler_opponents_cannot_cast_outside_sorcery_window() {
+        use crate::core::SpellAbility;
+        use crate::game::game_loop::GameLoop;
+        use crate::game::{Step, VerbosityLevel};
+        use std::path::PathBuf;
+
+        // Need both Teferi and an instant (Lightning Bolt) from the cardsfolder.
+        let teferi_path = PathBuf::from("../cardsfolder/t/teferi_time_raveler.txt");
+        let bolt_path = PathBuf::from("../cardsfolder/l/lightning_bolt.txt");
+        if !teferi_path.exists() || !bolt_path.exists() {
+            eprintln!("Skipping: cardsfolder not present");
+            return;
+        }
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        let p2_id = game.players[1].id;
+
+        // P1 controls Teferi on the battlefield.
+        let teferi_id =
+            load_test_card(&mut game, "Teferi, Time Raveler", p1_id).expect("Teferi, Time Raveler should load");
+        game.battlefield.add(teferi_id);
+
+        // P2 has Lightning Bolt in hand and a Mountain to pay {R}.
+        let bolt_id = load_test_card(&mut game, "Lightning Bolt", p2_id).expect("Lightning Bolt should load");
+        if let Some(zones) = game.get_player_zones_mut(p2_id) {
+            zones.hand.add(bolt_id);
+        }
+        let mountain_id = load_test_card(&mut game, "Mountain", p2_id).expect("Mountain should load");
+        game.battlefield.add(mountain_id);
+        if let Ok(c) = game.cards.get_mut(mountain_id) {
+            c.controller = p2_id;
+            c.tapped = false;
+        }
+
+        // --- Scenario A: P1's main phase, stack empty ---
+        // P2 is the opponent; they are NOT in a sorcery window (not their turn).
+        // Teferi's prohibition SHOULD block P2 from casting Lightning Bolt.
+        game.turn.active_player = p1_id;
+        game.turn.current_step = Step::Main1;
+        // stack is already empty
+
+        let buffer_a = {
+            let mut gl = GameLoop::new(&mut game).with_verbosity(VerbosityLevel::Silent);
+            gl.push_castable_spells(p2_id);
+            gl.get_abilities_buffer().to_vec()
+        };
+
+        let bolt_offered_a = buffer_a
+            .iter()
+            .any(|sa| matches!(sa, SpellAbility::CastSpell { card_id, .. } if *card_id == bolt_id));
+        assert!(
+            !bolt_offered_a,
+            "Teferi, Time Raveler: opponent P2 must NOT be offered Lightning Bolt \
+             during P1's main phase (not P2's sorcery window). Buffer: {:?}",
+            buffer_a
+        );
+
+        // --- Scenario B: P2's own main phase, stack empty ---
+        // P2 IS in a sorcery window, so Teferi's prohibition is lifted.
+        game.turn.active_player = p2_id;
+        game.turn.current_step = Step::Main1;
+
+        let buffer_b = {
+            let mut gl2 = GameLoop::new(&mut game).with_verbosity(VerbosityLevel::Silent);
+            gl2.push_castable_spells(p2_id);
+            gl2.get_abilities_buffer().to_vec()
+        };
+
+        let bolt_offered_b = buffer_b
+            .iter()
+            .any(|sa| matches!(sa, SpellAbility::CastSpell { card_id, .. } if *card_id == bolt_id));
+        assert!(
+            bolt_offered_b,
+            "Teferi, Time Raveler: P2 MUST be offered Lightning Bolt during their \
+             own main phase with empty stack (sorcery window lifted). Buffer: {:?}",
+            buffer_b
+        );
+    }
+
+    /// Card compat: Opalescence (cardsfolder/o/opalescence.txt) — mtg-912 B5.
+    ///
+    /// Script:
+    ///   `S:Mode$ Continuous | Affected$ Enchantment.nonAura+Other
+    ///    | SetPower$ AffectedX | SetToughness$ AffectedX | AddType$ Creature`
+    ///   `SVar:AffectedX:Count$CardManaCost`
+    ///
+    /// Verifies that:
+    /// 1. Opalescence parses to `StaticAbility::OpalescenceStyle`.
+    /// 2. `GameState::is_opalescence_creature()` returns `true` for a non-Aura
+    ///    enchantment and `false` for a non-enchantment, an Aura, and Opalescence
+    ///    itself.
+    /// 3. `GameState::opalescence_pt()` returns the correct mana value for a
+    ///    matching enchantment.
+    /// 4. Matching enchantments appear in the available-attacker list.
+    #[test]
+    fn test_card_compat_opalescence_enchantments_become_creatures() {
+        use crate::core::StaticAbility;
+        use std::path::PathBuf;
+
+        let opalescence_path = PathBuf::from("../cardsfolder/o/opalescence.txt");
+        if !opalescence_path.exists() {
+            eprintln!("Skipping: cardsfolder not present");
+            return;
+        }
+
+        // --- 1. Parser check: Opalescence emits OpalescenceStyle static ---
+        let opalescence_def =
+            crate::loader::CardLoader::load_from_file(&opalescence_path).expect("opalescence.txt should load");
+        let statics = opalescence_def.parse_static_abilities();
+        let has_opalescence_style = statics
+            .iter()
+            .any(|s| matches!(s, StaticAbility::OpalescenceStyle { .. }));
+        assert!(
+            has_opalescence_style,
+            "Opalescence must parse to StaticAbility::OpalescenceStyle; got {:?}",
+            statics
+        );
+
+        // --- 2. Runtime: is_opalescence_creature() ---
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        let p2_id = game.players[1].id;
+
+        // P1 controls Opalescence.
+        let opal_id = load_test_card(&mut game, "Opalescence", p1_id).expect("Opalescence should load");
+        game.battlefield.add(opal_id);
+
+        // P2 controls a non-Aura enchantment: Worship (3W enchantment, CMC=4).
+        // (We use Worship because it's already tested elsewhere and loads cleanly.)
+        let worship_path = PathBuf::from("../cardsfolder/w/worship.txt");
+        if !worship_path.exists() {
+            eprintln!("Skipping Worship sub-test: cardsfolder not present");
+            return;
+        }
+        let worship_id = load_test_card(&mut game, "Worship", p2_id).expect("Worship should load");
+        game.battlefield.add(worship_id);
+
+        let worship_card = game.cards.get(worship_id).expect("Worship in card store");
+        assert!(
+            game.is_opalescence_creature(worship_card),
+            "is_opalescence_creature must be true for a non-Aura enchantment (Worship) with Opalescence on the battlefield"
+        );
+
+        // 2b. Opalescence itself is excluded ("other non-Aura enchantments").
+        let opal_card = game.cards.get(opal_id).expect("Opalescence in card store");
+        assert!(
+            !game.is_opalescence_creature(opal_card),
+            "is_opalescence_creature must be false for Opalescence itself (it is the source)"
+        );
+
+        // 2c. A non-enchantment permanent is not affected.
+        let plains_id = load_test_card(&mut game, "Plains", p1_id).expect("Plains should load");
+        game.battlefield.add(plains_id);
+        let plains_card = game.cards.get(plains_id).expect("Plains in card store");
+        assert!(
+            !game.is_opalescence_creature(plains_card),
+            "is_opalescence_creature must be false for a non-enchantment (Plains)"
+        );
+
+        // --- 3. P/T check: Worship has CMC 4 (3W), expect 4/4 ---
+        let worship_card = game.cards.get(worship_id).expect("Worship");
+        let pt = game.opalescence_pt(worship_card);
+        assert_eq!(
+            pt,
+            Some(4),
+            "opalescence_pt must return Some(4) for Worship (CMC=4); got {:?}",
+            pt
+        );
+
+        // --- 4. Attacker list: Worship should appear as available attacker for P2 ---
+        // Mark Worship as entering a previous turn (no summoning sickness).
+        game.cards.get_mut(worship_id).unwrap().turn_entered_battlefield = Some(0);
+        game.turn.turn_number = 1;
+
+        // Verify via get_available_attacker_creatures_for_test (GameLoop helper).
+        // We construct a GameLoop to access the helper.
+        {
+            let game_loop = crate::game::game_loop::GameLoop::new(&mut game);
+            let available_attackers = game_loop.get_available_attacker_creatures_for_test(p2_id);
+            assert!(
+                available_attackers.contains(&worship_id),
+                "Worship (as an Opalescence-animated enchantment-creature) must appear in \
+                 the available-attacker list for P2; got {:?}",
+                available_attackers
+            );
+        }
+    }
+
+    /// Card compat: Torpor Orb — `StaticAbility::DisableCreatureEtbTriggers` (mtg-881).
+    ///
+    /// Script:
+    ///   `S:Mode$ DisableTriggers | ValidCause$ Creature | ValidMode$ ChangesZone,ChangesZoneAll
+    ///    | Destination$ Battlefield`
+    ///
+    /// Verifies two things:
+    /// 1. Torpor Orb's static ability parses to `DisableCreatureEtbTriggers`.
+    /// 2. `is_creature_etb_trigger_suppressed` returns `true` for a creature when
+    ///    Torpor Orb is on the battlefield, and `false` for a non-creature.
+    ///
+    /// MTG rules: CR 603.6b — "Some effects can turn off abilities." Torpor Orb
+    /// prevents creatures that enter the battlefield from causing triggered
+    /// abilities to trigger (WotC rules guidance 2012).
+    #[test]
+    fn test_card_compat_torpor_orb_disables_creature_etb_triggers() {
+        use std::path::PathBuf;
+
+        if !PathBuf::from("../cardsfolder/t/torpor_orb.txt").exists() {
+            eprintln!("Skipping: cardsfolder not present");
+            return;
+        }
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        let p2_id = game.players[1].id;
+
+        // P1 controls Torpor Orb (typical sideboard card — put it on P1's side).
+        let orb_id = load_test_card(&mut game, "Torpor Orb", p1_id).expect("Torpor Orb should load");
+        game.battlefield.add(orb_id);
+
+        // --- 1. Verify Torpor Orb parses the DisableCreatureEtbTriggers static ---
+        {
+            let orb = game.cards.get(orb_id).expect("Torpor Orb card");
+            let has_disable_static = orb
+                .static_abilities
+                .iter()
+                .any(|sa| matches!(sa, crate::core::StaticAbility::DisableCreatureEtbTriggers { .. }));
+            assert!(
+                has_disable_static,
+                "Torpor Orb must have a DisableCreatureEtbTriggers static ability; \
+                 parsed statics: {:?}",
+                orb.static_abilities
+                    .iter()
+                    .map(|s| format!("{s:?}"))
+                    .collect::<Vec<_>>()
+            );
+        }
+
+        // --- 2. is_creature_etb_trigger_suppressed: true for a creature ---
+        // Wood Elves has a well-defined ETB trigger (search for Forest).
+        let elves_id = load_test_card(&mut game, "Wood Elves", p2_id).expect("Wood Elves should load");
+        // Put Wood Elves on the battlefield so it exists as a permanent.
+        game.battlefield.add(elves_id);
+
+        {
+            let elves = game.cards.get(elves_id).expect("Wood Elves card");
+            assert!(
+                game.is_creature_etb_trigger_suppressed(elves),
+                "is_creature_etb_trigger_suppressed must be true for a creature (Wood Elves) \
+                 while Torpor Orb is on the battlefield"
+            );
+        }
+
+        // --- 3. is_creature_etb_trigger_suppressed: false for a non-creature ---
+        // Torpor Orb itself (an artifact, not a creature) must NOT be suppressed.
+        {
+            let orb = game.cards.get(orb_id).expect("Torpor Orb card");
+            assert!(
+                !game.is_creature_etb_trigger_suppressed(orb),
+                "is_creature_etb_trigger_suppressed must be false for a non-creature (Torpor Orb itself)"
+            );
+        }
+
+        // --- 4. is_creature_etb_trigger_suppressed: false when Torpor Orb is removed ---
+        game.battlefield.remove(orb_id);
+        {
+            let elves = game.cards.get(elves_id).expect("Wood Elves card");
+            assert!(
+                !game.is_creature_etb_trigger_suppressed(elves),
+                "is_creature_etb_trigger_suppressed must be false for a creature when \
+                 Torpor Orb is no longer on the battlefield"
+            );
+        }
+    }
+
+    /// Card compat: Torpor Orb — end-to-end trigger suppression via `check_triggers`
+    /// (mtg-881, follow-up to `test_card_compat_torpor_orb_disables_creature_etb_triggers`).
+    ///
+    /// Verifies that when Torpor Orb is on the battlefield and a creature fires
+    /// `TriggerEvent::EntersBattlefield`, `check_triggers` returns without firing any
+    /// ETB effect. We measure the player's library size before and after to confirm
+    /// that Wood Elves' "search for a Forest" ETB trigger was NOT executed.
+    ///
+    /// MTG rules: CR 603.6b — Torpor Orb prevents creatures from causing triggered
+    /// abilities to trigger when they enter the battlefield.
+    #[test]
+    fn test_torpor_orb_check_triggers_suppression() {
+        use crate::core::TriggerEvent;
+        use std::path::PathBuf;
+
+        if !PathBuf::from("../cardsfolder/t/torpor_orb.txt").exists()
+            || !PathBuf::from("../cardsfolder/w/wood_elves.txt").exists()
+        {
+            eprintln!("Skipping: cardsfolder not present");
+            return;
+        }
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        let p2_id = game.players[1].id;
+
+        // Set up a library for P2 (Wood Elves controller) so the search-library
+        // trigger has something to find.
+        let forest_id = load_test_card(&mut game, "Forest", p2_id).expect("Forest should load");
+        game.get_player_zones_mut(p2_id).unwrap().library.cards.push(forest_id);
+        let initial_lib_size = game.get_player_zones(p2_id).unwrap().library.cards.len();
+
+        // P1 controls Torpor Orb.
+        let orb_id = load_test_card(&mut game, "Torpor Orb", p1_id).expect("Torpor Orb should load");
+        game.battlefield.add(orb_id);
+
+        // P2's Wood Elves enters the battlefield.
+        let elves_id = load_test_card(&mut game, "Wood Elves", p2_id).expect("Wood Elves should load");
+        game.battlefield.add(elves_id);
+
+        // Fire the ETB event for Wood Elves — WITH Torpor Orb in play.
+        game.check_triggers(TriggerEvent::EntersBattlefield, elves_id)
+            .expect("check_triggers should not error");
+
+        // Wood Elves' "search for Forest" trigger must NOT have fired.
+        let lib_size_after = game.get_player_zones(p2_id).unwrap().library.cards.len();
+        assert_eq!(
+            lib_size_after, initial_lib_size,
+            "Torpor Orb must suppress Wood Elves' ETB trigger: library should be unchanged \
+             (before={initial_lib_size}, after={lib_size_after})"
+        );
+
+        // --- Sanity check: without Torpor Orb the trigger DOES fire ---
+        game.battlefield.remove(orb_id);
+
+        // Reset library to one Forest again.
+        let forest2_id = load_test_card(&mut game, "Forest", p2_id).expect("Forest should load");
+        game.get_player_zones_mut(p2_id).unwrap().library.cards.clear();
+        game.get_player_zones_mut(p2_id).unwrap().library.cards.push(forest2_id);
+        let lib_before_no_orb = game.get_player_zones(p2_id).unwrap().library.cards.len();
+
+        // A NEW Wood Elves enters without Torpor Orb — trigger should fire.
+        let elves2_id = load_test_card(&mut game, "Wood Elves", p2_id).expect("Wood Elves should load");
+        game.battlefield.add(elves2_id);
+
+        game.check_triggers(TriggerEvent::EntersBattlefield, elves2_id)
+            .expect("check_triggers should not error");
+
+        let lib_after_no_orb = game.get_player_zones(p2_id).unwrap().library.cards.len();
+        // Library should have decreased (Forest was put onto battlefield).
+        assert!(
+            lib_after_no_orb < lib_before_no_orb,
+            "Without Torpor Orb, Wood Elves' ETB trigger must fire and reduce the library \
+             (before={lib_before_no_orb}, after={lib_after_no_orb})"
+        );
+    }
+
+    // ── 2005 Wave-2 fixes: graveyard reanimation ──────────────────────────────
+
+    /// Card compat: Goryo's Vengeance — Wave-2 fix.
+    ///
+    /// Script (SP$ ChangeZone):
+    ///   A:SP$ ChangeZone | Origin$ Graveyard | Destination$ Battlefield
+    ///   | ValidTgts$ Creature.Legendary+YouCtrl | GainControl$ True
+    ///   | RememberChanged$ True | SubAbility$ DBPump
+    ///   SVar:DBPump:DB$ Animate | Keywords$ Haste | Defined$ Remembered
+    ///   | Duration$ Permanent | AtEOT$ Exile | SubAbility$ DBCleanup
+    ///
+    /// Two assertions:
+    /// 1. The SP$ ChangeZone maps to `ReturnGraveyardCardToZone` with
+    ///    `remember_changed: true` (so the reanimated card enters remembered_cards).
+    /// 2. The DBPump Animate maps to `SetBasePowerToughness` with
+    ///    `target = CardId::remembered_card()` and `at_eot = Some(AtEotAction::Exile)`.
+    ///
+    /// MTG CR 400.7 / CR 603.7a: the exile is a delayed triggered ability that
+    /// fires at the beginning of the next end step.
+    #[test]
+    fn test_card_compat_goryos_vengeance_wave2() {
+        use crate::core::{
+            effects::{AtEotAction, Effect},
+            CardId,
+        };
+        use crate::zones::Zone;
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("../cardsfolder/g/goryos_vengeance.txt");
+        if !path.exists() {
+            eprintln!("Skipping: cardsfolder not present at {:?}", path);
+            return;
+        }
+        let def = crate::loader::CardLoader::load_from_file(&path).expect("Goryo's Vengeance should load");
+        assert_eq!(def.name.as_str(), "Goryo's Vengeance");
+
+        let card = def.instantiate(CardId::new(1), crate::core::PlayerId::new(0));
+
+        // 1. SP$ ChangeZone → ReturnGraveyardCardToZone with remember_changed: true.
+        let gy_effect = card
+            .effects
+            .iter()
+            .find(|e| {
+                matches!(
+                    e,
+                    Effect::ReturnGraveyardCardToZone {
+                        destination: Zone::Battlefield,
+                        ..
+                    }
+                )
+            })
+            .expect(
+                "Goryo's Vengeance must have a ReturnGraveyardCardToZone (Battlefield) effect. \
+                 If this fails the converter is not mapping Origin$ Graveyard | Destination$ \
+                 Battlefield | ValidTgts$ to ReturnGraveyardCardToZone.",
+            );
+        if let Effect::ReturnGraveyardCardToZone {
+            destination,
+            gain_control,
+            remember_changed,
+            ..
+        } = gy_effect
+        {
+            assert_eq!(*destination, Zone::Battlefield);
+            assert!(*gain_control, "Goryo's Vengeance: GainControl$ True required");
+            assert!(
+                *remember_changed,
+                "Goryo's Vengeance: RememberChanged$ True required so DBPump can find the \
+                 reanimated card via Defined$ Remembered"
+            );
+        } else {
+            panic!("Expected ReturnGraveyardCardToZone");
+        }
+
+        // 2. DBPump Animate → SetBasePowerToughness with remembered_card target + AtEOT Exile.
+        let animate_effect = card
+            .effects
+            .iter()
+            .find(|e| {
+                matches!(
+                    e,
+                    Effect::SetBasePowerToughness { target, at_eot: Some(AtEotAction::Exile), .. }
+                    if target.is_remembered_card()
+                )
+            })
+            .expect(
+                "Goryo's Vengeance DBPump must map to SetBasePowerToughness with \
+                 target=remembered_card() and at_eot=Some(Exile). If this fails: \
+                 (a) Animate Defined$ Remembered not using remembered_card() sentinel, or \
+                 (b) AtEOT$ Exile not parsed.",
+            );
+        if let Effect::SetBasePowerToughness { at_eot, .. } = animate_effect {
+            assert_eq!(
+                *at_eot,
+                Some(AtEotAction::Exile),
+                "DBPump must have AtEOT$ Exile (CR 603.7a delayed trigger)"
+            );
+        }
+    }
+
+    /// Card compat: Sneak Attack — Wave-2 fix.
+    ///
+    /// Script (AB$ ChangeZone from Enchantment on battlefield):
+    ///   A:AB$ ChangeZone | Origin$ Hand | Destination$ Battlefield
+    ///   | ChangeType$ Creature.YouCtrl | RememberChanged$ True
+    ///   | SubAbility$ DBPump
+    ///   SVar:DBPump:DB$ Animate | Keywords$ Haste | Defined$ Remembered
+    ///   | Duration$ Permanent | AtEOT$ Sacrifice | SubAbility$ DBCleanup
+    ///
+    /// Assertions:
+    /// 1. The AB$ ChangeZone maps to `PutCreatureFromHandOnBattlefield` with
+    ///    `remember_changed: true` (found in `card.activated_abilities[*].effects`,
+    ///    NOT `card.effects` — `A:AB$` lines go to activated abilities).
+    /// 2. The DBPump Animate maps to `SetBasePowerToughness` with
+    ///    `target = CardId::remembered_card()` and `at_eot = Some(AtEotAction::Sacrifice)`.
+    #[test]
+    fn test_card_compat_sneak_attack_wave2() {
+        use crate::core::{
+            effects::{AtEotAction, Effect},
+            CardId,
+        };
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("../cardsfolder/s/sneak_attack.txt");
+        if !path.exists() {
+            eprintln!("Skipping: cardsfolder not present at {:?}", path);
+            return;
+        }
+        let def = crate::loader::CardLoader::load_from_file(&path).expect("Sneak Attack should load");
+        assert_eq!(def.name.as_str(), "Sneak Attack");
+
+        let card = def.instantiate(CardId::new(1), crate::core::PlayerId::new(0));
+
+        // Sneak Attack is `A:AB$` — its effects live in `activated_abilities`, not `effects`.
+        // Collect all effects from all activated abilities for the search below.
+        let all_activated_effects: Vec<&Effect> = card
+            .activated_abilities
+            .iter()
+            .flat_map(|ab| ab.effects.iter())
+            .collect();
+
+        // 1. AB$ ChangeZone Origin$ Hand → PutCreatureFromHandOnBattlefield.
+        let put_effect = all_activated_effects
+            .iter()
+            .copied()
+            .find(|e| {
+                matches!(
+                    e,
+                    Effect::PutCreatureFromHandOnBattlefield {
+                        remember_changed: true,
+                        ..
+                    }
+                )
+            })
+            .expect(
+                "Sneak Attack must have PutCreatureFromHandOnBattlefield with remember_changed: true \
+                 in its activated ability effects. If this fails the converter does not handle \
+                 Origin$ Hand | Destination$ Battlefield | ChangeType$ Creature.YouCtrl | \
+                 RememberChanged$ True for A:AB$ lines.",
+            );
+        if let Effect::PutCreatureFromHandOnBattlefield {
+            remember_changed,
+            type_filter,
+            ..
+        } = put_effect
+        {
+            assert!(*remember_changed);
+            assert!(
+                type_filter.contains("Creature"),
+                "type_filter must include Creature (got {:?})",
+                type_filter
+            );
+        }
+
+        // 2. DBPump → SetBasePowerToughness with remembered_card target + AtEOT Sacrifice.
+        let animate_effect = all_activated_effects
+            .iter()
+            .copied()
+            .find(|e| {
+                matches!(
+                    e,
+                    Effect::SetBasePowerToughness { target, at_eot: Some(AtEotAction::Sacrifice), .. }
+                    if target.is_remembered_card()
+                )
+            })
+            .expect(
+                "Sneak Attack DBPump must map to SetBasePowerToughness with \
+                 target=remembered_card() and at_eot=Some(Sacrifice). \
+                 If this fails AtEOT$ Sacrifice is not parsed.",
+            );
+        if let Effect::SetBasePowerToughness { at_eot, .. } = animate_effect {
+            assert_eq!(
+                *at_eot,
+                Some(AtEotAction::Sacrifice),
+                "Sneak Attack DBPump must have AtEOT$ Sacrifice"
+            );
+        }
+    }
+
+    /// Card compat: Debtors' Knell — Wave-2 fix.
+    ///
+    /// Script (upkeep trigger):
+    ///   T:Mode$ Phase | Phase$ Upkeep | ValidPlayer$ You | TriggerZones$ Battlefield
+    ///   | Execute$ TrigChange
+    ///   SVar:TrigChange:DB$ ChangeZone | Origin$ Graveyard | Destination$ Battlefield
+    ///   | GainControl$ True | ChangeNum$ 1 | Mandatory$ True | ValidTgts$ Creature
+    ///
+    /// Before the fix, `ChangeNum$ 1` caused this to miss all converter arms
+    /// (the Graveyard→non-Hand arm had `!params.contains_key("ChangeNum")`), so the
+    /// upkeep trigger fired but reanimated nothing. The fix relaxes the guard to
+    /// allow `ChangeNum$ 1` (one card = identical semantics).
+    ///
+    /// Note: `T:Mode$ Phase` lines produce **triggers**, not spell effects.
+    /// The effects are in `card.triggers[*].effects`, NOT `card.effects`.
+    ///
+    /// Assertion: TrigChange SVar maps to `ReturnGraveyardCardToZone` with
+    /// `destination: Battlefield` and `gain_control: true`.
+    #[test]
+    fn test_card_compat_debtors_knell_wave2() {
+        use crate::core::effects::Effect;
+        use crate::zones::Zone;
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("../cardsfolder/d/debtors_knell.txt");
+        if !path.exists() {
+            eprintln!("Skipping: cardsfolder not present at {:?}", path);
+            return;
+        }
+        let def = crate::loader::CardLoader::load_from_file(&path).expect("Debtors' Knell should load");
+        assert_eq!(def.name.as_str(), "Debtors' Knell");
+
+        let card = def.instantiate(crate::core::CardId::new(1), crate::core::PlayerId::new(0));
+
+        // Debtors' Knell is `T:Mode$ Phase` — its effects live in `triggers`, not `effects`.
+        // Collect all effects from all triggers for the search below.
+        let all_trigger_effects: Vec<&Effect> = card.triggers.iter().flat_map(|t| t.effects.iter()).collect();
+
+        // TrigChange must produce ReturnGraveyardCardToZone → Battlefield.
+        let gy_effect = all_trigger_effects
+            .iter()
+            .copied()
+            .find(|e| {
+                matches!(
+                    e,
+                    Effect::ReturnGraveyardCardToZone {
+                        destination: Zone::Battlefield,
+                        gain_control: true,
+                        ..
+                    }
+                )
+            })
+            .expect(
+                "Debtors' Knell TrigChange must map to ReturnGraveyardCardToZone (Battlefield, \
+                 gain_control) in its trigger effects. If this fails the ChangeNum$ 1 guard in \
+                 the converter is still blocking this card (the pre-Wave-2 bug).",
+            );
+        if let Effect::ReturnGraveyardCardToZone {
+            destination,
+            gain_control,
+            ..
+        } = gy_effect
+        {
+            assert_eq!(*destination, Zone::Battlefield);
+            assert!(*gain_control);
+        }
+    }
+
+    // =========================================================================
+    // 1994 Wave 8 Card Compatibility Tests (mtg-709)
+    // =========================================================================
+
+    /// Ivory Tower parses correctly: artifact with a BeginningOfUpkeep trigger
+    /// that fires GainLifeDynamic(Count(CardsInHand{minus:4})).
+    ///
+    /// Verifies the loader produces the right trigger shape for
+    /// `T:Mode$ Phase | Phase$ Upkeep | Execute$ TrigGainLife`
+    /// with `SVar:X:Count$ValidHand Card.YouOwn/Minus.4`.
+    #[test]
+    fn test_card_compat_ivory_tower() {
+        use crate::core::{CountExpression, CountModifier, DynamicAmount, TriggerEvent};
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("../cardsfolder/i/ivory_tower.txt");
+        if !path.exists() {
+            eprintln!("Skipping: cardsfolder not present at {:?}", path);
+            return;
+        }
+        let def = crate::loader::CardLoader::load_from_file(&path).expect("Ivory Tower should load");
+
+        assert_eq!(def.name.as_str(), "Ivory Tower");
+        assert_eq!(def.mana_cost.generic, 1, "Ivory Tower costs {{1}}");
+        assert!(def.types.contains(&CardType::Artifact), "Must be an Artifact");
+
+        let card = def.instantiate(CardId::new(1), PlayerId::new(0));
+
+        // Must have exactly one upkeep trigger that fires on the controller's turn
+        let trigger = card
+            .triggers
+            .iter()
+            .find(|t| t.event == TriggerEvent::BeginningOfUpkeep)
+            .expect("Ivory Tower must have a BeginningOfUpkeep trigger");
+        assert!(
+            trigger.controller_turn_only,
+            "Ivory Tower fires only on controller's upkeep"
+        );
+
+        // The effect must be GainLifeDynamic with a CardsInHand/Minus.4 count
+        let gain_effect = trigger
+            .effects
+            .iter()
+            .find(|e| matches!(e, Effect::GainLifeDynamic { .. }))
+            .expect("Ivory Tower's trigger must produce a GainLifeDynamic effect");
+
+        let Effect::GainLifeDynamic { amount, .. } = gain_effect else {
+            unreachable!("matched GainLifeDynamic above");
+        };
+        assert!(
+            matches!(
+                amount,
+                DynamicAmount::Count(CountExpression::CardsInHand {
+                    modifier: CountModifier::Minus(4),
+                    ..
+                })
+            ),
+            "Ivory Tower's life gain must be Count(CardsInHand/Minus.4), got {amount:?}"
+        );
+    }
+
+    /// Berserk parses as an instant that includes a `CreateDelayedTrigger` effect
+    /// (end-step destroy) AND the `PumpCreatureVariable` (+X/+0 trample) effect.
+    ///
+    /// Verifies:
+    /// - The spell effect chain includes `PumpCreatureVariable` (grants trample, +X/+0)
+    /// - The spell effect chain includes `CreateDelayedTrigger` with a Phase end-step condition
+    /// - The `attacked_this_turn` field is added and cleared by `reset_transient_state`
+    #[test]
+    fn test_card_compat_berserk_parse() {
+        use crate::core::{Card, CardId, PlayerId, TriggerEvent};
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("../cardsfolder/b/berserk.txt");
+        if !path.exists() {
+            eprintln!("Skipping: cardsfolder not present at {:?}", path);
+            return;
+        }
+        let def = crate::loader::CardLoader::load_from_file(&path).expect("Berserk should load");
+        assert_eq!(def.name.as_str(), "Berserk");
+        // {G} instant
+        assert_eq!(def.mana_cost.green, 1);
+        assert_eq!(def.mana_cost.generic, 0);
+        assert!(def.types.contains(&CardType::Instant));
+
+        let card = def.instantiate(CardId::new(1), PlayerId::new(0));
+        // No upkeep / combat triggers on the card itself — Berserk's delay is SP$
+        assert!(
+            card.triggers.is_empty(),
+            "Berserk card must have no triggers (it creates a delayed trigger when cast)"
+        );
+
+        // Spell effects should include PumpCreatureVariable (grants Trample, +X/+0 via
+        // SVar:X:Targeted$CardPower = power at resolution time) and CreateDelayedTrigger
+        // for the end-step destroy condition.
+        let has_pump = card
+            .effects
+            .iter()
+            .any(|e| matches!(e, Effect::PumpCreatureVariable { .. }));
+        let has_delayed = card
+            .effects
+            .iter()
+            .any(|e| matches!(e, Effect::CreateDelayedTrigger { .. }));
+        assert!(
+            has_pump,
+            "Berserk must have a PumpCreatureVariable effect (variable +X/+0 pump via TargetedCardPower)"
+        );
+        assert!(
+            has_delayed,
+            "Berserk must create a delayed trigger (end-step destroy condition)"
+        );
+
+        // Verify Card::attacked_this_turn starts false
+        let test_id = CardId::new(99);
+        let mut dummy_card = Card::new(test_id, "Test", PlayerId::new(0));
+        assert!(!dummy_card.attacked_this_turn, "attacked_this_turn must start false");
+        dummy_card.attacked_this_turn = true;
+        dummy_card.reset_transient_state(None);
+        assert!(
+            !dummy_card.attacked_this_turn,
+            "attacked_this_turn must be cleared by reset_transient_state"
+        );
+        let _ = TriggerEvent::AttackerUnblocked; // ensure the variant compiles
+    }
+
+    /// Floral Spuzzem parses correctly: creature with an `AttackerUnblocked` trigger
+    /// that optionally destroys a target artifact controlled by the defending player.
+    ///
+    /// Verifies:
+    /// - One `TriggerEvent::AttackerUnblocked` trigger
+    /// - The trigger is optional
+    /// - The trigger effect is `DestroyPermanent` targeting artifacts with `OppCtrl`
+    #[test]
+    fn test_card_compat_floral_spuzzem() {
+        use crate::core::effects::ControllerRestriction;
+        use crate::core::{CardType, TargetType, TriggerEvent};
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("../cardsfolder/f/floral_spuzzem.txt");
+        if !path.exists() {
+            eprintln!("Skipping: cardsfolder not present at {:?}", path);
+            return;
+        }
+        let def = crate::loader::CardLoader::load_from_file(&path).expect("Floral Spuzzem should load");
+        assert_eq!(def.name.as_str(), "Floral Spuzzem");
+        assert!(def.types.contains(&CardType::Creature), "Must be a Creature");
+
+        let card = def.instantiate(CardId::new(1), PlayerId::new(0));
+
+        // Must have exactly one AttackerUnblocked trigger
+        let unblocked_triggers: Vec<_> = card
+            .triggers
+            .iter()
+            .filter(|t| t.event == TriggerEvent::AttackerUnblocked)
+            .collect();
+        assert_eq!(
+            unblocked_triggers.len(),
+            1,
+            "Floral Spuzzem must have exactly one AttackerUnblocked trigger, got {}",
+            unblocked_triggers.len()
+        );
+        let trigger = unblocked_triggers[0];
+        assert!(
+            trigger.optional,
+            "Floral Spuzzem's trigger must be optional ('you may destroy')"
+        );
+
+        // The trigger effect must destroy an artifact controlled by an opponent (OppCtrl)
+        let destroy_effect = trigger
+            .effects
+            .iter()
+            .find(|e| matches!(e, Effect::DestroyPermanent { .. }))
+            .expect("Floral Spuzzem's trigger must have a DestroyPermanent effect");
+
+        let Effect::DestroyPermanent { restriction, .. } = destroy_effect else {
+            unreachable!("matched DestroyPermanent above");
+        };
+        assert!(
+            restriction.types.contains(&TargetType::Artifact),
+            "Target must be an artifact (got types {:?})",
+            restriction.types
+        );
+        assert_eq!(
+            restriction.controller,
+            ControllerRestriction::OppCtrl,
+            "Target must be controlled by an opponent (defending player)"
+        );
+    }
+
+    /// Card compat: Valley Floodcaller (cardsfolder/v/valley_floodcaller.txt) — mtg-881 wave11.
+    ///
+    /// Script:
+    ///   `K:Flash`
+    ///   `S:Mode$ CastWithFlash | ValidCard$ Card.nonCreature | ValidSA$ Spell | Caster$ You |
+    ///    Description$ You may cast noncreature spells as though they had flash.`
+    ///
+    /// Parser check: verifies `StaticAbility::CastWithFlash` is emitted with
+    ///   `requires_noncreature = true`.
+    ///
+    /// Runtime check (Scenario A): With Valley Floodcaller on P0's battlefield and P1
+    ///   as the active player (P1's Main1, empty stack), P0's Armageddon (Sorcery) IS
+    ///   offered in the castable-spells buffer — flash is granted by the static.
+    ///
+    /// Runtime check (Scenario B): Without Valley Floodcaller, Armageddon is NOT offered
+    ///   to P0 during P1's turn (sorcery-speed restriction applies).
+    #[test]
+    fn test_card_compat_valley_floodcaller_cast_with_flash() {
+        use crate::core::SpellAbility;
+        use crate::core::StaticAbility;
+        use crate::game::game_loop::GameLoop;
+        use crate::game::{Step, VerbosityLevel};
+        use std::path::PathBuf;
+
+        let floodcaller_path = PathBuf::from("../cardsfolder/v/valley_floodcaller.txt");
+        let armageddon_path = PathBuf::from("../cardsfolder/a/armageddon.txt");
+        if !floodcaller_path.exists() || !armageddon_path.exists() {
+            eprintln!("Skipping: cardsfolder not present at {:?}", floodcaller_path);
+            return;
+        }
+
+        // --- 1. Parser check: CastWithFlash static with nonCreature filter ---
+        let def = crate::loader::CardLoader::load_from_file(&floodcaller_path).expect("Valley Floodcaller should load");
+        assert_eq!(def.name.as_str(), "Valley Floodcaller");
+        let card = def.instantiate(CardId::new(1), PlayerId::new(0));
+
+        let cwf_static = card.static_abilities.iter().find_map(|sa| {
+            if let StaticAbility::CastWithFlash { valid_card, .. } = sa {
+                Some(valid_card.clone())
+            } else {
+                None
+            }
+        });
+        let valid_card = cwf_static.expect("Valley Floodcaller must have a CastWithFlash static ability");
+        assert!(
+            valid_card.requires_noncreature,
+            "CastWithFlash filter must have requires_noncreature=true (ValidCard$ Card.nonCreature)"
+        );
+
+        // Confirm the filter matches a sorcery (nonCreature) and does NOT match a creature.
+        let armageddon_def =
+            crate::loader::CardLoader::load_from_file(&armageddon_path).expect("Armageddon should load");
+        let armageddon_card = armageddon_def.instantiate(CardId::new(2), PlayerId::new(0));
+        assert!(
+            valid_card.matches(&armageddon_card),
+            "CastWithFlash filter must match Armageddon (a sorcery / nonCreature)"
+        );
+
+        let grizzly_path = PathBuf::from("../cardsfolder/g/grizzly_bears.txt");
+        if grizzly_path.exists() {
+            let grizzly_def =
+                crate::loader::CardLoader::load_from_file(&grizzly_path).expect("Grizzly Bears should load");
+            let grizzly_card = grizzly_def.instantiate(CardId::new(3), PlayerId::new(0));
+            assert!(
+                !valid_card.matches(&grizzly_card),
+                "CastWithFlash filter must NOT match Grizzly Bears (a creature)"
+            );
+        }
+
+        // --- 2. Runtime check: Scenario A — Floodcaller on battlefield grants flash to sorcery ---
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p0_id = game.players[0].id;
+        let p1_id = game.players[1].id;
+
+        // P0 controls Valley Floodcaller on the battlefield.
+        let floodcaller_id =
+            load_test_card(&mut game, "Valley Floodcaller", p0_id).expect("Valley Floodcaller should load");
+        game.battlefield.add(floodcaller_id);
+        if let Ok(c) = game.cards.get_mut(floodcaller_id) {
+            c.controller = p0_id;
+        }
+
+        // P0 has Armageddon in hand and 4 Plains untapped (to pay {3}{W}).
+        let armageddon_id = load_test_card(&mut game, "Armageddon", p0_id).expect("Armageddon should load");
+        if let Some(zones) = game.get_player_zones_mut(p0_id) {
+            zones.hand.add(armageddon_id);
+        }
+        for _ in 0..4 {
+            let plains_id = load_test_card(&mut game, "Plains", p0_id).expect("Plains should load");
+            game.battlefield.add(plains_id);
+            if let Ok(c) = game.cards.get_mut(plains_id) {
+                c.controller = p0_id;
+                c.tapped = false;
+            }
+        }
+
+        // It is P1's turn, Main1, stack empty → P0 is the non-active player.
+        game.turn.active_player = p1_id;
+        game.turn.current_step = Step::Main1;
+
+        let buffer_a = {
+            let mut gl = GameLoop::new(&mut game).with_verbosity(VerbosityLevel::Silent);
+            gl.push_castable_spells(p0_id);
+            gl.get_abilities_buffer().to_vec()
+        };
+
+        let armageddon_offered_a = buffer_a
+            .iter()
+            .any(|sa| matches!(sa, SpellAbility::CastSpell { card_id, .. } if *card_id == armageddon_id));
+        assert!(
+            armageddon_offered_a,
+            "Valley Floodcaller: P0 MUST be offered Armageddon during P1's turn \
+             (CastWithFlash grants flash to nonCreature sorcery). Buffer: {:?}",
+            buffer_a
+        );
+
+        // --- 3. Runtime check: Scenario B — Without Floodcaller, sorcery is NOT offered ---
+        game.battlefield.remove(floodcaller_id);
+
+        let buffer_b = {
+            let mut gl2 = GameLoop::new(&mut game).with_verbosity(VerbosityLevel::Silent);
+            gl2.push_castable_spells(p0_id);
+            gl2.get_abilities_buffer().to_vec()
+        };
+
+        let armageddon_offered_b = buffer_b
+            .iter()
+            .any(|sa| matches!(sa, SpellAbility::CastSpell { card_id, .. } if *card_id == armageddon_id));
+        assert!(
+            !armageddon_offered_b,
+            "Without Valley Floodcaller: P0 must NOT be offered Armageddon during P1's turn \
+             (sorcery-speed restriction applies). Buffer: {:?}",
+            buffer_b
+        );
+    }
+
+    /// Card compat: The Legend of Kuruk (cardsfolder/t/the_legend_of_kuruk_avatar_kuruk.txt) — mtg-881 wave11.
+    ///
+    /// Script:
+    ///   `Name:The Legend of Kuruk`
+    ///   `Types:Enchantment Saga`
+    ///   `K:Chapter:3:DBScry,DBScry,DBTransform`
+    ///   (front face; back face Avatar Kuruk ignored — DFC back not loaded, CR 715.2)
+    ///
+    /// Parser check:
+    /// 1. Card loads without error (card file now present after wave-11 fix).
+    /// 2. Card type is Enchantment with Saga subtype.
+    /// 3. Saga Chapter keyword is parsed (3 chapters: I+II = Scry+Draw, III = Transform).
+    ///    Chapters I and II (Scry 2 + draw a card) WORKING.
+    ///    Chapter III (exile-and-return-transformed) is PARTIAL — exile fires but
+    ///    `Transformed$ True` not yet implemented; Avatar Kuruk face not loaded.
+    #[test]
+    fn test_card_compat_legend_of_kuruk_saga_parser_shape() {
+        use crate::core::{CardType, Keyword};
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("../cardsfolder/t/the_legend_of_kuruk_avatar_kuruk.txt");
+        if !path.exists() {
+            eprintln!("Skipping: cardsfolder not present at {:?}", path);
+            return;
+        }
+
+        let def =
+            crate::loader::CardLoader::load_from_file(&path).expect("The Legend of Kuruk should load without error");
+
+        assert_eq!(def.name.as_str(), "The Legend of Kuruk");
+        assert!(
+            def.types.contains(&CardType::Enchantment),
+            "Must be an Enchantment (got types {:?})",
+            def.types
+        );
+
+        // Must have Saga subtype
+        let has_saga_subtype = def.subtypes.iter().any(|s| s.as_str() == "Saga");
+        assert!(
+            has_saga_subtype,
+            "Must have Saga subtype (got subtypes {:?})",
+            def.subtypes
+        );
+
+        // Must have Chapter keyword
+        let card = def.instantiate(CardId::new(1), PlayerId::new(0));
+        assert!(
+            card.keywords.contains(Keyword::Chapter),
+            "The Legend of Kuruk must have the Chapter keyword (Saga chapters I-III)"
         );
     }
 }

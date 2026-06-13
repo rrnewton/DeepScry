@@ -373,6 +373,7 @@ impl<'a> GameLoop<'a> {
                 power_bonus,
                 toughness_bonus,
                 keywords_granted,
+                keyword_args_granted,
             } => {
                 let target_name = self
                     .game
@@ -380,19 +381,20 @@ impl<'a> GameLoop<'a> {
                     .get(*target)
                     .map(|c| c.name.as_str())
                     .unwrap_or("Unknown");
-                let message = if keywords_granted.is_empty() {
+                let has_keywords = !keywords_granted.is_empty() || !keyword_args_granted.is_empty();
+                let message = if !has_keywords {
                     format!(
                         "{source_name} ({source_id}) gives {target_name} ({target}) {power_bonus:+}/{toughness_bonus:+} until end of turn"
                     )
                 } else if *power_bonus == 0 && *toughness_bonus == 0 {
                     format!(
-                        "{source_name} ({source_id}) gives {target_name} ({target}) {:?} until end of turn",
-                        keywords_granted
+                        "{source_name} ({source_id}) gives {target_name} ({target}) {:?}{:?} until end of turn",
+                        keywords_granted, keyword_args_granted
                     )
                 } else {
                     format!(
-                        "{source_name} ({source_id}) gives {target_name} ({target}) {power_bonus:+}/{toughness_bonus:+} and {:?} until end of turn",
-                        keywords_granted
+                        "{source_name} ({source_id}) gives {target_name} ({target}) {power_bonus:+}/{toughness_bonus:+} and {:?}{:?} until end of turn",
+                        keywords_granted, keyword_args_granted
                     )
                 };
                 self.game.logger.gamelog(&message);
@@ -402,6 +404,7 @@ impl<'a> GameLoop<'a> {
                 power_count,
                 toughness_count,
                 keywords_granted,
+                keyword_args_granted,
             } => {
                 let target_name = self
                     .game
@@ -411,8 +414,8 @@ impl<'a> GameLoop<'a> {
                     .unwrap_or("Unknown");
                 // Note: We log the expression type since actual values depend on game state
                 let message = format!(
-                    "{source_name} ({source_id}) gives {target_name} ({target}) +X/+X (power: {:?}, toughness: {:?}) and {:?} until end of turn",
-                    power_count, toughness_count, keywords_granted
+                    "{source_name} ({source_id}) gives {target_name} ({target}) +X/+X (power: {:?}, toughness: {:?}) and {:?}{:?} until end of turn",
+                    power_count, toughness_count, keywords_granted, keyword_args_granted
                 );
                 self.game.logger.gamelog(&message);
             }
@@ -437,7 +440,23 @@ impl<'a> GameLoop<'a> {
                 let message = format!("{source_name} ({source_id}) causes {player_name} to mill {count} card(s)");
                 self.game.logger.gamelog(&message);
             }
-            Effect::Scry { player, count } => {
+            Effect::Scry {
+                player,
+                count,
+                only_if_bargained,
+            } => {
+                // Condition$ Bargain: suppress the log when the scry is
+                // conditional on bargain but the source spell was not bargained.
+                if *only_if_bargained {
+                    let is_bargained = self
+                        .game
+                        .cards
+                        .try_get(source_id)
+                        .is_some_and(|c| c.bargain_paid);
+                    if !is_bargained {
+                        return;
+                    }
+                }
                 let player_name = self.get_player_name(*player);
                 let message = format!("{source_name} ({source_id}) causes {player_name} to scry {count}");
                 self.game.logger.gamelog(&message);
@@ -576,6 +595,16 @@ impl<'a> GameLoop<'a> {
                 );
                 self.game.logger.gamelog(&message);
             }
+            Effect::ReturnPermanentToHand { target, .. } => {
+                let target_name = self
+                    .game
+                    .cards
+                    .get(*target)
+                    .map(|c| c.name.as_str())
+                    .unwrap_or("Unknown");
+                let message = format!("{source_name} ({source_id}) returns {target_name} ({target}) to hand");
+                self.game.logger.gamelog(&message);
+            }
             Effect::ExilePermanent { target } => {
                 let target_name = self
                     .game
@@ -654,6 +683,17 @@ impl<'a> GameLoop<'a> {
                     self.game.logger.gamelog(&message);
                 }
             }
+            Effect::CreateTokenWithStoredPt {
+                source_card,
+                controller,
+                token_script,
+            } => {
+                let controller_name = self.get_player_name(*controller);
+                let message = format!(
+                    "{source_name} ({source_id}) creates a {token_script} token (P/T from stored value on {source_card:?}) under {controller_name}'s control"
+                );
+                self.game.logger.gamelog(&message);
+            }
             Effect::Balance {
                 card_type,
                 zone,
@@ -674,6 +714,12 @@ impl<'a> GameLoop<'a> {
                 keywords_granted,
                 ..
             } => {
+                // `Defined$ Remembered` sentinel: the actual card(s) are in
+                // remembered_cards and will be logged inside execute_set_base_power_toughness.
+                // Skip top-level logging here to avoid "Unknown (4294967291)" noise.
+                if target.is_remembered_card() {
+                    return;
+                }
                 let target_name = self
                     .game
                     .cards
@@ -895,6 +941,7 @@ impl<'a> GameLoop<'a> {
                 power,
                 toughness,
                 keywords_granted,
+                ..
             } => {
                 let controller_name = self.get_player_name(*controller);
                 let target_desc = if filter.contains("YouCtrl") {
@@ -975,6 +1022,14 @@ impl<'a> GameLoop<'a> {
                 let message = format!("{source_name} ({source_id}) clears remembered cards");
                 self.game.logger.gamelog(&message);
             }
+            Effect::ChooseAndRememberOneOfEach { types } => {
+                let type_names: Vec<String> = types.iter().map(|t| format!("{t:?}")).collect();
+                let message = format!(
+                    "{source_name} ({source_id}) chooses one of each: {}",
+                    type_names.join(", ")
+                );
+                self.game.logger.gamelog(&message);
+            }
             Effect::ChooseColor { player, .. } => {
                 let player_name = self.get_player_name(*player);
                 let message = format!("{source_name} ({source_id}) {player_name} chooses a color");
@@ -1049,12 +1104,26 @@ impl<'a> GameLoop<'a> {
                     format!("{source_name} ({source_id}) forces {player_name} to sacrifice {count} {sac_type}");
                 self.game.logger.gamelog(&message);
             }
+            Effect::SacrificeSelf { source } => {
+                let card_name = self
+                    .game
+                    .cards
+                    .try_get(*source)
+                    .map(|c| c.name.as_str().to_owned())
+                    .unwrap_or_else(|| source_name.to_string());
+                let message = format!("{card_name} is sacrificed");
+                self.game.logger.gamelog(&message);
+            }
             Effect::TapAll { .. } => {
                 let message = format!("{source_name} ({source_id}) taps all matching permanents");
                 self.game.logger.gamelog(&message);
             }
             Effect::UntapAll { .. } => {
                 let message = format!("{source_name} ({source_id}) untaps all matching permanents");
+                self.game.logger.gamelog(&message);
+            }
+            Effect::UntapOne { .. } => {
+                let message = format!("{source_name} ({source_id}) untaps one matching permanent");
                 self.game.logger.gamelog(&message);
             }
             Effect::DrainMana { .. } => {
@@ -1123,6 +1192,19 @@ impl<'a> GameLoop<'a> {
             // NoOp is an INTENTIONAL no-op (e.g. StoreSVar): no gamelog line, in
             // contrast to Unimplemented which surfaces the gap.
             Effect::NoOp { .. } => {}
+            Effect::PlayFromGraveyard { target, .. } => {
+                // Log is emitted inside execute_play_from_graveyard (which has
+                // the card name in context). If still placeholder, nothing to log.
+                if !target.is_placeholder() {
+                    if let Some(card) = self.game.cards.try_get(*target) {
+                        let message = format!(
+                            "{source_name} ({source_id}): may cast {} from graveyard this turn",
+                            card.name
+                        );
+                        self.game.logger.gamelog(&message);
+                    }
+                }
+            }
             // ClassLevelUp logging is handled inside execute_class_level_up
             // (the level advance is logged there with full context).
             Effect::ClassLevelUp { .. } => {}
@@ -1145,7 +1227,13 @@ impl<'a> GameLoop<'a> {
                 let message = format!("{source_name} ({source_id}) moves from {origin:?} to {destination:?}");
                 self.game.logger.gamelog(&message);
             }
-            Effect::ReturnCardsFromGraveyardToHand { .. } | Effect::ReturnGraveyardCardToHand { .. } => {
+            Effect::ReturnCardsFromGraveyardToHand { .. }
+            | Effect::PutCardsFromHandOnTopOfLibrary { .. }
+            | Effect::RevealCardsFromHand { .. }  // reveal logged inside execute_effect
+            | Effect::ReturnGraveyardCardToHand { .. }
+            | Effect::ReturnGraveyardCardToZone { .. }
+            | Effect::PutCreatureFromHandOnBattlefield { .. }
+            | Effect::ReturnSelfAsEnchantment { .. } => {
                 // Individual card-return log lines are emitted inside execute_effect.
                 // Nothing to surface at the top level.
             }
@@ -1156,6 +1244,49 @@ impl<'a> GameLoop<'a> {
             Effect::ConditionalSelfCounter { .. } => {
                 // The wrapper itself produces no log; the inner effect logs when
                 // (and if) it executes. Nothing to surface here.
+            }
+            Effect::CreateTokenDynamic { .. } => {
+                // Resolved to CreateToken by resolve_effect_placeholder before
+                // execute_effect; the concrete CreateToken arm above handles
+                // logging at execution time.
+            }
+            Effect::CreateEmblem { emblem_name, .. } => {
+                // Emblem creation is logged inside execute_create_emblem using
+                // the gamelog channel (which includes the player name). No
+                // duplicate log line needed here.
+                log::debug!(target: "emblem", "CreateEmblem '{}' logged by execute_create_emblem", emblem_name);
+            }
+            Effect::RearrangeTopOfLibrary { .. } => {
+                // The gamelog line ("P? looks at the top N cards ...") is emitted
+                // inside execute_rearrange_top_of_library. Nothing to surface here.
+            }
+            Effect::SkipUntapStep { .. } => {
+                // The gamelog line ("P? will skip their next untap step") is emitted
+                // inside execute_skip_untap_step. Nothing to surface here.
+            }
+            // RepeatEach: individual sub-effect logs are emitted by each sub-ability's
+            // own log_effect call; no top-level summary log needed here.
+            Effect::RepeatEach { .. } => {}
+            Effect::ExtraLandPlay { player, amount } => {
+                // execute_extra_land_play emits its own gamelog; this hook is
+                // a pre-execution log so we keep it brief.
+                let player_name = self.get_player_name(*player);
+                let plural = if *amount == 1 { "" } else { "s" };
+                self.game.logger.gamelog(&format!(
+                    "{source_name} grants {player_name} {amount} extra land play{plural} this turn"
+                ));
+            }
+            Effect::TapPermanentsMatchingFilter { player, count, .. } => {
+                let player_name = self.get_player_name(*player);
+                self.game.logger.gamelog(&format!(
+                    "{source_name} forces {player_name} to tap {count} permanents"
+                ));
+            }
+            Effect::GrantCastWithFlash { player, .. } => {
+                let player_name = self.get_player_name(*player);
+                self.game.logger.gamelog(&format!(
+                    "{source_name} grants {player_name} flash-casting permission this turn"
+                ));
             }
         }
     }

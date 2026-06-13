@@ -1,0 +1,23 @@
+[metadata]
+Name:Summoning Trap alt-cost {0} after creature spell countered
+Goal:Win
+Turns:5
+Difficulty:Medium
+Description:P0 has Summoning Trap in hand and Llanowar Elves on library top. On turn 1, P1 counters P0's creature spell (Grizzly Bears is countered by Cancel). SetTrap StoreSVar should increment to 1. Then P0 casts Summoning Trap — the {0} alternative cost should be offered. If StoreSVar is a no-op, Summoning Trap costs {4GG} instead. Verifies B6 alt-cost for 2010 WC tracker mtg-914.
+
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Summoning Trap; Grizzly Bears
+p0library=Llanowar Elves; Forest; Forest; Forest; Forest; Forest; Forest
+p0graveyard=
+p0battlefield=Forest; Forest; Forest; Forest; Forest; Forest
+
+p1life=20
+p1hand=Cancel
+p1library=Island; Island; Island; Island
+p1graveyard=
+p1battlefield=Island; Island; Island
+p1exile=

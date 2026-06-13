@@ -531,11 +531,13 @@ impl HeuristicController {
             return true;
         }
 
-        // Check for UntapAll effects
-        let has_untap_all = spell
-            .effects
-            .iter()
-            .any(|e| matches!(e, crate::core::Effect::UntapAll { .. }));
+        // Check for UntapAll / UntapOne effects
+        let has_untap_all = spell.effects.iter().any(|e| {
+            matches!(
+                e,
+                crate::core::Effect::UntapAll { .. } | crate::core::Effect::UntapOne { .. }
+            )
+        });
         if has_untap_all && self.should_cast_untap_all(view) {
             return true;
         }
@@ -708,11 +710,13 @@ impl HeuristicController {
                 e,
                 crate::core::Effect::SearchLibrary { .. }
                     | crate::core::Effect::CreateToken { .. }
+                    | crate::core::Effect::CreateTokenWithStoredPt { .. }
                     | crate::core::Effect::Scry { .. }
                     | crate::core::Effect::Surveil { .. }
                     | crate::core::Effect::Loot { .. }
                     | crate::core::Effect::Dig { .. }
                     | crate::core::Effect::CopyPermanent { .. }
+                    | crate::core::Effect::ReturnPermanentToHand { .. }
                     | crate::core::Effect::ExilePermanent { .. }
                     | crate::core::Effect::Balance { .. }
                     | crate::core::Effect::AddTurn { .. }
@@ -1193,22 +1197,13 @@ impl HeuristicController {
     /// Simple heuristic: cast if opponent has creatures on the battlefield.
     /// More valuable if opponent has few creatures (they lose their best one).
     pub(crate) fn should_cast_force_sacrifice(&self, view: &GameStateView) -> bool {
-        // Check if any opponent has creatures
-        for opp_id in view.opponents() {
-            let opp_creature_count = view
-                .battlefield()
-                .iter()
-                .filter(|&&card_id| {
-                    view.get_card(card_id)
-                        .is_some_and(|c| c.is_creature() && c.controller == opp_id)
-                })
-                .count();
-
-            if opp_creature_count > 0 {
-                return true;
-            }
-        }
-        false
+        // Cast if any opponent has at least one creature on the battlefield.
+        view.opponents().any(|opp_id| {
+            view.battlefield().iter().any(|&id| {
+                view.get_card(id)
+                    .is_some_and(|c| c.is_creature() && c.controller == opp_id)
+            })
+        })
     }
 
     /// Evaluate whether to cast TapAll
@@ -1286,20 +1281,13 @@ impl HeuristicController {
     /// Best used before combat to tap opponent's best blocker,
     /// or during opponent's turn to tap their best attacker.
     pub(crate) fn should_cast_tap_permanent(&self, view: &GameStateView) -> bool {
-        // Check if opponent has untapped creatures we'd want to tap
-        let has_untapped_opp_creature = view
-            .battlefield()
+        // Cast when an opponent has an untapped creature we would want to tap
+        // (e.g. tap their best blocker before our attack).
+        // CR 602.1: the heuristic must prefer opponent targets over our own.
+        view.battlefield()
             .iter()
-            .filter_map(|&card_id| view.get_card(card_id))
-            .any(|c| c.is_creature() && c.controller != self.player_id && !c.tapped);
-
-        if has_untapped_opp_creature {
-            return true;
-        }
-
-        // Also worthwhile if opponent has untapped mana sources we want to deny
-        // (especially before they can cast something)
-        false
+            .filter_map(|&id| view.get_card(id))
+            .any(|c| c.is_creature() && c.controller != self.player_id && !c.tapped)
     }
 
     /// Evaluate whether to cast a Debuff spell (remove keywords from opponent creature)

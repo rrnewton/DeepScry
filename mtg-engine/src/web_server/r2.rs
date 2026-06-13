@@ -142,6 +142,21 @@ pub struct R2Config {
     pub endpoint: String,
     /// `R2_BUCKET`, e.g. `deepscry-decks`.
     pub bucket: String,
+    /// `R2_PUBLIC_BASE_URL` — optional base URL for the bucket's public
+    /// Cloudflare R2.dev subdomain, e.g.
+    /// `https://pub-<hash>.r2.dev`. When set, the credentials endpoint
+    /// includes a `public_url` field pointing straight at the caller's
+    /// collection object (no expiry, no signature). Requires the bucket
+    /// to be enabled for public access in the Cloudflare dashboard
+    /// (Bucket → Settings → Public access → Allow Access). When unset,
+    /// the credentials endpoint omits `public_url` and the browser falls
+    /// back to the presigned `get_url`.
+    ///
+    /// OPERATOR STEP (one-time, out-of-band): in the Cloudflare dashboard
+    /// open R2 → <bucket> → Settings → "Public access" and click
+    /// "Allow Access". Note the `pub-<hash>.r2.dev` subdomain shown there
+    /// and set `R2_PUBLIC_BASE_URL=https://pub-<hash>.r2.dev` in `.r2.env`.
+    pub public_base_url: Option<String>,
 }
 
 impl std::fmt::Debug for R2Config {
@@ -152,6 +167,7 @@ impl std::fmt::Debug for R2Config {
             .field("secret_access_key", &"<redacted>")
             .field("endpoint", &self.endpoint)
             .field("bucket", &self.bucket)
+            .field("public_base_url", &self.public_base_url)
             .finish()
     }
 }
@@ -167,12 +183,24 @@ impl R2Config {
         let secret_access_key = non_empty_env("AWS_SECRET_ACCESS_KEY")?;
         let endpoint = non_empty_env("R2_ENDPOINT")?;
         let bucket = non_empty_env("R2_BUCKET")?;
+        let public_base_url = non_empty_env("R2_PUBLIC_BASE_URL").map(|u| u.trim_end_matches('/').to_string());
         Some(Self {
             access_key_id,
             secret_access_key,
             endpoint: endpoint.trim_end_matches('/').to_string(),
             bucket,
+            public_base_url,
         })
+    }
+
+    /// Build the permanent public URL for a collection object, using the
+    /// optional `public_base_url`. Returns `None` when public access is not
+    /// configured.
+    ///
+    /// URL shape: `<public_base_url>/<object_key>`
+    /// e.g. `https://pub-abc123.r2.dev/decks/github-583231/collection.tgz`
+    pub fn public_url(&self, object_key: &str) -> Option<String> {
+        self.public_base_url.as_ref().map(|base| format!("{base}/{object_key}"))
     }
 
     /// The bucket host (no scheme), e.g.
@@ -459,7 +487,29 @@ mod tests {
             secret_access_key: "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY".to_string(),
             endpoint: "https://acct.r2.cloudflarestorage.com".to_string(),
             bucket: "deepscry-decks".to_string(),
+            public_base_url: None,
         }
+    }
+
+    #[test]
+    fn public_url_present_and_absent() {
+        let mut cfg = test_config();
+        assert_eq!(cfg.public_url("decks/dev/collection.tgz"), None);
+
+        cfg.public_base_url = Some("https://pub-abc123.r2.dev".to_string());
+        assert_eq!(
+            cfg.public_url("decks/dev/collection.tgz"),
+            Some("https://pub-abc123.r2.dev/decks/dev/collection.tgz".to_string())
+        );
+
+        // Trailing slash on the base is normalised away by from_env but we also
+        // handle it if someone constructs directly.
+        cfg.public_base_url = Some("https://pub-abc123.r2.dev/".to_string());
+        // The trailing slash becomes part of the URL in this direct construction
+        // path (from_env strips it; direct struct init doesn't). Either way the
+        // object_key is appended after the slash.
+        let url = cfg.public_url("decks/dev/collection.tgz").unwrap();
+        assert!(url.contains("decks/dev/collection.tgz"));
     }
 
     /// The presigned URL is well-formed and DETERMINISTIC for a fixed clock

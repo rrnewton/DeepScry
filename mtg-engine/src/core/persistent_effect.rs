@@ -182,6 +182,63 @@ pub enum PersistentEffectKind {
         /// If true, creatures cast this way enter with a finality counter
         add_finality_counter: bool,
     },
+
+    /// CastTargetedSpellFromGraveyard: one-time permission to cast a specific
+    /// instant or sorcery from the graveyard.
+    ///
+    /// Created by: Chandra, Acolyte of Flame −2 (`AB$ Play | TgtZone$ Graveyard`)
+    /// Effect: "You may cast [tracked_card] from your graveyard this turn."
+    /// If `exile_on_resolution` is true, the card is exiled instead of going to
+    /// the graveyard when it resolves (CR 614 replacement applied by
+    /// `resolve_spell_finalize` reading `Card::exile_if_would_go_to_graveyard_this_turn`).
+    ///
+    /// Cleanup: when the tracked card is cast OR at end of turn (whichever first).
+    CastTargetedSpellFromGraveyard {
+        /// The specific card in the graveyard that may be cast
+        tracked_card: CardId,
+
+        /// The player who may cast it
+        owner: PlayerId,
+
+        /// If true, exile instead of graveyard on resolution (ReplaceGraveyard$ Exile)
+        exile_on_resolution: bool,
+    },
+
+    /// Temporary extra land-play permission, valid until end of turn.
+    ///
+    /// Created by spells such as Explore (`A:SP$ Effect | StaticAbilities$ Exploration`)
+    /// where `SVar:Exploration:Mode$ Continuous | Affected$ You | AdjustLandPlays$ 1`.
+    ///
+    /// Permanent versions (Oracle of Mul Daya, Exploration enchantment) use
+    /// `StaticAbility::ExtraLandPlay` on the battlefield card instead; those are
+    /// computed dynamically in `GameState::effective_max_lands()` without a
+    /// `PersistentEffect` entry.
+    ///
+    /// Cleanup: `CleanupCondition::EndOfTurn`.
+    ExtraLandPlay {
+        /// Player who gains the extra land play.
+        player: PlayerId,
+        /// Number of extra plays granted (usually 1).
+        amount: u8,
+    },
+
+    /// Temporary "cast with flash" grant for matching spells, valid until end of turn.
+    ///
+    /// Created by `AB$ Effect | StaticAbilities$ STPlay | Duration$ UntilYourNextTurn`
+    /// where the SVar body is `Mode$ CastWithFlash | ValidCard$ <filter>`.
+    ///
+    /// Example: Teferi, Time Raveler's +1 — "Until your next turn, you may cast sorcery
+    /// spells as though they had flash."
+    ///
+    /// Cleanup: `CleanupCondition::EndOfTurn` (conservative approximation; the true rule
+    /// is "until your next turn", but EndOfTurn is correct for the current active player's
+    /// full-turn grant in a 2-player game: the grant expires at end of the opponent's turn).
+    GrantCastWithFlash {
+        /// Player who may cast the affected spells with flash.
+        player: PlayerId,
+        /// Filter for which cards may be cast with flash (e.g. `Sorcery`).
+        valid_card: crate::core::TargetRestriction,
+    },
 }
 
 /// Condition that triggers automatic cleanup of a persistent effect.
@@ -444,6 +501,44 @@ impl PersistentEffectStore {
     /// Check if there are no active effects.
     pub fn is_empty(&self) -> bool {
         self.effects.is_empty()
+    }
+
+    /// True if any active `GrantCastWithFlash` persistent effect allows `player`
+    /// to cast `card` as though it had flash.
+    ///
+    /// Used by the priority action-enumeration loop to offer sorceries (and other
+    /// non-instant spells) as castable at instant speed when Teferi's +1 is in
+    /// effect (or any similar temporary `CastWithFlash` grant).
+    pub fn player_has_grant_cast_with_flash(&self, player: PlayerId, card: &crate::core::Card) -> bool {
+        self.effects.iter().any(|e| {
+            if let PersistentEffectKind::GrantCastWithFlash { player: p, valid_card } = &e.kind {
+                *p == player && valid_card.matches(card)
+            } else {
+                false
+            }
+        })
+    }
+
+    /// Sum the number of extra land plays granted to `player` by temporary
+    /// `ExtraLandPlay` persistent effects (i.e., from spells like Explore).
+    ///
+    /// Does NOT include permanent-static grants such as Oracle of Mul Daya;
+    /// those are summed separately in `GameState::effective_max_lands()`.
+    pub fn extra_land_plays_for_player(&self, player: PlayerId) -> u8 {
+        self.effects
+            .iter()
+            .filter_map(|e| {
+                if let PersistentEffectKind::ExtraLandPlay { player: p, amount } = &e.kind {
+                    if *p == player {
+                        Some(*amount)
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            })
+            .fold(0u8, |acc, n| acc.saturating_add(n))
     }
 }
 

@@ -1,0 +1,24 @@
+[metadata]
+Name:Torch the Tower deals 3 damage when bargained
+Goal:Win
+Turns:3
+Difficulty:Easy
+Description:Torch the Tower (SVar:X:Count$Bargain.3.2) deals 3 damage when the optional Bargain cost is paid by sacrificing an artifact/enchantment/token. P0 controls 2 Mountains (mana for {R}), Soul-Guide Lantern (artifact to sacrifice), and holds Torch the Tower. P1 controls a 3/3 Centaur Token. The AI should pay Bargain by sacrificing Soul-Guide Lantern, dealing 3 damage instead of 2 — enough to kill the 3/3 that would survive 2 damage. Also verifies the Condition$Bargain Scry 1 rider fires.
+
+[state]
+turn=2
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Torch the Tower
+p0library=Mountain; Mountain; Mountain; Mountain; Mountain
+p0graveyard=
+p0battlefield=Mountain; Mountain; Soul-Guide Lantern
+p0exile=
+
+p1life=20
+p1hand=
+p1library=Plains; Plains; Plains; Plains; Plains
+p1graveyard=
+p1battlefield=Centaur Courser
+p1exile=

@@ -228,13 +228,18 @@ impl GameState {
         // These are from pump spells like Giant Growth that set card.power_bonus/toughness_bonus
         let temp_pump = (creature.power_bonus, creature.toughness_bonus);
 
-        // Layer 7a (CR 613.4a): Characteristic-defining abilities
-        // TODO: Implement for creatures like Tarmogoyf (*/* based on card types)
-        let characteristic_value = None;
+        // Layer 7a (CR 613.4a): Characteristic-defining abilities.
+        // The creature itself carries the CDA static (e.g. Serra Avatar).
+        // Evaluated dynamically so life-total changes propagate immediately.
+        let characteristic_value = self.calculate_cda_pt(creature_id)?;
 
-        // Layer 7b (CR 613.4b): Set P/T effects
-        // TODO: Implement for effects like "becomes 0/1" or Lignify
-        let setpt_value = None;
+        // Layer 7b (CR 613.4b): Set P/T effects.
+        // Opalescence: enchantments-as-creatures have P/T = their mana value.
+        // "becomes 0/1" (Lignify etc.) is still a TODO.
+        let setpt_value = {
+            let card = self.cards.get(creature_id)?;
+            self.opalescence_pt(card).map(|v| (v, v))
+        };
 
         // Layer 7c (CR 613.4c): Modify P/T - continuous effects from other permanents
         let continuous_effects = self.calculate_modifypt_effects(creature_id)?;
@@ -710,6 +715,88 @@ impl GameState {
                 creature_id != source_id && creature.subtypes.contains(subtype)
             }
         }
+    }
+
+    /// Calculate Layer 7a: Characteristic-Defining Ability P/T (CR 613.4a).
+    ///
+    /// Returns `Some((power, toughness))` if the creature has a CDA that
+    /// defines its P/T (e.g. Serra Avatar: P/T = controller's life total),
+    /// or `None` if no CDA applies.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the creature is not found in the card store.
+    fn calculate_cda_pt(&self, creature_id: CardId) -> Result<Option<(i32, i32)>> {
+        use crate::core::{CdaPtSource, StaticAbility};
+
+        let creature = self.cards.get(creature_id)?;
+        for sa in &creature.static_abilities {
+            if let StaticAbility::CharacteristicDefiningPt {
+                power_source,
+                toughness_source,
+                ..
+            } = sa
+            {
+                let eval = |src: &CdaPtSource| -> i32 {
+                    match src {
+                        CdaPtSource::ControllerLifeTotal => {
+                            // Serra Avatar: P/T = controller's current life total.
+                            // Life total is public state (CR 119.1), so this is
+                            // information-independent and network-determinism-safe.
+                            self.players
+                                .iter()
+                                .find(|p| p.id == creature.controller)
+                                .map(|p| p.life)
+                                .unwrap_or(0)
+                        }
+                        CdaPtSource::AllGraveyardCreatures { modifier } => {
+                            // Lhurgoyf: count creature cards across ALL players'
+                            // graveyards. Graveyard contents are public (CR 400.2),
+                            // so this is information-independent.
+                            let raw: i32 = self
+                                .player_zones
+                                .iter()
+                                .map(|(_, zones)| {
+                                    zones
+                                        .graveyard
+                                        .cards
+                                        .iter()
+                                        .filter(|&&cid| {
+                                            self.cards.try_get(cid).map(|c| c.is_creature()).unwrap_or(false)
+                                        })
+                                        .count()
+                                })
+                                .sum::<usize>()
+                                .try_into()
+                                .unwrap_or(i32::MAX);
+                            modifier.apply(raw)
+                        }
+                    }
+                };
+                let power = eval(power_source);
+                let toughness = eval(toughness_source);
+                return Ok(Some((power, toughness)));
+            }
+        }
+        Ok(None)
+    }
+
+    /// Public wrapper over `selector_applies_to_creature` for general-purpose
+    /// permanent matching (not just creatures with P/T).
+    ///
+    /// Used by `check_grant_upkeep_sacrifice_statics` in `steps.rs` to determine
+    /// which permanents are affected by [`crate::core::StaticAbility::GrantUpkeepSacrificeUnlessPay`]
+    /// statics (Energy Flux, Aura Flux). Delegates to the same exhaustive
+    /// `selector_applies_to_creature` implementation; the name "creature" in the
+    /// delegate is historical — the function works for any permanent type because
+    /// it checks `cache.is_artifact`, `is_land()`, etc., not just `is_creature()`.
+    pub fn affected_selector_matches_card(
+        &self,
+        selector: crate::core::AffectedSelector,
+        card_id: CardId,
+        source_id: CardId,
+    ) -> bool {
+        self.selector_applies_to_creature(&selector, card_id, source_id)
     }
 
     /// Calculate Layer 7c continuous effects (Equipment, anthems, etc).
@@ -1564,6 +1651,73 @@ impl GameState {
                         // Block-restriction statics (Ironclaw Orcs) don't affect
                         // P/T; they gate block legality in combat_rules::can_block.
                     }
+                    StaticAbility::DamageIncrease { .. } => {
+                        // Damage-increase replacement (Torbran et al.) doesn't
+                        // affect P/T; applied at damage-dealing time in
+                        // get_damage_boost_for_source / combat post-processing.
+                    }
+                    StaticAbility::PreventDamageToEnchantedByChosenColor { .. } => {
+                        // Prismatic Ward color-prevention: doesn't affect P/T;
+                        // applied at damage-dealing time in deal_damage_to_creature.
+                    }
+                    StaticAbility::CantAttackIfDefenderHasUntappedPowerGE { .. } => {
+                        // Conditional attack prohibition (Orgg): doesn't affect P/T;
+                        // enforced at declare-attackers time in game_loop/actions.rs
+                        // and actions/combat.rs.
+                    }
+                    StaticAbility::CantAttackOrBlockMatching { .. } => {
+                        // Global attack/block prohibition (Light of Day): doesn't
+                        // affect P/T; enforced at declare-attackers/blockers time
+                        // via GameState::is_attack_prohibited / is_block_prohibited.
+                    }
+                    StaticAbility::CantBeActivated { .. } => {
+                        // Activated-ability lock (Cursed Totem): doesn't affect P/T;
+                        // enforced at action-generation time in game_loop/actions.rs.
+                    }
+                    StaticAbility::ExtraLandPlay { .. } => {
+                        // Extra land-play grant doesn't affect P/T; queried via
+                        // GameState::effective_max_lands() at land-play time.
+                    }
+                    StaticAbility::LifeFloor { .. } => {
+                        // Life-floor replacement (Worship): doesn't affect P/T;
+                        // applied at damage-dealing time in apply_life_floor().
+                    }
+                    StaticAbility::DamageToExileLibrary { .. } => {
+                        // Damage-redirect replacement (Crumbling Sanctuary): doesn't
+                        // affect P/T; applied at damage-dealing time in deal_damage().
+                    }
+                    StaticAbility::CharacteristicDefiningPt { .. } => {
+                        // CDA P/T (Serra Avatar): handled in calculate_cda_pt() called
+                        // in get_pt_breakdown() layer 7a — not a ModifyPT modifier.
+                    }
+                    StaticAbility::GrantUpkeepSacrificeUnlessPay { .. } => {
+                        // Upkeep sacrifice-unless-pay trigger grant (Energy Flux, Aura Flux).
+                        // Handled at upkeep time in check_grant_upkeep_sacrifice_statics();
+                        // does not affect P/T.
+                    }
+                    StaticAbility::AlternativeCost { .. } => {
+                        // Alternative-cost static (Summoning Trap). Handled at cast time
+                        // in push_castable_spells; does not affect P/T.
+                    }
+                    StaticAbility::MayPlayWithoutManaCost { .. } => {
+                        // Fires of Invention free-cast grant. Handled at cast time in
+                        // push_castable_with_fires; does not affect P/T.
+                    }
+                    StaticAbility::MayPlayFromLibrary { .. } => {
+                        // Experimental Frenzy top-of-library grant. Handled at cast time in
+                        // push_castable_from_library; does not affect P/T.
+                    }
+                    StaticAbility::OpalescenceStyle { .. } => {
+                        // Opalescence: gives non-Aura enchantments the Creature type and
+                        // sets their P/T = mana value (Layer 7b). Handled via
+                        // GameState::opalescence_pt() in get_pt_breakdown(); the ModifyPT
+                        // layer (7c) is not involved.
+                    }
+                    StaticAbility::DisableCreatureEtbTriggers { .. } => {
+                        // Torpor Orb: suppresses ETB triggers on creatures entering the
+                        // battlefield. Does not affect P/T; enforced at trigger-dispatch
+                        // time in check_triggers_inner via is_creature_etb_trigger_suppressed.
+                    }
                 }
             }
         }
@@ -1735,6 +1889,11 @@ impl GameState {
                                 .iter()
                                 .any(|s| self.selector_applies_to_creature(s, creature_id, source_id))
                         }
+                        // Land-wide selectors (Hokori: all lands don't untap; etc.)
+                        AffectedSelector::AllLands => creature.is_land(),
+                        AffectedSelector::LandsYouControl => {
+                            creature.is_land() && creature.controller == source.controller
+                        }
                         _ => false, // Other selectors not yet supported for keywords
                     };
 
@@ -1778,6 +1937,31 @@ impl GameState {
 
         // Then check for granted keywords from continuous effects
         self.get_granted_keywords(creature_id).contains(keyword)
+    }
+
+    /// Returns `true` if `creature_id` has islandwalk (Landwalk:Island).
+    ///
+    /// Used by the Island Sanctuary enforcement to distinguish creatures that
+    /// may bypass the protection (flying or islandwalk) from those that cannot.
+    /// Checks both innate keywords and granted keywords from continuous effects.
+    pub fn has_islandwalk(&self, creature_id: CardId) -> bool {
+        use crate::core::keyword_set::KeywordArgs;
+        use crate::core::Subtype;
+        // Check the card's own keyword list first (fast path).
+        if let Ok(card) = self.cards.get(creature_id) {
+            let island_subtype = Subtype::new("Island");
+            if card
+                .keywords
+                .iter_args()
+                .any(|kw| matches!(kw, KeywordArgs::Landwalk { land_type } if *land_type == island_subtype))
+            {
+                return true;
+            }
+        }
+        // Granted keywords from continuous effects do not carry argument data
+        // (they carry only the base Keyword variant), so granted islandwalk is
+        // not distinguishable here — conservatively return false.
+        false
     }
 
     /// Get all activated abilities granted to a permanent by continuous effects.

@@ -109,6 +109,21 @@ merged or fully cherry-picked into integration; some were dead
 research that produced docs instead of code. Tags (where listed)
 preserve the tip commit so the branch can always be resurrected.
 
+### `claude/compat-1994-wave7`
+
+Last commit: `7609ace92` (2026-06-12). Two-bug fix for B23 (Erhnam Djinn /
+Cat Warriors Forestwalk / Landwalk): (1) the `KW$`/`Keywords$` token parse
+pipeline in `effect_converter.rs` now routes parameterized keywords (e.g.
+`Forestwalk`) through `KeywordArgs::from_string_parameterized()`, (2)
+`can_block_impl` in `combat_rules.rs` now correctly checks Landwalk against
+the defender's controlled lands on the server-side path (when `view=None`).
+Infrastructure: `Effect::PumpCreature`, `PumpCreatureVariable`, `AnimateAll`,
+`SetBasePowerToughness` gained a `keyword_args_granted: SmallVec<[KeywordArgs; 2]>`
+field; `Card::grant_keyword_args_until_eot()` added. Puzzle test
+`test_forestwalk_blocks_forest_owner` added. Merged into `integration` via
+ff-only at SHA `7609ace92`. Archived as tag `claude/compat-1994-wave7.v1`.
+Tracked in mtg-713.
+
 ### `choose-from-library-refactor`
 - ~3 months old, 7 commits, all landed on integration.
 - Refactored the "choose card(s) from library" controller path so

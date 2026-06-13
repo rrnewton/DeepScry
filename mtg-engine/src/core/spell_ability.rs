@@ -121,6 +121,35 @@ pub enum SpellAbility {
     /// effects, ...) to the Adventure face before running the standard 8-step
     /// cast, so targeting / cost / modal / X handling are shared, not duplicated.
     CastAdventure { card_id: CardId },
+
+    /// Cast a spell from hand with an alternative cost.
+    ///
+    /// Used by cards like Summoning Trap that may be cast for a different (usually
+    /// cheaper) mana cost when a specific condition is met — e.g. "You may cast this
+    /// spell for {0} if a creature spell you cast this turn was countered."
+    ///
+    /// The alternative cost replaces the card's normal mana cost during the 8-step
+    /// casting process; all other steps (targeting, etc.) proceed normally.
+    CastFromHandWithAltCost {
+        card_id: CardId,
+        /// The alternative mana cost to pay instead of the card's printed cost.
+        alternative_cost: ManaCost,
+    },
+
+    /// Cast the top card of the library as a spell (Experimental Frenzy, Future Sight).
+    ///
+    /// The card moves from the library to the stack and resolves normally,
+    /// paying its printed mana cost (no alternative cost). The card must be
+    /// the top card of the controller's library.
+    ///
+    /// MTG CR 702.150 (Future Sight); CR 601 applies normally after the zone grant.
+    CastFromLibrary { card_id: CardId },
+
+    /// Play the top card of the library as a land (Experimental Frenzy, Future Sight).
+    ///
+    /// The land moves from the library directly to the battlefield (or is
+    /// played normally), consuming the player's land-play for the turn.
+    PlayLandFromLibrary { card_id: CardId },
 }
 
 impl SpellAbility {
@@ -135,6 +164,8 @@ impl SpellAbility {
             SpellAbility::ActivateAbility { card_id, .. } => *card_id,
             SpellAbility::CastFromGraveyard { card_id, .. } => *card_id,
             SpellAbility::CastAdventure { card_id } => *card_id,
+            SpellAbility::CastFromHandWithAltCost { card_id, .. } => *card_id,
+            SpellAbility::CastFromLibrary { card_id } | SpellAbility::PlayLandFromLibrary { card_id } => *card_id,
         }
     }
 
@@ -143,7 +174,7 @@ impl SpellAbility {
         matches!(self, SpellAbility::PlayLand { .. })
     }
 
-    /// Check if this is a spell (includes casting from exile, command zone, or graveyard)
+    /// Check if this is a spell (includes casting from exile, command zone, graveyard, or library)
     pub fn is_spell(&self) -> bool {
         matches!(
             self,
@@ -152,6 +183,8 @@ impl SpellAbility {
                 | SpellAbility::CastFromCommand { .. }
                 | SpellAbility::CastFromGraveyard { .. }
                 | SpellAbility::CastAdventure { .. }
+                | SpellAbility::CastFromHandWithAltCost { .. }
+                | SpellAbility::CastFromLibrary { .. }
         )
     }
 

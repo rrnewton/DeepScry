@@ -1,0 +1,21 @@
+[metadata]
+Name=Narset Parter of Veils Abilities Test
+Goal=Win
+Turns=5
+Difficulty=Medium
+Description=P1 has Narset, Parter of Veils in play with 5 loyalty. Verify -2 dig 4 take noncreature. Also verify static (opponent can't draw more than 1 per turn). P2 has fewer cards in library.
+
+[state]
+turn=6
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=
+p0battlefield=Island;Island;Island;Plains;Narset, Parter of Veils
+p0library=Teferi, Time Raveler;Dream Trawler;Island;Plains;Island
+p0graveyard=
+p1life=5
+p1hand=
+p1battlefield=Plains;Plains;Plains;Plains;Plains
+p1library=Plains;Plains;Plains
+p1graveyard=

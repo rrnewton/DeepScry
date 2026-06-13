@@ -21,7 +21,7 @@
 //! removed, eliminating the "No Hacky String Operations On Structured Data"
 //! violation and the divergence between the two mass-effects).
 
-use crate::core::{CardId, CountExpression, Keyword, PlayerId};
+use crate::core::{CardId, CountExpression, Keyword, KeywordArgs, PlayerId};
 use crate::game::GameState;
 use crate::Result;
 
@@ -36,13 +36,14 @@ impl GameState {
         power_bonus: i32,
         toughness_bonus: i32,
         keywords_granted: &[Keyword],
+        keyword_args_granted: &[KeywordArgs],
     ) -> Result<()> {
         // Skip if target is still placeholder (0) or unresolved sentinel
         if target.is_placeholder() || target.is_reuse_previous() {
             log::warn!(target: "pump", "PumpCreature fizzled: unresolved target {}", target.as_u32());
             return Ok(());
         }
-        log::debug!(target: "pump", "PumpCreature executing: target={}, power_bonus={}, toughness_bonus={}, keywords={:?}", target.as_u32(), power_bonus, toughness_bonus, keywords_granted);
+        log::debug!(target: "pump", "PumpCreature executing: target={}, power_bonus={}, toughness_bonus={}, keywords={:?}, keyword_args={:?}", target.as_u32(), power_bonus, toughness_bonus, keywords_granted, keyword_args_granted);
         // Capture log size before pump
         let prior_log_size = self.logger.log_count();
 
@@ -61,6 +62,28 @@ impl GameState {
                 newly_granted.push(*keyword);
             }
         }
+        // Grant complex (parameterized) keywords (e.g. Landwalk:Forest).
+        // Vec used (not SmallVec) to match the undo log field type, which uses
+        // Vec to keep GameAction::PumpCreature from inflating the enum's size.
+        let mut newly_args_granted: Vec<KeywordArgs> = Vec::new();
+        for kw_args in keyword_args_granted.iter() {
+            if card.grant_keyword_args_until_eot(kw_args) {
+                newly_args_granted.push(kw_args.clone());
+            }
+        }
+
+        // Emit gamelog for pump effect (B23: keyword grants were silent).
+        let card_name = self.cards.get(target)?.name.clone();
+        if power_bonus != 0 || toughness_bonus != 0 {
+            self.logger.gamelog(&format!(
+                "{} gets +{}/+{} until end of turn",
+                card_name, power_bonus, toughness_bonus
+            ));
+        }
+        if !newly_granted.is_empty() {
+            let kws: Vec<_> = newly_granted.iter().map(|k| format!("{:?}", k)).collect();
+            self.logger.gamelog(&format!("{} gains {}", card_name, kws.join(", ")));
+        }
 
         // Log the pump effect
         self.undo_log.log(
@@ -69,6 +92,7 @@ impl GameState {
                 power_delta: power_bonus,
                 toughness_delta: toughness_bonus,
                 keywords_granted: newly_granted,
+                keyword_args_granted: newly_args_granted,
             },
             prior_log_size,
         );
@@ -86,6 +110,7 @@ impl GameState {
         power_count: &CountExpression,
         toughness_count: &CountExpression,
         keywords_granted: &[Keyword],
+        keyword_args_granted: &[KeywordArgs],
     ) -> Result<()> {
         // Variable pump: bonus depends on counting game state
         // Example: Elephant-Mandrill gets +X/+X where X is artifacts opponents control
@@ -138,6 +163,12 @@ impl GameState {
                 newly_granted.push(*keyword);
             }
         }
+        let mut newly_args_granted: Vec<KeywordArgs> = Vec::new();
+        for kw_args in keyword_args_granted.iter() {
+            if card.grant_keyword_args_until_eot(kw_args) {
+                newly_args_granted.push(kw_args.clone());
+            }
+        }
 
         // Log for undo
         self.undo_log.log(
@@ -146,6 +177,7 @@ impl GameState {
                 power_delta: power_bonus,
                 toughness_delta: toughness_bonus,
                 keywords_granted: newly_granted,
+                keyword_args_granted: newly_args_granted,
             },
             prior_log_size,
         );
@@ -236,6 +268,7 @@ impl GameState {
                     power_delta: power_bonus,
                     toughness_delta: toughness_bonus,
                     keywords_granted: smallvec::SmallVec::new(),
+                    keyword_args_granted: Vec::new(),
                 },
                 prior_log_size,
             );
@@ -257,6 +290,7 @@ impl GameState {
         power: Option<i32>,
         toughness: Option<i32>,
         keywords_granted: &[Keyword],
+        keyword_args_granted: &[KeywordArgs],
     ) -> Result<()> {
         // AnimateAll: set base P/T and/or grant keywords to all matching permanents
         // Similar to PumpAllCreatures but sets base P/T instead of bonuses.
@@ -303,6 +337,9 @@ impl GameState {
                 for kw in keywords_granted {
                     card.grant_keyword_until_eot(*kw);
                 }
+                for kw_args in keyword_args_granted.iter() {
+                    card.grant_keyword_args_until_eot(kw_args);
+                }
 
                 if self.logger.verbosity() >= crate::game::VerbosityLevel::Normal {
                     let kws: Vec<_> = keywords_granted.iter().map(|k| format!("{:?}", k)).collect();
@@ -347,13 +384,44 @@ impl GameState {
         power: Option<i32>,
         toughness: Option<i32>,
         keywords_granted: &[Keyword],
+        keyword_args_granted: &[KeywordArgs],
         types_added: &[crate::core::CardType],
         subtypes_added: &[crate::core::Subtype],
         remove_creature_subtypes: bool,
+        at_eot: Option<crate::core::effects::AtEotAction>,
     ) -> Result<()> {
         // Skip if target is still placeholder (0) - no valid targets found
         if target.is_placeholder() {
             // Spell fizzles - no valid targets
+            return Ok(());
+        }
+
+        // `Defined$ Remembered` sentinel: run the Animate on every card in
+        // remembered_cards. Most callers have exactly one (Goryo's Vengeance,
+        // Sneak Attack), but the loop handles the general case.
+        if target.is_remembered_card() {
+            // Snapshot remembered_cards to avoid borrow conflict.
+            let remembered: smallvec::SmallVec<[CardId; 4]> = self.remembered_cards.iter().copied().collect();
+            if remembered.is_empty() {
+                log::debug!(
+                    target: "pump",
+                    "SetBasePowerToughness: Defined$ Remembered but remembered_cards is empty, skipping"
+                );
+                return Ok(());
+            }
+            for remembered_target in remembered {
+                self.execute_set_base_power_toughness(
+                    remembered_target,
+                    power,
+                    toughness,
+                    keywords_granted,
+                    keyword_args_granted,
+                    types_added,
+                    subtypes_added,
+                    remove_creature_subtypes,
+                    at_eot,
+                )?;
+            }
             return Ok(());
         }
         // Set temporary base P/T override (until end of turn)
@@ -382,6 +450,16 @@ impl GameState {
             if !card.keywords.contains(*kw) {
                 card.keywords.insert(*kw);
                 granted_keywords.push(*kw);
+            }
+        }
+        // Also grant complex (parameterized) keywords (e.g. Landwalk:Forest).
+        // Vec used (not SmallVec) to match the undo log field type, which uses
+        // Vec to keep GameAction::AnimateTypeline from inflating the enum's size.
+        let mut granted_keyword_args_vec: Vec<KeywordArgs> = Vec::new();
+        for kw_args in keyword_args_granted.iter() {
+            if !card.keywords.contains(kw_args.keyword()) {
+                card.keywords.insert_complex(kw_args.clone());
+                granted_keyword_args_vec.push(kw_args.clone());
             }
         }
 
@@ -465,7 +543,7 @@ impl GameState {
         // the typeline OR newly granted a keyword (Soulstone Sanctuary
         // changes both, but a hypothetical keyword-only animate must still
         // be reversible).
-        if types_changed || !granted_keywords.is_empty() {
+        if types_changed || !granted_keywords.is_empty() || !granted_keyword_args_vec.is_empty() {
             let prior_log_size = self.logger.log_count();
             self.undo_log.log(
                 crate::undo::GameAction::AnimateTypeline {
@@ -476,6 +554,7 @@ impl GameState {
                     prev_temp_animate_subtypes,
                     prev_temp_removed_subtypes,
                     granted_keywords,
+                    granted_keyword_args: granted_keyword_args_vec,
                 },
                 prior_log_size,
             );
@@ -532,6 +611,68 @@ impl GameState {
                     .gamelog(&format!("{} becomes {}", card_name, type_names.join(" + ")));
             }
         }
+
+        // `AtEOT$ Sacrifice` / `AtEOT$ Exile`: register a delayed trigger that
+        // fires at the beginning of the next end step (any player's, CR 603.7a)
+        // to sacrifice or exile the just-animated target.
+        //
+        // Examples:
+        //   - Sneak Attack: "Sacrifice [the creature] at the beginning of the
+        //     next end step." (AtEOT$ Sacrifice, DelayedEffect::Sacrifice)
+        //   - Goryo's Vengeance: "Exile it at the beginning of the next end
+        //     step." (AtEOT$ Exile, DelayedEffect::ExileCard)
+        //
+        // Rules note (CR 603.7a): the delayed trigger fires "at the beginning
+        // of the next end step" regardless of whose turn it is.
+        if let Some(action) = at_eot {
+            use crate::core::effects::AtEotAction;
+            use crate::core::{
+                DelayedEffect, DelayedTrigger, DelayedTriggerCondition, DelayedTriggerId, TriggerPhase, TurnOwner,
+            };
+
+            let controller = self
+                .current_damage_source
+                .and_then(|src| self.cards.try_get(src))
+                .map(|c| c.controller)
+                .unwrap_or(self.turn.active_player);
+
+            let delayed_effect = match action {
+                AtEotAction::Sacrifice => DelayedEffect::Sacrifice,
+                AtEotAction::Exile => DelayedEffect::ExileCard,
+            };
+
+            let action_label = match action {
+                AtEotAction::Sacrifice => "sacrifice",
+                AtEotAction::Exile => "exile",
+            };
+
+            let trigger = DelayedTrigger::new(
+                DelayedTriggerId::new(0), // assigned by store
+                target,
+                target,
+                controller,
+                DelayedTriggerCondition::Phase {
+                    phases: smallvec::smallvec![TriggerPhase::EndStep],
+                    whose_turn: TurnOwner::Any,
+                },
+                delayed_effect,
+            );
+
+            let prior_log_size = self.logger.log_count();
+            let trigger_id = self.delayed_triggers.add(trigger);
+            self.undo_log.log(
+                crate::undo::GameAction::RegisterDelayedTrigger { id: trigger_id },
+                prior_log_size,
+            );
+
+            self.logger.gamelog(&format!(
+                "{} will be {}d at the beginning of the next end step (delayed trigger {})",
+                card_name,
+                action_label,
+                trigger_id.as_u32()
+            ));
+        }
+
         Ok(())
     }
 }

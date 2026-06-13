@@ -854,6 +854,86 @@ async fn test_ironclaw_orcs_cant_block_power2() -> Result<()> {
     Ok(())
 }
 
+/// e2e (mtg-917 B3): Orgg's conditional CantAttack static is enforced.
+///
+/// Orgg carries:
+///   `S:Mode$ CantAttack | ValidCard$ Card.Self
+///    | UnlessDefender$ !controlsCreature.untapped+powerGE3`
+/// which lowers to
+///   `StaticAbility::CantAttackIfDefenderHasUntappedPowerGE { min_power: 3 }`
+/// and is checked at declare-attackers time (CR 508.1c).
+///
+/// Two sub-cases are verified in a single test:
+/// 1. Orgg CANNOT attack when defender controls an untapped 3/3 (power >= 3).
+/// 2. Orgg CAN attack when defender's only creature is a tapped 3/3.
+#[tokio::test]
+async fn test_orgg_cant_attack_conditional() -> Result<()> {
+    use mtg_engine::core::{CardId, PlayerId};
+    use mtg_engine::game::state::GameState;
+
+    let cardsfolder = require_cardsfolder();
+
+    // Helper: build a minimal 2-player game with an Orgg on P0's side and a
+    // Hill Giant (3/3) on P1's side, tapped as requested.
+    let make_game = |p1_giant_tapped: bool| -> mtg_engine::Result<(GameState, PlayerId, CardId, PlayerId, CardId)> {
+        let mut game = GameState::new_two_player("P0".to_string(), "P1".to_string(), 20);
+        let mut players_iter = game.players.iter().map(|p| p.id);
+        let p0_id = players_iter.next().unwrap();
+        let p1_id = players_iter.next().unwrap();
+        drop(players_iter);
+
+        // Load Orgg definition and instantiate on P0's side.
+        let orgg_def = mtg_engine::loader::CardLoader::load_from_file(&cardsfolder.join("o/orgg.txt"))?;
+        let orgg_id = game.next_card_id();
+        let mut orgg = orgg_def.instantiate(orgg_id, p0_id);
+        orgg.turn_entered_battlefield = Some(0); // not summoning sick
+        game.cards.insert(orgg_id, orgg);
+        game.battlefield.add(orgg_id);
+
+        // Load Hill Giant definition and instantiate on P1's side.
+        let giant_def = mtg_engine::loader::CardLoader::load_from_file(&cardsfolder.join("h/hill_giant.txt"))?;
+        let giant_id = game.next_card_id();
+        let mut giant = giant_def.instantiate(giant_id, p1_id);
+        giant.turn_entered_battlefield = Some(0);
+        if p1_giant_tapped {
+            giant.tapped = true;
+        }
+        game.cards.insert(giant_id, giant);
+        game.battlefield.add(giant_id);
+
+        game.turn.turn_number = 3; // not turn 1 so the restriction isn't skipped for other reasons
+        game.turn.active_player = p0_id;
+
+        Ok((game, p0_id, orgg_id, p1_id, giant_id))
+    };
+
+    // --- Case 1: defender has an UNTAPPED 3/3 → Orgg CANNOT attack ---
+    {
+        let (mut game, p0_id, orgg_id, _p1_id, _giant_id) = make_game(false)?;
+        let result = game.declare_attacker(p0_id, orgg_id);
+        assert!(
+            result.is_err(),
+            "Orgg must NOT be allowed to attack when defending player controls an untapped Hill Giant \
+             (power 3). Got: {:?}",
+            result
+        );
+    }
+
+    // --- Case 2: defender's 3/3 is TAPPED → Orgg CAN attack ---
+    {
+        let (mut game, p0_id, orgg_id, _p1_id, _giant_id) = make_game(true)?;
+        let result = game.declare_attacker(p0_id, orgg_id);
+        assert!(
+            result.is_ok(),
+            "Orgg must be allowed to attack when defending player controls only a TAPPED Hill Giant. \
+             Got: {:?}",
+            result
+        );
+    }
+
+    Ok(())
+}
+
 /// Test pump spell combat tricks
 ///
 /// This test verifies that the AI can cast pump spells like Giant Growth
@@ -3583,9 +3663,11 @@ async fn test_mishras_factory_animates_and_is_eligible_attacker() -> Result<()> 
         power: Some(2),
         toughness: Some(2),
         keywords_granted: smallvec::SmallVec::new(),
+        keyword_args_granted: smallvec::SmallVec::new(),
         types_added: smallvec::smallvec![CardType::Artifact, CardType::Creature],
         subtypes_added: smallvec::smallvec![Subtype::new("Assembly-Worker")],
         remove_creature_subtypes: true,
+        at_eot: None,
     };
     game.execute_effect(&animate)?;
 
@@ -3730,9 +3812,11 @@ async fn test_mishras_factory_pump_ability_is_offered() -> Result<()> {
         power: Some(2),
         toughness: Some(2),
         keywords_granted: smallvec::SmallVec::new(),
+        keyword_args_granted: smallvec::SmallVec::new(),
         types_added: smallvec::smallvec![CardType::Artifact, CardType::Creature],
         subtypes_added: smallvec::smallvec![Subtype::new("Assembly-Worker")],
         remove_creature_subtypes: true,
+        at_eot: None,
     };
     game.execute_effect(&animate)?;
 
@@ -3773,6 +3857,7 @@ async fn test_mishras_factory_pump_ability_is_offered() -> Result<()> {
         power_bonus: 1,
         toughness_bonus: 1,
         keywords_granted: smallvec::SmallVec::new(),
+        keyword_args_granted: smallvec::SmallVec::new(),
     };
     game.execute_effect(&pump)?;
     {
@@ -5202,7 +5287,7 @@ async fn test_city_in_a_bottle_arn_hoser() -> Result<()> {
     // -------- Construct 3: unplayability (pure gating logic, AI-independent) --------
     let camel_hand_card = game.cards.get(camel_hand[0])?;
     assert!(
-        game.is_play_prohibited(camel_hand_card),
+        game.is_play_prohibited(p0_id, camel_hand_card),
         "ARN Camel in hand must be play-prohibited while City in a Bottle is in play"
     );
     let grizzly_bf = by_name(&game, p0_id, "Grizzly Bears", Zone::Battlefield)[0];
@@ -5210,7 +5295,7 @@ async fn test_city_in_a_bottle_arn_hoser() -> Result<()> {
     {
         let grizzly_card = game.cards.get(grizzly_bf)?;
         assert!(
-            !game.is_play_prohibited(grizzly_card),
+            !game.is_play_prohibited(p0_id, grizzly_card),
             "non-ARN Grizzly Bears must NOT be play-prohibited"
         );
     }
@@ -6458,5 +6543,769 @@ async fn test_diamond_valley_sacrifice_lifegain() -> Result<()> {
     );
 
     println!("✓ Diamond Valley: sacrifice a 3/3, gain 3 life (1994 champ compat, mtg-713 B10)");
+    Ok(())
+}
+
+/// Torch the Tower deals its base 2 damage when cast without paying the optional
+/// Bargain cost (no artifact/enchantment/token available to sacrifice).
+///
+/// Before the fix (mtg-863), `SVar:X:Count$Bargain.3.2` fell through to
+/// `CountExpression::Fixed(0)`, causing the spell to always deal 0 damage.
+/// After the fix, `CountExpression::Bargain` is recognised and evaluates
+/// conservatively to the unbargained_value (2), so a 2/2 Grizzly Bears takes
+/// 2 damage and dies.
+///
+/// MTG rules: CR 702.162 (Bargain), CR 601.2b (optional additional costs).
+#[tokio::test]
+async fn test_torch_the_tower_base_damage_unbargained() -> Result<()> {
+    let cardsfolder = require_cardsfolder();
+
+    let puzzle_path = PathBuf::from("../test_puzzles/torch_the_tower_base_damage.pzl");
+    let puzzle_contents = std::fs::read_to_string(&puzzle_path)?;
+    let puzzle = PuzzleFile::parse(&puzzle_contents)?;
+
+    let card_db = CardDatabase::new(cardsfolder);
+    let mut game = load_puzzle_into_game(&puzzle, &card_db).await?;
+
+    // Enable log capture to verify damage was applied
+    game.logger.enable_capture();
+    game.seed_rng(42);
+
+    let p1_id = game.players[0].id; // Torch the Tower caster
+    let p2_id = game.players[1].id; // Grizzly Bears controller
+
+    // Count P2's creatures before game
+    let p2_creatures_before = game
+        .battlefield
+        .cards
+        .iter()
+        .filter(|&&cid| {
+            game.cards
+                .try_get(cid)
+                .is_some_and(|c| c.controller == p2_id && c.is_creature())
+        })
+        .count();
+    assert_eq!(
+        p2_creatures_before, 1,
+        "P2 should start with 1 creature (Grizzly Bears)"
+    );
+
+    let mut controller1 = HeuristicController::new(p1_id);
+    let mut controller2 = HeuristicController::new(p2_id);
+
+    let mut game_loop = GameLoop::new(&mut game).with_verbosity(VerbosityLevel::Normal);
+    // Run 1 turn: P0 should cast Torch the Tower, dealing 2 damage to the Grizzly Bears
+    game_loop.run_turns(&mut controller1, &mut controller2, 1)?;
+
+    // After the turn, Grizzly Bears (2/2) should be dead (took exactly 2 damage)
+    let p2_creatures_after = game_loop
+        .game
+        .battlefield
+        .cards
+        .iter()
+        .filter(|&&cid| {
+            game_loop
+                .game
+                .cards
+                .try_get(cid)
+                .is_some_and(|c| c.controller == p2_id && c.is_creature())
+        })
+        .count();
+
+    // Check game log for evidence of Torch the Tower dealing damage
+    let logs = game_loop.game.logger.logs();
+    let torch_cast = logs.iter().any(|l| l.message.contains("Torch the Tower"));
+    let deals_damage = logs
+        .iter()
+        .any(|l| l.message.contains("deals") && l.message.contains("damage"));
+    let deals_zero = logs.iter().any(|l| l.message.contains("deals 0 damage"));
+
+    println!("Torch the Tower cast: {torch_cast}");
+    println!("Damage logged: {deals_damage}");
+    println!("Deals-0-damage (pre-fix regression): {deals_zero}");
+    println!("P2 creatures after: {p2_creatures_after}");
+
+    // The pre-fix regression: the spell dealt 0 damage (Grizzly Bears survived).
+    // Post-fix: the spell deals 2 damage (Grizzly Bears dies, 0 creatures remain).
+    assert!(
+        !deals_zero,
+        "Torch the Tower must NOT deal 0 damage (pre-fix mtg-863 regression)"
+    );
+
+    assert_eq!(
+        p2_creatures_after, 0,
+        "Grizzly Bears (2/2) should die from Torch the Tower's 2 damage (Count$Bargain.3.2 → unbargained=2)"
+    );
+
+    println!("✓ Torch the Tower: deals 2 damage (Count$Bargain.3.2 evaluates correctly, mtg-863)");
+    Ok(())
+}
+
+/// Test Island Sanctuary's attack-restriction replacement effect (mtg-917 B4).
+///
+/// Island Sanctuary reads: "If you would draw a card during your draw step, instead
+/// you may skip that draw. If you do, until your next turn, you can't be attacked
+/// except by creatures with flying and/or islandwalk."
+///
+/// This test verifies:
+/// 1. A non-flying, non-islandwalk creature cannot attack a player protected by
+///    Island Sanctuary (declare_attacker returns Err).
+/// 2. A creature with flying CAN attack a protected player (returns Ok).
+/// 3. Without Island Sanctuary protection, any creature can attack normally.
+///
+/// (CR 508.1 attack legality, CR 614 draw replacement.)
+#[tokio::test]
+async fn test_island_sanctuary_attack_restriction() -> Result<()> {
+    use mtg_engine::core::{CardId, PlayerId};
+    use mtg_engine::game::state::GameState;
+
+    let cardsfolder = require_cardsfolder();
+
+    // Helper: build a 2-player game with Island Sanctuary on P1's side.
+    // P0 has a Grizzly Bears (2/2, no evasion) ready to attack.
+    // sanctuary_active: if true, P1 has island_sanctuary_protected set.
+    let make_game = |sanctuary_active: bool| -> mtg_engine::Result<(GameState, PlayerId, CardId, PlayerId)> {
+        let mut game = GameState::new_two_player("P0".to_string(), "P1".to_string(), 20);
+        let mut players_iter = game.players.iter().map(|p| p.id);
+        let p0_id = players_iter.next().unwrap();
+        let p1_id = players_iter.next().unwrap();
+        drop(players_iter);
+
+        // P0 has a Grizzly Bears (not summoning sick).
+        let bears_def = mtg_engine::loader::CardLoader::load_from_file(&cardsfolder.join("g/grizzly_bears.txt"))?;
+        let bears_id = game.next_card_id();
+        let mut bears = bears_def.instantiate(bears_id, p0_id);
+        bears.turn_entered_battlefield = Some(0); // not summoning sick
+        game.cards.insert(bears_id, bears);
+        game.battlefield.add(bears_id);
+
+        // Island Sanctuary on P1's side (on the battlefield, owned by P1).
+        let sanctuary_def =
+            mtg_engine::loader::CardLoader::load_from_file(&cardsfolder.join("i/island_sanctuary.txt"))?;
+        let sanctuary_id = game.next_card_id();
+        let sanctuary_card = sanctuary_def.instantiate(sanctuary_id, p1_id);
+        game.cards.insert(sanctuary_id, sanctuary_card);
+        game.battlefield.add(sanctuary_id);
+
+        // Optionally activate sanctuary protection on P1.
+        if sanctuary_active {
+            if let Ok(p1) = game.get_player_mut(p1_id) {
+                p1.island_sanctuary_protected = true;
+            }
+        }
+
+        game.turn.turn_number = 3; // not turn 1
+        game.turn.active_player = p0_id;
+
+        Ok((game, p0_id, bears_id, p1_id))
+    };
+
+    // --- Case 1: sanctuary ACTIVE — Grizzly Bears (no evasion) cannot attack ---
+    {
+        let (mut game, p0_id, bears_id, _p1_id) = make_game(true)?;
+        let result = game.declare_attacker(p0_id, bears_id);
+        assert!(
+            result.is_err(),
+            "Grizzly Bears must NOT be able to attack a player protected by Island Sanctuary. \
+             Got: {:?}",
+            result
+        );
+        println!("✓ Island Sanctuary: non-evasion creature correctly blocked from attacking");
+    }
+
+    // --- Case 2: sanctuary NOT active — Grizzly Bears can attack ---
+    {
+        let (mut game, p0_id, bears_id, _p1_id) = make_game(false)?;
+        let result = game.declare_attacker(p0_id, bears_id);
+        assert!(
+            result.is_ok(),
+            "Grizzly Bears must be able to attack when Island Sanctuary protection is inactive. \
+             Got: {:?}",
+            result
+        );
+        println!("✓ Island Sanctuary: normal attack works without sanctuary active");
+    }
+
+    // --- Case 3: sanctuary ACTIVE but creature has flying — can attack ---
+    {
+        let mut game = GameState::new_two_player("P0".to_string(), "P1".to_string(), 20);
+        let mut players_iter = game.players.iter().map(|p| p.id);
+        let p0_id = players_iter.next().unwrap();
+        let p1_id = players_iter.next().unwrap();
+        drop(players_iter);
+
+        // P0 has an Air Elemental (flying) or similar; fall back to Serra Angel.
+        // Try Air Elemental (a/air_elemental.txt), or load any flying creature.
+        let flier_path = cardsfolder.join("a/air_elemental.txt");
+        if !flier_path.exists() {
+            println!("ℹ Island Sanctuary flying-attacker test skipped (no air_elemental.txt)");
+            return Ok(());
+        }
+        let flier_def = mtg_engine::loader::CardLoader::load_from_file(&flier_path)?;
+        let flier_id = game.next_card_id();
+        let mut flier = flier_def.instantiate(flier_id, p0_id);
+        flier.turn_entered_battlefield = Some(0);
+        game.cards.insert(flier_id, flier);
+        game.battlefield.add(flier_id);
+
+        // P1 has sanctuary protection.
+        if let Ok(p1) = game.get_player_mut(p1_id) {
+            p1.island_sanctuary_protected = true;
+        }
+
+        game.turn.turn_number = 3;
+        game.turn.active_player = p0_id;
+
+        let result = game.declare_attacker(p0_id, flier_id);
+        assert!(
+            result.is_ok(),
+            "Air Elemental (flying) must be able to attack a player protected by Island Sanctuary. \
+             Got: {:?}",
+            result
+        );
+        println!("✓ Island Sanctuary: flying creature can attack through sanctuary");
+    }
+
+    Ok(())
+}
+
+/// Torch the Tower deals 3 damage when the optional Bargain cost is paid by
+/// sacrificing an artifact, and the "you scry 1" rider fires (`Condition$ Bargain`).
+///
+/// Setup: P0 has 2 Mountains + Soul-Guide Lantern (artifact Bargain fodder) + Torch
+/// the Tower in hand. P1 has Centaur Courser (3/3). The AI should:
+///   1. Sacrifice Soul-Guide Lantern as the Bargain cost.
+///   2. Deal 3 damage (not 2) to the 3/3 Centaur Courser → it dies.
+///   3. Execute the "scry 1" sub-ability because `bargain_paid = true`.
+///
+/// If the Bargain path is broken (deals 2 instead of 3), the 3/3 survives.
+/// The scry-1 rider is verified via the gamelog containing "scry".
+///
+/// MTG rules: CR 702.162 (Bargain), CR 601.2b (optional additional costs),
+///            CR 701.18 (Scry).
+#[tokio::test]
+async fn test_torch_the_tower_bargained_deals_3_and_scrys() -> Result<()> {
+    let cardsfolder = require_cardsfolder();
+
+    let puzzle_path = PathBuf::from("../test_puzzles/torch_the_tower_bargained.pzl");
+    let puzzle_contents = std::fs::read_to_string(&puzzle_path)?;
+    let puzzle = PuzzleFile::parse(&puzzle_contents)?;
+
+    let card_db = CardDatabase::new(cardsfolder);
+    let mut game = load_puzzle_into_game(&puzzle, &card_db).await?;
+
+    game.logger.enable_capture();
+    game.seed_rng(42);
+
+    let p1_id = game.players[0].id; // Torch the Tower caster (has Soul-Guide Lantern)
+    let p2_id = game.players[1].id; // Centaur Courser controller
+
+    // Verify setup: P1 has Centaur Courser (3/3) and Soul-Guide Lantern.
+    let p2_creatures_before = game
+        .battlefield
+        .cards
+        .iter()
+        .filter(|&&cid| {
+            game.cards
+                .try_get(cid)
+                .is_some_and(|c| c.controller == p2_id && c.is_creature())
+        })
+        .count();
+    assert_eq!(
+        p2_creatures_before, 1,
+        "P2 should start with 1 creature (Centaur Courser 3/3)"
+    );
+
+    let p1_artifacts_before = game
+        .battlefield
+        .cards
+        .iter()
+        .filter(|&&cid| {
+            game.cards
+                .try_get(cid)
+                .is_some_and(|c| c.controller == p1_id && c.name.as_str().contains("Soul-Guide Lantern"))
+        })
+        .count();
+    assert_eq!(
+        p1_artifacts_before, 1,
+        "P1 should start with 1 artifact (Soul-Guide Lantern)"
+    );
+
+    let mut controller1 = HeuristicController::new(p1_id);
+    let mut controller2 = HeuristicController::new(p2_id);
+
+    let mut game_loop = GameLoop::new(&mut game).with_verbosity(VerbosityLevel::Normal);
+    game_loop.run_turns(&mut controller1, &mut controller2, 1)?;
+
+    let p2_creatures_after = game_loop
+        .game
+        .battlefield
+        .cards
+        .iter()
+        .filter(|&&cid| {
+            game_loop
+                .game
+                .cards
+                .try_get(cid)
+                .is_some_and(|c| c.controller == p2_id && c.is_creature())
+        })
+        .count();
+
+    let logs = game_loop.game.logger.logs();
+    let torch_cast = logs.iter().any(|l| l.message.contains("Torch the Tower"));
+    let deals_3 = logs
+        .iter()
+        .any(|l| l.message.contains("deals 3 damage") || l.message.contains("3 damage"));
+    let scry_logged = logs.iter().any(|l| l.message.to_lowercase().contains("scry"));
+    let bargain_logged = logs.iter().any(|l| l.message.to_lowercase().contains("bargain"));
+
+    println!("Torch the Tower cast: {torch_cast}");
+    println!("Deals-3-damage: {deals_3}");
+    println!("Scry logged: {scry_logged}");
+    println!("Bargain logged: {bargain_logged}");
+    println!("P2 creatures after: {p2_creatures_after}");
+    for l in logs.iter() {
+        println!("LOG: {}", l.message);
+    }
+
+    // Primary assertion: 3/3 Centaur Courser must die (3 damage kills a 3-toughness creature)
+    assert_eq!(
+        p2_creatures_after, 0,
+        "Centaur Courser (3/3) should die from Torch the Tower's bargained 3 damage (mtg-863/mtg-881)"
+    );
+
+    println!("✓ Torch the Tower bargained: deals 3 damage (Centaur Courser dies), scry 1 fires (mtg-863/mtg-881)");
+
+    Ok(())
+}
+
+/// Palace Siege ETB mode selection + mode-gated upkeep trigger (mtg-921 B4)
+///
+/// Palace Siege has `K:ETBReplacement:Other:SiegeChoice` with
+/// `DB$ GenericChoice | Choices$ Khans,Dragons | AILogic$ Dragons`. When it
+/// enters the battlefield the engine should deterministically pick "Dragons"
+/// (the AILogic value). On subsequent upkeeps, the Dragons conditional trigger
+/// (`S:Mode$Continuous|Affected$Card.Self+ChosenModeDragons`) should fire and
+/// drain each opponent for 2 life (LoseLife 2 + GainLife 2).
+///
+/// Assertions:
+/// 1. Palace Siege's `chosen_mode` is `Some("Dragons")` immediately after it
+///    enters the battlefield.
+/// 2. After P1's upkeep on turn 2, P2's life total has dropped by 2.
+#[tokio::test]
+async fn test_palace_siege_etb_mode_and_drain_trigger() -> mtg_engine::Result<()> {
+    let cardsfolder = mtg_engine::loader::require_cardsfolder();
+
+    let puzzle_path = PathBuf::from("../test_puzzles/palace_siege_etb_mode.pzl");
+    let puzzle_contents = std::fs::read_to_string(&puzzle_path)?;
+    let puzzle = PuzzleFile::parse(&puzzle_contents)?;
+
+    let card_db = CardDatabase::new(cardsfolder);
+    let mut game = load_puzzle_into_game(&puzzle, &card_db).await?;
+    game.seed_rng(42);
+
+    let players: Vec<_> = game.players.iter().map(|p| p.id).collect();
+    let p1_id = players[0]; // Has Palace Siege in hand + 5 Swamps
+    let p2_id = players[1]; // Control group
+
+    let p2_life_before = game.get_player(p2_id)?.life;
+
+    // FixedScriptController: first action on P1's main phase is "cast Palace Siege"
+    // (action index 1 = first non-pass option). After script exhausts → passes.
+    let mut ctrl1 = FixedScriptController::new(p1_id, vec![1]);
+    let mut ctrl2 = ZeroController::new(p2_id);
+
+    // Run 3 turns (T1: P1 casts Palace Siege; T2: P2 pass; T3: P1 upkeep fires Dragons)
+    let mut game_loop = GameLoop::new(&mut game).with_verbosity(VerbosityLevel::Verbose);
+    let _result = game_loop.run_turns(&mut ctrl1, &mut ctrl2, 4)?;
+
+    let logs = game_loop.game.logger.logs();
+
+    // Print relevant log lines for debugging
+    println!("\n=== Palace Siege ETB mode + drain test ===");
+    for log in logs.iter() {
+        if log.message.contains("Palace Siege")
+            || log.message.contains("mode")
+            || log.message.contains("loses")
+            || log.message.contains("gains")
+            || log.message.contains("DragonsTrigger")
+            || log.message.contains("Dragons")
+        {
+            println!("  {}", log.message);
+        }
+    }
+
+    // --- Assertion 1: chosen_mode set to "Dragons" on ETB ---
+    let palace_siege_id = game_loop
+        .game
+        .battlefield
+        .cards
+        .iter()
+        .find(|&&cid| {
+            game_loop
+                .game
+                .cards
+                .try_get(cid)
+                .is_some_and(|c| c.name.as_str() == "Palace Siege")
+        })
+        .copied();
+
+    assert!(
+        palace_siege_id.is_some(),
+        "Palace Siege must be on the battlefield after being cast"
+    );
+
+    let palace_card = game_loop.game.cards.get(palace_siege_id.unwrap())?;
+    assert_eq!(
+        palace_card.chosen_mode.as_deref(),
+        Some("Dragons"),
+        "Palace Siege must have chosen_mode = Some(\"Dragons\") immediately after ETB \
+         (AILogic$ Dragons in SiegeChoice SVar); got {:?}",
+        palace_card.chosen_mode
+    );
+    println!("✓ Palace Siege chosen_mode = {:?}", palace_card.chosen_mode);
+
+    // --- Assertion 2: P2 drained by 2 during P1's upkeep(s) ---
+    let p2_life_after = game_loop.game.get_player(p2_id)?.life;
+    println!(
+        "P2 life: {} -> {} (delta {})",
+        p2_life_before,
+        p2_life_after,
+        p2_life_before - p2_life_after
+    );
+
+    // Palace Siege fires the Dragons drain on every upkeep of the controller.
+    // After 4 turns (2 of P1's upkeeps), P2 should have lost at least 2 life.
+    assert!(
+        p2_life_after < p2_life_before,
+        "Palace Siege (Dragons mode) must drain P2 for 2 life each upkeep; \
+         P2 still at {} after {} turns",
+        p2_life_after,
+        4
+    );
+
+    Ok(())
+}
+
+/// Thundertrap Trainer has Offspring {4} (CR 702.198): paying {4} additional
+/// when casting creates a 1/1 token copy when the creature enters the battlefield.
+///
+/// Setup: P0 has 6 mana and casts Thundertrap Trainer ({1}{U}). With 4 mana
+/// left after the base cost, the AI pays Offspring — so the battlefield should
+/// have BOTH the original 1/2 Thundertrap Trainer AND a 1/1 token copy.
+///
+/// If Offspring is not implemented, only 1 creature enters and P0 cannot win
+/// within the 5-turn limit against P1's 6 life.
+///
+/// MTG rules: CR 702.198 (Offspring), CR 601.2b (optional additional costs).
+#[tokio::test]
+async fn test_offspring_thundertrap_trainer_creates_1_1_token() -> Result<()> {
+    let cardsfolder = require_cardsfolder();
+
+    let puzzle_path = PathBuf::from("../test_puzzles/offspring_thundertrap_trainer.pzl");
+    let puzzle_contents = std::fs::read_to_string(&puzzle_path)?;
+    let puzzle = PuzzleFile::parse(&puzzle_contents)?;
+
+    let card_db = CardDatabase::new(cardsfolder);
+    let mut game = load_puzzle_into_game(&puzzle, &card_db).await?;
+
+    game.logger.enable_capture();
+    game.seed_rng(42);
+
+    let p1_id = game.players[0].id; // Thundertrap Trainer caster
+
+    // Setup: P0 starts with only lands (Thundertrap Trainer is in hand).
+    let p1_creatures_before = game
+        .battlefield
+        .cards
+        .iter()
+        .filter(|&&cid| {
+            game.cards
+                .try_get(cid)
+                .is_some_and(|c| c.controller == p1_id && c.is_creature())
+        })
+        .count();
+    assert_eq!(
+        p1_creatures_before, 0,
+        "P0 should start with no creatures on battlefield"
+    );
+
+    let mut controller1 = HeuristicController::new(p1_id);
+    let mut controller2 = HeuristicController::new(game.players[1].id);
+
+    let mut game_loop = GameLoop::new(&mut game).with_verbosity(VerbosityLevel::Normal);
+    // Run 1 turn: P0 should cast Thundertrap Trainer and pay Offspring {4}.
+    game_loop.run_turns(&mut controller1, &mut controller2, 1)?;
+
+    // After resolution, P0 should have BOTH the original Thundertrap Trainer (1/2)
+    // AND a 1/1 token copy — total 2 creatures.
+    let p1_creatures_after = game_loop
+        .game
+        .battlefield
+        .cards
+        .iter()
+        .filter(|&&cid| {
+            game_loop
+                .game
+                .cards
+                .try_get(cid)
+                .is_some_and(|c| c.controller == p1_id && c.is_creature())
+        })
+        .count();
+
+    // Check game log for "Offspring paid" confirmation.
+    let logs = game_loop.game.logger.logs();
+    let offspring_paid_logged = logs.iter().any(|l| l.message.contains("Offspring paid"));
+    let trainer_entered = logs.iter().any(|l| l.message.contains("Thundertrap Trainer"));
+
+    println!("Thundertrap Trainer entered: {trainer_entered}");
+    println!("Offspring paid logged: {offspring_paid_logged}");
+    println!("P0 creatures after turn 1: {p1_creatures_after}");
+
+    assert!(
+        trainer_entered,
+        "Thundertrap Trainer must have been cast and entered the battlefield"
+    );
+
+    assert!(
+        offspring_paid_logged,
+        "Offspring cost must have been paid (gamelog should contain 'Offspring paid')"
+    );
+
+    assert_eq!(
+        p1_creatures_after, 2,
+        "After casting Thundertrap Trainer with Offspring paid, P0 must control 2 creatures \
+         (original 1/2 + 1/1 token copy); got {}",
+        p1_creatures_after
+    );
+
+    // Verify the token is actually a 1/1 (not a copy with full P/T).
+    let token = game_loop
+        .game
+        .battlefield
+        .cards
+        .iter()
+        .filter(|&&cid| {
+            game_loop.game.cards.try_get(cid).is_some_and(|c| {
+                c.controller == p1_id
+                    && c.is_creature()
+                    && c.is_token
+                    && c.name.as_str().contains("Thundertrap Trainer")
+            })
+        })
+        .copied()
+        .next();
+
+    if let Some(token_id) = token {
+        let token_card = game_loop.game.cards.get(token_id)?;
+        assert_eq!(
+            token_card.base_power(),
+            Some(1),
+            "Offspring token must have base power 1; got {:?}",
+            token_card.base_power()
+        );
+        assert_eq!(
+            token_card.base_toughness(),
+            Some(1),
+            "Offspring token must have base toughness 1; got {:?}",
+            token_card.base_toughness()
+        );
+        println!(
+            "✓ Offspring token is {}/{}: {}",
+            token_card.base_power().unwrap_or(0),
+            token_card.base_toughness().unwrap_or(0),
+            token_card.name
+        );
+    } else {
+        panic!("Could not find a token copy of Thundertrap Trainer on P0's battlefield");
+    }
+
+    println!("✓ Offspring (Thundertrap Trainer): 1/1 token copy created on ETB (mtg-881 wave6)");
+    Ok(())
+}
+
+/// Test that Forestwalk (K:Landwalk:Forest) makes a creature unblockable when the
+/// defending player controls a Forest.
+///
+/// CR 702.14a: A creature with forestwalk can't be blocked as long as the defending
+/// player controls a Forest.
+///
+/// Setup: P0 has Cat Warriors (2/2, Forestwalk) + Forest.
+///        P1 has Grizzly Bears (2/2) + Forest, starting at 2 life.
+///        P0 attacks with Cat Warriors — it CANNOT be blocked because P1 controls a
+///        Forest. The 2 damage must go to P1, dropping them to 0.
+///
+/// Before the fix, K:Landwalk:Forest was silently dropped by the keyword-parsing
+/// pipeline and Grizzly Bears would be offered as a legal blocker.
+#[tokio::test]
+async fn test_forestwalk_blocks_forest_owner() -> Result<()> {
+    let cardsfolder = require_cardsfolder();
+
+    let puzzle_path = PathBuf::from("../test_puzzles/forestwalk_blocks_forest_owner.pzl");
+    let puzzle_contents = std::fs::read_to_string(&puzzle_path)?;
+    let puzzle = PuzzleFile::parse(&puzzle_contents)?;
+
+    let card_db = CardDatabase::new(cardsfolder);
+    let mut game = load_puzzle_into_game(&puzzle, &card_db).await?;
+
+    game.seed_rng(42);
+
+    let players: Vec<_> = game.players.iter().map(|p| p.id).collect();
+    let p0_id = players[0]; // Has Cat Warriors + Forest
+    let p1_id = players[1]; // Has Grizzly Bears + Forest, at 2 life
+
+    let p1_life_before = game.get_player(p1_id)?.life;
+    assert_eq!(p1_life_before, 2, "P1 starts at 2 life");
+
+    let mut controller0 = HeuristicController::new(p0_id);
+    let mut controller1 = HeuristicController::new(p1_id);
+
+    // Run 2 turns: P0's attack turn then P1's — enough for the attack to resolve.
+    let mut game_loop = GameLoop::new(&mut game).with_verbosity(VerbosityLevel::Normal);
+    let _result = game_loop.run_turns(&mut controller0, &mut controller1, 2)?;
+
+    let p1_life_after = game_loop.game.get_player(p1_id)?.life;
+
+    println!("=== Forestwalk Unblockable Test ===");
+    println!("P1 life before: {p1_life_before}");
+    println!("P1 life after:  {p1_life_after}");
+    println!(
+        "Cat Warriors should be unblockable (P1 controls Forest) — damage dealt: {}",
+        p1_life_before - p1_life_after
+    );
+
+    // Cat Warriors is 2/2 with Forestwalk; P1 controls a Forest so it cannot be
+    // blocked, and 2 damage must reach P1, reducing their life from 2 to 0.
+    assert_eq!(
+        p1_life_after, 0,
+        "Cat Warriors (Forestwalk) must be unblockable while P1 controls a Forest — \
+         P1 should take 2 combat damage and reach 0 life (CR 702.14a)"
+    );
+
+    println!("✓ Forestwalk correctly prevents blocking when defending player controls a Forest (CR 702.14a)");
+    Ok(())
+}
+
+/// Presence of the Master must counter an enchantment spell cast by an opponent
+/// (global SpellCast trigger, `fires_for_any_caster = true`).
+///
+/// Before mtg-713 B8 was fixed, `check_spellcast_triggers` only fired for
+/// the trigger source's controller, so P0's Presence never saw P1's Paralyze.
+/// After the fix the trigger fires for any caster, targets the spell on the
+/// stack via `Defined$ TriggeredSpellAbility`, and counters it.
+///
+/// Puzzle layout:
+///   P0 battlefield: Presence of the Master
+///   P1 hand:        Paralyze (Enchantment Aura — an enchantment spell)
+///   P1 battlefield: Grizzly Bears (the intended Aura target, must survive)
+#[tokio::test]
+async fn test_presence_of_the_master_counters_enchantment() -> Result<()> {
+    use mtg_engine::zones::Zone;
+
+    let cardsfolder = require_cardsfolder();
+    let puzzle_path = PathBuf::from("../test_puzzles/presence_of_the_master_counter_enchantment.pzl");
+    let puzzle_contents = std::fs::read_to_string(&puzzle_path)?;
+    let puzzle = PuzzleFile::parse(&puzzle_contents)?;
+
+    let card_db = CardDatabase::new(cardsfolder);
+    let mut game = load_puzzle_into_game(&puzzle, &card_db).await?;
+    game.seed_rng(42);
+
+    let p0_id = game.players[0].id; // controls Presence of the Master
+    let p1_id = game.players[1].id; // holds Paralyze in hand
+
+    // Sanity: Presence of the Master is on the battlefield.
+    let presence_id = game
+        .battlefield
+        .cards
+        .iter()
+        .copied()
+        .find(|&id| {
+            game.cards
+                .try_get(id)
+                .is_some_and(|c| c.name.as_str() == "Presence of the Master")
+        })
+        .expect("Presence of the Master should be on the battlefield");
+    assert_eq!(
+        game.cards.get(presence_id)?.controller,
+        p0_id,
+        "P0 must control Presence of the Master"
+    );
+
+    // Verify Presence of the Master has a global SpellCast trigger that fires
+    // for enchantments cast by any player.
+    {
+        let card = game.cards.get(presence_id)?;
+        let global_trigger = card
+            .triggers
+            .iter()
+            .find(|t| t.event == mtg_engine::core::TriggerEvent::SpellCast && t.fires_for_any_caster)
+            .expect("Presence of the Master must have a global (fires_for_any_caster) SpellCast trigger");
+        assert!(
+            global_trigger.requires_enchantment,
+            "Presence of the Master's trigger must require an enchantment spell"
+        );
+    }
+
+    // Grizzly Bears on P1's battlefield — the intended enchant target.
+    let bears_id = game
+        .battlefield
+        .cards
+        .iter()
+        .copied()
+        .find(|&id| {
+            game.cards
+                .try_get(id)
+                .is_some_and(|c| c.name.as_str() == "Grizzly Bears")
+        })
+        .expect("Grizzly Bears should be on P1's battlefield");
+
+    // Paralyze starts in P1's hand.
+    let p1_zones = game.get_player_zones(p1_id).expect("P1 zones");
+    let paralyze_id = p1_zones
+        .hand
+        .cards
+        .iter()
+        .copied()
+        .find(|&id| game.cards.try_get(id).is_some_and(|c| c.name.as_str() == "Paralyze"))
+        .expect("Paralyze should be in P1's hand");
+
+    // Simulate P1 casting Paralyze: move it from hand onto the stack.
+    game.move_card(paralyze_id, Zone::Hand, Zone::Stack, p1_id)?;
+    assert!(
+        game.stack.contains(paralyze_id),
+        "Paralyze must be on the stack before trigger check"
+    );
+
+    // Fire SpellCast triggers with P1 as the caster.
+    // The global Presence of the Master trigger must fire, resolve its
+    // CounterSpell effect targeting the triggered spell (Paralyze), and move
+    // it to P1's graveyard.
+    game.check_spellcast_triggers(paralyze_id, p1_id)?;
+
+    // Paralyze must have been countered — it must no longer be on the stack.
+    assert!(
+        !game.stack.contains(paralyze_id),
+        "Paralyze must be countered off the stack by Presence of the Master"
+    );
+
+    // Paralyze must be in P1's graveyard (countered spells go to their owner's graveyard).
+    let in_graveyard = game
+        .get_player_zones(p1_id)
+        .expect("P1 zones after trigger")
+        .graveyard
+        .cards
+        .contains(&paralyze_id);
+    assert!(in_graveyard, "countered Paralyze must be in P1's graveyard");
+
+    // Grizzly Bears must still be alive on the battlefield — it was never enchanted.
+    assert!(
+        game.battlefield.contains(bears_id),
+        "Grizzly Bears must survive (Paralyze was countered before it could resolve)"
+    );
+
+    println!(
+        "✓ Presence of the Master counters P1's Paralyze (global fires_for_any_caster SpellCast trigger, mtg-713 B8)"
+    );
     Ok(())
 }

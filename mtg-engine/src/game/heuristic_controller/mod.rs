@@ -13,6 +13,15 @@ use crate::core::{Card, CardId, Keyword, KeywordArgs, ManaCost, PlayerId, SpellA
 use crate::game::controller::{ChoiceResult, GameStateView, PlayerController};
 use smallvec::SmallVec;
 
+/// Return `true` if `card` carries at least one effect matching `pred`,
+/// searching both its top-level `effects` list and the effects of every
+/// activated ability. This helper eliminates the repeated
+/// `c.effects.iter().any(pred) || c.activated_abilities.iter().any(|a| a.effects.iter().any(pred))`
+/// scaffold used throughout `choose_targets`.
+fn card_has_effect_anywhere(card: &Card, pred: impl Fn(&crate::core::Effect) -> bool) -> bool {
+    card.effects.iter().any(&pred) || card.activated_abilities.iter().any(|a| a.effects.iter().any(&pred))
+}
+
 /// Predicted outcome of combat for attack decision making
 ///
 /// Reference: GameStateEvaluator.java:40-67 - simulateUpcomingCombatThisTurn
@@ -58,10 +67,17 @@ pub(crate) enum ActivatedAbilityType {
     /// Pump ability - boosts creature stats
     /// Example: Shivan Dragon "{R}: +1/+0 until end of turn"
     Pump { power: i32, toughness: i32 },
-    /// Destroy ability - destroys target permanent
-    /// Example: Royal Assassin "{T}: Destroy target tapped creature"
+    /// Destroy ability - destroys target permanent.
+    ///
+    /// `requires_tapped_target` is true when the ability description mentions
+    /// "tapped" (e.g. Royal Assassin) so the heuristic limits its search to
+    /// tapped creatures.  When false (e.g. Chaos Orb — "destroy all nontoken
+    /// permanents it touches"), any opponent permanent is a valid candidate.
+    ///
+    /// Example (requires_tapped=true):  Royal Assassin "{T}: Destroy target tapped creature"
+    /// Example (requires_tapped=false): Chaos Orb "{1},{T}: flip; destroy touched non-token permanents"
     /// Reference: DestroyAi.java in forge-ai
-    Destroy,
+    Destroy { requires_tapped_target: bool },
     /// Regenerate ability - adds a regeneration shield
     /// Example: Drudge Skeletons "{B}: Regenerate CARDNAME."
     Regenerate,
@@ -87,6 +103,16 @@ pub(crate) enum ActivatedAbilityType {
     /// Example: Clue Token "{2}, Sacrifice this token: Draw a card."
     /// (DrawCards effect). Card advantage is almost always good.
     DrawCard,
+    /// Modal (Charm) ability — choose one of N sub-effects (ModalChoice).
+    /// Example: Umezawa's Jitte "Remove a charge counter: choose pump / curse / life".
+    /// Activated at sorcery speed; AI picks the best available mode. (mtg-911 B3)
+    Charm,
+    /// Level Up / counter-placement self-improvement ability (CR 702.87).
+    /// Example: Joraga Treespeaker "{1}{G}: Put a level counter on CARDNAME".
+    /// The creature gains stats / abilities at level thresholds. Activate at
+    /// sorcery speed in Main2 when we have spare mana. Not urgent — the
+    /// creature is already functional at level 0.
+    LevelUp,
     /// Other abilities not yet categorized
     Other,
 }
@@ -262,57 +288,26 @@ impl PlayerController for HeuristicController {
             None
         });
 
-        // Check if the spell has pump effects (target self)
-        let has_pump_effect = spell_card.is_some_and(|c| {
-            c.effects
-                .iter()
-                .any(|e| matches!(e, crate::core::Effect::PumpCreature { .. }))
-                || c.activated_abilities.iter().any(|a| {
-                    a.effects
-                        .iter()
-                        .any(|e| matches!(e, crate::core::Effect::PumpCreature { .. }))
-                })
-        });
+        // Check if the spell has pump effects (target self).
+        let has_pump_effect = spell_card
+            .is_some_and(|c| card_has_effect_anywhere(c, |e| matches!(e, crate::core::Effect::PumpCreature { .. })));
 
-        // Check if the spell has debuff effects targeting others (remove keywords from opponent)
-        let has_debuff_effect = spell_card.is_some_and(|c| {
-            c.effects
-                .iter()
-                .any(|e| matches!(e, crate::core::Effect::DebuffCreature { .. }))
-                || c.activated_abilities.iter().any(|a| {
-                    a.effects
-                        .iter()
-                        .any(|e| matches!(e, crate::core::Effect::DebuffCreature { .. }))
-                })
-        });
+        // Check if the spell has debuff effects targeting others (remove keywords from opponent).
+        let has_debuff_effect = spell_card
+            .is_some_and(|c| card_has_effect_anywhere(c, |e| matches!(e, crate::core::Effect::DebuffCreature { .. })));
 
         // Check if the spell has destroy effects (Sinkhole, Terror, etc.)
-        // These should target opponent's permanents, not our own
+        // These should target opponent's permanents, not our own.
         let has_destroy_effect = spell_card.is_some_and(|c| {
-            c.effects
-                .iter()
-                .any(|e| matches!(e, crate::core::Effect::DestroyPermanent { .. }))
-                || c.activated_abilities.iter().any(|a| {
-                    a.effects
-                        .iter()
-                        .any(|e| matches!(e, crate::core::Effect::DestroyPermanent { .. }))
-                })
+            card_has_effect_anywhere(c, |e| matches!(e, crate::core::Effect::DestroyPermanent { .. }))
         });
 
         // Check if the spell/ability has a tap effect (Icy Manipulator, etc.)
         // These should target opponent's permanents — tapping your own stuff is useless.
         // CR 602.1: activated ability effects are chosen at activation time; the
         // heuristic must pick an opponent permanent where available.
-        let has_tap_effect = spell_card.is_some_and(|c| {
-            c.effects
-                .iter()
-                .any(|e| matches!(e, crate::core::Effect::TapPermanent { .. }))
-                || c.activated_abilities.iter().any(|a| {
-                    a.effects
-                        .iter()
-                        .any(|e| matches!(e, crate::core::Effect::TapPermanent { .. }))
-                })
-        });
+        let has_tap_effect = spell_card
+            .is_some_and(|c| card_has_effect_anywhere(c, |e| matches!(e, crate::core::Effect::TapPermanent { .. })));
 
         // Choose targeting strategy based on spell/ability type
         let filtered_target_ids: Vec<CardId> = if let Some(damage) = damage_amount {
@@ -339,16 +334,39 @@ impl PlayerController for HeuristicController {
                 .copied()
                 .collect();
 
-            // If we have killable creatures, prioritize those
-            // Otherwise fall back to any opponent creature (damage still useful)
+            // If we have killable creatures, prioritize those.
+            // Otherwise: target any opponent creature, or — for "any target" abilities
+            // like Sorin Markov +2 — an opponent player sentinel (CR 114.1a: players
+            // are legal targets for spells/abilities that say "any target").
             if !killable_targets.is_empty() {
                 killable_targets
             } else {
-                valid_targets
+                let opp_creatures: Vec<CardId> = valid_targets
                     .iter()
                     .filter(|&&id| view.get_card(id).map(|c| c.owner != self.player_id).unwrap_or(false))
                     .copied()
-                    .collect()
+                    .collect();
+                if !opp_creatures.is_empty() {
+                    opp_creatures
+                } else {
+                    // No opponent creatures — try opponent player sentinels if present.
+                    // These sentinel CardIds have no card entry (view.get_card → None),
+                    // but decode back to a TargetRef::Player at effect-resolution time.
+                    let opp_sentinels: Vec<CardId> = valid_targets
+                        .iter()
+                        .filter(|&&id| {
+                            crate::core::player_target_from_sentinel(id)
+                                .map(|pid| pid != self.player_id)
+                                .unwrap_or(false)
+                        })
+                        .copied()
+                        .collect();
+                    if !opp_sentinels.is_empty() {
+                        opp_sentinels
+                    } else {
+                        valid_targets.to_vec()
+                    }
+                }
             }
         } else if has_pump_effect {
             // Pump effects: Target our best creature
@@ -1236,35 +1254,45 @@ impl PlayerController for HeuristicController {
             return 0;
         }
 
-        // Prefer playing lands (usually first option is pass, second is land)
+        // Assign a priority score to each option in a single pass, then pick the
+        // lowest-numbered option with the best score. Priority (lowest = prefer):
+        //   0 = play a land, 1 = cast a spell, 2 = attack, 3 = any other option,
+        //   4 = explicitly pass.
+        // This replaces three sequential scans of the same slice.
+        const PLAY_LAND: usize = 0;
+        const CAST_SPELL: usize = 1;
+        const ATTACK: usize = 2;
+        const OTHER: usize = 3;
+        const PASS: usize = 4;
+
+        let mut best_idx = 0usize;
+        let mut best_prio = PASS;
+
         for (i, opt) in options.iter().enumerate() {
-            let opt_lower = opt.to_lowercase();
-            if opt_lower.contains("play") && opt_lower.contains("land") {
-                return i;
+            let lower = opt.to_lowercase();
+            let prio = if lower.contains("play") && lower.contains("land") {
+                PLAY_LAND
+            } else if lower.contains("cast") {
+                CAST_SPELL
+            } else if lower.contains("attack") && !lower.contains("don't") && !lower.contains("no ") {
+                ATTACK
+            } else if lower.contains("pass") {
+                PASS
+            } else {
+                OTHER
+            };
+
+            if prio < best_prio {
+                best_prio = prio;
+                best_idx = i;
             }
         }
 
-        // Prefer casting spells
-        for (i, opt) in options.iter().enumerate() {
-            let opt_lower = opt.to_lowercase();
-            if opt_lower.contains("cast") {
-                return i;
-            }
-        }
-
-        // Prefer attacking
-        for (i, opt) in options.iter().enumerate() {
-            let opt_lower = opt.to_lowercase();
-            if opt_lower.contains("attack") && !opt_lower.contains("don't") && !opt_lower.contains("no ") {
-                return i;
-            }
-        }
-
-        // Default: choose first non-pass option if available, otherwise pass
-        if options.len() > 1 {
-            1 // Skip "pass" which is usually option 0
+        // Fall back to skipping "pass" (usually option 0) when nothing scored better.
+        if best_prio == PASS && options.len() > 1 {
+            1
         } else {
-            0
+            best_idx
         }
     }
 

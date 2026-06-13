@@ -370,6 +370,14 @@ impl<'a> GameLoop<'a> {
             }
         }
 
+        // MTG CR 509.4 / 603.6: After blockers are declared, fire "attacks and
+        // isn't blocked" (AttackerUnblocked) triggers for each attacker that has
+        // no blockers assigned.  Uses check_attacker_unblocked_triggers which
+        // threads the defending player through TriggerContext so effects like
+        // Floral Spuzzem can target "artifact defending player controls".
+        let active_player = self.game.turn.active_player;
+        self.check_attacker_unblocked_triggers(active_player)?;
+
         // MTG Rules 509.4: After blockers are declared, players receive priority
         if let Some(result) = self.priority_round(controller1, controller2)? {
             return Ok(Some(result));

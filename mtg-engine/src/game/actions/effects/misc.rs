@@ -14,7 +14,7 @@
 //! Each handler is a thin `impl GameState` method; `execute_effect` matches the
 //! variant and delegates here. Behavior-preserving: bodies moved verbatim.
 
-use crate::core::{CardId, Color, ManaCost, PlayerId};
+use crate::core::{CardId, Color, ManaCost, PlayerId, TargetType};
 use crate::game::GameState;
 use crate::Result;
 
@@ -46,30 +46,43 @@ impl GameState {
             self.logger
                 .normal("Warning: produces_chosen_color in execute_effect - source card unknown");
         }
-        if amount_var.is_some() {
-            // Variable mana should be resolved before reaching execute_effect
-            self.logger
-                .normal("Warning: amount_var in execute_effect - should be resolved in ManaEngine");
-        }
+        // `remembered*N` — Metalworker-style: add `mana * remembered_amount * N`.
+        // Encoded by effect_converter when it detects `Remembered$Amount[/Twice]`
+        // in the SVar referenced by `Amount$`.
+        let effective_mana = if let Some(var) = amount_var {
+            if let Some(mult_str) = var.strip_prefix("remembered*") {
+                let mult: u32 = mult_str.parse().unwrap_or(1);
+                let remembered = self.remembered_amount.unwrap_or(0);
+                let total = remembered * mult;
+                mana.multiply(total as u8)
+            } else {
+                // Unknown variable: warn and fall through to base mana (1 unit).
+                self.logger
+                    .normal(&format!("Warning: unresolved amount_var '{var}' in execute_add_mana"));
+                *mana
+            }
+        } else {
+            *mana
+        };
         let p = self.get_player_mut(player)?;
 
         // Add each component of the mana cost to the pool
-        for _ in 0..mana.white {
+        for _ in 0..effective_mana.white {
             p.mana_pool.add_color(Color::White);
         }
-        for _ in 0..mana.blue {
+        for _ in 0..effective_mana.blue {
             p.mana_pool.add_color(Color::Blue);
         }
-        for _ in 0..mana.black {
+        for _ in 0..effective_mana.black {
             p.mana_pool.add_color(Color::Black);
         }
-        for _ in 0..mana.red {
+        for _ in 0..effective_mana.red {
             p.mana_pool.add_color(Color::Red);
         }
-        for _ in 0..mana.green {
+        for _ in 0..effective_mana.green {
             p.mana_pool.add_color(Color::Green);
         }
-        for _ in 0..mana.colorless {
+        for _ in 0..effective_mana.colorless {
             p.mana_pool.add_color(Color::Colorless);
         }
 
@@ -77,7 +90,7 @@ impl GameState {
         self.undo_log.log(
             crate::undo::GameAction::AddMana {
                 player_id: player,
-                mana: *mana,
+                mana: effective_mana,
             },
             prior_log_size,
         );
@@ -184,6 +197,37 @@ impl GameState {
         Ok(())
     }
 
+    /// [`Effect::SkipUntapStep`]: set the `skip_untap_next_turn` flag on
+    /// `player`, causing their next untap step to be skipped (CR 502.1).
+    ///
+    /// Yosei, the Morning Star die trigger:
+    ///   `DB$ SkipPhase | ValidTgts$ Player | Step$ Untap`
+    ///
+    /// The flag is consumed (and cleared) at the start of the next
+    /// `untap_step` for that player.
+    pub(in crate::game::actions) fn execute_skip_untap_step(&mut self, player: PlayerId) -> Result<()> {
+        let Some(p) = self.players.iter_mut().find(|p| p.id == player) else {
+            return Ok(()); // Player has already lost; ignore gracefully.
+        };
+        let old_value = p.skip_untap_next_turn;
+        p.skip_untap_next_turn = true;
+
+        let prior_log_size = self.logger.log_count();
+        self.undo_log.log(
+            crate::undo::GameAction::SetSkipUntapNextTurn {
+                player_id: player,
+                old_value,
+                new_value: true,
+            },
+            prior_log_size,
+        );
+
+        let player_num = player.as_u32() + 1;
+        self.logger
+            .gamelog(&format!("P{} will skip their next untap step", player_num));
+        Ok(())
+    }
+
     /// [`Effect::Unimplemented`]: an effect API not yet modeled — log a warning
     /// and a gamelog line, then resolve as a no-op (so the gap is visible).
     pub(in crate::game::actions) fn execute_unimplemented(&mut self, api_type: &str) -> Result<()> {
@@ -201,5 +245,383 @@ impl GameState {
     pub(in crate::game::actions) fn execute_noop(&self, api_type: &str) -> Result<()> {
         log::debug!(target: "actions", "NoOp effect '{}' (intentional)", api_type);
         Ok(())
+    }
+
+    /// [`Effect::ExtraLandPlay`]: grant `player` permission to play `amount`
+    /// additional lands this turn.
+    ///
+    /// Creates a `PersistentEffectKind::ExtraLandPlay` with
+    /// `CleanupCondition::EndOfTurn`.  The permanent form (Oracle of Mul Daya,
+    /// Exploration enchantment, …) is handled via `StaticAbility::ExtraLandPlay`
+    /// on the battlefield card and does NOT create a persistent effect.
+    /// [`Effect::GrantCastWithFlash`]: create a `PersistentEffectKind::GrantCastWithFlash`
+    /// that lets `player` cast spells matching `valid_card` as though they had flash
+    /// until end of turn (CR 702.8a). Used by Teferi, Time Raveler's +1 ability.
+    pub(in crate::game::actions) fn execute_grant_cast_with_flash(
+        &mut self,
+        player: PlayerId,
+        valid_card: crate::core::TargetRestriction,
+    ) -> Result<()> {
+        use crate::core::{CleanupCondition, PersistentEffectKind};
+
+        let player_name = self
+            .get_player(player)
+            .map(|p| p.name.as_str().to_string())
+            .unwrap_or_else(|_| format!("Player {}", player.as_u32()));
+
+        let source = crate::core::CardId::new(0);
+
+        self.persistent_effects.add(
+            PersistentEffectKind::GrantCastWithFlash { player, valid_card },
+            source,
+            player,
+            CleanupCondition::EndOfTurn,
+        );
+
+        self.logger.gamelog(&format!(
+            "{} may cast spells as though they had flash until end of turn.",
+            player_name
+        ));
+
+        Ok(())
+    }
+
+    pub(in crate::game::actions) fn execute_extra_land_play(&mut self, player: PlayerId, amount: u8) -> Result<()> {
+        use crate::core::{CleanupCondition, PersistentEffectKind};
+
+        if amount == 0 {
+            return Ok(());
+        }
+
+        let player_name = self
+            .get_player(player)
+            .map(|p| p.name.as_str().to_string())
+            .unwrap_or_else(|_| format!("Player {}", player.as_u32()));
+
+        // Use a sentinel source (card 0 = no specific source card)
+        let source = crate::core::CardId::new(0);
+
+        self.persistent_effects.add(
+            PersistentEffectKind::ExtraLandPlay { player, amount },
+            source,
+            player,
+            CleanupCondition::EndOfTurn,
+        );
+
+        let plural = if amount == 1 { "" } else { "s" };
+        self.logger.gamelog(&format!(
+            "{} may play {} additional land{} this turn.",
+            player_name, amount, plural
+        ));
+
+        Ok(())
+    }
+
+    /// [`Effect::ChooseAndRememberOneOfEach`]: for each `TargetType` in `types`,
+    /// choose one permanent of that type controlled by the current loop player
+    /// (`remembered_players[0]`) and push the chosen card onto
+    /// `game.remembered_cards`.
+    ///
+    /// Called from Tragic Arrogance's `YouChoose` SVar:
+    ///   `DB$ ChooseCard | ChooseEach$ Artifact & Creature & Enchantment & Planeswalker
+    ///    | ControlledByPlayer$ Remembered | RememberChosen$ True`
+    ///
+    /// The caster (YOU) picks for the current loop player.  AI heuristic:
+    /// - For the caster's OWN permanents: keep the highest-mana-value one of
+    ///   each type (save the best).
+    /// - For an OPPONENT's permanents: keep the lowest-mana-value one of each
+    ///   type (so the opponent's best get sacrificed).
+    ///
+    /// If no permanent of a given type is controlled by the loop player, that
+    /// type is silently skipped (MTG rules: you can only choose from what exists).
+    ///
+    /// CR 701.17: "sacrifice a permanent" is used by the companion SacAllOthers;
+    /// this step only REMEMBERS the chosen permanents.
+    pub(in crate::game::actions) fn execute_choose_and_remember_one_of_each(
+        &mut self,
+        types: &[TargetType],
+    ) -> Result<()> {
+        // Who is the current loop player? (set by RepeatEach | RepeatPlayers$ Player)
+        let loop_player = self.remembered_players.first().copied();
+        let Some(loop_player_id) = loop_player else {
+            log::warn!(
+                target: "actions",
+                "ChooseAndRememberOneOfEach: no remembered player to choose for; skipping"
+            );
+            return Ok(());
+        };
+
+        // Is the loop player the caster?  For this effect, "caster" = spell
+        // controller.  We approximate as: is the loop player player 0 in
+        // turn order?  More precisely we compare against `active_player` at
+        // time of resolution, but we don't always have that.  Instead we use
+        // the sign of the choice heuristic:
+        //   - loop player == spell controller → keep best (high MV)
+        //   - loop player != spell controller → keep worst (low MV, sacrifice best)
+        //
+        // Technically the card says the CASTER always decides (Defined$ You),
+        // but the AI approximation is: the caster prefers to keep their own
+        // best and sacrifice the opponent's best.  We identify "caster" as
+        // whichever remembered_player is current (RepeatEach always runs the
+        // active spell-controller as first or later); for simplicity we check
+        // whether `loop_player_id` is player index 0 in `self.players`.
+        let loop_player_is_first = self.players.first().is_some_and(|p| p.id == loop_player_id);
+
+        for target_type in types {
+            // Collect all permanents of this type controlled by loop_player_id
+            let candidates: Vec<(CardId, u8)> = self
+                .battlefield
+                .cards
+                .iter()
+                .copied()
+                .filter_map(|cid| {
+                    let card = self.cards.try_get(cid)?;
+                    // Must be controlled by the loop player
+                    if card.controller != loop_player_id {
+                        return None;
+                    }
+                    // Must match the target type
+                    let type_restriction = crate::core::TargetRestriction::from_types([*target_type]);
+                    if !type_restriction.matches(card) {
+                        return None;
+                    }
+                    Some((cid, card.mana_cost.cmc()))
+                })
+                .collect();
+
+            if candidates.is_empty() {
+                // No permanent of this type for this player — skip silently (CR: you
+                // choose from among permanents that player controls; if none exist,
+                // there is nothing to choose and nothing survives for that type).
+                log::debug!(
+                    target: "actions",
+                    "ChooseAndRememberOneOfEach: player {:?} controls no {:?}; skipping type",
+                    loop_player_id, target_type
+                );
+                continue;
+            }
+
+            // Pick the one to KEEP (remember = save from sacrifice).
+            // If this is the loop player's own permanents (loop_player_is_first):
+            //   keep highest CMC (save the best)
+            // If this is an opponent's permanents (!loop_player_is_first):
+            //   keep lowest CMC (sacrifice the best)
+            let chosen_id = if loop_player_is_first {
+                // Keep best (highest CMC)
+                candidates.iter().max_by_key(|(_, cmc)| *cmc).map(|(cid, _)| *cid)
+            } else {
+                // Keep worst (lowest CMC) so the best gets sacrificed
+                candidates.iter().min_by_key(|(_, cmc)| *cmc).map(|(cid, _)| *cid)
+            };
+
+            if let Some(cid) = chosen_id {
+                self.remembered_cards.push(cid);
+                let card_name = self
+                    .cards
+                    .try_get(cid)
+                    .map(|c| c.name.to_string())
+                    .unwrap_or_else(|| "Unknown".to_string());
+                log::debug!(
+                    target: "actions",
+                    "ChooseAndRememberOneOfEach: chose {:?} ({}) for type {:?} (player {:?})",
+                    cid, card_name, target_type, loop_player_id
+                );
+                self.logger.gamelog(&format!(
+                    "Player {:?} chooses to keep {} ({:?}) as their {:?}",
+                    loop_player_id, card_name, cid, target_type
+                ));
+            }
+        }
+
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::{Card, CardId, CardType, TargetType};
+    use crate::game::GameState;
+
+    /// Helper: create a permanent of the given `card_type` on the battlefield
+    /// under `owner`'s control, with the given CMC set on its mana cost.
+    fn create_typed_permanent(
+        game: &mut GameState,
+        owner: PlayerId,
+        name: &str,
+        card_type: CardType,
+        cmc: u8,
+    ) -> CardId {
+        let card_id = game.next_card_id();
+        let mut card = Card::new(card_id, name, owner);
+        card.controller = owner;
+        card.add_type(card_type);
+        // Set a mana cost whose CMC matches `cmc`. Using generic mana is the
+        // simplest way — ManaCost::from_generic(n).
+        // Build a mana cost string with `cmc` generic mana
+        let cost_str = cmc.to_string();
+        card.mana_cost = crate::core::ManaCost::from_string(&cost_str);
+        game.cards.insert(card_id, card);
+        game.battlefield.add(card_id);
+        card_id
+    }
+
+    /// Tragic Arrogance scenario: P1 (loop player = "self") controls one
+    /// Creature and one Artifact; P2 is the caster but is not the loop player.
+    ///
+    /// When `loop_player_is_first` is true (P1 == players[0]):
+    ///   the executor should keep the highest-CMC permanent of each type.
+    #[test]
+    fn test_choose_and_remember_keeps_best_for_self() {
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1 = game.players[0].id; // loop player
+        let _p2 = game.players[1].id;
+
+        // P1 controls two creatures: Grizzly Bears (CMC 2) and Serra Angel (CMC 5)
+        let bears = create_typed_permanent(&mut game, p1, "Grizzly Bears", CardType::Creature, 2);
+        let angel = create_typed_permanent(&mut game, p1, "Serra Angel", CardType::Creature, 5);
+        // P1 controls two artifacts: Sol Ring (CMC 1) and Wurmcoil Engine (CMC 6)
+        let sol_ring = create_typed_permanent(&mut game, p1, "Sol Ring", CardType::Artifact, 1);
+        let wurmcoil = create_typed_permanent(&mut game, p1, "Wurmcoil Engine", CardType::Artifact, 6);
+
+        // Set up: loop player = P1 (stored in remembered_players[0])
+        game.remembered_players.clear();
+        game.remembered_players.push(p1);
+        game.remembered_cards.clear();
+
+        let types = vec![TargetType::Creature, TargetType::Artifact];
+        game.execute_choose_and_remember_one_of_each(&types)
+            .expect("execute_choose_and_remember_one_of_each should succeed");
+
+        // Should remember exactly 2 cards: best creature (Serra Angel, CMC 5)
+        // and best artifact (Wurmcoil Engine, CMC 6).
+        assert_eq!(
+            game.remembered_cards.len(),
+            2,
+            "Expected 2 remembered cards, got {}: {:?}",
+            game.remembered_cards.len(),
+            game.remembered_cards
+        );
+        assert!(
+            game.remembered_cards.contains(&angel),
+            "Serra Angel (CMC 5, best creature) should be kept"
+        );
+        assert!(
+            game.remembered_cards.contains(&wurmcoil),
+            "Wurmcoil Engine (CMC 6, best artifact) should be kept"
+        );
+        // Weaker cards must NOT be in remembered (they will be sacrificed)
+        assert!(
+            !game.remembered_cards.contains(&bears),
+            "Grizzly Bears should NOT be kept (lower CMC)"
+        );
+        assert!(
+            !game.remembered_cards.contains(&sol_ring),
+            "Sol Ring should NOT be kept (lower CMC)"
+        );
+    }
+
+    /// When the loop player is NOT players[0] (i.e., an opponent's turn in the
+    /// RepeatEach loop), the executor should keep the WEAKEST permanent of each
+    /// type (so the opponent's best permanents get sacrificed).
+    #[test]
+    fn test_choose_and_remember_keeps_worst_for_opponent() {
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1 = game.players[0].id; // caster (first player)
+        let p2 = game.players[1].id; // loop player (opponent)
+
+        // P2 controls two creatures: Grizzly Bears (CMC 2) and Serra Angel (CMC 5)
+        let bears = create_typed_permanent(&mut game, p2, "Grizzly Bears", CardType::Creature, 2);
+        let angel = create_typed_permanent(&mut game, p2, "Serra Angel", CardType::Creature, 5);
+
+        // Set loop player = P2 (NOT the first player → opponent branch)
+        game.remembered_players.clear();
+        game.remembered_players.push(p2);
+        game.remembered_cards.clear();
+
+        let types = vec![TargetType::Creature];
+        game.execute_choose_and_remember_one_of_each(&types)
+            .expect("execute_choose_and_remember_one_of_each should succeed");
+
+        assert_eq!(
+            game.remembered_cards.len(),
+            1,
+            "Expected 1 remembered card, got {}: {:?}",
+            game.remembered_cards.len(),
+            game.remembered_cards
+        );
+        // Keep the WORST (lowest CMC) so the opponent's best gets sacrificed
+        assert!(
+            game.remembered_cards.contains(&bears),
+            "Grizzly Bears (CMC 2, worst creature) should be kept for opponent"
+        );
+        assert!(
+            !game.remembered_cards.contains(&angel),
+            "Serra Angel (CMC 5, best creature) should NOT be kept (gets sacrificed)"
+        );
+        let _ = p1;
+    }
+
+    /// If the loop player controls no permanent of a given type, that type is
+    /// silently skipped (no panic, no remembered card for that type).
+    #[test]
+    fn test_choose_and_remember_skips_missing_types() {
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1 = game.players[0].id;
+        let _p2 = game.players[1].id;
+
+        // P1 controls only a Creature — no Artifact
+        let _bear = create_typed_permanent(&mut game, p1, "Grizzly Bears", CardType::Creature, 2);
+
+        game.remembered_players.clear();
+        game.remembered_players.push(p1);
+        game.remembered_cards.clear();
+
+        // Ask for both Creature and Artifact
+        let types = vec![TargetType::Creature, TargetType::Artifact];
+        game.execute_choose_and_remember_one_of_each(&types)
+            .expect("execute_choose_and_remember_one_of_each should succeed even with missing type");
+
+        // Only 1 card remembered (the creature); Artifact type silently skipped
+        assert_eq!(
+            game.remembered_cards.len(),
+            1,
+            "Expected 1 remembered card (creature kept, no artifact to skip), got {}",
+            game.remembered_cards.len()
+        );
+    }
+
+    /// `SacrificeAll` with `!IsRemembered` should sacrifice only permanents NOT
+    /// in `remembered_cards`.  This is the "SacAllOthers" step of Tragic
+    /// Arrogance: `ValidCards$ Permanent.nonLand+!IsRemembered`.
+    #[test]
+    fn test_sacrifice_all_excludes_remembered() {
+        use crate::core::TargetRestriction;
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1 = game.players[0].id;
+
+        // P1 controls: a Creature (to keep) and an Artifact (to sacrifice)
+        let creature = create_typed_permanent(&mut game, p1, "Serra Angel", CardType::Creature, 5);
+        let artifact = create_typed_permanent(&mut game, p1, "Sol Ring", CardType::Artifact, 1);
+
+        // Mark the creature as "remembered" (chosen to survive)
+        game.remembered_cards.clear();
+        game.remembered_cards.push(creature);
+
+        // Execute SacrificeAll with !IsRemembered restriction
+        let restriction = TargetRestriction::parse("Permanent.!IsRemembered");
+        game.execute_sacrifice_all(&restriction)
+            .expect("execute_sacrifice_all should succeed");
+
+        // The artifact should be sacrificed (moved to graveyard); the creature should survive
+        assert!(
+            !game.battlefield.contains(artifact),
+            "Artifact should have been sacrificed (not in remembered)"
+        );
+        assert!(
+            game.battlefield.contains(creature),
+            "Creature should survive (it was in remembered)"
+        );
     }
 }

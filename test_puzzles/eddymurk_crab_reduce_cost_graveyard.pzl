@@ -1,0 +1,25 @@
+[metadata]
+Name:Eddymurk Crab ReduceCost Amount$X (graveyard count)
+Goal:Win
+Turns:3
+Difficulty:Easy
+Description:Eddymurk Crab has a ReduceCost static: "costs {1} less to cast for each instant and sorcery card in your graveyard" (SVar:X:Count$ValidGraveyard Instant.YouOwn,Sorcery.YouOwn, Amount$X). P0 has 5 instant/sorcery cards in graveyard, reducing the 5UU base cost by 5 to 0UU = {U}{U} only. P0 has exactly 2 Islands. Without the fix (Amount$X parsed as 0), P0 cannot afford the {5}{U}{U} cost. With the fix (dynamic count = 5), cost reduces to {U}{U} and P0 can cast it. This also exercises the comma-separated type filter "Instant.YouOwn,Sorcery.YouOwn" in count_cards_matching_filter.
+
+[state]
+turn=2
+activeplayer=p0
+activephase=MAIN1
+
+p0life=20
+# Eddymurk Crab in hand — normally costs 5UU; with 5 graveyard spells costs 0UU
+p0hand=Eddymurk Crab
+# Exactly 2 Islands — enough to pay UU but NOT enough for the unreduced 5UU cost
+p0battlefield=Island; Island
+# 5 instants/sorceries in graveyard to trigger full 5-mana reduction
+p0graveyard=Lightning Bolt; Opt; Negate; Counterspell; Giant Growth
+p0library=Plains; Plains; Plains
+
+p1life=20
+p1hand=
+p1battlefield=Forest; Forest; Forest
+p1library=Forest; Forest; Forest

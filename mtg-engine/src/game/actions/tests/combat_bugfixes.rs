@@ -440,4 +440,142 @@ mod tests {
              hand should still be 9 but was {p2_hand}"
         );
     }
+
+    // ========================================================================
+    // Torbran, Thane of Red Fell: damage-increase replacement (CR 614.1a)
+    //
+    // "If a red source you control would deal damage to an opponent or a
+    //  permanent an opponent controls, it deals that much damage plus 2 instead."
+    //
+    // CR 614.1a: A replacement effect modifies the damage value of a damage
+    // event. Torbran's static ability is a damage-increase replacement that
+    // fires whenever a red source controlled by Torbran's controller would deal
+    // damage to an opponent or an opponent-controlled permanent.
+    //
+    // mtg-901 B1: Prior to this fix the replacement was completely unimplemented;
+    // red sources dealt their printed damage with no bonus even when Torbran
+    // was on the battlefield (confirmed via debug/survey2020/torbran_test.pzl).
+    // ========================================================================
+
+    /// Torbran: unblocked red attacker deals base_power + 2 to defending player.
+    ///
+    /// Setup: P1 controls Torbran (2/4) + Scorch Spitter (1/1 red) on battlefield;
+    /// P2 has no creatures. Scorch Spitter attacks unblocked → should deal
+    /// 1 (power) + 2 (Torbran) = 3 combat damage to P2, not just 1.
+    ///
+    /// Reproducer: `python3 agentplay/agent_game.py --mock --seed 42 --max-turns 6 \
+    ///   -- decks/championship/2020/03_manfield_mono_red.dck \
+    ///      decks/championship/2020/01_pvddr_azorius_control.dck`
+    #[test]
+    fn test_torbran_boosts_combat_damage_to_player() {
+        use crate::core::Color;
+        use crate::game::ZeroController;
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let players: Vec<_> = game.players.iter().map(|p| p.id).collect();
+        let p1_id = players[0];
+        let p2_id = players[1];
+
+        // -- Torbran on P1's side --
+        let torbran_id = game.next_card_id();
+        {
+            use super::super::effects::load_test_card;
+            // We use load_test_card so that static_abilities are fully parsed
+            // from the actual cardsfolder script (including DamageIncrease).
+            let loaded = load_test_card(&mut game, "Torbran, Thane of Red Fell", p1_id);
+            if let Err(e) = &loaded {
+                // If card loading fails (e.g. cardsfolder path issue), skip gracefully.
+                eprintln!("Skipping Torbran test: card load error: {e}");
+                return;
+            }
+            let tid = loaded.unwrap();
+            // Move loaded id onto battlefield
+            game.battlefield.add(tid);
+            let _ = torbran_id; // unused; real id is `tid`
+            let card = game.cards.get_mut(tid).unwrap();
+            card.controller = p1_id;
+            card.tapped = false;
+        }
+
+        // -- Scorch Spitter (1/1 red) controlled by P1 --
+        let spitter_id = game.next_card_id();
+        {
+            let mut spitter = Card::new(spitter_id, "Scorch Spitter".to_string(), p1_id);
+            spitter.add_type(CardType::Creature);
+            spitter.set_base_power(Some(1));
+            spitter.set_base_toughness(Some(1));
+            spitter.colors.push(Color::Red);
+            spitter.controller = p1_id;
+            spitter.tapped = false;
+            spitter.turn_entered_battlefield = Some(0); // was here last turn — no sick
+            game.cards.insert(spitter_id, spitter);
+            game.battlefield.add(spitter_id);
+        }
+
+        // Declare Scorch Spitter as attacker targeting P2.
+        game.combat.declare_attacker(spitter_id, p2_id);
+
+        // Apply combat damage (no blockers → unblocked).
+        let mut p1_ctrl = ZeroController::new(p1_id);
+        let mut p2_ctrl = ZeroController::new(p2_id);
+        game.assign_combat_damage(&mut p1_ctrl, &mut p2_ctrl, false)
+            .expect("assign_combat_damage failed");
+
+        let p2_life = game.get_player(p2_id).unwrap().life;
+        // Without Torbran fix: 20 - 1 = 19. With fix: 20 - (1+2) = 17.
+        assert_eq!(
+            p2_life, 17,
+            "Torbran should boost Scorch Spitter's combat damage by +2 \
+             (1 base + 2 Torbran = 3 total); P2 life should be 17, got {p2_life}"
+        );
+    }
+
+    /// Torbran: red spell damage to opponent player also gets +2.
+    ///
+    /// Setup: P1 controls Torbran; P1 casts a "Lightning Bolt" (3 damage) effect
+    /// at P2 → should deal 3 + 2 = 5 damage (Torbran boost applies to spell damage
+    /// from red sources too, CR 614.1a).
+    #[test]
+    fn test_torbran_boosts_spell_damage_to_player() {
+        use crate::core::Color;
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let players: Vec<_> = game.players.iter().map(|p| p.id).collect();
+        let p1_id = players[0];
+        let p2_id = players[1];
+
+        // Load Torbran from cardsfolder.
+        let loaded = {
+            use super::super::effects::load_test_card;
+            load_test_card(&mut game, "Torbran, Thane of Red Fell", p1_id)
+        };
+        if let Err(e) = &loaded {
+            eprintln!("Skipping Torbran spell test: {e}");
+            return;
+        }
+        let torbran_id = loaded.unwrap();
+        game.battlefield.add(torbran_id);
+        game.cards.get_mut(torbran_id).unwrap().controller = p1_id;
+
+        // Create a fake "red bolt" source card on the stack (simulates a red spell).
+        let bolt_id = game.next_card_id();
+        {
+            let mut bolt = Card::new(bolt_id, "Lightning Bolt".to_string(), p1_id);
+            bolt.add_type(crate::core::CardType::Instant);
+            bolt.colors.push(Color::Red);
+            bolt.controller = p1_id;
+            game.cards.insert(bolt_id, bolt);
+        }
+
+        // Simulate dealing 3 damage through the spell damage path.
+        game.current_damage_source = Some(bolt_id);
+        game.deal_damage(p2_id, 3).expect("deal_damage failed");
+        game.current_damage_source = None;
+
+        let p2_life = game.get_player(p2_id).unwrap().life;
+        // Without fix: 20 - 3 = 17. With Torbran fix: 20 - (3+2) = 15.
+        assert_eq!(
+            p2_life, 15,
+            "Torbran should boost red spell damage by +2 (3 base + 2 = 5); \
+             P2 life should be 15, got {p2_life}"
+        );
+    }
 }

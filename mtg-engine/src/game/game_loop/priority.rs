@@ -225,6 +225,7 @@ impl<'a> GameLoop<'a> {
                         power_bonus,
                         toughness_bonus,
                         keywords_granted,
+                        keyword_args_granted,
                     } if target.is_placeholder() && target_index < targets.len() => {
                         let resolved_target = targets[target_index];
                         last_resolved_target = Some(resolved_target);
@@ -233,6 +234,7 @@ impl<'a> GameLoop<'a> {
                             power_bonus: *power_bonus,
                             toughness_bonus: *toughness_bonus,
                             keywords_granted: keywords_granted.clone(),
+                            keyword_args_granted: keyword_args_granted.clone(),
                         };
                         target_index += 1;
                         replaced
@@ -1005,11 +1007,41 @@ impl<'a> GameLoop<'a> {
                                         .get_valid_modes_for_spell(card_id, current_priority)
                                         .unwrap_or_default();
 
-                                    // Filter to only modes with valid targets
+                                    // Compute available mana minus base spell cost to budget for ModeCost$
+                                    // (tiered modal spells like Fire Magic). Untapped sources + pool.
+                                    let base_spell_cost =
+                                        self.game.cards.try_get(card_id).map(|c| c.mana_cost.cmc()).unwrap_or(0);
+                                    self.mana_engine.update_mut(self.game, current_priority);
+                                    let untapped_for_mode = self
+                                        .mana_engine
+                                        .all_sources()
+                                        .iter()
+                                        .filter(|s| !s.is_tapped && !s.has_summoning_sickness)
+                                        .count() as u8;
+                                    let pool_for_mode = self
+                                        .game
+                                        .get_player(current_priority)
+                                        .map(|p| p.total_available_mana().total())
+                                        .unwrap_or(0);
+                                    let total_mana_for_mode = untapped_for_mode.saturating_add(pool_for_mode);
+                                    let mana_for_mode_cost = total_mana_for_mode.saturating_sub(base_spell_cost);
+
+                                    // Filter to only modes with valid targets AND affordable ModeCost$
+                                    log::debug!(
+                                        target: "priority",
+                                        "ModeCost filter: base_cost={}, untapped={}, pool={}, mana_for_mode_cost={}, modes={}",
+                                        base_spell_cost, untapped_for_mode, pool_for_mode, mana_for_mode_cost, modes.len()
+                                    );
                                     let valid_mode_indices: Vec<usize> = valid_modes
                                         .iter()
                                         .filter(|(_, has_targets)| *has_targets)
                                         .map(|(idx, _)| *idx)
+                                        .filter(|&idx| {
+                                            modes
+                                                .get(idx)
+                                                .map(|m| m.mode_cost <= mana_for_mode_cost)
+                                                .unwrap_or(false)
+                                        })
                                         .collect();
 
                                     // If no modes have valid targets, the spell can't be cast legally
@@ -1055,12 +1087,20 @@ impl<'a> GameLoop<'a> {
                                         self.log_choice_point(current_priority, Some(replay_choice), prior_log_size);
 
                                         // Apply selected modes to the spell (replaces ModalChoice with mode effects)
-                                        if let Err(e) = self.game.apply_selected_modes(card_id, &original_indices) {
-                                            log::warn!(
-                                                target: "priority",
-                                                "Failed to apply selected modes: {}",
-                                                e
-                                            );
+                                        match self.game.apply_selected_modes(card_id, &original_indices) {
+                                            Ok((_, mode_cost)) if mode_cost > 0 => {
+                                                // Record extra ModeCost$ mana via undo-safe log so
+                                                // compute_effective_cost adds it to total spell cost.
+                                                self.game.set_mode_cost_paid_logged(card_id, mode_cost);
+                                            }
+                                            Ok(_) => {}
+                                            Err(e) => {
+                                                log::warn!(
+                                                    target: "priority",
+                                                    "Failed to apply selected modes: {}",
+                                                    e
+                                                );
+                                            }
                                         }
 
                                         // Log which mode was chosen
@@ -1152,6 +1192,255 @@ impl<'a> GameLoop<'a> {
                                         if self.verbosity >= VerbosityLevel::Normal && !self.replaying {
                                             let message = format!("  → X = {}", x_value);
                                             self.game.logger.gamelog(&message);
+                                        }
+                                    }
+                                }
+
+                                // Step 2c: Multikicker payment (CR 702.33a)
+                                // If the spell has Multikicker, the caster may pay
+                                // the kicker cost any number of additional times.
+                                // Heuristic: pay as many times as mana allows
+                                // (greedy — always kick as much as possible).
+                                {
+                                    let multikicker_cost = self
+                                        .game
+                                        .cards
+                                        .try_get(card_id)
+                                        .and_then(|c| c.keywords.get_args(crate::core::Keyword::Multikicker))
+                                        .and_then(|args| {
+                                            if let crate::core::KeywordArgs::Multikicker { cost } = args {
+                                                Some(crate::core::ManaCost {
+                                                    generic: cost.generic,
+                                                    white: cost.white,
+                                                    blue: cost.blue,
+                                                    black: cost.black,
+                                                    red: cost.red,
+                                                    green: cost.green,
+                                                    colorless: cost.colorless,
+                                                    x_count: cost.x_count,
+                                                })
+                                            } else {
+                                                None
+                                            }
+                                        });
+                                    if let Some(kick_cost) = multikicker_cost {
+                                        let kick_cmc = kick_cost.cmc();
+                                        if kick_cmc > 0 {
+                                            self.mana_engine.update_mut(self.game, current_priority);
+                                            let untapped_sources =
+                                                self.mana_engine
+                                                    .all_sources()
+                                                    .iter()
+                                                    .filter(|s| !s.is_tapped && !s.has_summoning_sickness)
+                                                    .count() as u8;
+                                            let pool_mana = self
+                                                .game
+                                                .get_player(current_priority)
+                                                .map(|p| p.total_available_mana().total())
+                                                .unwrap_or(0);
+                                            let total_mana = untapped_sources.saturating_add(pool_mana);
+                                            // Reserve mana for the base spell cost
+                                            let base_cost =
+                                                self.game.cards.get(card_id).map(|c| c.mana_cost.cmc()).unwrap_or(0);
+                                            let available_for_kicker = total_mana.saturating_sub(base_cost);
+                                            let max_kicks = available_for_kicker / kick_cmc;
+                                            if max_kicks > 0 {
+                                                self.game.set_times_kicked_logged(card_id, max_kicks);
+                                                if self.verbosity >= VerbosityLevel::Normal && !self.replaying {
+                                                    let msg = format!(
+                                                        "  → Multikicker paid {} time{}",
+                                                        max_kicks,
+                                                        if max_kicks == 1 { "" } else { "s" }
+                                                    );
+                                                    self.game.logger.gamelog(&msg);
+                                                }
+                                            } else {
+                                                // Ensure times_kicked is 0 (reset from any prior value)
+                                                self.game.set_times_kicked_logged(card_id, 0);
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // Step 2c.5: Kicker payment (CR 702.32)
+                                // If the spell has the Kicker keyword, the caster may
+                                // pay the kicker cost once as an optional additional cost.
+                                // Heuristic: always pay kicker when mana allows (greedy —
+                                // the kicked mode always has equal or greater effect, e.g.
+                                // Firebending Lesson deals 5 kicked vs 2 unkicked).
+                                {
+                                    let kicker_cost = self
+                                        .game
+                                        .cards
+                                        .try_get(card_id)
+                                        .and_then(|c| c.keywords.get_args(crate::core::Keyword::Kicker))
+                                        .and_then(|args| {
+                                            if let crate::core::KeywordArgs::Kicker { cost } = args {
+                                                Some(crate::core::ManaCost {
+                                                    generic: cost.generic,
+                                                    white: cost.white,
+                                                    blue: cost.blue,
+                                                    black: cost.black,
+                                                    red: cost.red,
+                                                    green: cost.green,
+                                                    colorless: cost.colorless,
+                                                    x_count: cost.x_count,
+                                                })
+                                            } else {
+                                                None
+                                            }
+                                        });
+                                    if let Some(kick_cost) = kicker_cost {
+                                        let kick_cmc = kick_cost.cmc();
+                                        if kick_cmc > 0 {
+                                            self.mana_engine.update_mut(self.game, current_priority);
+                                            let untapped_sources =
+                                                self.mana_engine
+                                                    .all_sources()
+                                                    .iter()
+                                                    .filter(|s| !s.is_tapped && !s.has_summoning_sickness)
+                                                    .count() as u8;
+                                            let pool_mana = self
+                                                .game
+                                                .get_player(current_priority)
+                                                .map(|p| p.total_available_mana().total())
+                                                .unwrap_or(0);
+                                            let total_mana = untapped_sources.saturating_add(pool_mana);
+                                            // Reserve mana for the base spell cost
+                                            let base_cost =
+                                                self.game.cards.get(card_id).map(|c| c.mana_cost.cmc()).unwrap_or(0);
+                                            let available_for_kicker = total_mana.saturating_sub(base_cost);
+                                            if available_for_kicker >= kick_cmc {
+                                                self.game.set_kicker_paid_logged(card_id, true);
+                                                if self.verbosity >= VerbosityLevel::Normal && !self.replaying {
+                                                    let msg = "  → Kicker paid".to_string();
+                                                    self.game.logger.gamelog(&msg);
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // Step 2c.6: Offspring payment (CR 702.198)
+                                // If the creature spell has the Offspring keyword, the
+                                // caster may pay the Offspring cost once as an optional
+                                // additional cost. When the creature enters, a 1/1 token
+                                // copy of it is created. Heuristic: always pay Offspring
+                                // when mana allows (greedy — the extra token is always
+                                // advantageous).
+                                {
+                                    let offspring_cost = self
+                                        .game
+                                        .cards
+                                        .try_get(card_id)
+                                        .and_then(|c| c.keywords.get_args(crate::core::Keyword::Offspring))
+                                        .and_then(|args| {
+                                            if let crate::core::KeywordArgs::Offspring { cost } = args {
+                                                Some(crate::core::ManaCost {
+                                                    generic: cost.generic,
+                                                    white: cost.white,
+                                                    blue: cost.blue,
+                                                    black: cost.black,
+                                                    red: cost.red,
+                                                    green: cost.green,
+                                                    colorless: cost.colorless,
+                                                    x_count: cost.x_count,
+                                                })
+                                            } else {
+                                                None
+                                            }
+                                        });
+                                    if let Some(off_cost) = offspring_cost {
+                                        let off_cmc = off_cost.cmc();
+                                        if off_cmc > 0 {
+                                            self.mana_engine.update_mut(self.game, current_priority);
+                                            let untapped_sources =
+                                                self.mana_engine
+                                                    .all_sources()
+                                                    .iter()
+                                                    .filter(|s| !s.is_tapped && !s.has_summoning_sickness)
+                                                    .count() as u8;
+                                            let pool_mana = self
+                                                .game
+                                                .get_player(current_priority)
+                                                .map(|p| p.total_available_mana().total())
+                                                .unwrap_or(0);
+                                            let total_mana = untapped_sources.saturating_add(pool_mana);
+                                            // Reserve mana for the base spell cost (already paid by
+                                            // the time we reach here; conservative check).
+                                            let base_cost =
+                                                self.game.cards.get(card_id).map(|c| c.mana_cost.cmc()).unwrap_or(0);
+                                            let available_for_offspring = total_mana.saturating_sub(base_cost);
+                                            if available_for_offspring >= off_cmc {
+                                                self.game.set_offspring_paid_logged(card_id, true);
+                                                if self.verbosity >= VerbosityLevel::Normal && !self.replaying {
+                                                    let msg = "  → Offspring paid".to_string();
+                                                    self.game.logger.gamelog(&msg);
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // Step 2d: Bargain payment (CR 702.162)
+                                // If the spell has the Bargain keyword, the caster
+                                // may sacrifice an artifact, enchantment, or token as
+                                // an optional additional cost. Heuristic: always pay
+                                // Bargain if there is a token available (cheapest
+                                // sacrifice, maximum value from the rider).
+                                {
+                                    let has_bargain = self
+                                        .game
+                                        .cards
+                                        .try_get(card_id)
+                                        .is_some_and(|c| c.keywords.contains(crate::core::Keyword::Bargain));
+                                    if has_bargain {
+                                        // Find a token on the battlefield controlled by current_priority
+                                        // to sacrifice (tokens are the cheapest Bargain fodder).
+                                        // Fall back to any artifact or enchantment.
+                                        let sacrifice_target = self
+                                            .game
+                                            .battlefield
+                                            .cards
+                                            .iter()
+                                            .find(|&&pid| {
+                                                self.game.cards.try_get(pid).is_some_and(|c| {
+                                                    c.controller == current_priority
+                                                        && c.id != card_id
+                                                        && (c.is_token
+                                                            || c.is_type(&crate::core::CardType::Artifact)
+                                                            || c.is_type(&crate::core::CardType::Enchantment))
+                                                })
+                                            })
+                                            .copied();
+                                        if let Some(sacrifice_id) = sacrifice_target {
+                                            // Mark bargain_paid BEFORE cast_spell_8_step
+                                            // (which reads it at resolution).
+                                            self.game.set_bargain_paid_logged(card_id, true);
+                                            // Perform the sacrifice: move to graveyard.
+                                            let dest = self.game.death_destination_for_card(sacrifice_id);
+                                            let _ = self.game.move_card(
+                                                sacrifice_id,
+                                                crate::zones::Zone::Battlefield,
+                                                dest,
+                                                current_priority,
+                                            );
+                                            if self.verbosity >= VerbosityLevel::Normal && !self.replaying {
+                                                if let Some(sac_name) = self
+                                                    .game
+                                                    .cards
+                                                    .try_get(sacrifice_id)
+                                                    .map(|c| c.name.as_str().to_string())
+                                                {
+                                                    self.game.logger.gamelog(&format!(
+                                                        "  → Bargain: sacrificed {} as additional cost",
+                                                        sac_name
+                                                    ));
+                                                }
+                                            }
+                                        } else {
+                                            // No sacrifice target — cannot pay Bargain; reset flag.
+                                            self.game.set_bargain_paid_logged(card_id, false);
                                         }
                                     }
                                 }
@@ -1500,6 +1789,11 @@ impl<'a> GameLoop<'a> {
                                         } // end if effect_start_idx == 0 (skip costs on effect resumption)
                                     } // end else (not resuming from effect_resume)
 
+                                    // Set transient controller context so execute_counter_spell can
+                                    // detect opponent-countered creature spells (Summoning Trap).
+                                    // Cleared below after the effects loop completes.
+                                    self.game.current_spell_controller = Some(current_priority);
+
                                     // Execute effects immediately (not on the stack)
                                     // TODO(mtg-70): Put non-mana abilities on the stack
                                     // Use enumerate to track index for WASM effect resumption.
@@ -1509,6 +1803,182 @@ impl<'a> GameLoop<'a> {
                                         if effect_idx < effect_start_idx {
                                             continue; // Skip already-executed effects on resumption
                                         }
+
+                                        // B3 fix (mtg-910): ModalChoice activated abilities (e.g. Umezawa's
+                                        // Jitte Charm — "remove a charge counter: choose +2/+2, -1/-1, or +2
+                                        // life") were falling through to execute_effect which no-ops them.
+                                        // Handle them here by routing mode selection through the controller,
+                                        // then executing the chosen mode's sub-effect with placeholder
+                                        // resolution. MTG CR 601.2b: mode choice happens before targeting;
+                                        // for activated abilities we do it during resolution since targeting
+                                        // was collected above across all modes.
+                                        if let crate::core::Effect::ModalChoice {
+                                            modes,
+                                            num_to_choose,
+                                            min_to_choose,
+                                            can_repeat_modes,
+                                        } = effect
+                                        {
+                                            let mode_descriptions: Vec<String> =
+                                                modes.iter().map(|m| m.description.clone()).collect();
+                                            let n_choose = *num_to_choose as usize;
+                                            let n_min = *min_to_choose as usize;
+                                            let can_repeat = *can_repeat_modes;
+
+                                            let prior_log_size = self.game.logger.log_count();
+                                            let choice = self.choose_modes_with_hook(
+                                                controller,
+                                                current_priority,
+                                                card_id,
+                                                &mode_descriptions,
+                                                n_choose,
+                                                n_min,
+                                                can_repeat,
+                                            );
+                                            let selected_modes =
+                                                handle_choice_result_break!(choice, self.game, current_priority);
+
+                                            let replay_choice = crate::game::ReplayChoice::Modes(
+                                                selected_modes.iter().copied().collect(),
+                                            );
+                                            self.log_choice_point(
+                                                current_priority,
+                                                Some(replay_choice),
+                                                prior_log_size,
+                                            );
+
+                                            if self.verbosity >= VerbosityLevel::Normal && !self.replaying {
+                                                for &idx in &selected_modes {
+                                                    if let Some(mode) = modes.get(idx) {
+                                                        self.game
+                                                            .logger
+                                                            .gamelog(&format!("  Mode chosen: {}", mode.description));
+                                                    }
+                                                }
+                                            }
+
+                                            // Execute each selected mode's sub-effect with placeholder
+                                            // resolution mirroring the main dispatch below.
+                                            for &mode_idx in &selected_modes {
+                                                if let Some(mode) = modes.get(mode_idx) {
+                                                    let sub = mode.effect.as_ref();
+
+                                                    // If this mode needs targeting (ValidTgts$ present in
+                                                    // the SVar, e.g. Jitte JitteCurse "Target creature gets
+                                                    // -1/-1") and no target was pre-chosen, ask the
+                                                    // controller now (before resolving). MTG CR 701.4a:
+                                                    // for activated abilities the mode choice happens as
+                                                    // part of activation; per-mode targeting follows.
+                                                    let mode_target: Option<CardId> =
+                                                        if mode.needs_targeting && chosen_targets_vec.is_empty() {
+                                                            // Collect valid targets for the sub-effect.
+                                                            // For PumpCreature (covers both +/- bonuses),
+                                                            // target any creature on the battlefield.
+                                                            let mut valid: SmallVec<[CardId; 8]> = SmallVec::new();
+                                                            for &cid in &self.game.battlefield.cards {
+                                                                if let Some(c) = self.game.cards.try_get(cid) {
+                                                                    if c.is_creature() {
+                                                                        valid.push(cid);
+                                                                    }
+                                                                }
+                                                            }
+                                                            if valid.is_empty() {
+                                                                None
+                                                            } else if valid.len() == 1 {
+                                                                Some(valid[0])
+                                                            } else {
+                                                                let prior_log_size = self.game.logger.log_count();
+                                                                let choice = self.choose_targets_with_hook(
+                                                                    controller,
+                                                                    current_priority,
+                                                                    card_id,
+                                                                    &valid,
+                                                                    1,
+                                                                    1,
+                                                                );
+                                                                let chosen = handle_choice_result_break!(
+                                                                    choice,
+                                                                    self.game,
+                                                                    current_priority
+                                                                );
+                                                                let replay_choice =
+                                                                    crate::game::ReplayChoice::Targets(chosen.clone());
+                                                                self.log_choice_point(
+                                                                    current_priority,
+                                                                    Some(replay_choice),
+                                                                    prior_log_size,
+                                                                );
+                                                                chosen.into_iter().next()
+                                                            }
+                                                        } else if !chosen_targets_vec.is_empty() {
+                                                            Some(chosen_targets_vec[0])
+                                                        } else {
+                                                            None
+                                                        };
+
+                                                    // Resolve the most common placeholders in mode sub-effects.
+                                                    let resolved_sub = match sub {
+                                                        crate::core::Effect::GainLife { player, amount }
+                                                            if player.is_placeholder() =>
+                                                        {
+                                                            crate::core::Effect::GainLife {
+                                                                player: current_priority,
+                                                                amount: *amount,
+                                                            }
+                                                        }
+                                                        crate::core::Effect::PumpCreature {
+                                                            target,
+                                                            power_bonus,
+                                                            toughness_bonus,
+                                                            keywords_granted,
+                                                            keyword_args_granted,
+                                                        } if target.is_placeholder() && mode_target.is_some() => {
+                                                            // Use the mode-specific target (either from
+                                                            // needs_targeting selection above or pre-chosen).
+                                                            crate::core::Effect::PumpCreature {
+                                                                target: mode_target.unwrap(),
+                                                                power_bonus: *power_bonus,
+                                                                toughness_bonus: *toughness_bonus,
+                                                                keywords_granted: keywords_granted.clone(),
+                                                                keyword_args_granted: keyword_args_granted.clone(),
+                                                            }
+                                                        }
+                                                        crate::core::Effect::PumpCreature {
+                                                            target,
+                                                            power_bonus,
+                                                            toughness_bonus,
+                                                            keywords_granted,
+                                                            keyword_args_granted,
+                                                        } if target.is_placeholder() => {
+                                                            // No chosen target and no targeting needed
+                                                            // (Defined$ Equipped path). Use the equipped
+                                                            // creature, or fall back to the source card.
+                                                            let pump_target = self
+                                                                .game
+                                                                .cards
+                                                                .try_get(card_id)
+                                                                .and_then(|c| c.attached_to)
+                                                                .unwrap_or(card_id);
+                                                            crate::core::Effect::PumpCreature {
+                                                                target: pump_target,
+                                                                power_bonus: *power_bonus,
+                                                                toughness_bonus: *toughness_bonus,
+                                                                keywords_granted: keywords_granted.clone(),
+                                                                keyword_args_granted: keyword_args_granted.clone(),
+                                                            }
+                                                        }
+                                                        _ => sub.clone(),
+                                                    };
+                                                    if let Err(e) = self.game.execute_effect(&resolved_sub) {
+                                                        if self.verbosity >= VerbosityLevel::Normal && !self.replaying {
+                                                            eprintln!("    Failed to execute modal sub-effect: {e}");
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                            continue; // skip normal execute_effect for this effect slot
+                                        }
+
                                         // Fix placeholder player IDs and targets for effects
                                         let fixed_effect = match effect {
                                             crate::core::Effect::AddMana {
@@ -1628,12 +2098,14 @@ impl<'a> GameLoop<'a> {
                                                 power_bonus,
                                                 toughness_bonus,
                                                 keywords_granted,
+                                                keyword_args_granted,
                                             } if target.is_placeholder() && !chosen_targets_vec.is_empty() => {
                                                 crate::core::Effect::PumpCreature {
                                                     target: chosen_targets_vec[0],
                                                     power_bonus: *power_bonus,
                                                     toughness_bonus: *toughness_bonus,
                                                     keywords_granted: keywords_granted.clone(),
+                                                    keyword_args_granted: keyword_args_granted.clone(),
                                                 }
                                             }
                                             // Self-targeting pump: "This creature gets +X/+Y"
@@ -1643,12 +2115,14 @@ impl<'a> GameLoop<'a> {
                                                 power_bonus,
                                                 toughness_bonus,
                                                 keywords_granted,
+                                                keyword_args_granted,
                                             } if target.is_placeholder() && chosen_targets_vec.is_empty() => {
                                                 crate::core::Effect::PumpCreature {
                                                     target: card_id, // Target self (the source of the ability)
                                                     power_bonus: *power_bonus,
                                                     toughness_bonus: *toughness_bonus,
                                                     keywords_granted: keywords_granted.clone(),
+                                                    keyword_args_granted: keyword_args_granted.clone(),
                                                 }
                                             }
                                             // Self-targeting PutCounter: "Put counter on this creature"
@@ -1694,18 +2168,22 @@ impl<'a> GameLoop<'a> {
                                                 power,
                                                 toughness,
                                                 keywords_granted,
+                                                keyword_args_granted,
                                                 types_added,
                                                 subtypes_added,
                                                 remove_creature_subtypes,
+                                                at_eot,
                                             } if target.is_placeholder() && chosen_targets_vec.is_empty() => {
                                                 crate::core::Effect::SetBasePowerToughness {
                                                     target: card_id, // Target self (the source of the ability)
                                                     power: *power,
                                                     toughness: *toughness,
                                                     keywords_granted: keywords_granted.clone(),
+                                                    keyword_args_granted: keyword_args_granted.clone(),
                                                     types_added: types_added.clone(),
                                                     subtypes_added: subtypes_added.clone(),
                                                     remove_creature_subtypes: *remove_creature_subtypes,
+                                                    at_eot: *at_eot,
                                                 }
                                             }
                                             // Targeted SetBasePowerToughness: "Target creature has base P/T X/Y"
@@ -1714,18 +2192,22 @@ impl<'a> GameLoop<'a> {
                                                 power,
                                                 toughness,
                                                 keywords_granted,
+                                                keyword_args_granted,
                                                 types_added,
                                                 subtypes_added,
                                                 remove_creature_subtypes,
+                                                at_eot,
                                             } if target.is_placeholder() && !chosen_targets_vec.is_empty() => {
                                                 crate::core::Effect::SetBasePowerToughness {
                                                     target: chosen_targets_vec[0],
                                                     power: *power,
                                                     toughness: *toughness,
                                                     keywords_granted: keywords_granted.clone(),
+                                                    keyword_args_granted: keyword_args_granted.clone(),
                                                     types_added: types_added.clone(),
                                                     subtypes_added: subtypes_added.clone(),
                                                     remove_creature_subtypes: *remove_creature_subtypes,
+                                                    at_eot: *at_eot,
                                                 }
                                             }
                                             crate::core::Effect::AttachEquipment {
@@ -1735,6 +2217,19 @@ impl<'a> GameLoop<'a> {
                                                 crate::core::Effect::AttachEquipment {
                                                     source_equipment: *source_equipment,
                                                     target_creature: chosen_targets_vec[0],
+                                                }
+                                            }
+                                            // Self-targeting GrantCantBeBlocked: "CARDNAME can't be blocked this turn"
+                                            // Used by manland animate + unblockable sub-ability chains
+                                            // (Creeping Tar Pit: AB$ Animate | SubAbility$ DBUnblockable
+                                            //   where DBUnblockable: DB$ Effect | RememberObjects$ Self | ...)
+                                            // When Defined$ Self is used, no external targets are chosen —
+                                            // the source card (the activated land/creature) is the target.
+                                            crate::core::Effect::GrantCantBeBlocked { target }
+                                                if target.is_placeholder() && chosen_targets_vec.is_empty() =>
+                                            {
+                                                crate::core::Effect::GrantCantBeBlocked {
+                                                    target: card_id, // Target self (the source of the ability)
                                                 }
                                             }
                                             // GrantCantBeBlocked: "Target creature can't be blocked this turn"
@@ -2159,7 +2654,23 @@ impl<'a> GameLoop<'a> {
                                             // Scry: snapshot → controller → apply (mirror of
                                             // the spell-resolution branch; see
                                             // resolve_top_spell_with_discard_hook above).
-                                            crate::core::Effect::Scry { player, count } => {
+                                            crate::core::Effect::Scry {
+                                                player,
+                                                count,
+                                                only_if_bargained,
+                                            } => {
+                                                // Condition$ Bargain: skip scry unless source
+                                                // card was bargained (CR 702.162).
+                                                if *only_if_bargained {
+                                                    let is_bargained = self
+                                                        .game
+                                                        .cards
+                                                        .try_get(card_id)
+                                                        .is_some_and(|c| c.bargain_paid);
+                                                    if !is_bargained {
+                                                        continue;
+                                                    }
+                                                }
                                                 let scry_player = if player.is_placeholder() {
                                                     current_priority
                                                 } else {
@@ -2297,6 +2808,44 @@ impl<'a> GameLoop<'a> {
                                                     source: Some(card_id),
                                                 }
                                             }
+                                            // SetLife targeting a player (Sorin Markov -3: "Target
+                                            // opponent's life total becomes 10"). The chosen target
+                                            // is a player sentinel; decode it to a PlayerId.
+                                            crate::core::Effect::SetLife { player, amount }
+                                                if player.is_placeholder() && !chosen_targets_vec.is_empty() =>
+                                            {
+                                                let resolved =
+                                                    crate::core::player_target_from_sentinel(chosen_targets_vec[0])
+                                                        .unwrap_or(current_priority);
+                                                crate::core::Effect::SetLife {
+                                                    player: resolved,
+                                                    amount: *amount,
+                                                }
+                                            }
+                                            // CreateTokenWithStoredPt (Phyrexian Processor): resolve
+                                            // the source_card placeholder to the activating card so
+                                            // execute_create_token_with_stored_pt can read stored_int.
+                                            crate::core::Effect::CreateTokenWithStoredPt {
+                                                source_card,
+                                                controller,
+                                                token_script,
+                                            } => {
+                                                let resolved_source = if source_card.is_placeholder() {
+                                                    card_id
+                                                } else {
+                                                    *source_card
+                                                };
+                                                let resolved_controller = if controller.is_placeholder() {
+                                                    current_priority
+                                                } else {
+                                                    *controller
+                                                };
+                                                crate::core::Effect::CreateTokenWithStoredPt {
+                                                    source_card: resolved_source,
+                                                    controller: resolved_controller,
+                                                    token_script: token_script.clone(),
+                                                }
+                                            }
                                             _ => effect.clone(),
                                         };
 
@@ -2306,6 +2855,10 @@ impl<'a> GameLoop<'a> {
                                             }
                                         }
                                     }
+
+                                    // Clear transient spell-controller context (set above for
+                                    // Summoning Trap / execute_counter_spell detection).
+                                    self.game.current_spell_controller = None;
 
                                     // Clear the cost-payment sacrifice scratch now that this
                                     // ability's effects have run. Keeps it provably None at
@@ -2437,10 +2990,36 @@ impl<'a> GameLoop<'a> {
                                         .game
                                         .get_valid_modes_for_spell(card_id, current_priority)
                                         .unwrap_or_default();
+
+                                    // Filter by valid targets AND affordable ModeCost$ (from-exile path)
+                                    let base_spell_cost_exile =
+                                        self.game.cards.try_get(card_id).map(|c| c.mana_cost.cmc()).unwrap_or(0);
+                                    self.mana_engine.update_mut(self.game, current_priority);
+                                    let untapped_exile = self
+                                        .mana_engine
+                                        .all_sources()
+                                        .iter()
+                                        .filter(|s| !s.is_tapped && !s.has_summoning_sickness)
+                                        .count() as u8;
+                                    let pool_exile = self
+                                        .game
+                                        .get_player(current_priority)
+                                        .map(|p| p.total_available_mana().total())
+                                        .unwrap_or(0);
+                                    let mana_for_mode_cost_exile = untapped_exile
+                                        .saturating_add(pool_exile)
+                                        .saturating_sub(base_spell_cost_exile);
+
                                     let valid_mode_indices: Vec<usize> = valid_modes
                                         .iter()
                                         .filter(|(_, has_targets)| *has_targets)
                                         .map(|(idx, _)| *idx)
+                                        .filter(|&idx| {
+                                            modes
+                                                .get(idx)
+                                                .map(|m| m.mode_cost <= mana_for_mode_cost_exile)
+                                                .unwrap_or(false)
+                                        })
                                         .collect();
 
                                     if !valid_mode_indices.is_empty() {
@@ -2472,8 +3051,14 @@ impl<'a> GameLoop<'a> {
                                         );
                                         self.log_choice_point(current_priority, Some(replay_choice), prior_log_size);
 
-                                        if let Err(e) = self.game.apply_selected_modes(card_id, &original_indices) {
-                                            log::warn!(target: "priority", "Failed to apply modes: {}", e);
+                                        match self.game.apply_selected_modes(card_id, &original_indices) {
+                                            Ok((_, mode_cost)) if mode_cost > 0 => {
+                                                self.game.set_mode_cost_paid_logged(card_id, mode_cost);
+                                            }
+                                            Ok(_) => {}
+                                            Err(e) => {
+                                                log::warn!(target: "priority", "Failed to apply modes: {}", e);
+                                            }
                                         }
 
                                         if self.verbosity >= VerbosityLevel::Normal && !self.replaying {
@@ -3052,6 +3637,130 @@ impl<'a> GameLoop<'a> {
                             crate::core::SpellAbility::CastAdventure { .. } => {
                                 unreachable!("CastAdventure is rewritten to CastSpell before dispatch")
                             }
+
+                            crate::core::SpellAbility::CastFromHandWithAltCost {
+                                card_id,
+                                alternative_cost,
+                            } => {
+                                // Cast from hand with an alternative cost (e.g. Summoning Trap for {0}).
+                                // Uses the same 8-step casting process as CastFromExile, but from
+                                // Zone::Hand with the override cost.
+                                if self.verbosity >= VerbosityLevel::Normal && !self.replaying {
+                                    let card_name = self
+                                        .game
+                                        .cards
+                                        .get(card_id)
+                                        .map(|c| c.name.to_string())
+                                        .unwrap_or_else(|_| "Unknown".to_string());
+                                    let message = format!(
+                                        "{} casts {} for {} (alternative cost)",
+                                        self.get_player_name(current_priority),
+                                        card_name,
+                                        alternative_cost
+                                    );
+                                    self.game.logger.gamelog(&message);
+                                }
+
+                                self.mana_engine.update_mut(self.game, current_priority);
+
+                                if let Err(e) = self.game.cast_spell_8_step_from(
+                                    current_priority,
+                                    card_id,
+                                    |_, _| smallvec::smallvec![],
+                                    &self.mana_engine,
+                                    crate::zones::Zone::Hand,
+                                    Some(alternative_cost),
+                                ) {
+                                    if self.verbosity >= VerbosityLevel::Normal && !self.replaying {
+                                        let message = format!("Error casting with alt cost: {e}");
+                                        self.game.logger.normal(&message);
+                                    }
+                                    consecutive_passes += 1;
+                                    self.game.turn.consecutive_passes = consecutive_passes;
+                                    current_priority = if current_priority == active_player {
+                                        non_active_player
+                                    } else {
+                                        active_player
+                                    };
+                                    self.game.turn.priority_player = Some(current_priority);
+                                    continue;
+                                }
+
+                                // Spell is now on the stack - will resolve when both players pass
+                            }
+
+                            crate::core::SpellAbility::CastFromLibrary { card_id } => {
+                                // Cast the top card of the library (Experimental Frenzy).
+                                // Uses the standard 8-step casting process from Zone::Library.
+                                if self.verbosity >= VerbosityLevel::Normal && !self.replaying {
+                                    let card_name = self
+                                        .game
+                                        .cards
+                                        .get(card_id)
+                                        .map(|c| c.name.to_string())
+                                        .unwrap_or_else(|_| "Unknown".to_string());
+                                    let message = format!(
+                                        "{} casts {} from the top of their library",
+                                        self.get_player_name(current_priority),
+                                        card_name,
+                                    );
+                                    self.game.logger.gamelog(&message);
+                                }
+
+                                self.mana_engine.update_mut(self.game, current_priority);
+
+                                if let Err(e) = self.game.cast_spell_8_step_from(
+                                    current_priority,
+                                    card_id,
+                                    |_, _| smallvec::smallvec![],
+                                    &self.mana_engine,
+                                    crate::zones::Zone::Library,
+                                    None, // pay printed mana cost
+                                ) {
+                                    if self.verbosity >= VerbosityLevel::Normal && !self.replaying {
+                                        let message = format!("Error casting from library: {e}");
+                                        self.game.logger.normal(&message);
+                                    }
+                                    consecutive_passes += 1;
+                                    self.game.turn.consecutive_passes = consecutive_passes;
+                                    current_priority = if current_priority == active_player {
+                                        non_active_player
+                                    } else {
+                                        active_player
+                                    };
+                                    self.game.turn.priority_player = Some(current_priority);
+                                    continue;
+                                }
+                                // Spell is now on the stack
+                            }
+
+                            crate::core::SpellAbility::PlayLandFromLibrary { card_id } => {
+                                // Play the top card of the library as a land (Experimental Frenzy).
+                                // Behaves exactly like playing a land from hand: no stack, immediate
+                                // battlefield entry, consumes the land play for the turn.
+                                if self.verbosity >= VerbosityLevel::Normal && !self.replaying {
+                                    let card_name = self
+                                        .game
+                                        .cards
+                                        .get(card_id)
+                                        .map(|c| c.name.to_string())
+                                        .unwrap_or_else(|_| "Unknown".to_string());
+                                    let message = format!(
+                                        "{} plays {} from the top of their library",
+                                        self.get_player_name(current_priority),
+                                        card_name,
+                                    );
+                                    self.game.logger.gamelog(&message);
+                                }
+
+                                if let Err(e) = self.game.play_land_from_library(current_priority, card_id) {
+                                    if self.verbosity >= VerbosityLevel::Normal && !self.replaying {
+                                        let message = format!("Error playing land from library: {e}");
+                                        self.game.logger.normal(&message);
+                                    }
+                                }
+                                // Land play complete — no stack entry
+                            }
                         }
 
                         // After taking an action, switch priority to other player
@@ -3170,6 +3879,15 @@ impl<'a> GameLoop<'a> {
                     // CardId and the client uses the server-authoritative
                     // library_search_result.
                         || matches!(e, crate::core::Effect::SearchLibrary { .. })
+                    // PutCardsFromHandOnTopOfLibrary (Brainstorm sub-ability): the
+                    // controller must choose which cards to put back.  Route through
+                    // the same discard-style protocol (choose_discard_with_hook) but
+                    // move the chosen cards to the library instead of the graveyard.
+                    // Must be interactive so the network-shadow client receives the
+                    // ChoiceRequest carrying the hand reveal before deciding (same
+                    // ordering guarantee as the DiscardCards interactive path,
+                    // mtg-768 BLOCKER-1/2 pattern).
+                        || matches!(e, crate::core::Effect::PutCardsFromHandOnTopOfLibrary { .. })
                 });
                 (balances, needs_interactive, card.svars.clone())
             } else {
@@ -3410,6 +4128,77 @@ impl<'a> GameLoop<'a> {
                                     let _ = self.game.check_card_drawn_triggers(*player, draw_num);
                                 }
                                 Err(_) => break,
+                            }
+                        }
+                    }
+                    // Brainstorm sub-ability: put N cards from hand on top of library.
+                    // The controller chooses which cards; we reuse `choose_discard_with_hook`
+                    // for the selection protocol and then move the chosen cards to the
+                    // library instead of the graveyard (CR 701.19b: put on top in any order).
+                    // The cards are put back in reverse-chosen order so the last card chosen
+                    // ends up on top (matching typical "last put = top" convention).
+                    crate::core::Effect::PutCardsFromHandOnTopOfLibrary { player, count } => {
+                        let put_count = *count as usize;
+
+                        self.push_reveals(*player);
+                        if let Some(opp) = self.game.get_other_player_id(*player) {
+                            self.push_reveals(opp);
+                        }
+
+                        let hand: SmallVec<[CardId; 8]> = self
+                            .game
+                            .get_player_zones(*player)
+                            .map(|zones| zones.hand.cards.iter().copied().collect())
+                            .unwrap_or_default();
+
+                        let actual_count = put_count.min(hand.len());
+                        if actual_count > 0 {
+                            let controller: &mut dyn PlayerController = if *player == controller1.player_id() {
+                                controller1
+                            } else {
+                                controller2
+                            };
+                            let _ = controller.prepare_for_priority_choice();
+                            self.sync_to_action();
+                            let prior_log_size = self.game.logger.log_count();
+                            // Reuse choose_discard_with_hook — the semantics are
+                            // "choose N cards from hand"; the destination differs.
+                            let choice = self.choose_discard_with_hook(controller, *player, &hand, actual_count);
+                            let cards_to_put = match choice {
+                                crate::game::controller::ChoiceResult::Ok(v) => v,
+                                crate::game::controller::ChoiceResult::NeedInput(ctx) => {
+                                    return Err(crate::MtgError::NeedInput(Box::new(ctx)));
+                                }
+                                crate::game::controller::ChoiceResult::ExitGame => {
+                                    return Err(crate::MtgError::InvalidAction(
+                                        "Game exit requested during put-back".into(),
+                                    ));
+                                }
+                                crate::game::controller::ChoiceResult::Error(e) => {
+                                    return Err(crate::MtgError::InvalidAction(format!(
+                                        "Controller error during put-back: {e}"
+                                    )));
+                                }
+                                crate::game::controller::ChoiceResult::UndoRequest(_) => {
+                                    // Undo during spell resolution: fall back to heuristic
+                                    self.game.pick_cards_to_put_back_heuristic(&hand, actual_count)
+                                }
+                            };
+                            // Log as a Discard-style ChoicePoint for replay determinism
+                            // (same encoding: ordered list of CardIds chosen from hand).
+                            let replay_choice = crate::game::ReplayChoice::Discard(cards_to_put.clone());
+                            self.log_choice_point(*player, Some(replay_choice), prior_log_size);
+
+                            // Move chosen cards to top of library.  Put them in order
+                            // [0..n] — last-pushed card ends up on top (the controller
+                            // chose them as "first on top" order when we asked).
+                            if let Err(e) = self
+                                .game
+                                .execute_put_cards_from_hand_on_top_of_library(*player, &cards_to_put)
+                            {
+                                if should_log {
+                                    eprintln!("    Failed to put cards back on library: {e}");
+                                }
                             }
                         }
                     }
@@ -3710,7 +4499,21 @@ impl<'a> GameLoop<'a> {
                     //   - no currently-shipping deck triggers scry on a path
                     //     that hits this gap (server-local + client-shadow)
                     //     before some other unrelated desync fires.
-                    crate::core::Effect::Scry { player, count } => {
+                    crate::core::Effect::Scry {
+                        player,
+                        count,
+                        only_if_bargained,
+                    } => {
+                        // Condition$ Bargain: skip scry unless the source spell
+                        // was bargained (CR 702.162). Check bargain_paid on the
+                        // resolving spell (spell_id) — same check as execute_effect.
+                        if *only_if_bargained {
+                            let is_bargained = self.game.cards.try_get(spell_id).is_some_and(|c| c.bargain_paid);
+                            if !is_bargained {
+                                // Condition not met — skip the scry silently.
+                                continue;
+                            }
+                        }
                         let scry_player = *player;
                         let revealed = self.game.scry_snapshot_top_n(scry_player, *count);
                         if !revealed.is_empty() {

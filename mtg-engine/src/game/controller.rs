@@ -114,6 +114,21 @@ pub fn format_choice_menu(view: &GameStateView, available: &[SpellAbility], want
                 let name = view.adventure_name(*card_id).unwrap_or_default();
                 output.push_str(&format!("  [{}] cast {} (Adventure)\n", display_idx, name));
             }
+            SpellAbility::CastFromHandWithAltCost {
+                card_id,
+                alternative_cost,
+            } => {
+                let name = view.card_name(*card_id).unwrap_or_default();
+                output.push_str(&format!("  [{}] cast {} for {}\n", display_idx, name, alternative_cost));
+            }
+            SpellAbility::CastFromLibrary { card_id } => {
+                let name = view.card_name(*card_id).unwrap_or_default();
+                output.push_str(&format!("  [{}] cast {} from top of library\n", display_idx, name));
+            }
+            SpellAbility::PlayLandFromLibrary { card_id } => {
+                let name = view.card_name(*card_id).unwrap_or_default();
+                output.push_str(&format!("  [{}] play {} from top of library\n", display_idx, name));
+            }
         }
     }
 
@@ -301,6 +316,11 @@ fn spell_ability_sort_key(ability: &SpellAbility) -> u8 {
         SpellAbility::CastFromGraveyard { .. } => 6,
         // Adventure cast is a hand cast; order it next to CastSpell.
         SpellAbility::CastAdventure { .. } => 7,
+        // Alt-cost cast from hand (e.g. Summoning Trap for {0}) groups with CastSpell.
+        SpellAbility::CastFromHandWithAltCost { .. } => 1,
+        // Library casts group with CastSpell.
+        SpellAbility::CastFromLibrary { .. } => 1,
+        SpellAbility::PlayLandFromLibrary { .. } => 0,
     }
 }
 
@@ -450,6 +470,21 @@ pub fn format_spell_ability_choice(view: &GameStateView, ability: &SpellAbility)
             // creature-half cast (`cast <CreatureName>`) for fixed-inputs.
             let name = view.adventure_name(*card_id).unwrap_or_default();
             format!("cast {} (Adventure)", name)
+        }
+        SpellAbility::CastFromHandWithAltCost {
+            card_id,
+            alternative_cost,
+        } => {
+            let name = view.card_name(*card_id).unwrap_or_default();
+            format!("cast {} for {}", name, alternative_cost)
+        }
+        SpellAbility::CastFromLibrary { card_id } => {
+            let name = view.card_name(*card_id).unwrap_or_default();
+            format!("cast {} from top of library", name)
+        }
+        SpellAbility::PlayLandFromLibrary { card_id } => {
+            let name = view.card_name(*card_id).unwrap_or_default();
+            format!("play {} from top of library", name)
         }
     }
 }
@@ -946,13 +981,10 @@ impl<'a> GameStateView<'a> {
         )
     }
 
-    /// Check if player can play lands this turn
+    /// Check if player can play lands this turn, respecting extra land-play
+    /// grants from permanents like Oracle of Mul Daya and spells like Explore.
     pub fn can_play_land(&self) -> bool {
-        self.game
-            .get_player(self.player_id)
-            .ok()
-            .map(|p| p.can_play_land())
-            .unwrap_or(false)
+        self.game.can_play_land_effective(self.player_id)
     }
 
     /// Get cards on the stack
@@ -1030,6 +1062,28 @@ impl<'a> GameStateView<'a> {
                 // the new order at the right game position.
                 (player, order, action_count)
             })
+            .collect()
+    }
+
+    /// Drain pending Dig-effect kept-lists from the engine for broadcast.
+    ///
+    /// Mirrors [`Self::take_pending_library_reorders`] for the
+    /// `StateSyncEntry::DigDecision` broadcast path (mtg-677/mtg-908).
+    ///
+    /// Returns `(digger, kept_card_ids, action_count)` triples, where
+    /// `kept_card_ids` is the authoritative list moved to `destination` by
+    /// `execute_dig`, and `action_count` is the undo-log position at the time
+    /// of the decision (used to key the entry in the shadow's state-sync log).
+    ///
+    /// Always empty for non-network controllers and for client-built requests.
+    pub fn take_pending_dig_decisions(&self) -> Vec<(PlayerId, Vec<crate::core::CardId>, u64)> {
+        let mut queue = self.game.sub_action_scratch.pending_dig_decisions.borrow_mut();
+        if queue.is_empty() {
+            return Vec::new();
+        }
+        queue
+            .drain(..)
+            .map(|(digger, kept, ac)| (digger, kept.into_vec(), ac))
             .collect()
     }
 

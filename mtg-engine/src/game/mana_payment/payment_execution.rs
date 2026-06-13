@@ -897,21 +897,16 @@ impl GameState {
                             continue;
                         }
 
-                        // Check if it matches the pattern
-                        let matches = if card_type == "Land" {
-                            card.is_land()
-                        } else if card_type.starts_with("Creature") {
-                            if card_type == "Creature.Other" {
-                                // Other means not the card with the ability
-                                card.is_creature() && permanent_id != card_id
-                            } else {
-                                card.is_creature()
-                            }
-                        } else if card_type == "Artifact" {
-                            card.is_artifact()
+                        // Check if it matches the pattern.
+                        // Use card_matches_type_filter_static which handles both
+                        // main types (Land, Creature, Artifact) AND subtypes
+                        // (Forest, Island, Mountain, etc.) correctly.
+                        // Special-case "Creature.Other" which means the creature
+                        // is not the card holding the ability.
+                        let matches = if card_type == "Creature.Other" {
+                            card.is_creature() && permanent_id != card_id
                         } else {
-                            // Generic type match - check if any type contains the string
-                            card.types.iter().any(|t| format!("{t:?}").contains(card_type))
+                            crate::game::GameState::card_matches_type_filter_static(card, card_type)
                         };
 
                         if matches {
@@ -947,6 +942,15 @@ impl GameState {
 
                 // Sacrifice the permanents (move to graveyard or exile if finality) and check triggers
                 for sac_id in to_sacrifice.iter().take(*count as usize) {
+                    // Capture the toughness BEFORE the card leaves the battlefield
+                    // (Diamond Valley: "gain life equal to the sacrificed creature's toughness").
+                    // Stored in GameState::last_sacrificed_toughness for GainLifeDynamic
+                    // (DynamicAmount::SacrificedToughness) to read at resolution time.
+                    if let Ok(sac_card) = self.cards.get(*sac_id) {
+                        if sac_card.is_creature() {
+                            self.last_sacrificed_toughness = Some(i32::from(sac_card.current_toughness()));
+                        }
+                    }
                     let owner = self.cards.get(*sac_id)?.owner;
                     let dest = self.death_destination_for_card(*sac_id);
                     self.move_card(*sac_id, Zone::Battlefield, dest, owner)?;

@@ -111,6 +111,23 @@ pub const TRIGGERED_PLAYER_ID: u32 = u32::MAX - 7;
 /// `TRIGGERED_PLAYER_ID` (the player the event happened TO).
 pub const TRIGGERED_CAUSE_CONTROLLER_ID: u32 = u32::MAX - 8;
 
+/// Sentinel value for a `PlayerId` meaning "the controller of the currently-remembered
+/// card" (`TokenOwner$ RememberedController`). Used by Terastodon's `DBToken`:
+/// the Elephant token goes to the controller of the destroyed permanent (stored in
+/// `GameState::remembered_cards[0]` at token-creation time), not to the caster.
+///
+/// Resolved at execute-time by looking up `GameState::remembered_cards[0].controller`.
+pub const REMEMBERED_CONTROLLER_ID: u32 = u32::MAX - 9;
+
+/// Sentinel value indicating "the spell that triggered this trigger"
+/// (Forge `Defined$ TriggeredSpellAbility`). Used by world enchantments like
+/// In the Eye of Chaos ("counter it unless that player pays {X}") and Presence
+/// of the Master ("counter it") — the trigger fires when a spell is cast, and
+/// this sentinel resolves at fire time to the `cast_spell_id` in the
+/// `TriggerContext`. Distinct from `PLACEHOLDER_ID` (controller) and
+/// `REUSE_PREVIOUS_TARGET` (last-resolved-target chain).
+pub const TRIGGERED_SPELL_ID: u32 = u32::MAX - 10;
+
 /// Sentinel range for encoding a Player as a CardId inside the
 /// `valid_targets` slice returned to `Controller::choose_targets`. We do
 /// this so controllers can offer Players as targets for `ValidTgts$ Any`
@@ -270,6 +287,36 @@ impl<T> EntityId<T> {
     #[inline]
     pub fn triggered_cause_controller() -> Self {
         EntityId::new(TRIGGERED_CAUSE_CONTROLLER_ID)
+    }
+
+    /// Check if this ID is the "controller of the remembered card" sentinel
+    /// (`TokenOwner$ RememberedController` — the controller of the first card
+    /// in `GameState::remembered_cards` at token-creation time).
+    #[inline]
+    pub fn is_remembered_controller(&self) -> bool {
+        self.id == REMEMBERED_CONTROLLER_ID
+    }
+
+    /// Create the "controller of the remembered card" sentinel.
+    #[inline]
+    pub fn remembered_controller() -> Self {
+        EntityId::new(REMEMBERED_CONTROLLER_ID)
+    }
+
+    /// Check if this ID is the "triggering spell" sentinel
+    /// (Forge `Defined$ TriggeredSpellAbility`). Used by In the Eye of Chaos
+    /// and Presence of the Master to counter the spell that fired the trigger.
+    #[inline]
+    pub fn is_triggered_spell(&self) -> bool {
+        self.id == TRIGGERED_SPELL_ID
+    }
+
+    /// Create the "triggering spell" sentinel — the spell on the stack that
+    /// caused a SpellCast trigger to fire. Resolved from
+    /// `TriggerContext::cast_spell_id` at trigger resolution time.
+    #[inline]
+    pub fn triggered_spell() -> Self {
+        EntityId::new(TRIGGERED_SPELL_ID)
     }
 }
 

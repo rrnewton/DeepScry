@@ -454,6 +454,8 @@ mod tests {
             }),
             description: "Destroy target creature with no counters on it.".to_string(),
             svar_name: "Destroy".to_string(),
+            mode_cost: 0,
+            needs_targeting: false,
         };
 
         // For mode2, we'd use RemoveCounter but it's not implemented yet
@@ -465,6 +467,8 @@ mod tests {
             }), // Placeholder for RemoveCounter
             description: "Remove up to three counters from target creature.".to_string(),
             svar_name: "Remove".to_string(),
+            mode_cost: 0,
+            needs_targeting: false,
         };
 
         let modal_effect = Effect::ModalChoice {
@@ -524,6 +528,8 @@ mod tests {
             }),
             description: "Destroy target creature".to_string(),
             svar_name: "Destroy".to_string(),
+            mode_cost: 0,
+            needs_targeting: false,
         };
 
         spell.effects.push(Effect::ModalChoice {
@@ -578,6 +584,8 @@ mod tests {
             }),
             description: "Destroy".to_string(),
             svar_name: "Destroy".to_string(),
+            mode_cost: 0,
+            needs_targeting: false,
         };
 
         let mode2 = ModalMode {
@@ -587,6 +595,8 @@ mod tests {
             }),
             description: "Deal 3 damage".to_string(),
             svar_name: "Damage".to_string(),
+            mode_cost: 0,
+            needs_targeting: false,
         };
 
         spell.effects.push(Effect::ModalChoice {
@@ -607,7 +617,7 @@ mod tests {
         // Apply mode 1 (index 0 = Destroy)
         let result = game.apply_selected_modes(spell_id, &[0]);
         assert!(result.is_ok());
-        assert!(result.unwrap(), "Should return true for modal spell");
+        assert!(result.unwrap().0, "Should return true for modal spell");
 
         // Verify ModalChoice was replaced with DestroyPermanent
         let spell_after = game.cards.get(spell_id).unwrap();
@@ -662,6 +672,8 @@ mod tests {
             }),
             description: "Destroy target creature with no counters on it.".to_string(),
             svar_name: "Destroy".to_string(),
+            mode_cost: 0,
+            needs_targeting: false,
         };
 
         // Mode 2: Remove counters (not used in this test)
@@ -673,6 +685,8 @@ mod tests {
             }),
             description: "Remove up to three counters from target creature.".to_string(),
             svar_name: "Remove".to_string(),
+            mode_cost: 0,
+            needs_targeting: false,
         };
 
         spell.effects.push(Effect::ModalChoice {
@@ -782,6 +796,8 @@ mod tests {
             }),
             description: "Destroy target creature with no counters on it.".to_string(),
             svar_name: "Destroy".to_string(),
+            mode_cost: 0,
+            needs_targeting: false,
         };
 
         // Mode 2: Remove up to 3 counters
@@ -793,6 +809,8 @@ mod tests {
             }),
             description: "Remove up to three counters from target creature.".to_string(),
             svar_name: "Remove".to_string(),
+            mode_cost: 0,
+            needs_targeting: false,
         };
 
         spell.effects.push(Effect::ModalChoice {
@@ -885,6 +903,8 @@ mod tests {
             }),
             description: "Destroy target creature with no counters on it.".to_string(),
             svar_name: "Destroy".to_string(),
+            mode_cost: 0,
+            needs_targeting: false,
         };
 
         // Mode 2: Remove counters
@@ -896,6 +916,8 @@ mod tests {
             }),
             description: "Remove up to three counters from target creature.".to_string(),
             svar_name: "Remove".to_string(),
+            mode_cost: 0,
+            needs_targeting: false,
         };
 
         spell.effects.push(Effect::ModalChoice {
@@ -1216,7 +1238,7 @@ mod tests {
         gran_gran.controller = p1_id;
         gran_gran.static_abilities.push(StaticAbility::ReduceCost {
             valid_card: CostReductionTarget::NonCreature,
-            amount: 1,
+            amount: crate::core::CostReductionAmount::Fixed(1),
             condition: Some(CostReductionCondition {
                 is_present: "Lesson.YouOwn".to_string(),
                 present_zone: crate::zones::Zone::Graveyard,
@@ -1315,7 +1337,7 @@ mod tests {
         reducer.controller = p1_id;
         reducer.static_abilities.push(StaticAbility::ReduceCost {
             valid_card: CostReductionTarget::AllSpells,
-            amount: 1,
+            amount: crate::core::CostReductionAmount::Fixed(1),
             condition: None, // No condition - always active
             description: "All spells cost {1} less".to_string(),
         });
@@ -1417,6 +1439,8 @@ mod tests {
             }),
             description: "Destroy target creature with power 4 or greater.".to_string(),
             svar_name: "DBDestroy".to_string(),
+            mode_cost: 0,
+            needs_targeting: false,
         };
 
         // Mode 2: Earthbend 3
@@ -1427,6 +1451,8 @@ mod tests {
             }),
             description: "Earthbend 3.".to_string(),
             svar_name: "DBEarthbend".to_string(),
+            mode_cost: 0,
+            needs_targeting: false,
         };
 
         spell.effects.push(Effect::ModalChoice {
@@ -1451,7 +1477,7 @@ mod tests {
 
         // Step 2: Apply earthbend mode selection
         let applied = game.apply_selected_modes(spell_id, &[1]).unwrap();
-        assert!(applied, "Should successfully apply earthbend mode");
+        assert!(applied.0, "Should successfully apply earthbend mode");
 
         // Step 3: Get valid targets for the spell (after mode selection)
         let valid_targets = game.get_valid_targets_for_spell(spell_id).unwrap();
@@ -1807,5 +1833,76 @@ Oracle:At the beginning of each player's draw step, if Howling Mine is untapped,
             !PlayerId::placeholder().is_triggered_player(),
             "placeholder and triggered_player sentinels must be distinct"
         );
+    }
+
+    /// CR 601.2c: A spell with a required target cannot be cast unless at least one
+    /// legal target exists.  Regrowth (`ValidTgts$ Card.YouCtrl` from the graveyard)
+    /// must NOT be offered as a castable option when the caster's graveyard is empty.
+    ///
+    /// This is regression coverage for the bug where push_castable_spells offered
+    /// Regrowth unconditionally because `ReturnGraveyardCardToHand` was classified
+    /// as `NoTargetNeeded` — it fell into the generic "has effects → offer it" branch
+    /// without checking whether a legal target existed in the graveyard.
+    #[test]
+    fn test_regrowth_not_offered_with_empty_graveyard() {
+        use crate::core::{Color, Effect, ManaCost, SpellAbility};
+        use crate::game::game_loop::GameLoop;
+        use crate::game::{Step, VerbosityLevel};
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let players: Vec<_> = game.players.iter().map(|p| p.id).collect();
+        let p1_id = players[0];
+        game.turn.active_player = p1_id;
+        game.turn.current_step = Step::Main1;
+        game.stack.clear();
+
+        // Build a minimal Regrowth card: sorcery with ReturnGraveyardCardToHand effect.
+        let regrowth_id = game.next_card_id();
+        let mut regrowth = Card::new(regrowth_id, "Regrowth".to_string(), p1_id);
+        regrowth.add_type(CardType::Sorcery);
+        regrowth.mana_cost = ManaCost::from_string("1G");
+        regrowth.effects.push(Effect::ReturnGraveyardCardToHand {
+            player: PlayerId::placeholder(),
+            type_filter: String::new(),
+        });
+        game.cards.insert(regrowth_id, regrowth);
+        if let Some(zones) = game.get_player_zones_mut(p1_id) {
+            zones.hand.add(regrowth_id);
+        }
+
+        // Fund mana so cost isn't the gate (Regrowth costs {1}{G}: 1 generic + 1 green).
+        let player = game.get_player_mut(p1_id).unwrap();
+        player.mana_pool.add_color(Color::Green);
+        player.mana_pool.add_color(Color::Colorless); // covers the {1} generic portion
+
+        // --- Case 1: empty graveyard → must NOT be offered ---
+        {
+            let mut gl = GameLoop::new(&mut game).with_verbosity(VerbosityLevel::Silent);
+            gl.push_castable_spells(p1_id);
+            let abilities: Vec<SpellAbility> = gl.get_abilities_buffer().to_vec();
+            assert!(
+                abilities.iter().all(|a| a.card_id() != regrowth_id),
+                "Regrowth must not be offered when graveyard is empty (CR 601.2c)"
+            );
+        }
+
+        // --- Case 2: put a card in the graveyard → must be offered ---
+        let gravel_id = game.next_card_id();
+        let mut gravel = Card::new(gravel_id, "Forest".to_string(), p1_id);
+        gravel.add_type(CardType::Land);
+        gravel.controller = p1_id;
+        game.cards.insert(gravel_id, gravel);
+        if let Some(zones) = game.get_player_zones_mut(p1_id) {
+            zones.graveyard.add(gravel_id);
+        }
+        {
+            let mut gl2 = GameLoop::new(&mut game).with_verbosity(VerbosityLevel::Silent);
+            gl2.push_castable_spells(p1_id);
+            let abilities2: Vec<SpellAbility> = gl2.get_abilities_buffer().to_vec();
+            assert!(
+                abilities2.iter().any(|a| a.card_id() == regrowth_id),
+                "Regrowth must be offered when graveyard has a card (CR 601.2c)"
+            );
+        }
     }
 }

@@ -14,7 +14,7 @@
 //! 2. Otherwise, iteratively ask "assign lethal damage to which blocker first?"
 //! 3. After all killable blockers are handled, ask where to put remaining non-lethal damage
 
-use crate::core::{CardId, Keyword, PlayerId, TriggerEvent};
+use crate::core::{CardId, Keyword, KeywordArgs, PlayerId, StaticAbility, TriggerEvent};
 use crate::game::state::GameState;
 use crate::zones::Zone;
 use crate::{MtgError, Result};
@@ -99,6 +99,64 @@ impl GameState {
             .map(|p| p.id)
             .ok_or_else(|| MtgError::InvalidAction("No opponent found".to_string()))?;
 
+        // Check conditional CantAttack statics (CR 508.1c).
+        // e.g. Orgg: "can't attack if defending player controls an untapped
+        // creature with power >= N."
+        {
+            let statics: Vec<StaticAbility> = self.cards.get(card_id)?.static_abilities.to_vec();
+            for sa in &statics {
+                if let StaticAbility::CantAttackIfDefenderHasUntappedPowerGE { min_power, .. } = sa {
+                    let defender_blocks = self.battlefield.cards.iter().any(|&bid| {
+                        self.cards.try_get(bid).is_some_and(|c| {
+                            c.controller == defending_player
+                                && c.is_creature()
+                                && !c.tapped
+                                && i32::from(c.current_power()) >= *min_power
+                        })
+                    });
+                    if defender_blocks {
+                        return Err(MtgError::InvalidAction(
+                            "Creature can't attack: defending player controls an untapped creature \
+                             with sufficient power"
+                                .to_string(),
+                        ));
+                    }
+                }
+            }
+        }
+
+        // Island Sanctuary (CR 614): if the defending player activated sanctuary
+        // this turn, only creatures with flying or islandwalk may attack them.
+        {
+            let defending_player_has_sanctuary = self
+                .players
+                .iter()
+                .find(|p| p.id == defending_player)
+                .is_some_and(|p| p.island_sanctuary_protected);
+            if defending_player_has_sanctuary {
+                let has_evasion =
+                    self.has_keyword_with_effects(card_id, Keyword::Flying) || self.has_islandwalk(card_id);
+                if !has_evasion {
+                    return Err(MtgError::InvalidAction(
+                        "Island Sanctuary: only creatures with flying or islandwalk can attack \
+                         this player"
+                            .to_string(),
+                    ));
+                }
+            }
+        }
+
+        // Check global CantAttackOrBlockMatching statics (e.g. Light of Day:
+        // "black creatures can't attack or block"). CR 508.1c.
+        {
+            let card = self.cards.get(card_id)?;
+            if self.is_attack_prohibited(card) {
+                return Err(MtgError::InvalidAction(
+                    "Creature can't attack: a global restriction prevents it".to_string(),
+                ));
+            }
+        }
+
         // Declare attacker in combat state (logged so it is reversible by the
         // undo log — mtg-614 hole (b)). The WASM ai_harness now blocks via
         // rewind+replay (mtg-610), so a logged DeclareAttacker is reverted on
@@ -120,6 +178,31 @@ impl GameState {
         // Check for attack triggers (MTG Rules 508.1m)
         // "Whenever this creature attacks" triggers fire after attackers are declared
         self.check_triggers(TriggerEvent::Attacks, card_id)?;
+
+        // Annihilator (CR 702.86): whenever a creature with annihilator N attacks,
+        // the defending player sacrifices N permanents. This fires immediately when
+        // the creature is declared as an attacker (not a scripted Trigger object —
+        // the amount is stored in KeywordArgs::Annihilator on the card).
+        let annihilator_amount: Option<u8> = self
+            .cards
+            .get(card_id)
+            .ok()
+            .and_then(|c| c.keywords.get_args(Keyword::Annihilator))
+            .and_then(|args| {
+                if let KeywordArgs::Annihilator { amount } = args {
+                    Some(*amount)
+                } else {
+                    None
+                }
+            });
+        if let Some(n) = annihilator_amount {
+            let card_name = self.cards.get(card_id).map(|c| c.name.to_string()).unwrap_or_default();
+            self.logger.gamelog(&format!(
+                "Trigger: {} — Annihilator {n} (defending player sacrifices {n} permanents)",
+                card_name
+            ));
+            self.execute_force_sacrifice(defending_player, "Permanent", n)?;
+        }
 
         Ok(())
     }
@@ -720,6 +803,21 @@ impl GameState {
                     // Use explicit damage assignments from SMART algorithm
                     for (blocker_id, damage) in assignments {
                         if *damage > 0 {
+                            // Prismatic Ward / color-prevention Aura: if the attacker's
+                            // color is the chosen color of a prevention Aura on the
+                            // blocker, skip this damage entirely (CR 615.1).
+                            if self.is_color_prevented_by_aura(*blocker_id, attacker_id) {
+                                self.logger.normal(&format!(
+                                    "Prevented {} combat damage to {} ({}) by color-prevention Aura",
+                                    damage,
+                                    self.cards
+                                        .try_get(*blocker_id)
+                                        .map(|c| c.name.as_str())
+                                        .unwrap_or("creature"),
+                                    blocker_id
+                                ));
+                                continue;
+                            }
                             *damage_to_creatures.entry(*blocker_id).or_insert(0) += damage;
                             *damage_dealt_by_creature.entry(attacker_id).or_insert(0) += damage;
                             damage_sources_per_target
@@ -790,6 +888,21 @@ impl GameState {
                         };
 
                         if damage_to_assign > 0 {
+                            // Prismatic Ward / color-prevention Aura: check before
+                            // assigning single-blocker combat damage (CR 615.1).
+                            if self.is_color_prevented_by_aura(*blocker_id, attacker_id) {
+                                self.logger.normal(&format!(
+                                    "Prevented {} combat damage to {} ({}) by color-prevention Aura",
+                                    damage_to_assign,
+                                    self.cards
+                                        .try_get(*blocker_id)
+                                        .map(|c| c.name.as_str())
+                                        .unwrap_or("creature"),
+                                    blocker_id
+                                ));
+                                remaining_power -= damage_to_assign;
+                                continue;
+                            }
                             *damage_to_creatures.entry(*blocker_id).or_insert(0) += damage_to_assign;
                             *damage_dealt_by_creature.entry(attacker_id).or_insert(0) += damage_to_assign;
                             damage_sources_per_target
@@ -876,25 +989,41 @@ impl GameState {
                         .get_effective_power(*blocker_id)
                         .unwrap_or_else(|_| i32::from(blocker.current_power()));
                     if blocker_power > 0 {
-                        *damage_to_creatures.entry(attacker_id).or_insert(0) += blocker_power;
-                        // Track damage for lifelink
-                        *damage_dealt_by_creature.entry(*blocker_id).or_insert(0) += blocker_power;
-                        damage_sources_per_target
-                            .entry(attacker_id)
-                            .or_default()
-                            .insert(*blocker_id);
-                        // Track deathtouch damage from blocker (MTG Rules 702.2b)
-                        // Uses has_keyword_with_effects to account for granted deathtouch
-                        if self.has_keyword_with_effects(*blocker_id, Keyword::Deathtouch) {
-                            deathtouch_damaged_creatures.insert(attacker_id);
+                        // Prismatic Ward / color-prevention Aura on the ATTACKER:
+                        // if attacker has a color-prevention Aura and the blocker's
+                        // color matches the chosen color, prevent combat damage
+                        // from the blocker to the attacker (CR 615.1).
+                        if self.is_color_prevented_by_aura(attacker_id, *blocker_id) {
+                            self.logger.normal(&format!(
+                                "Prevented {} combat damage to {} ({}) by color-prevention Aura",
+                                blocker_power,
+                                self.cards
+                                    .try_get(attacker_id)
+                                    .map(|c| c.name.as_str())
+                                    .unwrap_or("creature"),
+                                attacker_id
+                            ));
+                        } else {
+                            *damage_to_creatures.entry(attacker_id).or_insert(0) += blocker_power;
+                            // Track damage for lifelink
+                            *damage_dealt_by_creature.entry(*blocker_id).or_insert(0) += blocker_power;
+                            damage_sources_per_target
+                                .entry(attacker_id)
+                                .or_default()
+                                .insert(*blocker_id);
+                            // Track deathtouch damage from blocker (MTG Rules 702.2b)
+                            // Uses has_keyword_with_effects to account for granted deathtouch
+                            if self.has_keyword_with_effects(*blocker_id, Keyword::Deathtouch) {
+                                deathtouch_damaged_creatures.insert(attacker_id);
+                            }
+                            // Log per-direction damage: blocker -> attacker
+                            self.log_combat_damage_to_creature(
+                                blocker_name.as_str(),
+                                *blocker_id,
+                                attacker_id,
+                                blocker_power,
+                            );
                         }
-                        // Log per-direction damage: blocker -> attacker
-                        self.log_combat_damage_to_creature(
-                            blocker_name.as_str(),
-                            *blocker_id,
-                            attacker_id,
-                            blocker_power,
-                        );
                     }
                 }
             } else {
@@ -926,6 +1055,78 @@ impl GameState {
                     // Track for DealsCombatDamage triggers
                     creatures_that_dealt_player_damage.push((attacker_id, defending_player, remaining_power));
                 }
+            }
+        }
+
+        // Apply damage-increase replacement effects (CR 614.1a) such as Torbran,
+        // Thane of Red Fell: "If a red source you control would deal damage to an
+        // opponent or a permanent an opponent controls, it deals that much plus 2
+        // instead." This is applied AFTER the combat-damage map is fully populated
+        // (all prevention has already been applied) and BEFORE lifelink (so that
+        // a Torbran-boosted creature with lifelink gains the correct extra life).
+        //
+        // Creature targets: damage_sources_per_target maps creature → {source cards}.
+        // We look up each source's boost for the target's controller and add it.
+        let creature_target_ids: Vec<CardId> = damage_sources_per_target.keys().copied().collect();
+        for target_creature in creature_target_ids {
+            if !self.battlefield.contains(target_creature) {
+                continue;
+            }
+            let target_ctrl = match self.cards.get(target_creature) {
+                Ok(c) => c.controller,
+                Err(_) => continue,
+            };
+            let sources: Vec<CardId> = damage_sources_per_target
+                .get(&target_creature)
+                .map(|s| s.iter().copied().collect())
+                .unwrap_or_default();
+            for source_id in sources {
+                let boost = self.get_damage_boost_for_source(source_id, target_ctrl);
+                if boost > 0 {
+                    *damage_to_creatures.entry(target_creature).or_insert(0) += boost;
+                    *damage_dealt_by_creature.entry(source_id).or_insert(0) += boost;
+                    let source_name = self
+                        .cards
+                        .get(source_id)
+                        .map(|c| c.name.to_string())
+                        .unwrap_or_default();
+                    let target_name = self
+                        .cards
+                        .get(target_creature)
+                        .map(|c| c.name.to_string())
+                        .unwrap_or_default();
+                    self.logger.gamelog(&format!(
+                        "Torbran: {} deals {} additional damage to {} (damage increase)",
+                        source_name, boost, target_name
+                    ));
+                }
+            }
+        }
+        // Player targets: creatures_that_dealt_player_damage has (source, player, amount).
+        // Torbran boosts damage from a red source controlled by the Torbran-controller to
+        // an opponent player. Since in combat the defending player is always the opponent
+        // of the attacker, get_damage_boost_for_source handles the opponent check.
+        for (attacker_id, defending_player, ref mut recorded_amount) in creatures_that_dealt_player_damage.iter_mut() {
+            let (attacker_id, defending_player) = (*attacker_id, *defending_player);
+            let boost = self.get_damage_boost_for_source(attacker_id, defending_player);
+            if boost > 0 {
+                *damage_to_players.entry(defending_player).or_insert(0) += boost;
+                *damage_dealt_by_creature.entry(attacker_id).or_insert(0) += boost;
+                // Update the recorded amount in creatures_that_dealt_player_damage for triggers.
+                *recorded_amount += boost;
+                let attacker_name = self
+                    .cards
+                    .get(attacker_id)
+                    .map(|c| c.name.to_string())
+                    .unwrap_or_default();
+                let player_name = self
+                    .get_player(defending_player)
+                    .map(|p| p.name.to_string())
+                    .unwrap_or_default();
+                self.logger.gamelog(&format!(
+                    "Torbran: {} deals {} additional damage to {} (damage increase)",
+                    attacker_name, boost, player_name
+                ));
             }
         }
 

@@ -1,0 +1,24 @@
+[metadata]
+Name:Disdainful Stroke counters spell with MV 4+
+Goal:Win
+Turns:3
+Difficulty:Easy
+Description:Disdainful Stroke counters target spell with mana value 4 or greater. P0 holds Disdainful Stroke and controls 2 Islands. P1 is trying to cast a Craw Wurm (MV 6 >= 4). Expected: Craw Wurm is countered and goes to graveyard.
+
+[state]
+turn=2
+activeplayer=p1
+activephase=MAIN1
+p0life=20
+p0hand=Disdainful Stroke
+p0library=Island; Island; Island; Island; Island
+p0graveyard=
+p0battlefield=Island; Island
+p0exile=
+
+p1life=20
+p1hand=Craw Wurm
+p1library=Forest; Forest; Forest; Forest; Forest
+p1graveyard=
+p1battlefield=Forest; Forest; Forest; Forest; Forest; Forest
+p1exile=

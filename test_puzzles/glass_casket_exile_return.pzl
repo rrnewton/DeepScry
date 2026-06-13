@@ -1,0 +1,21 @@
+[metadata]
+Name=Glass Casket Exile and Return Test
+Goal=Win
+Turns=5
+Difficulty=Easy
+Description=P1 casts Glass Casket to exile P2's small creature. Verify exile happens on ETB and creature returns when Glass Casket leaves. P1 wins by attacking after exiling blocker.
+
+[state]
+turn=4
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Glass Casket
+p0battlefield=Plains;Plains;Plains
+p0library=Plains;Plains;Plains;Plains;Plains;Plains
+p0graveyard=
+p1life=5
+p1hand=
+p1battlefield=Plains;Plains;Runaway Steam-Kin
+p1library=Plains;Plains;Plains
+p1graveyard=

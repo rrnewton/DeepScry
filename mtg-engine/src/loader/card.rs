@@ -131,6 +131,12 @@ impl CardLoader {
         // the referenced SVar's api_type structurally rather than string-matching
         // the K-line text).
         let mut etb_choose_player_svar: Option<String> = None;
+        // SVar name referenced by a `K:ETBReplacement:Other:<SVar>` line whose
+        // body is a `DB$ GenericChoice` (Palace Siege's `SiegeChoice`). Resolved
+        // to `etb_choose_mode` AFTER all SVars are parsed so we do a structured
+        // api_type check rather than a substring match on the K-line.
+        let mut etb_choose_mode_svar: Option<String> = None;
+        let mut etb_pay_life = false;
         let mut is_legendary = false;
         let mut loyalty: Option<u8> = None;
         // Set when the front face carries `AlternateMode:Adventure` — the
@@ -222,7 +228,11 @@ impl CardLoader {
                             if let Some(svar_name) = rest.rsplit(':').next() {
                                 let svar_name = svar_name.trim();
                                 if !svar_name.is_empty() && svar_name != "ChooseColor" {
+                                    // Store in BOTH candidates; the resolution
+                                    // step below checks which api_type the SVar
+                                    // actually has (ChoosePlayer vs GenericChoice).
                                     etb_choose_player_svar = Some(svar_name.to_string());
+                                    etb_choose_mode_svar = Some(svar_name.to_string());
                                 }
                             }
                         }
@@ -247,6 +257,12 @@ impl CardLoader {
                                 EtbTappedReplacement::SelfHost => enters_tapped = true,
                                 EtbTappedReplacement::Global(pred) => etb_tapped_global = Some(pred),
                                 EtbTappedReplacement::NotApplicable => {}
+                            }
+                            // Detect ETB "pay any amount of life" replacement:
+                            // R:Event$ Moved | Destination$ Battlefield | ReplaceWith$ PayLife
+                            // (Phyrexian Processor). Structural parse — no substring matching.
+                            if is_etb_pay_life_replacement(value) {
+                                etb_pay_life = true;
                             }
                         }
                         raw_abilities.push(format!("{key}:{value}"));
@@ -335,6 +351,24 @@ impl CardLoader {
             .and_then(|svar_name| parsed_svars.get(svar_name))
             .is_some_and(|p| p.api_type == super::ability_parser::ApiType::ChoosePlayer);
 
+        // Resolve the ETB GenericChoice replacement: same K-line detection as
+        // etb_choose_player, but check for api_type == GenericChoice (Palace
+        // Siege's `SiegeChoice` SVar). Extract `Choices$` and `AILogic$` so
+        // set_card_zone can pick the mode deterministically without re-parsing.
+        let (etb_choose_mode, etb_mode_ai_logic, etb_mode_choices) = etb_choose_mode_svar
+            .as_deref()
+            .and_then(|svar_name| parsed_svars.get(svar_name).map(|p| (svar_name, p)))
+            .filter(|(_, p)| p.api_type == super::ability_parser::ApiType::GenericChoice)
+            .map(|(_, p)| {
+                let choices: Vec<String> = p
+                    .get("Choices")
+                    .map(|c| c.split(',').map(|s| s.trim().to_string()).collect())
+                    .unwrap_or_default();
+                let ai_logic = p.get("AILogic").map(|s| s.to_string());
+                (true, ai_logic, choices)
+            })
+            .unwrap_or((false, None, Vec::new()));
+
         // Parse the Adventure (instant/sorcery) face from the ALTERNATE block,
         // when the front face declared `AlternateMode:Adventure` (CR 715). The
         // block after the `ALTERNATE` separator is itself a complete card script,
@@ -380,6 +414,10 @@ impl CardLoader {
             etb_choose_color,
             etb_exclude_colors,
             etb_choose_player,
+            etb_choose_mode,
+            etb_mode_ai_logic,
+            etb_mode_choices,
+            etb_pay_life,
             script_name: None, // Set by token loader
             is_legendary,
             loyalty,
@@ -495,6 +533,22 @@ fn classify_etb_tapped_replacement(value: &str) -> EtbTappedReplacement {
     EtbTappedReplacement::Global(crate::core::effects::TargetRestriction::parse(valid_card))
 }
 
+/// Detect the ETB "pay any amount of life" replacement:
+///   `R:Event$ Moved | Destination$ Battlefield | ReplaceWith$ PayLife`
+/// (Phyrexian Processor). Structural tokenized parse — no substring matching.
+/// Returns `true` iff the body is this exact replacement shape.
+fn is_etb_pay_life_replacement(value: &str) -> bool {
+    let mut params: std::collections::HashMap<&str, &str> = std::collections::HashMap::new();
+    for token in value.split('|') {
+        if let Some((k, v)) = token.split_once('$') {
+            params.insert(k.trim(), v.trim());
+        }
+    }
+    params.get("Event") == Some(&"Moved")
+        && params.get("Destination") == Some(&"Battlefield")
+        && params.get("ReplaceWith") == Some(&"PayLife")
+}
+
 /// True iff every `.`-qualifier in a comma-separated `ValidCard$` predicate is a
 /// controller restriction that [`crate::core::effects::TargetRestriction::parse`]
 /// models. The base type itself is unrestricted (card types, universal selectors
@@ -563,6 +617,41 @@ fn creature_dies_filter(valid_card: Option<&str>) -> Option<CreatureDiesFilter> 
     })
 }
 
+/// Parse an SVar body string (e.g. `"Count$YourLifeTotal"`) into a
+/// [`crate::core::CdaPtSource`] for use in a `CharacteristicDefiningPt` static.
+///
+/// Returns `Some(source)` for recognised shapes, `None` for unknown ones.
+///
+/// Recognised shapes:
+/// - `Count$YourLifeTotal` → `CdaPtSource::ControllerLifeTotal`
+/// - `Count$ValidGraveyard Creature` → `CdaPtSource::AllGraveyardCreatures { modifier: None }`
+/// - `Count$ValidGraveyard Creature/Plus.1` → `CdaPtSource::AllGraveyardCreatures { modifier: Plus(1) }`
+fn parse_cda_pt_svar(svar_body: &str) -> Option<crate::core::CdaPtSource> {
+    use crate::core::{CdaPtSource, CountModifier};
+
+    if svar_body == "Count$YourLifeTotal" {
+        return Some(CdaPtSource::ControllerLifeTotal);
+    }
+
+    // Count$ValidGraveyard <filter>[/Modifier]
+    // For CDA purposes we only support the "Creature" filter (all graveyards —
+    // no YouOwn/OppOwn qualifier), matching Lhurgoyf's SVar shape.
+    if let Some(rest) = svar_body.strip_prefix("Count$ValidGraveyard ") {
+        let (filter, modifier) = match rest.split_once('/') {
+            Some((f, suffix)) => (f, CountModifier::parse(suffix)),
+            None => (rest, CountModifier::None),
+        };
+        // Only "Creature" without ownership qualifiers counts ALL graveyards.
+        // Any YouOwn/OppOwn suffix would restrict the search — we do not model
+        // those as a CDA source here (they would need a different enum variant).
+        if filter == "Creature" {
+            return Some(CdaPtSource::AllGraveyardCreatures { modifier });
+        }
+    }
+
+    None
+}
+
 /// Card definition (not yet instantiated in a game)
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CardDefinition {
@@ -627,6 +716,23 @@ pub struct CardDefinition {
     /// carries it and the choice fires identically on both engines.
     #[serde(default)]
     pub etb_choose_player: bool,
+    /// Does this card require choosing a named mode on ETB?
+    /// Derived from `K:ETBReplacement:Other:<SVar>` where the SVar body is
+    /// `DB$ GenericChoice | Choices$ <M1>,<M2>,...` (Palace Siege).
+    #[serde(default)]
+    pub etb_choose_mode: bool,
+    /// AI default mode for `etb_choose_mode` (from `AILogic$` in the GenericChoice SVar).
+    #[serde(default)]
+    pub etb_mode_ai_logic: Option<String>,
+    /// Ordered list of mode names for `etb_choose_mode` (from `Choices$`).
+    #[serde(default)]
+    pub etb_mode_choices: Vec<String>,
+    /// Does this card have an ETB "pay any amount of life" replacement?
+    /// Derived from `R:Event$ Moved | Destination$ Battlefield | ReplaceWith$ PayLife`.
+    /// When set, `set_card_zone` deducts AI-chosen life and stores the amount in
+    /// `Card::stored_int`.
+    #[serde(default)]
+    pub etb_pay_life: bool,
     /// Script name (for tokens only). Used to look up token definitions.
     /// For tokens loaded from tokenscripts/, this is the filename without extension
     /// (e.g., "c_a_food_sac" for tokenscripts/c_a_food_sac.txt).
@@ -707,6 +813,10 @@ impl Default for CardDefinition {
             etb_choose_color: false,
             etb_exclude_colors: Vec::new(),
             etb_choose_player: false,
+            etb_choose_mode: false,
+            etb_mode_ai_logic: None,
+            etb_mode_choices: Vec::new(),
+            etb_pay_life: false,
             script_name: None,
             is_legendary: false,
             loyalty: None,
@@ -754,7 +864,13 @@ impl CardDefinition {
                     if let Some(params) = AbilityParams::parse_svar_body(body) {
                         if params.api_type == ApiType::Token {
                             if let Some(script) = params.get("TokenScript") {
-                                token_scripts.insert(script.to_string());
+                                // TokenScript$ may be a comma-separated list of distinct token
+                                // scripts (e.g. Wurmcoil Engine: "c_3_3_a_phyrexian_wurm_deathtouch,
+                                // c_3_3_a_phyrexian_wurm_lifelink"). Split on commas so each
+                                // individual script name is loaded as its own file.
+                                for name in script.split(',') {
+                                    token_scripts.insert(name.trim().to_string());
+                                }
                             }
                         }
                     }
@@ -768,7 +884,10 @@ impl CardDefinition {
                 if let Some(params) = AbilityParams::parse_svar_body(body) {
                     if params.api_type == ApiType::Token {
                         if let Some(script) = params.get("TokenScript") {
-                            token_scripts.insert(script.to_string());
+                            // Same comma-split as the SVar arm above.
+                            for name in script.split(',') {
+                                token_scripts.insert(name.trim().to_string());
+                            }
                         }
                     }
                 }
@@ -807,8 +926,14 @@ impl CardDefinition {
         card.definition.cache.etb_choose_color = self.etb_choose_color;
         card.definition.cache.etb_exclude_colors = SmallVec::from_slice(&self.etb_exclude_colors);
         card.definition.cache.etb_choose_player = self.etb_choose_player;
+        card.definition.cache.etb_choose_mode = self.etb_choose_mode;
+        card.definition.cache.etb_mode_ai_logic = self.etb_mode_ai_logic.clone();
+        card.definition.cache.etb_mode_choices = self.etb_mode_choices.clone();
+        card.definition.cache.etb_pay_life = self.etb_pay_life;
         // Fireball's `{1}`-per-extra-target relative cost (CR 601.2f).
         card.definition.cache.spell_relative_target_cost = self.has_relative_self_target_cost();
+        // Island Sanctuary: skip-draw-for-protection replacement (CR 614).
+        card.definition.cache.is_island_sanctuary = self.is_island_sanctuary_card();
 
         // Parse keywords
         card.keywords = self.parse_keywords();
@@ -939,6 +1064,24 @@ impl CardDefinition {
             }
         }
 
+        // Add Level Up activated ability for leveler creatures (CR 702.87).
+        // K:Level up:<cost> — places a LEVEL counter on the card, sorcery-speed only.
+        // The S: lines on the card use `counters_GEN_LEVEL` IsPresent conditions to
+        // apply the stat / ability grants at the relevant level bands.
+        if let Some(KeywordArgs::LevelUp { cost }) = card.keywords.get_args(Keyword::LevelUp) {
+            use crate::core::{ActivatedAbility, CardId, Cost, CounterType, Effect};
+            let ability_cost = Cost::Mana(*cost);
+            let effects = vec![Effect::PutCounter {
+                target: CardId::self_target(),
+                counter_type: CounterType::Level,
+                amount: 1,
+            }];
+            let description = format!("Level up {cost} (place a level counter on {})", card.name);
+            // CR 702.87b: "Level up only as a sorcery."
+            card.activated_abilities
+                .push(ActivatedAbility::new_sorcery_speed(ability_cost, effects, description));
+        }
+
         // Copy SVars for SubAbility resolution during effect execution
         card.svars = self.svars.clone();
 
@@ -1039,6 +1182,7 @@ impl CardDefinition {
                     power_bonus: 1,
                     toughness_bonus: 1,
                     keywords_granted: smallvec::SmallVec::new(),
+                    keyword_args_granted: smallvec::SmallVec::new(),
                 }],
                 "[noncreature] Prowess (+1/+1 until end of turn)".to_string(),
             );
@@ -2231,6 +2375,9 @@ impl CardDefinition {
         // DamageDealt / Count(...) — routes through GainLifeDynamic.
         let amount = match DynamicAmount::parse(life_amount, &self.svars)? {
             DynamicAmount::Fixed(_) => return None,
+            // TriggeredCardCounters is not a valid LifeAmount shape for GainLife;
+            // fall through to let params_to_effect produce the fixed-amount path.
+            DynamicAmount::TriggeredCardCounters(_) => return None,
             dynamic @ (DynamicAmount::TargetPower
             | DynamicAmount::TargetManaValue
             | DynamicAmount::DamageDealt
@@ -2253,6 +2400,60 @@ impl CardDefinition {
             player,
             amount,
             reference: CardId::reuse_previous(),
+        })
+    }
+
+    /// Build a `CreateTokenDynamic` effect when `TokenAmount$` resolves to a
+    /// non-fixed `DynamicAmount` through the card's SVars.
+    ///
+    /// Returns `None` for fixed-integer amounts (let `params_to_effect` handle
+    /// those as `CreateToken`) and for non-Token ApiTypes.
+    ///
+    /// Used by `extract_effects_from_svar` to handle patterns like Hangarback
+    /// Walker: `DB$ Token | TokenAmount$ Y | TokenScript$ c_1_1_a_thopter_flying`
+    /// with `SVar:Y:TriggeredCard$CardCounters.P1P1` — the counter count on the
+    /// dying card is not known at load time and must be resolved dynamically.
+    fn create_token_dynamic_from_params(
+        &self,
+        params: &super::ability_parser::AbilityParams,
+    ) -> Option<crate::core::Effect> {
+        use super::ability_parser::ApiType;
+        use crate::core::{DynamicAmount, Effect, PlayerId};
+
+        if params.api_type != ApiType::Token {
+            return None;
+        }
+        let token_amount_str = params.get("TokenAmount")?;
+        // A plain integer is the fixed-amount case — let params_to_effect handle it.
+        let amount = match DynamicAmount::parse(token_amount_str, &self.svars)? {
+            DynamicAmount::Fixed(_) => return None,
+            dynamic @ DynamicAmount::TriggeredCardCounters(_) => dynamic,
+            // Count$… expressions (e.g. Avenger of Zendikar: TokenAmount$ X where
+            // SVar:X:Count$Valid Land.YouCtrl) are evaluated at resolution time
+            // against the current game state by execute_effect / execute_create_token.
+            dynamic @ DynamicAmount::Count(_) => dynamic,
+            // Other DynamicAmount variants are not yet used by token-creation
+            // effects; fall through to params_to_effect (amount=1 safe default).
+            DynamicAmount::TargetPower
+            | DynamicAmount::TargetManaValue
+            | DynamicAmount::DamageDealt
+            | DynamicAmount::DamageDealtCappedByTarget { .. }
+            | DynamicAmount::SacrificedToughness => return None,
+        };
+
+        let token_script = params.get("TokenScript")?.to_string();
+        let token_owner = params.get("TokenOwner");
+        let for_each_player = token_owner == Some("Player");
+        let controller = match token_owner {
+            Some("Opponent") => PlayerId::new(1), // Placeholder — resolved at runtime
+            _ => PlayerId::new(0),                // Placeholder — controller
+        };
+
+        Some(Effect::CreateTokenDynamic {
+            controller,
+            token_script,
+            amount,
+            for_each_player,
         })
     }
 
@@ -2309,7 +2510,9 @@ impl CardDefinition {
         svar_params: &super::ability_parser::AbilityParams,
     ) -> Vec<crate::core::Effect> {
         use super::ability_parser::ApiType;
-        use super::effect_converter::{params_to_charm_effect_with_svars, params_to_effect};
+        use super::effect_converter::{
+            params_to_charm_effect_with_svars, params_to_effect, params_to_effect_with_svars,
+        };
         use crate::core::{CardId, Effect, Keyword, PlayerId};
 
         let mut effects = Vec::new();
@@ -2325,12 +2528,36 @@ impl CardDefinition {
             return effects;
         }
 
+        // A `DB$ Token` with a variable `TokenAmount$` (e.g. Hangarback Walker's
+        // `TokenAmount$ Y` / `SVar:Y:TriggeredCard$CardCounters.P1P1`) is not
+        // expressible as a fixed `Effect::CreateToken` — params_to_effect would
+        // silently fall back to amount=1 (the default). Route it through the
+        // SVar-aware dynamic builder first (DRY with the GainLifeDynamic path
+        // above).
+        if let Some(effect) = self.create_token_dynamic_from_params(svar_params) {
+            effects.push(effect);
+            return effects;
+        }
+
         // Charm (DB$ Charm | Choices$ ...) needs the SVar-aware converter so that
         // mode SVars (e.g. DBDraw, DBToken, DBLoseLife) are resolved to real Effects
         // rather than placeholders. This mirrors the SubAbility-chain path in
         // follow_sub_ability_chain (same rule: Charm always gets the SVar builder).
         if svar_params.api_type == ApiType::Charm {
             if let Some(effect) = params_to_charm_effect_with_svars(svar_params, &self.svars) {
+                effects.push(effect);
+            }
+            return effects;
+        }
+
+        // RepeatEach (DB$ RepeatEach | RepeatSubAbility$ <svar> | ...) needs the
+        // SVar-aware converter so that the RepeatSubAbility$ SVar reference (e.g.
+        // DBToken in Terastodon) can be resolved to real sub-effects at parse time.
+        // params_to_effect (without svars) cannot handle this and produces an
+        // Unimplemented effect; route through params_to_effect_with_svars instead.
+        // Mirrors the Charm pattern above. (mtg-914 B2: Terastodon Elephant tokens)
+        if svar_params.api_type == ApiType::RepeatEach {
+            if let Some(effect) = params_to_effect_with_svars(svar_params, &self.svars) {
                 effects.push(effect);
             }
             return effects;
@@ -2386,15 +2613,23 @@ impl CardDefinition {
                         // DB$ Pump with KW$ (keyword grant)
                         if sub_params.api_type == ApiType::Pump {
                             if let Some(kw_str) = sub_params.get("KW") {
-                                let keywords_granted: smallvec::SmallVec<[Keyword; 2]> = kw_str
-                                    .split(" & ")
-                                    .filter_map(|kw| Keyword::from_string(kw.trim()))
-                                    .collect();
+                                use crate::core::KeywordArgs;
+                                let mut keywords_granted: smallvec::SmallVec<[Keyword; 2]> = smallvec::SmallVec::new();
+                                let mut keyword_args_granted: smallvec::SmallVec<[KeywordArgs; 2]> =
+                                    smallvec::SmallVec::new();
+                                for token in kw_str.split(" & ").map(|s| s.trim()) {
+                                    if let Some(args) = KeywordArgs::from_string_parameterized(token) {
+                                        keyword_args_granted.push(args);
+                                    } else if let Some(kw) = Keyword::from_string(token) {
+                                        keywords_granted.push(kw);
+                                    }
+                                }
                                 effects.push(Effect::PumpCreature {
                                     target: CardId::new(0),
                                     power_bonus: 0,
                                     toughness_bonus: 0,
                                     keywords_granted,
+                                    keyword_args_granted,
                                 });
                             }
                         }
@@ -2406,8 +2641,12 @@ impl CardDefinition {
         // Follow SubAbility chains for additional effects
         if let Some(sub_ref) = svar_params.get("SubAbility") {
             if let Some(sub_params) = self.parsed_svars.get(sub_ref) {
-                // Only follow if we haven't already handled this above (Attach case)
-                if svar_params.api_type != ApiType::Attach {
+                // Only follow if we haven't already handled this above.
+                // - Attach: SubAbility is handled inline in the Attach branch above.
+                // - ChooseCard: the entire ChooseCard→Tap→Cleanup chain is collapsed
+                //   into a single TapPermanentsMatchingFilter effect by the converter;
+                //   following the SubAbility$ here would double-emit the Tap step.
+                if svar_params.api_type != ApiType::Attach && svar_params.api_type != ApiType::ChooseCard {
                     effects.extend(self.extract_effects_from_svar(sub_params));
                 }
             }
@@ -2517,6 +2756,7 @@ impl CardDefinition {
                             power_bonus,
                             toughness_bonus,
                             keywords_granted: smallvec::SmallVec::new(),
+                            keyword_args_granted: smallvec::SmallVec::new(),
                         });
                     }
                 }
@@ -2567,12 +2807,64 @@ impl CardDefinition {
                 triggers.push(trigger);
             }
 
+            // Parse Constellation triggers (Mode$ ChangesZone with ValidCard$ Enchantment.YouCtrl)
+            // Constellation triggers when an enchantment you control enters the battlefield.
+            // Example: Archon of Sun's Grace: T:Mode$ ChangesZone | Origin$ Any | Destination$ Battlefield
+            //   | ValidCard$ Enchantment.YouCtrl | TriggerZones$ Battlefield | Execute$ TrigToken
+            if mode == Some("ChangesZone")
+                && params.get("Destination").map(|s| s.as_str()) == Some("Battlefield")
+                && params
+                    .get("ValidCard")
+                    .map(|s| s.as_str())
+                    .unwrap_or("")
+                    .starts_with("Enchantment.YouCtrl")
+            {
+                let mut effects = Vec::new();
+
+                // Check if we have Execute$ parameter (references a SVar with effects)
+                if let Some(exec_ref) = params.get("Execute") {
+                    if let Some(svar_params) = self.parsed_svars.get(exec_ref) {
+                        effects.extend(self.extract_effects_from_svar(svar_params));
+                    }
+                }
+
+                // Extract description from TriggerDescription$ if available
+                let description = params
+                    .get("TriggerDescription")
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| "Constellation".to_string());
+
+                // Create trigger with [constellation] flag for runtime filtering.
+                // trigger_self_only = false since this triggers on ANY enchantment you control.
+                let mut trigger = Trigger::new_any(
+                    TriggerEvent::EntersBattlefield,
+                    effects,
+                    format!("[constellation] {}", description),
+                );
+                trigger.trigger_self_only = false;
+                triggers.push(trigger);
+            }
+
             // Parse "dies" triggers (Mode$ ChangesZone with Origin$ Battlefield, Destination$ Graveyard)
             // Example: T:Mode$ ChangesZone | Origin$ Battlefield | Destination$ Graveyard | ValidCard$ Card.Self | Execute$ TrigAddMana
+            // Also handles ValidCard$ Card.Self+Creature (e.g. Enduring Vitality: "when this dies,
+            // if it was a creature") — the `+Creature` qualifier is a type guard that ensures the
+            // trigger only fires when the card was a creature when it died, preventing re-triggering
+            // if the card re-enters as a non-creature (e.g. pure enchantment).
+            let valid_card_is_self = params
+                .get("ValidCard")
+                .map(|s| {
+                    // Accept "Card.Self" exactly, or "Card.Self+<extra>" qualifiers
+                    // (e.g. "Card.Self+Creature").  We tokenize on "+" and check the
+                    // first segment starts with "Card.Self" to avoid false positives.
+                    let parts: Vec<&str> = s.split('+').collect();
+                    parts.first().map(|p| p.trim() == "Card.Self").unwrap_or(false)
+                })
+                .unwrap_or(false);
             if mode == Some("ChangesZone")
                 && params.get("Origin").map(|s| s.as_str()) == Some("Battlefield")
                 && params.get("Destination").map(|s| s.as_str()) == Some("Graveyard")
-                && params.get("ValidCard").map(|s| s.as_str()) == Some("Card.Self")
+                && valid_card_is_self
             {
                 let mut effects = Vec::new();
 
@@ -2593,13 +2885,22 @@ impl CardDefinition {
                 triggers.push(Trigger::new(TriggerEvent::LeavesBattlefield, effects, description));
             }
 
-            // Parse "equipped creature dies" triggers
+            // Parse "equipped creature dies" / "enchanted creature dies" triggers
             // T:Mode$ ChangesZone | Origin$ Battlefield | Destination$ Graveyard | ValidCard$ Card.EquippedBy | Execute$ TrigDraw
-            // Example: Skullclamp - "Whenever equipped creature dies, draw two cards."
+            // T:Mode$ ChangesZone | Origin$ Battlefield | Destination$ Graveyard | ValidCard$ Card.AttachedBy | Execute$ TrigSearch
+            // Example: Skullclamp — "Whenever equipped creature dies, draw two cards."
+            // Example: Pattern of Rebirth — "When enchanted creature dies, search library for a creature."
+            // Both use EquippedCreatureDies: the trigger fires on the attachment (equipment
+            // or aura) when the permanent it is attached to moves to the graveyard.
+            // check_death_triggers scans both is_equipment() and is_aura() cards whose
+            // attached_to matches the dying card.
             if mode == Some("ChangesZone")
                 && params.get("Origin").map(|s| s.as_str()) == Some("Battlefield")
                 && params.get("Destination").map(|s| s.as_str()) == Some("Graveyard")
-                && params.get("ValidCard").map(|s| s.as_str()) == Some("Card.EquippedBy")
+                && matches!(
+                    params.get("ValidCard").map(|s| s.as_str()),
+                    Some("Card.EquippedBy" | "Card.AttachedBy")
+                )
             {
                 let mut effects = Vec::new();
 
@@ -2612,7 +2913,7 @@ impl CardDefinition {
                 let description = params
                     .get("TriggerDescription")
                     .map(|s| s.to_string())
-                    .unwrap_or_else(|| "When equipped creature dies".to_string());
+                    .unwrap_or_else(|| "When equipped/enchanted permanent dies".to_string());
 
                 triggers.push(Trigger::new(TriggerEvent::EquippedCreatureDies, effects, description));
             }
@@ -2906,6 +3207,20 @@ impl CardDefinition {
                                     svar_params,
                                 ));
                             }
+                            // DB$ Untap | UntapExactly$ True | UntapType$ <filter> | Amount$ 1
+                            // | Defined$ TriggeredPlayer
+                            // Hokori, Dust Drinker's upkeep trigger: "at the beginning of each
+                            // player's upkeep, that player untaps a land they control."
+                            // UntapExactly$ True + Amount$ 1 means exactly one permanent.
+                            // UntapType$ provides the filter; Defined$ TriggeredPlayer means
+                            // the triggering player's resources are untapped (resolved by the
+                            // ActivePlayerCtrl controller restriction at fire-time).
+                            if svar_params.api_type == ApiType::Untap && svar_params.get("UntapExactly") == Some("True")
+                            {
+                                let untap_type = svar_params.get("UntapType").unwrap_or("Permanent");
+                                let restriction = crate::core::effects::TargetRestriction::parse(untap_type);
+                                effects.push(Effect::UntapOne { restriction });
+                            }
                             // DB$ Earthbend effects
                             // Example: "DB$ Earthbend | Num$ 8"
                             if svar_params.api_type == ApiType::Earthbend {
@@ -2950,6 +3265,7 @@ impl CardDefinition {
                                         power_count,
                                         toughness_count,
                                         keywords_granted: smallvec::SmallVec::new(),
+                                        keyword_args_granted: smallvec::SmallVec::new(),
                                     });
                                 } else {
                                     // Fixed pump values
@@ -2963,6 +3279,7 @@ impl CardDefinition {
                                             power_bonus,
                                             toughness_bonus,
                                             keywords_granted: smallvec::SmallVec::new(),
+                                            keyword_args_granted: smallvec::SmallVec::new(),
                                         });
                                     }
                                 }
@@ -2980,6 +3297,50 @@ impl CardDefinition {
                                 {
                                     effects.push(destroy_effect);
                                 }
+                            }
+
+                            // DB$ Sacrifice (self-sacrifice) on a phase trigger.
+                            // Pattern: `DB$ Sacrifice | UnlessPayer$ You | UnlessCost$ U`
+                            // (Stasis, Aura Flux, Arcades Sabboth, Avatar of Discord, …)
+                            // "At the beginning of your upkeep, sacrifice CARDNAME unless you pay {cost}."
+                            //
+                            // `DB$ Sacrifice` with NO `SacValid$` means "sacrifice THIS card"
+                            // (Forge convention: absent SacValid means self-sacrifice). We
+                            // emit a `SacrificeSelf` with a placeholder source (`CardId::new(0)`)
+                            // wrapped in `UnlessCostWrapper`; the phase-trigger executor in
+                            // `check_triggers_for_controller` resolves the placeholder to the
+                            // actual source `CardId` at fire time.
+                            if svar_params.api_type == ApiType::Sacrifice && svar_params.get("SacValid").is_none() {
+                                let sac_self = crate::core::Effect::SacrificeSelf {
+                                    source: crate::core::CardId::new(0), // placeholder
+                                };
+                                let wrapped =
+                                    crate::loader::effect_converter::wrap_with_unless_cost(sac_self, svar_params);
+                                effects.push(wrapped);
+                            }
+
+                            // DB$ ChooseCard on a phase trigger (Tangle Wire):
+                            // "that player taps N untapped artifacts/creatures/lands
+                            //  they control for each fade counter on this permanent".
+                            // `ChooseCard | Choices$ <types> | Amount$ X | Mandatory$ True`
+                            // → TapPermanentsMatchingFilter { player: placeholder,
+                            //                                 choices_filter: <types>,
+                            //                                 count: 0 (resolved at fire time
+                            //                                 from fade counters) }.
+                            // The resolver in `check_triggers_for_controller` patches
+                            // `player` → active_player and `count` → fade counter count.
+                            if svar_params.api_type == ApiType::ChooseCard {
+                                let choices_raw = svar_params.get("Choices").unwrap_or("");
+                                let choices_filter = choices_raw
+                                    .split(',')
+                                    .map(|seg| seg.trim().split('.').next().unwrap_or_else(|| seg.trim()).to_string())
+                                    .collect::<Vec<_>>()
+                                    .join(",");
+                                effects.push(Effect::TapPermanentsMatchingFilter {
+                                    player: crate::core::PlayerId::new(0), // placeholder
+                                    choices_filter,
+                                    count: 0, // placeholder → fade counters at fire time
+                                });
                             }
 
                             // Fallback for counter-driven self-relocation chains
@@ -3180,8 +3541,68 @@ impl CardDefinition {
                             // CardId::new(0) is placeholder - resolved at trigger execution time
                             effects.push(Effect::UntapPermanent { target: CardId::new(0) });
                         }
+
+                        // DB$ Dig | DestinationZone$ Exile | Defined$ TriggeredDefendingPlayer —
+                        // exile top card(s) of the DEFENDING player's library on attack.
+                        // Robber of the Rich: "exile the top card of their library"
+                        //
+                        // Only handle the specific exile-to-opponent shape (DestinationZone$ Exile
+                        // + Defined$ TriggeredDefendingPlayer or Opponent). Self-Dig variants like
+                        // Master Piandao (no DestinationZone$, targets own library) are NOT
+                        // handled here and require dedicated future support.
+                        if svar_params.api_type == ApiType::DigMultiple
+                            && svar_params.get("DestinationZone") == Some("Exile")
+                            && matches!(
+                                svar_params.get("Defined"),
+                                Some("TriggeredDefendingPlayer" | "Opponent")
+                            )
+                        {
+                            let dig_count = svar_params
+                                .get("DigNum")
+                                .and_then(|s| s.parse::<u8>().ok())
+                                .unwrap_or(1);
+                            let change_all = svar_params.get("ChangeNum") == Some("All");
+                            let change_count = if change_all {
+                                dig_count
+                            } else {
+                                svar_params
+                                    .get("ChangeNum")
+                                    .and_then(|s| s.parse::<u8>().ok())
+                                    .unwrap_or(1)
+                            };
+                            effects.push(Effect::Dig {
+                                dig_count,
+                                change_count,
+                                change_all,
+                                destination: crate::zones::Zone::Exile,
+                                rest_destination: crate::zones::Zone::Library,
+                                may_play: false,
+                                may_play_without_mana_cost: false,
+                                target_self: false, // always targets defending player's library
+                                optional: false,
+                                rest_random: false,
+                                reveal: false,
+                                change_valid: smallvec::SmallVec::new(),
+                            });
+                        }
                     }
                 }
+
+                // Detect intervening-if condition: CheckSVar$ X | SVarCompare$ GTY where
+                // SVar:X:Count$ValidHand Card.DefenderCtrl and SVar:Y:Count$ValidHand Card.YouOwn
+                // This means "fires only if defending player has more cards in hand than controller"
+                let requires_defender_hand_gt_controller = {
+                    let check_svar = params.get("CheckSVar").map(|s| s.as_str());
+                    let svar_compare = params.get("SVarCompare").map(|s| s.as_str());
+                    if check_svar == Some("X") && svar_compare == Some("GTY") {
+                        let x_def = self.svars.get("X").map(|s| s.as_str());
+                        let y_def = self.svars.get("Y").map(|s| s.as_str());
+                        x_def == Some("Count$ValidHand Card.DefenderCtrl")
+                            && y_def == Some("Count$ValidHand Card.YouOwn")
+                    } else {
+                        false
+                    }
+                };
 
                 // Extract description from TriggerDescription$ if available
                 let description = params
@@ -3194,7 +3615,7 @@ impl CardDefinition {
                     description.to_lowercase().contains("you may") || params.contains_key("OptionalDecider");
 
                 // Create appropriate trigger type based on optional and cost
-                let trigger = if is_optional {
+                let mut trigger = if is_optional {
                     if let Some(cost) = trigger_cost {
                         Trigger::new_optional_with_cost(TriggerEvent::Attacks, effects, description, cost)
                     } else {
@@ -3203,20 +3624,110 @@ impl CardDefinition {
                 } else {
                     Trigger::new(TriggerEvent::Attacks, effects, description)
                 };
+                trigger.requires_defender_hand_gt_controller = requires_defender_hand_gt_controller;
+
+                triggers.push(trigger);
+            }
+
+            // Parse AttackerUnblocked triggers (Mode$ AttackerUnblocked)
+            // Unified handler covering Draw (Eternal of Harsh Truths), Discard
+            // (Abyssal Nightstalker), Destroy (Floral Spuzzem), and generic Execute$ SVars.
+            // Example: T:Mode$ AttackerUnblocked | ValidCard$ Card.Self | Execute$ TrigDraw | TriggerDescription$ ...
+            // Fires at end of declare-blockers step for each unblocked attacker with this trigger.
+            if mode == Some("AttackerUnblocked") && params.get("ValidCard").map(|s| s.as_str()) == Some("Card.Self") {
+                use crate::core::{Effect, PlayerId, TriggerEvent};
+                use crate::loader::effect_converter::params_to_effect;
+
+                let mut effects = Vec::new();
+
+                // Extract effects from Execute$ SVar
+                if let Some(exec_ref) = params.get("Execute") {
+                    if let Some(svar_params) = self.parsed_svars.get(exec_ref) {
+                        // DB$ Draw — draw cards for controller (e.g. Eternal of Harsh Truths)
+                        if svar_params.api_type == ApiType::Draw {
+                            let draw_count = svar_params
+                                .get("NumCards")
+                                .and_then(|s| s.parse::<u8>().ok())
+                                .unwrap_or(1);
+                            effects.push(Effect::DrawCards {
+                                player: PlayerId::new(0), // placeholder → controller
+                                count: draw_count,
+                            });
+                        } else if svar_params.api_type == ApiType::Discard {
+                            // DB$ Discard — defending player discards (e.g. Abyssal Nightstalker)
+                            let discard_count = svar_params
+                                .get("NumCards")
+                                .and_then(|s| s.parse::<u8>().ok())
+                                .unwrap_or(1);
+                            effects.push(Effect::DiscardCards {
+                                player: PlayerId::target_opponent(),
+                                count: discard_count,
+                                remember_discarded: false,
+                                optional: false,
+                                remember_discarding_players: false,
+                            });
+                        } else if svar_params.api_type == ApiType::Destroy {
+                            // DB$ Destroy — destroy target artifact/permanent (e.g. Floral Spuzzem)
+                            if let Some(destroy_effect) = params_to_effect(svar_params) {
+                                effects.push(destroy_effect);
+                            }
+                        } else {
+                            effects.extend(self.extract_effects_from_svar(svar_params));
+                        }
+                        // Follow SubAbility$ chain
+                        self.follow_sub_ability_chain(svar_params, &mut effects);
+                    }
+                }
+
+                let description = params
+                    .get("TriggerDescription")
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| "Whenever this creature attacks and isn't blocked".to_string());
+
+                let is_optional =
+                    description.to_lowercase().contains("you may") || params.contains_key("OptionalDecider");
+
+                let trigger = if is_optional {
+                    Trigger::new_optional(TriggerEvent::AttackerUnblocked, effects, description)
+                } else {
+                    Trigger::new(TriggerEvent::AttackerUnblocked, effects, description)
+                };
 
                 triggers.push(trigger);
             }
 
             // Parse SpellCast triggers (Mode$ SpellCast)
             // Example: T:Mode$ SpellCast | ValidCard$ Card.nonCreature | ValidActivatingPlayer$ You | Execute$ TrigCounter
-            // This triggers when the controller casts a spell matching ValidCard$ criteria
+            // This triggers when the controller (or any player for global triggers) casts a
+            // spell matching ValidCard$ criteria.
             if mode == Some("SpellCast") {
                 let mut effects = Vec::new();
 
-                // Check ValidCard$ to determine what spells trigger this
-                // Card.nonCreature = triggers on noncreature spells (instants, sorceries, etc.)
+                // Check ValidCard$ to determine what spells trigger this.
+                // Tokenize on `$` boundaries; do NOT substring-match.
                 let valid_card = params.get("ValidCard").map(|s| s.as_str());
+
+                // Card.nonCreature = triggers on noncreature spells (instants, sorceries, etc.)
                 let is_noncreature_only = valid_card == Some("Card.nonCreature");
+
+                // `Instant,Sorcery` — triggers on instants or sorceries only
+                // (Stormchaser's Talent level 3, etc.)
+                let is_instant_or_sorcery =
+                    valid_card == Some("Instant,Sorcery") || valid_card == Some("Sorcery,Instant");
+
+                // `Instant` — triggers on instant spells only
+                // (In the Eye of Chaos: "Whenever a player casts an instant spell")
+                let is_instant_only = valid_card == Some("Instant");
+
+                // `Enchantment` — triggers on enchantment spells only
+                // (Presence of the Master: "Whenever a player casts an enchantment spell")
+                let is_enchantment_only = valid_card == Some("Enchantment");
+
+                // Global "any player" triggers have no ValidActivatingPlayer$ You restriction.
+                // In the Eye of Chaos and Presence of the Master say "whenever A player casts"
+                // which means any player, not just the controller.
+                let activating_player = params.get("ValidActivatingPlayer").map(|s| s.as_str());
+                let fires_for_any_caster = activating_player != Some("You");
 
                 // Check if we have Execute$ parameter (references a SVar with effects)
                 // Use extract_effects_from_svar helper (DRY)
@@ -3236,12 +3747,24 @@ impl CardDefinition {
                 // Use new_any() to mark trigger_self_only = false
                 let mut trigger = Trigger::new_any(TriggerEvent::SpellCast, effects, description);
 
-                // Set structured filter flag for noncreature-only triggers
+                // Set structured filter flags for spell type and caster scope
                 if is_noncreature_only {
                     trigger.requires_noncreature = true;
                     if !trigger.description.contains("noncreature") {
                         trigger.description = format!("[noncreature] {}", trigger.description);
                     }
+                }
+                if is_instant_or_sorcery {
+                    trigger.requires_instant_or_sorcery = true;
+                }
+                if is_instant_only {
+                    trigger.requires_instant = true;
+                }
+                if is_enchantment_only {
+                    trigger.requires_enchantment = true;
+                }
+                if fires_for_any_caster {
+                    trigger.fires_for_any_caster = true;
                 }
 
                 triggers.push(trigger);
@@ -3763,6 +4286,80 @@ impl CardDefinition {
             }
         }
 
+        // Scan `S:Mode$ Continuous | Affected$ Card.Self+ChosenMode<X> |
+        // AddTrigger$ <SVar>` lines (Palace Siege pattern). These conditional
+        // triggers are gated on the card's ETB-chosen mode (`Card::chosen_mode`)
+        // and reference a SVar that is itself a Phase trigger body.
+        //
+        // Design: rather than modelling mode-conditional triggers as a
+        // separate `StaticAbility::AddTrigger` (which would need a new
+        // continuous-effects pass), we build them as normal `Trigger` objects
+        // with a `mode_gate: Some("<Mode>")` field. The phase-trigger firing
+        // sites (`check_triggers_for_controller` / `fire_phase_triggers`) gate
+        // on the source card's `chosen_mode` matching the gate string.
+        for ability in &self.raw_abilities {
+            let Some(body) = ability.strip_prefix("S:") else {
+                continue;
+            };
+            // Tokenized parse (no substring matching — CLAUDE.md rule).
+            let params = tokenize_pipe_dollar(body);
+            if params.get("Mode").map(|s| s.as_str()) != Some("Continuous") {
+                continue;
+            }
+            // Affected$ must be `Card.Self+ChosenMode<X>` for us to handle it.
+            let Some(affected) = params.get("Affected") else {
+                continue;
+            };
+            let Some(mode_str) = affected.strip_prefix("Card.Self+ChosenMode") else {
+                continue;
+            };
+            let Some(svar_name) = params.get("AddTrigger") else {
+                continue;
+            };
+            let Some(svar_body) = self.svars.get(svar_name.as_str()) else {
+                continue;
+            };
+            // The SVar body is itself a Phase trigger specification.
+            let svar_params = tokenize_pipe_dollar(svar_body);
+            if svar_params.get("Mode").map(|s| s.as_str()) != Some("Phase") {
+                continue;
+            }
+            // Determine the trigger event from the Phase$ value.
+            let phase_token = svar_params.get("Phase").map(|s| s.replace(' ', ""));
+            let trigger_event = match phase_token.as_deref() {
+                Some("Upkeep") => TriggerEvent::BeginningOfUpkeep,
+                Some(p) if p.eq_ignore_ascii_case("EndOfTurn") || p.eq_ignore_ascii_case("End") => {
+                    TriggerEvent::BeginningOfEndStep
+                }
+                Some("BeginCombat") => TriggerEvent::BeginningOfCombat,
+                _ => continue, // Unsupported phase; skip
+            };
+            // Extract effects from Execute$ SVar using the shared helper which
+            // handles ChangeZone (Khans), LoseLife+SubAbility GainLife (Dragons),
+            // and every other effect type the rest of parse_triggers supports.
+            let mut effects = Vec::new();
+            if let Some(exec_ref) = svar_params.get("Execute") {
+                if let Some(exec_svar_params) = self.parsed_svars.get(exec_ref.as_str()) {
+                    effects.extend(self.extract_effects_from_svar(exec_svar_params));
+                }
+            }
+            let description = svar_params
+                .get("TriggerDescription")
+                .cloned()
+                .unwrap_or_else(|| format!("Conditional {} upkeep trigger", mode_str));
+
+            let mut trigger = Trigger::new_any(trigger_event, effects, description);
+            // Always fires from the Battlefield (these are enchantment triggers).
+            trigger.trigger_zones = smallvec::smallvec![crate::zones::Zone::Battlefield];
+            // Gate on the card's chosen mode.
+            trigger.mode_gate = Some(mode_str.to_string());
+            // ValidPlayer$ You → only the controller's own upkeep.
+            if svar_params.get("ValidPlayer").map(|s| s.as_str()) == Some("You") {
+                trigger.controller_turn_only = true;
+            }
+            triggers.push(trigger);
+        }
+
         triggers
     }
 
@@ -3809,7 +4406,7 @@ impl CardDefinition {
 
             // Parse effects using the tokenized converter
             use super::ability_parser::ApiType;
-            use super::effect_converter::params_to_effect_with_svars;
+            use super::effect_converter::{params_to_charm_effect_with_svars, params_to_effect_with_svars};
 
             // Special handling for mana abilities (need is_mana_ability = true)
             // BUT: Planeswalker loyalty abilities that produce mana (e.g., Chandra's +1: Add {R}{R})
@@ -3825,8 +4422,17 @@ impl CardDefinition {
             let is_mana_ability =
                 matches!(params.api_type, ApiType::Mana | ApiType::ManaReflected) && !is_planeswalker_ability;
 
-            // Try to convert parameters to effects (with SVar resolution for StaticAbilities$)
-            let mut effects = if let Some(effect) = params_to_effect_with_svars(&params, &self.svars) {
+            // Try to convert parameters to effects (with SVar resolution for StaticAbilities$).
+            // AB$ Charm activated abilities (e.g. Umezawa's Jitte) require the SVar-aware
+            // charm converter so that mode SVars (JittePump, JitteCurse, JitteLife) are
+            // resolved to real effects instead of placeholder DrawCards{count:0}. Mirrors
+            // the parse_effects() + follow_sub_ability_chain() logic that already handles
+            // SP$ Charm for spells (B3 fix, mtg-910).
+            let mut effects = if params.api_type == ApiType::Charm {
+                params_to_charm_effect_with_svars(&params, &self.svars)
+                    .map(|e| vec![e])
+                    .unwrap_or_default()
+            } else if let Some(effect) = params_to_effect_with_svars(&params, &self.svars) {
                 vec![effect]
             } else {
                 // Fallback to old parsing for unsupported API types
@@ -4830,24 +5436,68 @@ impl CardDefinition {
             };
             match mode {
                 "CantBeCast" => {
-                    let valid_card = params
-                        .get("ValidCard")
-                        .map(|v| crate::core::TargetRestriction::parse(v))
-                        .unwrap_or_else(crate::core::TargetRestriction::any);
-                    let description = params.get("Description").cloned().unwrap_or_default();
-                    abilities.push(StaticAbility::CantBeCast {
-                        valid_card,
-                        description,
-                    });
+                    // Skip `Secondary$ True` lines that only encode a
+                    // `NumLimitEachTurn$` limit WITHOUT an `Origin$`
+                    // restriction: those per-turn caps are enforced
+                    // separately (Fires of Invention's 2-spell cap is
+                    // checked directly against `spells_cast_this_turn`
+                    // in `push_castable_with_fires`).
+                    // However, `Secondary$ True` lines that DO have an
+                    // `Origin$` field (e.g. Experimental Frenzy's
+                    // `CantBeCast | ValidCard$ Card | Caster$ You | Origin$ Hand`)
+                    // must still be parsed to enforce the origin restriction.
+                    let is_secondary = params.get("Secondary").map(|v| v.trim()) == Some("True");
+                    let has_origin = params.contains_key("Origin");
+                    if is_secondary && !has_origin {
+                        // Fires-style NumLimitEachTurn cap — skip the static;
+                        // the cap is enforced inline in push_castable_with_fires.
+                    } else {
+                        let valid_card = params
+                            .get("ValidCard")
+                            .map(|v| crate::core::TargetRestriction::parse(v))
+                            .unwrap_or_else(crate::core::TargetRestriction::any);
+                        let caster_restriction = match params.get("Caster").map(|s| s.trim()) {
+                            Some("You") => crate::core::CasterRestriction::You,
+                            Some("You.NonActive") => crate::core::CasterRestriction::YouNonActive,
+                            Some("Opponent") => crate::core::CasterRestriction::Opponent,
+                            _ => crate::core::CasterRestriction::Any,
+                        };
+                        let origin_restriction = params
+                            .get("Origin")
+                            .and_then(|v| crate::zones::Zone::from_str_lenient(v.trim()));
+                        let only_sorcery_speed = params
+                            .get("OnlySorcerySpeed")
+                            .map(|v| v.trim().eq_ignore_ascii_case("true"))
+                            .unwrap_or(false);
+                        let description = params.get("Description").cloned().unwrap_or_default();
+                        abilities.push(StaticAbility::CantBeCast {
+                            valid_card,
+                            caster_restriction,
+                            origin_restriction,
+                            only_sorcery_speed,
+                            description,
+                        });
+                    }
                 }
                 "CantPlayLand" => {
                     let valid_card = params
                         .get("ValidCard")
                         .map(|v| crate::core::TargetRestriction::parse(v))
                         .unwrap_or_else(crate::core::TargetRestriction::any);
+                    let player_restriction = match params.get("Player").map(|s| s.trim()) {
+                        Some("You") => crate::core::CasterRestriction::You,
+                        Some("You.NonActive") => crate::core::CasterRestriction::YouNonActive,
+                        Some("Opponent") => crate::core::CasterRestriction::Opponent,
+                        _ => crate::core::CasterRestriction::Any,
+                    };
+                    let origin_restriction = params
+                        .get("Origin")
+                        .and_then(|v| crate::zones::Zone::from_str_lenient(v.trim()));
                     let description = params.get("Description").cloned().unwrap_or_default();
                     abilities.push(StaticAbility::CantPlayLand {
                         valid_card,
+                        player_restriction,
+                        origin_restriction,
                         description,
                     });
                 }
@@ -4885,6 +5535,125 @@ impl CardDefinition {
                         }
                     }
                 }
+                "CantAttack" => {
+                    // Two shapes:
+                    // (a) Self-conditional (Orgg):
+                    //   S:Mode$ CantAttack | ValidCard$ Card.Self
+                    //     | UnlessDefender$ !controlsCreature.untapped+powerGE<N>
+                    //
+                    // (b) Global creature filter (general hoser):
+                    //   S:Mode$ CantAttack | ValidCard$ Creature.<filter>
+                    //   e.g. `ValidCard$ Creature.Black` — "black creatures can't attack"
+                    let valid_card = params.get("ValidCard").map(|v| v.trim()).unwrap_or("");
+                    let is_self = valid_card == "Card.Self";
+                    if is_self {
+                        // Parse `UnlessDefender$ !controlsCreature.untapped+powerGE<N>`:
+                        // This means "can't attack UNLESS defender does NOT control
+                        // an untapped creature with power >= N", i.e., "can't attack
+                        // if defender DOES control such a creature."
+                        if let Some(unless) = params.get("UnlessDefender") {
+                            // Pattern: starts with `!controlsCreature.untapped+powerGE`
+                            let prefix = "!controlsCreature.untapped+powerGE";
+                            if let Some(suffix) = unless.trim().strip_prefix(prefix) {
+                                if let Ok(n) = suffix.parse::<i32>() {
+                                    let description = params.get("Description").cloned().unwrap_or_else(|| {
+                                        format!(
+                                            "CARDNAME can't attack if defending player \
+                                                 controls an untapped creature with power {n} or greater."
+                                        )
+                                    });
+                                    abilities.push(StaticAbility::CantAttackIfDefenderHasUntappedPowerGE {
+                                        min_power: n,
+                                        description,
+                                    });
+                                }
+                            }
+                        }
+                    } else if !valid_card.is_empty() {
+                        // General "creatures matching <filter> can't attack" hoser.
+                        let filter = crate::core::TargetRestriction::parse(valid_card);
+                        let description = params.get("Description").cloned().unwrap_or_default();
+                        abilities.push(StaticAbility::CantAttackOrBlockMatching {
+                            cant_attack: true,
+                            cant_block: false,
+                            filter,
+                            description,
+                        });
+                    }
+                }
+                "CantBlock" => {
+                    // Global creature filter:
+                    //   S:Mode$ CantBlock | ValidCard$ Creature.<filter>
+                    //   e.g. `ValidCard$ Creature.Black` — "black creatures can't block"
+                    if let Some(valid_card) = params.get("ValidCard") {
+                        let filter = crate::core::TargetRestriction::parse(valid_card.trim());
+                        let description = params.get("Description").cloned().unwrap_or_default();
+                        abilities.push(StaticAbility::CantAttackOrBlockMatching {
+                            cant_attack: false,
+                            cant_block: true,
+                            filter,
+                            description,
+                        });
+                    }
+                }
+                // Combined CantAttack,CantBlock (Light of Day):
+                //   S:Mode$ CantAttack,CantBlock | ValidCard$ Creature.Black
+                mode_str
+                    if {
+                        let parts: Vec<&str> = mode_str.split(',').collect();
+                        parts.iter().all(|p| *p == "CantAttack" || *p == "CantBlock")
+                            && parts.contains(&"CantAttack")
+                            && parts.contains(&"CantBlock")
+                    } =>
+                {
+                    if let Some(valid_card) = params.get("ValidCard") {
+                        let filter = crate::core::TargetRestriction::parse(valid_card.trim());
+                        let description = params.get("Description").cloned().unwrap_or_default();
+                        abilities.push(StaticAbility::CantAttackOrBlockMatching {
+                            cant_attack: true,
+                            cant_block: true,
+                            filter,
+                            description,
+                        });
+                    }
+                }
+                "CantBeActivated" => {
+                    // Activated-ability lock (Cursed Totem):
+                    //   S:Mode$ CantBeActivated | ValidCard$ Creature | ValidSA$ Activated
+                    // Suppress all activated abilities on creatures matching `ValidCard$`.
+                    if let Some(valid_card) = params.get("ValidCard") {
+                        let creature_filter = crate::core::TargetRestriction::parse(valid_card.trim());
+                        let description = params.get("Description").cloned().unwrap_or_default();
+                        abilities.push(StaticAbility::CantBeActivated {
+                            creature_filter,
+                            description,
+                        });
+                    }
+                }
+                "DisableTriggers" => {
+                    // Torpor Orb: creatures entering the battlefield don't cause
+                    // triggered abilities to trigger.
+                    //
+                    // Card script shape (Torpor Orb):
+                    //   S:Mode$ DisableTriggers | ValidCause$ Creature
+                    //   | ValidMode$ ChangesZone,ChangesZoneAll | Destination$ Battlefield
+                    //
+                    // We recognise any `DisableTriggers` static whose `ValidCause$`
+                    // includes `Creature` and whose `Destination$` is `Battlefield` (or is
+                    // absent, which defaults to Battlefield in most creature-ETB shapes).
+                    // Other DisableTriggers shapes (e.g. non-creature entering) would need
+                    // their own variant; for now Torpor Orb is the only relevant card.
+                    let valid_cause = params.get("ValidCause").map_or("", |v| v);
+                    let destination = params.get("Destination").map_or("Battlefield", |v| v);
+                    let is_creature_etb = valid_cause.contains("Creature") && destination == "Battlefield";
+                    if is_creature_etb {
+                        let description = params
+                            .get("Description")
+                            .cloned()
+                            .unwrap_or_else(|| "Creatures entering don't cause abilities to trigger.".to_owned());
+                        abilities.push(StaticAbility::DisableCreatureEtbTriggers { description });
+                    }
+                }
                 "Always" => {
                     // State-trigger sweep. We model only the SacrificeAll/
                     // DestroyAll form keyed off an IsPresent$ filter (City in a
@@ -4913,9 +5682,11 @@ impl CardDefinition {
             let is_reduce_cost = ability.contains("Mode$ ReduceCost");
             let is_raise_cost = ability.contains("Mode$ RaiseCost");
             let is_cast_with_flash = ability.contains("Mode$ CastWithFlash");
+            let is_alternative_cost = ability.contains("Mode$ AlternativeCost");
 
-            // Parse S:Mode$ Continuous, S:Mode$ ReduceCost, S:Mode$ RaiseCost, or S:Mode$ CastWithFlash lines
-            if !is_continuous && !is_reduce_cost && !is_raise_cost && !is_cast_with_flash {
+            // Parse S:Mode$ Continuous, S:Mode$ ReduceCost, S:Mode$ RaiseCost,
+            // S:Mode$ CastWithFlash, or S:Mode$ AlternativeCost lines
+            if !is_continuous && !is_reduce_cost && !is_raise_cost && !is_cast_with_flash && !is_alternative_cost {
                 continue;
             }
 
@@ -4929,10 +5700,18 @@ impl CardDefinition {
 
             // ReduceCost-specific parameters
             let mut valid_card: Option<crate::core::CostReductionTarget> = None;
-            let mut reduce_amount: u8 = 0;
+            let mut reduce_amount: crate::core::CostReductionAmount = crate::core::CostReductionAmount::Fixed(0);
             let mut is_present: Option<String> = None;
             let mut present_zone: Option<crate::zones::Zone> = None;
             let mut present_compare_min: u8 = 1; // Default: at least 1
+
+            // MayPlay / MayPlayWithoutManaCost-specific parameters
+            // `may_play` is true when `MayPlay$ True` is present.
+            // `may_play_without_mana_cost` is true when `MayPlayWithoutManaCost$ True` is present.
+            // `affected_zone` collects the `AffectedZone$` value (comma-separated list of zones).
+            let mut may_play = false;
+            let mut may_play_without_mana_cost = false;
+            let mut affected_zone_library = false;
 
             // RaiseCost-specific parameters
             let mut raised_cost: Option<crate::core::RaisedCost> = None;
@@ -4946,6 +5725,37 @@ impl CardDefinition {
             // GainControl-specific parameter: `GainControl$ You` on a control-stealing
             // Aura (Control Magic, Mind Control, ...). Models CR 613.2 layer-2 control.
             let mut gain_control = false;
+
+            // AdjustLandPlays-specific parameter: extra lands the controller may play
+            // per turn. Used by Exploration, Oracle of Mul Daya, Azusa, etc.
+            let mut adjust_land_plays: u8 = 0;
+
+            // CharacteristicDefining-specific parameters (Serra Avatar / Lhurgoyf Layer 7a CDA).
+            // Tracks `CharacteristicDefining$ True` and resolves the SVars that
+            // back SetPower$/SetToughness$ into `CdaPtSource` values.
+            // Power and toughness may have different sources (e.g. Lhurgoyf).
+            let mut is_characteristic_defining = false;
+            let mut cda_power_source: Option<crate::core::CdaPtSource> = None;
+            let mut cda_toughness_source: Option<crate::core::CdaPtSource> = None;
+
+            // Opalescence-specific parameters.
+            // `add_type_creature` is set when `AddType$ Creature` is present.
+            // `set_power_affected_x` / `set_toughness_affected_x` are set when
+            // `SetPower$ AffectedX` / `SetToughness$ AffectedX` are parsed.
+            // Together with `Affected$ Enchantment.nonAura+Other` these identify
+            // the Opalescence continuous-effect shape (Layer 4 + Layer 7b).
+            let mut add_type_creature = false;
+            let mut set_power_affected_x = false;
+            let mut set_toughness_affected_x = false;
+
+            // AddTrigger$-specific parameter: SVar name of the trigger to grant to
+            // affected permanents (Energy Flux, Aura Flux: upkeep sacrifice-unless-pay).
+            let mut add_trigger_svar: Option<String> = None;
+
+            // AlternativeCost-specific parameters.
+            // `alt_cost_mana`: the alternative mana cost (parsed from `Cost$`).
+            // `alt_cost_check_svar`: SVar variable name to check (e.g. `SetTrap`).
+            let mut alt_cost_mana: Option<crate::core::ManaCost> = None;
 
             // Split by | and parse each parameter
             for param in ability.split('|') {
@@ -5079,7 +5889,11 @@ impl CardDefinition {
                                 use crate::core::CostReductionTarget;
                                 valid_card = Some(match value {
                                     "Card.nonCreature" => CostReductionTarget::NonCreature,
-                                    "Card" | "Card.Self" => CostReductionTarget::AllSpells,
+                                    "Card" => CostReductionTarget::AllSpells,
+                                    // Card.Self: the reduction applies to THIS card's own casting
+                                    // cost (EffectZone$ All — active even from hand/graveyard).
+                                    // Eddymurk Crab: costs {1} less for each instant/sorcery in graveyard.
+                                    "Card.Self" => CostReductionTarget::SelfCard,
                                     "Creature" => CostReductionTarget::Creature,
                                     "Card.White" => CostReductionTarget::Color(crate::core::Color::White),
                                     "Card.Blue" => CostReductionTarget::Color(crate::core::Color::Blue),
@@ -5094,14 +5908,35 @@ impl CardDefinition {
                             }
                         }
                         "Amount" => {
-                            // Parse Amount$ for cost reduction/increase (e.g., "1", "2")
-                            reduce_amount = value.parse().unwrap_or(0);
-                            // For RaiseCost with Amount$, create a mana-based raised cost
-                            if is_raise_cost && reduce_amount > 0 {
-                                raised_cost = Some(crate::core::RaisedCost::Mana(reduce_amount));
+                            // Parse Amount$ for cost reduction/increase.
+                            // Numeric literal (e.g. "1", "2"): fixed.
+                            // Variable reference (e.g. "X") with a Count$… SVar:
+                            //   evaluate dynamically at cast time so cards like
+                            //   Eddymurk Crab ("costs {1} less for each instant/sorcery
+                            //   in your graveyard") work correctly.
+                            if let Ok(n) = value.parse::<u8>() {
+                                reduce_amount = crate::core::CostReductionAmount::Fixed(n);
+                                // For RaiseCost with Amount$, create a mana-based raised cost
+                                if is_raise_cost && n > 0 {
+                                    raised_cost = Some(crate::core::RaisedCost::Mana(n));
+                                }
+                            } else {
+                                // Variable reference — try to resolve through SVars.
+                                // Use DynamicAmount::parse which handles Count$ValidGraveyard, etc.
+                                if let Some(crate::core::DynamicAmount::Count(expr)) =
+                                    crate::core::DynamicAmount::parse(value, &self.svars)
+                                {
+                                    reduce_amount = crate::core::CostReductionAmount::Dynamic(expr);
+                                }
+                                // Note: RaiseCost with a variable Amount$ is not currently
+                                // used in the 2025 card set; leave raised_cost unchanged.
                             }
                         }
                         "Cost" => {
+                            // AlternativeCost: parse Cost$ as a mana cost (e.g. "0", "2GG")
+                            if is_alternative_cost {
+                                alt_cost_mana = Some(crate::core::ManaCost::from_string(value));
+                            }
                             // Parse Cost$ for RaiseCost sacrifice costs
                             // Format: Sac<amount/type/description> or Sac<X/type/description>
                             // Examples: "Sac<1/Land>", "Sac<X/Land/land(s)>"
@@ -5167,6 +6002,98 @@ impl CardDefinition {
                             // controller); other defined players are not yet supported.
                             if value.eq_ignore_ascii_case("You") {
                                 gain_control = true;
+                            }
+                        }
+                        "AdjustLandPlays" => {
+                            // `AdjustLandPlays$ N` — controller may play N extra lands per turn.
+                            // "Unlimited" (Fastbond) is capped at 7 as a practical maximum
+                            // (seven cards in hand = seven potential land plays).
+                            adjust_land_plays = if value.eq_ignore_ascii_case("Unlimited") {
+                                7
+                            } else {
+                                value.parse().unwrap_or(0)
+                            };
+                        }
+                        "CharacteristicDefining" => {
+                            // `CharacteristicDefining$ True` — marks this as a CR 613.4a
+                            // layer-7a CDA. Combined with SetPower$/SetToughness$ below.
+                            is_characteristic_defining = value.eq_ignore_ascii_case("True");
+                        }
+                        "SetPower" => {
+                            // `SetPower$ X` / `SetPower$ AffectedX`
+                            // Two shapes:
+                            //  (a) CDA (Serra Avatar / Lhurgoyf): value is an SVar name backed
+                            //      by Count$YourLifeTotal or Count$ValidGraveyard <filter>[/mod].
+                            //  (b) Opalescence: value is "AffectedX" backed by Count$CardManaCost.
+                            if value == "AffectedX" {
+                                // Opalescence shape: set_power_affected_x flag.
+                                if let Some(svar_body) = self.svars.get("AffectedX") {
+                                    if svar_body.trim() == "Count$CardManaCost" {
+                                        set_power_affected_x = true;
+                                    }
+                                }
+                            } else if cda_power_source.is_none() {
+                                // CDA shape: resolve the SVar and parse into a CdaPtSource.
+                                if let Some(svar_body) = self.svars.get(value) {
+                                    cda_power_source = parse_cda_pt_svar(svar_body.trim());
+                                }
+                            }
+                        }
+                        "SetToughness" => {
+                            // Mirrors SetPower$ (see above).
+                            if value == "AffectedX" {
+                                if let Some(svar_body) = self.svars.get("AffectedX") {
+                                    if svar_body.trim() == "Count$CardManaCost" {
+                                        set_toughness_affected_x = true;
+                                    }
+                                }
+                            } else if cda_toughness_source.is_none() {
+                                if let Some(svar_body) = self.svars.get(value) {
+                                    cda_toughness_source = parse_cda_pt_svar(svar_body.trim());
+                                }
+                            }
+                        }
+                        "AddType" => {
+                            // `AddType$ Creature` — the Opalescence continuous AddType.
+                            if value.trim() == "Creature" {
+                                add_type_creature = true;
+                            }
+                        }
+                        "AddTrigger" => {
+                            // `AddTrigger$ <svar>` — grants an upkeep trigger to all
+                            // affected permanents. We resolve the SVar to determine the
+                            // trigger shape; currently only the
+                            // `DB$ Sacrifice | UnlessPayer$ You | UnlessCost$ N` (sacrifice
+                            // unless pay {N}) pattern is handled (Energy Flux, Aura Flux).
+                            add_trigger_svar = Some(value.to_string());
+                        }
+                        "CheckSVar" => {
+                            // `CheckSVar$ <svar>` — for AlternativeCost, the SVar whose
+                            // value is checked at cast time. E.g. `CheckSVar$ SetTrap`
+                            // on Summoning Trap. Currently unused — the condition is
+                            // encoded directly in `AltCostCondition`.
+                            let _ = value;
+                        }
+                        "MayPlay" => {
+                            // `MayPlay$ True` — grants permission to cast/play affected cards.
+                            if value.eq_ignore_ascii_case("True") {
+                                may_play = true;
+                            }
+                        }
+                        "MayPlayWithoutManaCost" => {
+                            // `MayPlayWithoutManaCost$ True` — affected cards may be cast
+                            // for free (no mana cost required).
+                            if value.eq_ignore_ascii_case("True") {
+                                may_play_without_mana_cost = true;
+                            }
+                        }
+                        "AffectedZone" => {
+                            // `AffectedZone$ Library` (or comma-separated list) — restricts
+                            // which source zones the MayPlay grant applies to.
+                            for zone in value.split(',') {
+                                if zone.trim().eq_ignore_ascii_case("Library") {
+                                    affected_zone_library = true;
+                                }
                             }
                         }
                         _ => {} // Ignore other parameters (e.g., AddType$, Type$, Activator$)
@@ -5285,6 +6212,148 @@ impl CardDefinition {
                     });
                 }
             }
+
+            // AdjustLandPlays: extra land plays per turn (Oracle of Mul Daya, Exploration, Azusa, …).
+            // Only valid on permanent (Mode$ Continuous) statics — spells that
+            // temporarily grant extra plays go through Effect::ExtraLandPlay via
+            // the SVar path in effect_converter.rs instead.
+            if adjust_land_plays > 0 && is_continuous {
+                abilities.push(StaticAbility::ExtraLandPlay {
+                    amount: adjust_land_plays,
+                    description: description.clone(),
+                });
+            }
+
+            // CharacteristicDefining P/T static (Layer 7a, CR 613.4a).
+            // Shape: S:Mode$ Continuous | CharacteristicDefining$ True | SetPower$ X
+            //        | SetToughness$ X/Y  with SVar:X:<source>, SVar:Y:<source>
+            // Supported sources:
+            //   Count$YourLifeTotal                  → CdaPtSource::ControllerLifeTotal (Serra Avatar)
+            //   Count$ValidGraveyard Creature         → CdaPtSource::AllGraveyardCreatures (Lhurgoyf P)
+            //   Count$ValidGraveyard Creature/Plus.1  → CdaPtSource::AllGraveyardCreatures +1 (Lhurgoyf T)
+            if is_characteristic_defining {
+                if let (Some(p_src), Some(t_src)) = (cda_power_source, cda_toughness_source) {
+                    abilities.push(StaticAbility::CharacteristicDefiningPt {
+                        power_source: p_src,
+                        toughness_source: t_src,
+                        description: description.clone(),
+                    });
+                }
+            }
+
+            // Opalescence-style static (Layers 4 + 7b, CR 613.1a + 613.4b).
+            // Shape: S:Mode$ Continuous | Affected$ Enchantment.nonAura+Other
+            //        | SetPower$ AffectedX | SetToughness$ AffectedX | AddType$ Creature
+            //   SVar:AffectedX:Count$CardManaCost
+            // Detected when all three Opalescence flags are set AND Affected$ resolves
+            // to NonAuraEnchantmentsOther. We do NOT also require the shape to lack
+            // AddPower/AddToughness (N=0 from the default initialisation already guards that).
+            if is_continuous
+                && add_type_creature
+                && set_power_affected_x
+                && set_toughness_affected_x
+                && matches!(affected, AffectedSelector::NonAuraEnchantmentsOther)
+            {
+                abilities.push(StaticAbility::OpalescenceStyle {
+                    description: description.clone(),
+                });
+            }
+
+            // AddTrigger$ on a Continuous static: grant an upkeep trigger to all
+            // affected permanents. Currently only the "sacrifice unless pay {N}"
+            // shape is recognized (Energy Flux, Aura Flux).
+            //
+            // Trigger SVar shape (from Energy Flux / Aura Flux):
+            //   UpkeepCostTrigger:Mode$ Phase | Phase$ Upkeep | ... | Execute$ TrigUpkeep
+            //   TrigUpkeep:DB$ Sacrifice | UnlessPayer$ You | UnlessCost$ 2
+            //
+            // We resolve the chain: AddTrigger$ -> TriggerSVar -> Execute$ -> EffectSVar
+            // and extract the `UnlessCost$` mana value. If the pattern matches, emit
+            // StaticAbility::GrantUpkeepSacrificeUnlessPay.
+            if is_continuous {
+                if let Some(ref trigger_svar_name) = add_trigger_svar {
+                    // Resolve the trigger SVar (e.g. "UpkeepCostTrigger")
+                    if let Some(trigger_body) = self.svars.get(trigger_svar_name) {
+                        let trigger_params = tokenize_pipe_dollar(trigger_body);
+                        // Must be a Phase$ Upkeep trigger
+                        let is_upkeep = trigger_params.get("Mode").map(|s| s.as_str()) == Some("Phase")
+                            && trigger_params.get("Phase").map(|s| s.as_str()) == Some("Upkeep");
+                        if is_upkeep {
+                            if let Some(execute_svar_name) = trigger_params.get("Execute") {
+                                if let Some(execute_body) = self.svars.get(execute_svar_name) {
+                                    let execute_params = tokenize_pipe_dollar(execute_body);
+                                    // Must be DB$ Sacrifice with UnlessCost$ N
+                                    let is_sac = execute_params.get("DB").map(|s| s.as_str()) == Some("Sacrifice");
+                                    if is_sac {
+                                        let unless_cost: u8 = execute_params
+                                            .get("UnlessCost")
+                                            .and_then(|s| s.parse().ok())
+                                            .unwrap_or(0);
+                                        abilities.push(StaticAbility::GrantUpkeepSacrificeUnlessPay {
+                                            affected: affected.clone(),
+                                            unless_cost,
+                                            description: description.clone(),
+                                        });
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // AlternativeCost ability (Summoning Trap: may be cast for {0} when a
+            // creature spell you cast was countered this turn by an opponent).
+            // Shape: S:Mode$ AlternativeCost | ValidSA$ Spell.Self | Cost$ 0
+            //        | CheckSVar$ SetTrap | Description$ ...
+            // We currently only recognize CheckSVar$ values whose SVar body is a
+            // counter expression (Summoning Trap's SetTrap increments via StoreSVar).
+            // The condition maps to `AltCostCondition::HadCreatureCounteredThisTurn`.
+            if is_alternative_cost {
+                if let Some(alt_cost) = alt_cost_mana.take() {
+                    // CheckSVar$ links to the Summoning-Trap "SetTrap" counter; any
+                    // AlternativeCost with a CheckSVar is treated as the
+                    // HadCreatureCounteredThisTurn condition (the only one we support).
+                    let condition = crate::core::AltCostCondition::HadCreatureCounteredThisTurn;
+                    abilities.push(StaticAbility::AlternativeCost {
+                        condition,
+                        alt_cost,
+                        description: description.clone(),
+                    });
+                }
+            }
+
+            // MayPlayWithoutManaCost (Fires of Invention):
+            //   S:Mode$ Continuous | Affected$ Card.nonLand+cmcLEX
+            //   | MayPlay$ True | MayPlayWithoutManaCost$ True
+            //   | AffectedZone$ Hand,...
+            // The CMC limit is stored as SVar "X" on the source card and is
+            // evaluated dynamically at cast time (Count$Valid Land.YouCtrl).
+            if is_continuous && may_play && may_play_without_mana_cost {
+                // Only emit this static when the Affected$ selector names a cmcLE
+                // pattern — i.e. the free-cast is CMC-limited (Fires of Invention).
+                // The SVar name for the limit is always "X" in Forge card scripts.
+                if matches!(affected, AffectedSelector::NonLandCmcLE { .. }) {
+                    abilities.push(StaticAbility::MayPlayWithoutManaCost {
+                        cmc_limit_svar: "X".to_string(),
+                        description: description.clone(),
+                    });
+                }
+            }
+
+            // MayPlayFromLibrary (Experimental Frenzy):
+            //   S:Mode$ Continuous | Affected$ Card.TopLibrary+YouCtrl
+            //   | AffectedZone$ Library | MayPlay$ True
+            if is_continuous && may_play && affected_zone_library {
+                // Only emit when the Affected$ selector is TopCardOfLibrary
+                // (Card.TopLibrary+YouCtrl). Do NOT emit for the
+                // MayPlayWithoutManaCost case above, which never has a Library zone.
+                if !may_play_without_mana_cost && matches!(affected, AffectedSelector::TopCardOfLibrary) {
+                    abilities.push(StaticAbility::MayPlayFromLibrary {
+                        description: description.clone(),
+                    });
+                }
+            }
         }
 
         // Replacement effects (R: lines) that act as continuous "doesn't untap"
@@ -5297,6 +6366,13 @@ impl CardDefinition {
         // receives the keyword, and the untap step skips any permanent that has
         // it. This generalizes to every `Event$ Untap | Layer$ CantHappen`
         // replacement, not just Paralyze.
+        //
+        // Also: damage-increase replacement effects of the form:
+        //   R:Event$ DamageDone | ValidSource$ Card.RedSource+YouCtrl
+        //     | ValidTarget$ Player.Opponent,Permanent.OppCtrl
+        //     | ReplaceWith$ <SVar> | ...
+        // where <SVar> resolves to `ReplaceCount$DamageAmount/Plus.N` (Torbran).
+        // We model this as StaticAbility::DamageIncrease { bonus: N } on the host.
         for ability in &self.raw_abilities {
             let Some(body) = ability.strip_prefix("R:") else {
                 continue;
@@ -5308,25 +6384,159 @@ impl CardDefinition {
                     params.insert(k.trim(), v.trim());
                 }
             }
-            if params.get("Event") != Some(&"Untap") || params.get("Layer") != Some(&"CantHappen") {
+
+            // --- Doesn't-untap lock (Paralyze, Exhaustion, ...) ---
+            if params.get("Event") == Some(&"Untap") && params.get("Layer") == Some(&"CantHappen") {
+                // Which permanents are locked? Default to the enchanted creature
+                // (the overwhelmingly common case); honor an explicit ValidCard$.
+                let affected = params
+                    .get("ValidCard")
+                    .and_then(|v| parse_single_affected_selector(v))
+                    .unwrap_or(AffectedSelector::CreatureEnchantedBy);
+                let description = params
+                    .get("Description")
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| "Doesn't untap during its controller's untap step.".to_string());
+                abilities.push(StaticAbility::GrantKeyword {
+                    affected,
+                    keyword: Keyword::DoesNotUntap,
+                    description,
+                    condition: None,
+                });
                 continue;
             }
-            // Which permanents are locked? Default to the enchanted creature
-            // (the overwhelmingly common case); honor an explicit ValidCard$.
-            let affected = params
-                .get("ValidCard")
-                .and_then(|v| parse_single_affected_selector(v))
-                .unwrap_or(AffectedSelector::CreatureEnchantedBy);
-            let description = params
-                .get("Description")
-                .map(|s| s.to_string())
-                .unwrap_or_else(|| "Doesn't untap during its controller's untap step.".to_string());
-            abilities.push(StaticAbility::GrantKeyword {
-                affected,
-                keyword: Keyword::DoesNotUntap,
-                description,
-                condition: None,
-            });
+
+            // --- Damage-increase replacement (Torbran, Thane of Red Fell, ...) ---
+            // Shape: Event$ DamageDone | ValidSource$ Card.RedSource+YouCtrl
+            //        | ValidTarget$ Player.Opponent,Permanent.OppCtrl
+            //        | ReplaceWith$ <svar>
+            // where SVar:<svar>:DB$ ReplaceEffect | VarName$ DamageAmount | VarValue$ X
+            //       SVar:X:ReplaceCount$DamageAmount/Plus.<N>
+            if params.get("Event") == Some(&"DamageDone") {
+                let valid_source = params.get("ValidSource").copied().unwrap_or("");
+                let valid_target = params.get("ValidTarget").copied().unwrap_or("");
+                let replace_with = params.get("ReplaceWith").copied().unwrap_or("");
+                let prevent = params.get("Prevent").copied().unwrap_or("False");
+
+                // --- Prismatic Ward shape (CR 615.1 continuous prevent by chosen color) ---
+                // Shape: Event$ DamageDone | Prevent$ True | ValidTarget$ Creature.EnchantedBy
+                //        | ValidSource$ Card.ChosenColor
+                // Prevent all damage dealt to the enchanted creature by sources of the chosen color.
+                let is_prevent = prevent == "True";
+                let targets_enchanted = valid_target.split(',').any(|q| q.trim() == "Creature.EnchantedBy");
+                let source_is_chosen_color = valid_source.split('+').any(|q| q.trim() == "Card.ChosenColor");
+                if is_prevent && targets_enchanted && source_is_chosen_color {
+                    let description = params.get("Description").map(|s| s.to_string()).unwrap_or_else(|| {
+                        "Prevent all damage dealt to enchanted creature by sources of the chosen color.".to_string()
+                    });
+                    abilities.push(StaticAbility::PreventDamageToEnchantedByChosenColor { description });
+                    continue;
+                }
+
+                // --- Torbran shape (CR 614.1a damage-increase replacement) ---
+                // Shape: Event$ DamageDone | ValidSource$ Card.RedSource+YouCtrl
+                //        | ValidTarget$ Player.Opponent,Permanent.OppCtrl
+                //        | ReplaceWith$ <svar>
+                // where SVar:<svar>:DB$ ReplaceEffect | VarName$ DamageAmount | VarValue$ X
+                //       SVar:X:ReplaceCount$DamageAmount/Plus.<N>
+                let is_red_source_you_ctrl = valid_source
+                    .split('+')
+                    .any(|q| q.trim() == "RedSource" || q.trim() == "Card.RedSource");
+                let you_ctrl = valid_source.split('+').any(|q| q.trim() == "YouCtrl");
+                let targets_opponent =
+                    valid_target.contains("Player.Opponent") || valid_target.contains("Permanent.OppCtrl");
+                if is_red_source_you_ctrl && you_ctrl && targets_opponent && !replace_with.is_empty() {
+                    // Resolve the svar chain to extract the +N bonus.
+                    // SVar:X:ReplaceCount$DamageAmount/Plus.<N>
+                    let mut bonus: Option<u32> = None;
+                    // The replace_with svar (e.g. "DmgPlus2") contains a DB$ReplaceEffect
+                    // chain; the X svar carries "ReplaceCount$DamageAmount/Plus.<N>".
+                    // We look for any SVar whose body matches that pattern.
+                    for svar_body in self.svars.values() {
+                        // Tokenize: split on `$` (it's a simple key$value per param).
+                        // Format: "ReplaceCount$DamageAmount/Plus.2"
+                        for part in svar_body.split('$') {
+                            // Look for "DamageAmount/Plus.<N>" segment.
+                            if let Some(rest) = part.trim().strip_prefix("DamageAmount/Plus.") {
+                                if let Ok(n) = rest.trim().parse::<u32>() {
+                                    bonus = Some(n);
+                                    break;
+                                }
+                            }
+                        }
+                        if bonus.is_some() {
+                            break;
+                        }
+                    }
+                    if let Some(n) = bonus {
+                        let description = params.get("Description").map(|s| s.to_string()).unwrap_or_else(|| {
+                            format!(
+                                "If a red source you control would deal damage to an opponent \
+                                     or a permanent an opponent controls, it deals that much \
+                                     damage plus {} instead.",
+                                n
+                            )
+                        });
+                        abilities.push(StaticAbility::DamageIncrease { bonus: n, description });
+                    }
+                }
+
+                // --- Crumbling Sanctuary shape (CR 614.1a: damage → exile top) ---
+                // Shape: Event$ DamageDone | ValidTarget$ Player | ReplaceWith$ ExileTop
+                // where SVar:ExileTop:DB$ Dig | ... | DestinationZone$ Exile
+                // Damage to any player is replaced by that player exiling that many cards
+                // from the top of their library.
+                let targets_any_player = valid_target.split(',').any(|q| q.trim() == "Player");
+                let replace_svar_exile = replace_with.split(',').any(|rw| {
+                    self.svars.get(rw.trim()).is_some_and(|body| {
+                        // Tokenized check: the SVar must have DB$ Dig AND
+                        // DestinationZone$ Exile (the mill-to-exile shape of
+                        // Crumbling Sanctuary). The Torbran shape has DB$
+                        // ReplaceEffect, not DB$ Dig, so there is no ambiguity.
+                        let mut has_db_dig = false;
+                        let mut has_exile_dest = false;
+                        for part in body.split('|') {
+                            if let Some((k, v)) = part.split_once('$') {
+                                match (k.trim(), v.trim()) {
+                                    ("DB", "Dig") => has_db_dig = true,
+                                    ("DestinationZone", "Exile") => has_exile_dest = true,
+                                    _ => {}
+                                }
+                            }
+                        }
+                        has_db_dig && has_exile_dest
+                    })
+                });
+                if targets_any_player && !targets_opponent && replace_svar_exile {
+                    let description = params.get("Description").map(|s| s.to_string()).unwrap_or_else(|| {
+                        "If damage would be dealt to a player, that player exiles that many cards \
+                         from the top of their library instead."
+                            .to_string()
+                    });
+                    abilities.push(StaticAbility::DamageToExileLibrary { description });
+                }
+                continue;
+            }
+
+            // --- Worship shape (CR 614.1e: LifeReduced → life floor at 1) ---
+            // Shape: R:Event$ LifeReduced | ValidPlayer$ You.lifeGE1 | Result$ LT1
+            //        | IsDamage$ True | IsPresent$ Creature.YouCtrl | ReplaceWith$ ReduceLoss
+            // While the controller controls a creature, damage cannot reduce their
+            // life total below 1.
+            if params.get("Event") == Some(&"LifeReduced")
+                && params.get("IsDamage") == Some(&"True")
+                && params.get("IsPresent").is_some_and(|v| {
+                    // IsPresent$ Creature.YouCtrl (or Creature.Other+YouCtrl etc.)
+                    v.trim().starts_with("Creature")
+                })
+            {
+                let description = params.get("Description").map(|s| s.to_string()).unwrap_or_else(|| {
+                    "If you control a creature, damage that would reduce your life total \
+                         to less than 1 reduces it to 1 instead."
+                        .to_string()
+                });
+                abilities.push(StaticAbility::LifeFloor { description });
+            }
         }
 
         abilities
@@ -5450,6 +6660,44 @@ impl CardDefinition {
         None
     }
 
+    /// Detect Island Sanctuary's "skip your draw step for combat protection"
+    /// replacement, expressed as
+    ///   `R:Event$ Draw | ActivePhases$ Draw | PlayerTurn$ True | Optional$ True
+    ///    | ValidPlayer$ You | ReplaceWith$ <SVar>`.
+    ///
+    /// Parsed structurally (tokenize on `|` then `$`), never via substring
+    /// matching. Returns `true` when the permanent carries this replacement so
+    /// the draw-step handler can offer the choice and set the per-turn
+    /// `Player::island_sanctuary_protected` flag.
+    pub(crate) fn is_island_sanctuary_card(&self) -> bool {
+        for ability in &self.raw_abilities {
+            let Some(body) = ability.strip_prefix("R:") else {
+                continue;
+            };
+            let mut is_draw_event = false;
+            let mut is_draw_phase = false;
+            let mut is_player_turn = false;
+            let mut is_optional = false;
+            for token in body.split('|') {
+                let token = token.trim();
+                let Some((key, value)) = token.split_once('$') else {
+                    continue;
+                };
+                match (key.trim(), value.trim()) {
+                    ("Event", "Draw") => is_draw_event = true,
+                    ("ActivePhases", "Draw") => is_draw_phase = true,
+                    ("PlayerTurn", "True") => is_player_turn = true,
+                    ("Optional", "True") => is_optional = true,
+                    _ => {}
+                }
+            }
+            if is_draw_event && is_draw_phase && is_player_turn && is_optional {
+                return true;
+            }
+        }
+        false
+    }
+
     /// Parse an SVar body as an activated ability
     ///
     /// Used by AddAbility$ to convert an SVar like:
@@ -5544,6 +6792,94 @@ impl CardDefinition {
             }
             // ValidActivatingPlayer$ You is already handled at runtime:
             // check_triggers filters on card.controller == caster_id (line ~7942).
+        }
+
+        Some(trigger)
+    }
+
+    /// Parse a single `StaticAbility` from a SVar body string of the form
+    /// `Mode$ Continuous | Affected$ ... | AddKeyword$ ... | AddPower$ ...`.
+    ///
+    /// Reuses the full `parse_static_abilities` machinery by wrapping the body
+    /// as an `S:` line in a temporary `CardDefinition`, then extracting the
+    /// resulting abilities. Returns an empty vec if the body cannot be parsed
+    /// as a recognized continuous static ability.
+    ///
+    /// Used by the emblem converter in `effect_converter.rs` to parse the
+    /// static-ability SVar for planeswalker ultimates like Elspeth, Sun's Champion.
+    pub fn parse_static_abilities_from_svar_body(body: &str) -> Vec<crate::core::StaticAbility> {
+        let mut tmp = CardDefinition::default();
+        tmp.raw_abilities.push(format!("S:{}", body));
+        tmp.parse_static_abilities()
+    }
+
+    /// Parse a Phase trigger from a SVar body and a companion Execute$ SVar body.
+    ///
+    /// Used for emblem triggers like Sorin, Solemn Visitor's
+    /// `Mode$ Phase | Phase$ Upkeep | ValidPlayer$ Player.Opponent |
+    ///  TriggerZones$ Command | Execute$ SorinSac`
+    /// where `execute_body` is the body of the Execute$ SVar (e.g.
+    /// `DB$ Sacrifice | SacValid$ Creature | Defined$ TriggeredPlayer`).
+    ///
+    /// Returns the constructed `Trigger`, or `None` if the body cannot be parsed.
+    pub fn parse_emblem_phase_trigger(trig_body: &str, execute_body: Option<&str>) -> Option<crate::core::Trigger> {
+        use crate::core::{Effect, PlayerId, Trigger, TriggerEvent};
+
+        let params = tokenize_pipe_dollar(trig_body);
+
+        let phase_token = params.get("Phase").map(|s| s.replace(' ', ""));
+        let trigger_event = match phase_token.as_deref() {
+            Some("Upkeep") => TriggerEvent::BeginningOfUpkeep,
+            Some(p) if p.eq_ignore_ascii_case("EndOfTurn") || p.eq_ignore_ascii_case("End") => {
+                TriggerEvent::BeginningOfEndStep
+            }
+            Some("BeginCombat") => TriggerEvent::BeginningOfCombat,
+            _ => return None,
+        };
+
+        let valid_player = params.get("ValidPlayer").map(|s| s.as_str());
+        let opponent_only = valid_player == Some("Player.Opponent");
+
+        // Parse effects from the Execute$ SVar body, if provided.
+        // SVar bodies do NOT have a colon prefix (they are just "DB$ Sacrifice | ..."),
+        // so we use tokenize_pipe_dollar directly instead of AbilityParams::parse.
+        let mut effects = Vec::new();
+        if let Some(exec_body) = execute_body {
+            let exec_params = tokenize_pipe_dollar(exec_body);
+            let db_type = exec_params.get("DB").map(|s| s.as_str());
+            if db_type == Some("Sacrifice") {
+                // DB$ Sacrifice | SacValid$ Creature | Defined$ TriggeredPlayer
+                // → ForceSacrifice placeholder resolved at trigger time to the
+                // triggered player (opponent whose upkeep it is).
+                let sac_valid = exec_params.get("SacValid").map(|s| s.as_str()).unwrap_or("Creature");
+                effects.push(Effect::ForceSacrifice {
+                    player: PlayerId::placeholder(),
+                    sac_type: sac_valid.to_string(),
+                    count: 1,
+                });
+            }
+        }
+
+        let description = params
+            .get("TriggerDescription")
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| "Emblem trigger".to_string());
+
+        let mut trigger = Trigger::new_any(trigger_event, effects, description);
+
+        // TriggerZones$ Command means this trigger fires from the command zone
+        let trigger_zones: smallvec::SmallVec<[crate::zones::Zone; 2]> = params
+            .get("TriggerZones")
+            .map(|s| {
+                s.split(',')
+                    .filter_map(|z| crate::zones::Zone::from_str_lenient(z.trim()))
+                    .collect()
+            })
+            .unwrap_or_else(|| smallvec::smallvec![crate::zones::Zone::Command]);
+        trigger.trigger_zones = trigger_zones;
+
+        if opponent_only {
+            trigger.opponent_turn_only = true;
         }
 
         Some(trigger)
@@ -6219,6 +7555,52 @@ Oracle:Deathtouch\nWhen this creature enters, create a Food token.
     }
 
     #[test]
+    fn test_extract_token_scripts_comma_separated() {
+        // Wurmcoil Engine uses a comma-separated TokenScript$ list to create two
+        // distinct tokens: one with deathtouch, one with lifelink (B3 bug fix).
+        // extract_token_scripts must split on commas so each name is returned
+        // individually — callers load each as a separate file.
+        let content = r#"
+Name:Wurmcoil Engine
+ManaCost:6
+Types:Artifact Creature Phyrexian Wurm
+PT:6/6
+K:Deathtouch
+K:Lifelink
+T:Mode$ ChangesZone | Origin$ Battlefield | Destination$ Graveyard | ValidCard$ Card.Self | Execute$ TrigToken | TriggerDescription$ When CARDNAME dies, create a 3/3 colorless Phyrexian Wurm artifact creature token with deathtouch and a 3/3 colorless Phyrexian Wurm artifact creature token with lifelink.
+SVar:TrigToken:DB$ Token | TokenScript$ c_3_3_a_phyrexian_wurm_deathtouch,c_3_3_a_phyrexian_wurm_lifelink
+Oracle:Deathtouch, lifelink\nWhen Wurmcoil Engine dies, create a 3/3 colorless Phyrexian Wurm artifact creature token with deathtouch and a 3/3 colorless Phyrexian Wurm artifact creature token with lifelink.
+"#;
+
+        let def = CardLoader::parse(content).unwrap();
+        let token_scripts = def.extract_token_scripts();
+
+        // Both individual script names must be returned, NOT the composite string.
+        assert!(
+            token_scripts.contains(&"c_3_3_a_phyrexian_wurm_deathtouch".to_string()),
+            "Should extract deathtouch wurm script individually. Got: {:?}",
+            token_scripts
+        );
+        assert!(
+            token_scripts.contains(&"c_3_3_a_phyrexian_wurm_lifelink".to_string()),
+            "Should extract lifelink wurm script individually. Got: {:?}",
+            token_scripts
+        );
+        // The raw composite string must NOT appear in the output (that was the bug).
+        assert!(
+            !token_scripts.contains(&"c_3_3_a_phyrexian_wurm_deathtouch,c_3_3_a_phyrexian_wurm_lifelink".to_string()),
+            "Must not return the raw comma-joined string as a single entry. Got: {:?}",
+            token_scripts
+        );
+        assert_eq!(
+            token_scripts.len(),
+            2,
+            "Should extract exactly 2 scripts. Got: {:?}",
+            token_scripts
+        );
+    }
+
+    #[test]
     fn test_parse_fire_lord_ozai_attack_trigger() {
         use crate::core::{Cost, Effect, TriggerEvent};
 
@@ -6547,6 +7929,44 @@ Oracle:Whenever a creature dies, that creature's controller may draw a card.
         assert!(creature_dies_filter(Some("Creature.Token")).is_none());
         assert!(creature_dies_filter(Some("Creature,Artifact")).is_none());
         assert!(creature_dies_filter(None).is_none());
+    }
+
+    /// Parser regression for mtg-913 B12 (Pattern of Rebirth follow-up):
+    /// `ValidCard$ Card.AttachedBy` on a dies trigger must produce an
+    /// `EquippedCreatureDies` trigger, just like `ValidCard$ Card.EquippedBy`.
+    /// Before this fix, `Card.AttachedBy` was unrecognized and the trigger was
+    /// silently dropped.
+    #[test]
+    fn test_parse_attached_by_dies_trigger() {
+        use crate::core::TriggerEvent;
+
+        // Minimal Pattern-of-Rebirth script fragment (Aura with Card.AttachedBy trigger).
+        let content = r#"
+Name:Pattern of Rebirth
+ManaCost:3 G
+Types:Enchantment Aura
+K:Enchant:Creature
+T:Mode$ ChangesZone | Origin$ Battlefield | Destination$ Graveyard | ValidCard$ Card.AttachedBy | Execute$ TrigSearch | TriggerDescription$ When enchanted creature dies, that creature's controller may search their library for a creature card, put that card onto the battlefield, then shuffle.
+SVar:TrigSearch:DB$ ChangeZone | Optional$ True | DefinedPlayer$ TriggeredCardController | ChangeType$ Creature | ChangeNum$ 1 | Hidden$ True | Origin$ Library | Destination$ Battlefield | ShuffleNonMandatory$ True
+Oracle:Enchant creature
+When enchanted creature dies, that creature's controller may search their library for a creature card, put that card onto the battlefield, then shuffle.
+"#;
+
+        let def = CardLoader::parse(content).unwrap();
+        let triggers = def.parse_triggers();
+
+        assert_eq!(
+            triggers.len(),
+            1,
+            "Pattern of Rebirth should parse exactly one trigger; got {:?}",
+            triggers.iter().map(|t| &t.event).collect::<Vec<_>>()
+        );
+        assert_eq!(
+            triggers[0].event,
+            TriggerEvent::EquippedCreatureDies,
+            "Card.AttachedBy should produce EquippedCreatureDies trigger. Got: {:?}",
+            triggers[0].event
+        );
     }
 
     #[test]
@@ -7330,12 +8750,12 @@ Oracle:Reach\nAt the beginning of combat on your turn, this creature gets +1/+1 
         {
             // Both power and toughness should use the same Count$ expression
             assert!(
-                matches!(power_count, crate::core::CountExpression::ValidPermanents { filter } if filter.contains("Artifact")),
+                matches!(power_count, crate::core::CountExpression::ValidPermanents { filter, .. } if filter.contains("Artifact")),
                 "Power count should be ValidPermanents with Artifact filter: {:?}",
                 power_count
             );
             assert!(
-                matches!(toughness_count, crate::core::CountExpression::ValidPermanents { filter } if filter.contains("Artifact")),
+                matches!(toughness_count, crate::core::CountExpression::ValidPermanents { filter, .. } if filter.contains("Artifact")),
                 "Toughness count should be ValidPermanents with Artifact filter: {:?}",
                 toughness_count
             );
@@ -8013,5 +9433,819 @@ Oracle:{T}: Gain control of target creature with power less than or equal to Old
         // The precise tapped + power-comparison duration is a follow-on (mtg-713 B1);
         // for now it is bounded by the source-presence duration rather than permanent.
         assert_eq!(om_dur, ControlDuration::WhileControlSource);
+    }
+
+    /// Planeswalker ultimate with `StaticAbilities$ X | Duration$ Permanent` creates
+    /// `Effect::CreateEmblem` with the continuous static ability parsed from the SVar body.
+    /// This covers Elspeth, Sun's Champion's -7: "creatures you control get +2/+2 and have flying."
+    #[test]
+    fn test_elspeth_emblem_ultimate_parses_create_emblem() {
+        use crate::core::Effect;
+
+        let content = r#"
+Name:Elspeth, Sun's Champion
+ManaCost:4 W W
+Types:Legendary Planeswalker Elspeth
+Loyalty:4
+A:AB$ Token | Cost$ AddCounter<1/LOYALTY> | TokenAmount$ 3 | TokenScript$ w_1_1_soldier | TokenOwner$ You | Planeswalker$ True | SpellDescription$ Create three 1/1 white Soldier creature tokens.
+A:AB$ DestroyAll | Cost$ SubCounter<3/LOYALTY> | ValidCards$ Creature.powerGE4 | Planeswalker$ True | SpellDescription$ Destroy all creatures with power 4 or greater.
+A:AB$ Effect | Cost$ SubCounter<7/LOYALTY> | Name$ Emblem — Elspeth, Sun's Champion | Image$ emblem_elspeth_suns_champion | StaticAbilities$ STFlying | Planeswalker$ True | Ultimate$ True | Duration$ Permanent | AILogic$ Always | SpellDescription$ You get an emblem with "Creatures you control get +2/+2 and have flying."
+SVar:STFlying:Mode$ Continuous | Affected$ Creature.YouCtrl | AffectedZone$ Battlefield | AddKeyword$ Flying | AddPower$ 2 | AddToughness$ 2 | Description$ Creatures you control get +2/+2 and have flying.
+Oracle:[-7]: You get an emblem with "Creatures you control get +2/+2 and have flying."
+"#;
+
+        let def = CardLoader::parse(content).unwrap();
+        let abilities = def.parse_activated_abilities();
+
+        // The -7 ability is the ultimate; find it by looking for CreateEmblem effect
+        let ultimate = abilities
+            .iter()
+            .find(|a| a.effects.iter().any(|e| matches!(e, Effect::CreateEmblem { .. })));
+        assert!(
+            ultimate.is_some(),
+            "Elspeth's -7 should produce a CreateEmblem effect; got abilities: {:?}",
+            abilities.iter().map(|a| &a.effects).collect::<Vec<_>>()
+        );
+
+        let Effect::CreateEmblem {
+            static_abilities,
+            triggers,
+            emblem_name,
+            ..
+        } = &ultimate.unwrap().effects[0]
+        else {
+            panic!("Expected CreateEmblem");
+        };
+        assert_eq!(emblem_name, "Emblem — Elspeth, Sun's Champion");
+        assert!(triggers.is_empty(), "Elspeth emblem has no triggers");
+        assert!(
+            !static_abilities.is_empty(),
+            "Elspeth emblem should have static abilities"
+        );
+
+        // Should have both ModifyPT (+2/+2) and GrantKeyword (Flying)
+        use crate::core::StaticAbility;
+        let has_pt = static_abilities.iter().any(|s| {
+            matches!(
+                s,
+                StaticAbility::ModifyPT {
+                    power: 2,
+                    toughness: 2,
+                    ..
+                }
+            )
+        });
+        let has_flying = static_abilities.iter().any(|s| {
+            matches!(
+                s,
+                StaticAbility::GrantKeyword {
+                    keyword: crate::core::Keyword::Flying,
+                    ..
+                }
+            )
+        });
+        assert!(
+            has_pt,
+            "Elspeth emblem should grant +2/+2; static_abilities={:?}",
+            static_abilities
+        );
+        assert!(
+            has_flying,
+            "Elspeth emblem should grant Flying; static_abilities={:?}",
+            static_abilities
+        );
+    }
+
+    /// Sorin, Solemn Visitor's ultimate creates `Effect::CreateEmblem` with a
+    /// phase trigger: "at the beginning of each opponent's upkeep, that player
+    /// sacrifices a creature." (opponent_turn_only + ForceSacrifice placeholder)
+    #[test]
+    fn test_sorin_emblem_ultimate_parses_create_emblem_with_trigger() {
+        use crate::core::Effect;
+
+        let content = r#"
+Name:Sorin, Solemn Visitor
+ManaCost:2 W B
+Types:Legendary Planeswalker Sorin
+Loyalty:4
+A:AB$ PumpAll | Cost$ AddCounter<1/LOYALTY> | Planeswalker$ True | ValidCards$ Creature.YouCtrl | NumAtt$ +1 | KW$ Lifelink | Duration$ UntilYourNextTurn | SpellDescription$ Until your next turn, creatures you control get +1/+0 and gain lifelink.
+A:AB$ Token | Cost$ SubCounter<2/LOYALTY> | Planeswalker$ True | TokenOwner$ You | TokenScript$ b_2_2_vampire_flying | SpellDescription$ Create a 2/2 black Vampire creature token with flying.
+A:AB$ Effect | Cost$ SubCounter<6/LOYALTY> | Planeswalker$ True | Ultimate$ True | Name$ Emblem — Sorin, Solemn Visitor | Triggers$ BOTTrig | Duration$ Permanent | AILogic$ Always | SpellDescription$ You get an emblem with "At the beginning of each opponent's upkeep, that player sacrifices a creature."
+SVar:BOTTrig:Mode$ Phase | Phase$ Upkeep | ValidPlayer$ Player.Opponent | TriggerZones$ Command | Execute$ SorinSac | TriggerDescription$ At the beginning of each opponent's upkeep, that player sacrifices a creature.
+SVar:SorinSac:DB$ Sacrifice | SacValid$ Creature | Defined$ TriggeredPlayer
+Oracle:[-6]: You get an emblem with "At the beginning of each opponent's upkeep, that player sacrifices a creature."
+"#;
+
+        let def = CardLoader::parse(content).unwrap();
+        let abilities = def.parse_activated_abilities();
+
+        // Find the CreateEmblem ability
+        let ultimate = abilities
+            .iter()
+            .find(|a| a.effects.iter().any(|e| matches!(e, Effect::CreateEmblem { .. })));
+        assert!(ultimate.is_some(), "Sorin's -6 should produce a CreateEmblem effect");
+
+        let Effect::CreateEmblem {
+            static_abilities,
+            triggers,
+            emblem_name,
+            ..
+        } = &ultimate.unwrap().effects[0]
+        else {
+            panic!("Expected CreateEmblem");
+        };
+
+        assert_eq!(emblem_name, "Emblem — Sorin, Solemn Visitor");
+        assert!(static_abilities.is_empty(), "Sorin emblem has no static abilities");
+        assert_eq!(triggers.len(), 1, "Sorin emblem should have 1 trigger");
+
+        let trigger = &triggers[0];
+        assert!(
+            trigger.opponent_turn_only,
+            "Sorin trigger fires on opponent's upkeep only"
+        );
+        assert_eq!(
+            trigger.event,
+            crate::core::TriggerEvent::BeginningOfUpkeep,
+            "Sorin trigger fires at beginning of upkeep"
+        );
+        // Should have ForceSacrifice with placeholder player
+        let has_force_sac = trigger.effects.iter().any(|e| {
+            matches!(
+                e,
+                Effect::ForceSacrifice {
+                    player,
+                    sac_type,
+                    count: 1,
+                } if player.is_placeholder() && sac_type == "Creature"
+            )
+        });
+        assert!(
+            has_force_sac,
+            "Sorin trigger should force opponent to sacrifice a creature; effects={:?}",
+            trigger.effects
+        );
+    }
+
+    /// Parser unit test: Light of Day's `S:Mode$ CantAttack,CantBlock | ValidCard$ Creature.Black`
+    /// must parse to a `StaticAbility::CantAttackOrBlockMatching` with both flags set and a
+    /// black-creature filter (mtg-912 B7).
+    #[cfg(feature = "native")]
+    #[test]
+    fn test_parse_light_of_day_cant_attack_cant_block() {
+        use crate::core::StaticAbility;
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("../cardsfolder/l/light_of_day.txt");
+        if !path.exists() {
+            eprintln!("Skipping: cardsfolder not present");
+            return;
+        }
+        let def = CardLoader::load_from_file(&path).expect("Light of Day should load");
+        let card = def.instantiate(crate::core::CardId::new(1), crate::core::PlayerId::new(0));
+
+        let sa = card
+            .static_abilities
+            .iter()
+            .find(|s| matches!(s, StaticAbility::CantAttackOrBlockMatching { .. }))
+            .expect("Light of Day must produce CantAttackOrBlockMatching");
+
+        if let StaticAbility::CantAttackOrBlockMatching {
+            cant_attack,
+            cant_block,
+            filter,
+            ..
+        } = sa
+        {
+            assert!(*cant_attack, "Light of Day must prohibit attacking");
+            assert!(*cant_block, "Light of Day must prohibit blocking");
+            // Black creature: should match
+            let filter_str = "Creature.Black";
+            let black_filter = crate::core::TargetRestriction::parse(filter_str);
+            // The filter derived from the card must match exactly what Creature.Black parses to
+            assert_eq!(
+                filter.required_color, black_filter.required_color,
+                "Light of Day filter must require black"
+            );
+            assert!(
+                filter.required_color == Some(crate::core::Color::Black),
+                "Light of Day filter required_color must be Black, got {:?}",
+                filter.required_color
+            );
+        } else {
+            panic!("Expected CantAttackOrBlockMatching");
+        }
+    }
+
+    /// Parser unit test: Cursed Totem's `S:Mode$ CantBeActivated | ValidCard$ Creature | ValidSA$ Activated`
+    /// must parse to a `StaticAbility::CantBeActivated` with a creature filter (mtg-912 B6).
+    #[cfg(feature = "native")]
+    #[test]
+    fn test_parse_cursed_totem_cant_be_activated() {
+        use crate::core::StaticAbility;
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("../cardsfolder/c/cursed_totem.txt");
+        if !path.exists() {
+            eprintln!("Skipping: cardsfolder not present");
+            return;
+        }
+        let def = CardLoader::load_from_file(&path).expect("Cursed Totem should load");
+        let card = def.instantiate(crate::core::CardId::new(1), crate::core::PlayerId::new(0));
+
+        let sa = card
+            .static_abilities
+            .iter()
+            .find(|s| matches!(s, StaticAbility::CantBeActivated { .. }))
+            .expect("Cursed Totem must produce CantBeActivated");
+
+        if let StaticAbility::CantBeActivated { creature_filter, .. } = sa {
+            // TargetRestriction::parse("Creature") requires the Creature type.
+            // An artifact-only card should NOT match.
+            assert!(
+                !creature_filter.types.is_empty() || creature_filter.required_color.is_some(),
+                "Cursed Totem creature_filter should have Creature type restriction"
+            );
+        } else {
+            panic!("Expected CantBeActivated");
+        }
+    }
+
+    /// Parser unit test: Worship's `R:Event$ LifeReduced | IsDamage$ True
+    /// | IsPresent$ Creature.YouCtrl | ...` must parse to a
+    /// `StaticAbility::LifeFloor` (mtg-912 B10).
+    #[cfg(feature = "native")]
+    #[test]
+    fn test_parse_worship_life_floor() {
+        use crate::core::StaticAbility;
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("../cardsfolder/w/worship.txt");
+        if !path.exists() {
+            eprintln!("Skipping: cardsfolder not present");
+            return;
+        }
+        let def = CardLoader::load_from_file(&path).expect("Worship should load");
+        let card = def.instantiate(crate::core::CardId::new(1), crate::core::PlayerId::new(0));
+
+        assert!(
+            card.static_abilities
+                .iter()
+                .any(|s| matches!(s, StaticAbility::LifeFloor { .. })),
+            "Worship must produce a LifeFloor static ability (parsed from R:Event$ LifeReduced)"
+        );
+    }
+
+    /// Parser unit test: Serra Avatar's `S:Mode$ Continuous | CharacteristicDefining$ True
+    /// | SetPower$ X | SetToughness$ X` (SVar:X:Count$YourLifeTotal) must parse to a
+    /// `StaticAbility::CharacteristicDefiningPt { power_source: ControllerLifeTotal,
+    /// toughness_source: ControllerLifeTotal }` (mtg-912 B4).
+    #[cfg(feature = "native")]
+    #[test]
+    fn test_parse_serra_avatar_cda_pt() {
+        use crate::core::{CdaPtSource, StaticAbility};
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("../cardsfolder/s/serra_avatar.txt");
+        if !path.exists() {
+            eprintln!("Skipping: cardsfolder not present");
+            return;
+        }
+        let def = CardLoader::load_from_file(&path).expect("Serra Avatar should load");
+        let card = def.instantiate(crate::core::CardId::new(1), crate::core::PlayerId::new(0));
+
+        let sa = card
+            .static_abilities
+            .iter()
+            .find(|s| matches!(s, StaticAbility::CharacteristicDefiningPt { .. }))
+            .expect("Serra Avatar must produce a CharacteristicDefiningPt static ability");
+
+        if let StaticAbility::CharacteristicDefiningPt {
+            power_source,
+            toughness_source,
+            ..
+        } = sa
+        {
+            assert_eq!(
+                *power_source,
+                CdaPtSource::ControllerLifeTotal,
+                "Serra Avatar CDA power_source must be ControllerLifeTotal"
+            );
+            assert_eq!(
+                *toughness_source,
+                CdaPtSource::ControllerLifeTotal,
+                "Serra Avatar CDA toughness_source must be ControllerLifeTotal"
+            );
+        } else {
+            panic!("Expected CharacteristicDefiningPt");
+        }
+    }
+
+    /// Parser unit test: Lhurgoyf's `S:Mode$ Continuous | CharacteristicDefining$ True
+    /// | SetPower$ X | SetToughness$ Y` (SVar:X:Count$ValidGraveyard Creature,
+    /// SVar:Y:Count$ValidGraveyard Creature/Plus.1) must parse to
+    /// `StaticAbility::CharacteristicDefiningPt { power_source: AllGraveyardCreatures { None },
+    /// toughness_source: AllGraveyardCreatures { Plus(1) } }` (mtg-916 B2).
+    #[cfg(feature = "native")]
+    #[test]
+    fn test_parse_lhurgoyf_cda_pt() {
+        use crate::core::{CdaPtSource, CountModifier, StaticAbility};
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("../cardsfolder/l/lhurgoyf.txt");
+        if !path.exists() {
+            eprintln!("Skipping: cardsfolder not present");
+            return;
+        }
+        let def = CardLoader::load_from_file(&path).expect("Lhurgoyf should load");
+        let card = def.instantiate(crate::core::CardId::new(1), crate::core::PlayerId::new(0));
+
+        let sa = card
+            .static_abilities
+            .iter()
+            .find(|s| matches!(s, StaticAbility::CharacteristicDefiningPt { .. }))
+            .expect("Lhurgoyf must produce a CharacteristicDefiningPt static ability");
+
+        if let StaticAbility::CharacteristicDefiningPt {
+            power_source,
+            toughness_source,
+            ..
+        } = sa
+        {
+            assert_eq!(
+                *power_source,
+                CdaPtSource::AllGraveyardCreatures {
+                    modifier: CountModifier::None
+                },
+                "Lhurgoyf power_source must be AllGraveyardCreatures with no modifier"
+            );
+            assert_eq!(
+                *toughness_source,
+                CdaPtSource::AllGraveyardCreatures {
+                    modifier: CountModifier::Plus(1)
+                },
+                "Lhurgoyf toughness_source must be AllGraveyardCreatures+1"
+            );
+        } else {
+            panic!("Expected CharacteristicDefiningPt");
+        }
+    }
+
+    /// Parser unit test: Crumbling Sanctuary's `R:Event$ DamageDone | ValidTarget$ Player
+    /// | ReplaceWith$ ExileTop` must parse to a `StaticAbility::DamageToExileLibrary`
+    /// (mtg-912 B9).
+    #[cfg(feature = "native")]
+    #[test]
+    fn test_parse_crumbling_sanctuary_damage_to_exile() {
+        use crate::core::StaticAbility;
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("../cardsfolder/c/crumbling_sanctuary.txt");
+        if !path.exists() {
+            eprintln!("Skipping: cardsfolder not present");
+            return;
+        }
+        let def = CardLoader::load_from_file(&path).expect("Crumbling Sanctuary should load");
+        let card = def.instantiate(crate::core::CardId::new(1), crate::core::PlayerId::new(0));
+
+        assert!(
+            card.static_abilities
+                .iter()
+                .any(|s| matches!(s, StaticAbility::DamageToExileLibrary { .. })),
+            "Crumbling Sanctuary must produce a DamageToExileLibrary static ability \
+             (parsed from R:Event$ DamageDone | ValidTarget$ Player | ReplaceWith$ ExileTop)"
+        );
+    }
+
+    /// Palace Siege: `K:ETBReplacement:Other:SiegeChoice` + `DB$ GenericChoice |
+    /// Choices$ Khans,Dragons | AILogic$ Dragons` should be parsed as
+    /// `etb_choose_mode = true`, AI default = "Dragons", and two mode-gated
+    /// upkeep triggers must be built from the two `S:` AddTrigger$ lines.
+    ///
+    /// Evidence: the fix allows Palace Siege to function as printed — entering
+    /// the battlefield asks you to choose Khans or Dragons, then only the
+    /// relevant upkeep trigger fires each turn.  B4 status in mtg-921.
+    #[test]
+    fn test_palace_siege_parses_etb_choose_mode_and_conditional_triggers() {
+        use crate::core::TriggerEvent;
+
+        let palace_siege = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../cardsfolder/p/palace_siege.txt"
+        ))
+        .expect("palace_siege.txt must exist in cardsfolder/p/");
+
+        let def = CardLoader::parse(&palace_siege).expect("Palace Siege must parse without error");
+
+        // ---- ETB mode choice ----
+        assert!(def.etb_choose_mode, "Palace Siege must have etb_choose_mode = true");
+        assert_eq!(
+            def.etb_mode_ai_logic.as_deref(),
+            Some("Dragons"),
+            "Palace Siege AILogic$ must be 'Dragons'"
+        );
+        assert_eq!(
+            def.etb_mode_choices,
+            vec!["Khans".to_string(), "Dragons".to_string()],
+            "Palace Siege Choices$ must be [Khans, Dragons]"
+        );
+
+        // ---- Mode-gated upkeep triggers ----
+        let triggers = def.parse_triggers();
+        let khans_trig = triggers.iter().find(|t| t.mode_gate.as_deref() == Some("Khans"));
+        let dragons_trig = triggers.iter().find(|t| t.mode_gate.as_deref() == Some("Dragons"));
+
+        assert!(
+            khans_trig.is_some(),
+            "Palace Siege must produce a mode-gated Khans upkeep trigger; all triggers: {:?}",
+            triggers.iter().map(|t| (&t.mode_gate, &t.event)).collect::<Vec<_>>()
+        );
+        assert!(
+            dragons_trig.is_some(),
+            "Palace Siege must produce a mode-gated Dragons upkeep trigger"
+        );
+
+        let khans = khans_trig.unwrap();
+        assert_eq!(
+            khans.event,
+            TriggerEvent::BeginningOfUpkeep,
+            "Khans trigger fires at beginning of upkeep"
+        );
+        assert!(
+            khans.controller_turn_only,
+            "Khans trigger fires only on controller's upkeep"
+        );
+
+        let dragons = dragons_trig.unwrap();
+        assert_eq!(
+            dragons.event,
+            TriggerEvent::BeginningOfUpkeep,
+            "Dragons trigger fires at beginning of upkeep"
+        );
+        assert!(
+            dragons.controller_turn_only,
+            "Dragons trigger fires only on controller's upkeep"
+        );
+
+        // Dragons mode should drain life (LoseLife effect for opponent) and gain life.
+        let has_drain = dragons
+            .effects
+            .iter()
+            .any(|e| matches!(e, crate::core::Effect::LoseLife { amount: 2, .. }));
+        assert!(
+            has_drain,
+            "Dragons trigger must have a LoseLife(2) effect; effects={:?}",
+            dragons.effects
+        );
+    }
+
+    /// Test that AlternativeCost static ability parses from card text (mtg-914).
+    ///
+    /// Summoning Trap has:
+    ///   `S:Mode$ AlternativeCost | ValidSA$ Spell.Self | EffectZone$ All | Cost$ 0
+    ///    | CheckSVar$ SetTrap | Description$ ...`
+    /// This should produce a `StaticAbility::AlternativeCost` with a zero mana cost.
+    #[test]
+    fn test_alternative_cost_static_ability_parses() {
+        use crate::core::{AltCostCondition, StaticAbility};
+
+        let content = r#"
+Name:Summoning Trap
+ManaCost:5GG
+Types:Instant
+Oracle:You may cast this spell for {0} if a creature spell you cast this turn was countered.
+S:Mode$ AlternativeCost | ValidSA$ Spell.Self | EffectZone$ All | Cost$ 0 | CheckSVar$ SetTrap | Description$ You may cast CARDNAME for {0} if a creature spell you cast this turn was countered.
+"#;
+
+        let def = CardLoader::parse(content).expect("Summoning Trap inline text should parse");
+        let statics = def.parse_static_abilities();
+
+        let alt_cost_statics: Vec<_> = statics
+            .iter()
+            .filter(|s| matches!(s, StaticAbility::AlternativeCost { .. }))
+            .collect();
+
+        assert_eq!(
+            alt_cost_statics.len(),
+            1,
+            "Should have exactly one AlternativeCost static; got {:?}",
+            statics
+        );
+
+        if let StaticAbility::AlternativeCost {
+            condition, alt_cost, ..
+        } = &alt_cost_statics[0]
+        {
+            assert_eq!(
+                condition,
+                &AltCostCondition::HadCreatureCounteredThisTurn,
+                "Summoning Trap condition should be HadCreatureCounteredThisTurn"
+            );
+            assert_eq!(alt_cost.cmc(), 0, "Summoning Trap alt cost should be {{0}}");
+        }
+    }
+
+    /// Test that Summoning Trap from the cardsfolder has AlternativeCost parsed (mtg-914).
+    ///
+    /// Skipped if cardsfolder is not present (CI/unit test only environments).
+    #[test]
+    fn test_summoning_trap_from_cardsfolder_has_alt_cost() {
+        use crate::core::StaticAbility;
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("cardsfolder/s/summoning_trap.txt");
+        if !path.exists() {
+            return; // Skip if cardsfolder not present
+        }
+
+        let def = CardLoader::load_from_file(&path).expect("summoning_trap.txt should load");
+        let statics = def.parse_static_abilities();
+
+        let has_alt_cost = statics
+            .iter()
+            .any(|s| matches!(s, StaticAbility::AlternativeCost { .. }));
+        assert!(
+            has_alt_cost,
+            "Summoning Trap should have an AlternativeCost static; all statics: {:?}",
+            statics
+        );
+    }
+
+    /// Phyrexian Processor (B3 fix, mtg-913): the activated ability
+    /// `{4},{T}: Create an X/X black Phyrexian Minion creature token, where X
+    /// is the life paid as ~ entered` must parse to
+    /// `Effect::CreateTokenWithStoredPt` (not `Effect::CreateToken`), and the
+    /// ETB replacement detector must set `etb_pay_life = true`.
+    #[test]
+    fn test_phyrexian_processor_etb_pay_life_and_create_token_with_stored_pt() {
+        let content = r#"
+Name:Phyrexian Processor
+ManaCost:4
+Types:Artifact
+R:Event$ Moved | Destination$ Battlefield | ReplaceWith$ PayLife | ValidCard$ Card.Self
+SVar:PayLife:AB$ StoreSVar | Cost$ Mandatory PayLife<X> | SVar$ LifePaidOnETB | SpellDescription$ Choose a life total to pay.
+A:AB$ Token | Cost$ 4 T | TokenAmount$ 1 | TokenScript$ b_x_x_phyrexian_minion | TokenPower$ LifePaidOnETB | TokenToughness$ LifePaidOnETB | SpellDescription$ Create an X/X black Phyrexian Minion creature token, where X is the life paid as CARDNAME entered.
+Oracle:As Phyrexian Processor enters, pay any amount of life.\n{4}, {T}: Create an X/X black Phyrexian Minion artifact creature token, where X is the life paid as Phyrexian Processor entered.
+"#;
+        let def = CardLoader::parse(content).unwrap();
+
+        // 1. ETB replacement flag
+        assert!(
+            def.etb_pay_life,
+            "Phyrexian Processor should have etb_pay_life=true; svars={:?}",
+            def.svars
+        );
+
+        // 2. The activated ability produces a CreateTokenWithStoredPt effect.
+        let abilities = def.parse_activated_abilities();
+        assert_eq!(
+            abilities.len(),
+            1,
+            "Phyrexian Processor should have 1 activated ability; raw_abilities={:?}",
+            def.raw_abilities
+        );
+        let ability = &abilities[0];
+        let token_effect = ability
+            .effects
+            .iter()
+            .find(|e| matches!(e, crate::core::Effect::CreateTokenWithStoredPt { .. }));
+        assert!(
+            token_effect.is_some(),
+            "Phyrexian Processor activated ability should produce CreateTokenWithStoredPt; \
+             effects={:?}",
+            ability.effects
+        );
+
+        // 3. token_script points at the correct token definition.
+        if let Some(crate::core::Effect::CreateTokenWithStoredPt { token_script, .. }) = token_effect {
+            assert_eq!(
+                token_script, "b_x_x_phyrexian_minion",
+                "token_script should be b_x_x_phyrexian_minion; got {token_script}"
+            );
+        }
+    }
+
+    /// Test that Fires of Invention's continuous MayPlay line parses as
+    /// `StaticAbility::MayPlayWithoutManaCost` (CMC-limited free-cast grant).
+    #[test]
+    fn test_fires_of_invention_may_play_without_mana_cost_parses() {
+        use crate::core::StaticAbility;
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("cardsfolder/f/fires_of_invention.txt");
+        if !path.exists() {
+            return; // Skip if cardsfolder not present
+        }
+
+        let def = CardLoader::load_from_file(&path).expect("Should load fires_of_invention.txt");
+        let statics = def.parse_static_abilities();
+
+        let may_play_statics: Vec<_> = statics
+            .iter()
+            .filter(|s| matches!(s, StaticAbility::MayPlayWithoutManaCost { .. }))
+            .collect();
+
+        assert_eq!(
+            may_play_statics.len(),
+            1,
+            "Fires of Invention should have exactly one MayPlayWithoutManaCost static; got {:?}",
+            statics
+        );
+
+        if let StaticAbility::MayPlayWithoutManaCost { cmc_limit_svar, .. } = &may_play_statics[0] {
+            assert_eq!(cmc_limit_svar, "X", "Fires cmc_limit_svar should be 'X'");
+        }
+    }
+
+    /// Test that Experimental Frenzy's continuous MayPlay line parses as
+    /// `StaticAbility::MayPlayFromLibrary`.
+    #[test]
+    fn test_experimental_frenzy_may_play_from_library_parses() {
+        use crate::core::StaticAbility;
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("cardsfolder/e/experimental_frenzy.txt");
+        if !path.exists() {
+            return; // Skip if cardsfolder not present
+        }
+
+        let def = CardLoader::load_from_file(&path).expect("Should load experimental_frenzy.txt");
+        let statics = def.parse_static_abilities();
+
+        let lib_statics: Vec<_> = statics
+            .iter()
+            .filter(|s| matches!(s, StaticAbility::MayPlayFromLibrary { .. }))
+            .collect();
+
+        assert_eq!(
+            lib_statics.len(),
+            1,
+            "Experimental Frenzy should have exactly one MayPlayFromLibrary static; got {:?}",
+            statics
+        );
+    }
+
+    /// In the Eye of Chaos (B8): global SpellCast trigger fires for any player's
+    /// instant spells — `ValidCard$ Instant` and no `ValidActivatingPlayer$ You`.
+    /// The trigger must have `fires_for_any_caster = true` and `requires_instant = true`,
+    /// and carry a CounterSpell with `target = CardId::triggered_spell()`.
+    #[test]
+    #[allow(clippy::wildcard_enum_match_arm)]
+    fn test_parse_in_the_eye_of_chaos_global_spellcast_trigger() {
+        use crate::core::{Effect, TriggerEvent};
+
+        let content = r#"
+Name:In the Eye of Chaos
+ManaCost:2 U
+Types:World Enchantment
+T:Mode$ SpellCast | ValidCard$ Instant | Execute$ TrigCounter | TriggerZones$ Battlefield | TriggerDescription$ Whenever a player casts an instant spell, counter it unless that player pays {X}, where X is its mana value.
+SVar:TrigCounter:DB$ Counter | Defined$ TriggeredSpellAbility | UnlessCost$ X | UnlessPayer$ TriggeredActivator
+SVar:X:TriggeredCard$CardManaCost
+Oracle:Whenever a player casts an instant spell, counter it unless that player pays {X}, where X is its mana value.
+"#;
+
+        let def = CardLoader::parse(content).unwrap();
+        let triggers = def.parse_triggers();
+
+        let trigger = triggers
+            .iter()
+            .find(|t| t.event == TriggerEvent::SpellCast)
+            .expect("In the Eye of Chaos must have a SpellCast trigger");
+
+        assert!(
+            trigger.fires_for_any_caster,
+            "In the Eye of Chaos fires for any player's casts (no ValidActivatingPlayer$ You)"
+        );
+        assert!(
+            trigger.requires_instant,
+            "In the Eye of Chaos requires instant spells (ValidCard$ Instant)"
+        );
+        assert!(
+            !trigger.requires_instant_or_sorcery,
+            "requires_instant_or_sorcery must NOT be set (uses requires_instant instead)"
+        );
+
+        // The CounterSpell effect must target the triggering spell (not a placeholder)
+        let counter_effect = trigger
+            .effects
+            .iter()
+            .find(|e| matches!(e, Effect::UnlessCostWrapper { .. } | Effect::CounterSpell { .. }))
+            .expect("trigger must carry a CounterSpell or UnlessCostWrapper effect");
+
+        match counter_effect {
+            Effect::UnlessCostWrapper {
+                inner_effect,
+                unless_cost,
+            } => {
+                // X mana cost with TriggeredActivator payer
+                match &unless_cost.cost {
+                    crate::core::effects::UnlessCostType::Mana(mana_cost) => {
+                        assert!(mana_cost.has_x(), "UnlessCost$ X must have x_count > 0");
+                    }
+                    other => panic!("Expected Mana cost with X, got {:?}", other),
+                }
+                assert_eq!(
+                    unless_cost.payer, "TriggeredActivator",
+                    "payer must be TriggeredActivator before resolution"
+                );
+                match inner_effect.as_ref() {
+                    Effect::CounterSpell { target, .. } => {
+                        assert!(
+                            target.is_triggered_spell(),
+                            "CounterSpell target must be triggered_spell sentinel"
+                        );
+                    }
+                    other => panic!("Inner effect must be CounterSpell, got {:?}", other),
+                }
+            }
+            Effect::CounterSpell { target, .. } => {
+                assert!(
+                    target.is_triggered_spell(),
+                    "CounterSpell target must be triggered_spell sentinel"
+                );
+            }
+            _ => panic!("Expected CounterSpell or UnlessCostWrapper effect"),
+        }
+    }
+
+    /// Presence of the Master (B8): global SpellCast trigger fires for any player's
+    /// enchantment spells — `ValidCard$ Enchantment` and no `ValidActivatingPlayer$ You`.
+    /// The trigger must have `fires_for_any_caster = true` and `requires_enchantment = true`.
+    #[test]
+    #[allow(clippy::wildcard_enum_match_arm)]
+    fn test_parse_presence_of_the_master_global_spellcast_trigger() {
+        use crate::core::{Effect, TriggerEvent};
+
+        let content = r#"
+Name:Presence of the Master
+ManaCost:3 W
+Types:Enchantment
+T:Mode$ SpellCast | ValidCard$ Enchantment | TriggerZones$ Battlefield | Execute$ TrigCounter | TriggerDescription$ Whenever a player casts an enchantment spell, counter it.
+SVar:TrigCounter:DB$ Counter | Defined$ TriggeredSpellAbility
+Oracle:Whenever a player casts an enchantment spell, counter it.
+"#;
+
+        let def = CardLoader::parse(content).unwrap();
+        let triggers = def.parse_triggers();
+
+        let trigger = triggers
+            .iter()
+            .find(|t| t.event == TriggerEvent::SpellCast)
+            .expect("Presence of the Master must have a SpellCast trigger");
+
+        assert!(
+            trigger.fires_for_any_caster,
+            "Presence of the Master fires for any player's casts"
+        );
+        assert!(
+            trigger.requires_enchantment,
+            "Presence of the Master requires enchantment spells (ValidCard$ Enchantment)"
+        );
+
+        // Must carry a CounterSpell targeting the triggering spell
+        let counter_effect = trigger
+            .effects
+            .iter()
+            .find(|e| matches!(e, Effect::CounterSpell { .. }))
+            .expect("trigger must carry a CounterSpell effect");
+        match counter_effect {
+            Effect::CounterSpell { target, .. } => {
+                assert!(
+                    target.is_triggered_spell(),
+                    "CounterSpell target must be triggered_spell sentinel (Defined$ TriggeredSpellAbility)"
+                );
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    /// Prowess-style trigger: `ValidActivatingPlayer$ You` must NOT set
+    /// `fires_for_any_caster` — it should stay controller-scoped.
+    #[test]
+    fn test_parse_prowess_spellcast_trigger_not_global() {
+        use crate::core::TriggerEvent;
+
+        let content = r#"
+Name:Jeskai Sage
+ManaCost:1 U
+Types:Creature Human Monk
+PT:1/1
+T:Mode$ SpellCast | ValidCard$ Card.nonCreature | ValidActivatingPlayer$ You | Execute$ TrigPump | TriggerDescription$ Whenever you cast a noncreature spell, this creature gets +1/+1 until end of turn.
+SVar:TrigPump:DB$ Pump | NumAtt$ 1 | NumDef$ 1
+Oracle:Prowess
+"#;
+
+        let def = CardLoader::parse(content).unwrap();
+        let triggers = def.parse_triggers();
+
+        let trigger = triggers
+            .iter()
+            .find(|t| t.event == TriggerEvent::SpellCast)
+            .expect("must have a SpellCast trigger");
+
+        assert!(
+            !trigger.fires_for_any_caster,
+            "Controller-scoped trigger (ValidActivatingPlayer$ You) must NOT be global"
+        );
     }
 }

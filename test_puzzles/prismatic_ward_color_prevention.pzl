@@ -1,0 +1,24 @@
+[metadata]
+Name:Prismatic Ward — prevents damage from chosen color (B5 verify, mtg-916)
+Goal:Win
+Turns:5
+Difficulty:Easy
+Description:P0 controls Grizzly Bears (Id:5) enchanted by Prismatic Ward (Id:6, ChosenColor:Red, AttachedTo:5). P1 casts Lightning Bolt targeting Grizzly Bears. Prismatic Ward prevents all damage from red sources to the enchanted creature. The Grizzly Bears survives (stays at 0 damage). Verifies R:Event$ DamageDone color-prevention replacement (1995 compat B5 — Prismatic Ward WORKING).
+
+[state]
+turn=1
+activeplayer=p1
+activephase=MAIN1
+p0life=20
+p0hand=
+p0battlefield=Forest; Forest; Grizzly Bears|Id:5; Prismatic Ward|Id:6|AttachedTo:5|ChosenColor:Red
+p0library=Forest; Forest; Forest
+p0graveyard=
+p0exile=
+
+p1life=20
+p1hand=Lightning Bolt
+p1battlefield=Mountain; Mountain; Mountain
+p1library=Mountain; Mountain; Mountain
+p1graveyard=
+p1exile=

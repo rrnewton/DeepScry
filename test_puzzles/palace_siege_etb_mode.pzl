@@ -1,0 +1,24 @@
+[metadata]
+Name:Palace Siege ETB Mode Selection Test
+Goal:Win
+Turns:10
+Difficulty:Easy
+Description:Tests Palace Siege ETB mode selection (B4 fix in mtg-921). P0 has Palace Siege in hand with mana to cast it. The engine should auto-select Dragons mode (AILogic$) at ETB, then fire the Dragons upkeep trigger (drain 2 life from P1) on subsequent upkeeps.
+
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Palace Siege
+p0battlefield=Swamp; Swamp; Swamp; Swamp; Swamp
+p0library=Swamp; Swamp; Swamp; Swamp; Swamp
+p0graveyard=
+p0exile=
+
+p1life=20
+p1hand=
+p1battlefield=Forest; Forest; Forest
+p1library=Forest; Forest; Forest; Forest; Forest
+p1graveyard=
+p1exile=

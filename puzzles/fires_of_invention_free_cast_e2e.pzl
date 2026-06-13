@@ -1,0 +1,20 @@
+[metadata]
+Name:Fires of Invention Free-Cast E2E
+Goal:Win
+Turns:5
+Difficulty:Easy
+Description:Fires of Invention is on the battlefield. P0 has 4 lands (CMC limit = 4), so they may cast spells with CMC <= 4 without paying mana costs. Bonecrusher Giant (CMC 3) and Deafening Clarion (CMC 3) in hand should be offered as free casts. Teferi (CMC 4) is also in range. Cavalier of Flame (CMC 5) exceeds the CMC limit and should NOT be offered for free.
+
+[state]
+turn=3
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Bonecrusher Giant; Deafening Clarion; Teferi, Time Raveler; Cavalier of Flame
+p0battlefield=Steam Vents; Hallowed Fountain; Mountain; Plains; Fires of Invention
+p0library=Mountain; Mountain; Mountain; Island
+
+p1life=20
+p1hand=
+p1battlefield=Mountain; Mountain
+p1library=Mountain; Mountain; Mountain; Mountain; Mountain

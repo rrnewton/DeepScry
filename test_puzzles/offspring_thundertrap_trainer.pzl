@@ -1,0 +1,24 @@
+[metadata]
+Name:Offspring keyword creates 1/1 token copy for Thundertrap Trainer
+Goal:Win
+Turns:5
+Difficulty:Easy
+Description:Thundertrap Trainer has Offspring {4} — paying {4} additional when casting creates a 1/1 token copy of it when it enters. P0 has 6 mana (Island x3, Plains x3) and casts Thundertrap Trainer ({1}{U}). With 4 mana left after the base cost, the AI pays Offspring, yielding TWO creatures on the battlefield: the original 1/2 Thundertrap Trainer and a 1/1 token copy. P1 has 20 life; P0 wins by attacking with both creatures over multiple turns. If Offspring does NOT fire, P0 has only the 1/2 and cannot win within the turn limit. This is a regression test for mtg-881 wave6 Offspring implementation.
+
+[state]
+turn=2
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Thundertrap Trainer
+p0library=Island; Island; Island; Island; Island
+p0graveyard=
+p0battlefield=Island; Island; Island; Plains; Plains; Plains
+p0exile=
+
+p1life=6
+p1hand=
+p1library=Plains; Plains; Plains; Plains; Plains
+p1graveyard=
+p1battlefield=
+p1exile=
