@@ -26,11 +26,16 @@ use crate::game::GameState;
 use crate::Result;
 
 impl GameState {
-    /// [`Effect::PumpCreature`]: give the target a fixed +`power_bonus`/
-    /// +`toughness_bonus` and grant `keywords_granted` until end of turn. Only
-    /// the keywords this pump *newly* adds are recorded for undo, so a rewind
-    /// never strips a printed/other-source keyword (mtg-731).
-    pub(in crate::game::actions) fn execute_pump_creature(
+    /// Shared pump core: apply a **known** `power_bonus`/`toughness_bonus` to
+    /// `target`, grant `keywords_granted` and `keyword_args_granted` until EOT,
+    /// emit a gamelog entry, and write a reversible undo-log entry.
+    ///
+    /// Only the keywords *newly* added by this call are recorded in the undo
+    /// entry, so a rewind never strips a printed/other-source keyword (mtg-731).
+    ///
+    /// Called by [`execute_pump_creature`] (fixed bonus) and
+    /// [`execute_pump_creature_variable`] (after resolving the count expression).
+    fn apply_pump_bonus_and_log(
         &mut self,
         target: CardId,
         power_bonus: i32,
@@ -38,18 +43,12 @@ impl GameState {
         keywords_granted: &[Keyword],
         keyword_args_granted: &[KeywordArgs],
     ) -> Result<()> {
-        // Skip if target is still placeholder (0) or unresolved sentinel
-        if target.is_placeholder() || target.is_reuse_previous() {
-            log::warn!(target: "pump", "PumpCreature fizzled: unresolved target {}", target.as_u32());
-            return Ok(());
-        }
-        log::debug!(target: "pump", "PumpCreature executing: target={}, power_bonus={}, toughness_bonus={}, keywords={:?}, keyword_args={:?}", target.as_u32(), power_bonus, toughness_bonus, keywords_granted, keyword_args_granted);
-        // Capture log size before pump
         let prior_log_size = self.logger.log_count();
 
         let card = self.cards.get_mut(target)?;
         card.power_bonus += power_bonus;
         card.toughness_bonus += toughness_bonus;
+
         // Grant keywords until end of turn (tracked so forward cleanup
         // + rewind sweep can remove them deterministically; mtg-610).
         // Record ONLY the keywords this pump *newly* added so the undo
@@ -85,7 +84,7 @@ impl GameState {
             self.logger.gamelog(&format!("{} gains {}", card_name, kws.join(", ")));
         }
 
-        // Log the pump effect
+        // Log the pump effect for undo.
         self.undo_log.log(
             crate::undo::GameAction::PumpCreature {
                 card_id: target,
@@ -97,6 +96,41 @@ impl GameState {
             prior_log_size,
         );
         Ok(())
+    }
+
+    /// [`Effect::PumpCreature`]: give the target a fixed +`power_bonus`/
+    /// +`toughness_bonus` and grant `keywords_granted` until end of turn. Only
+    /// the keywords this pump *newly* adds are recorded for undo, so a rewind
+    /// never strips a printed/other-source keyword (mtg-731).
+    pub(in crate::game::actions) fn execute_pump_creature(
+        &mut self,
+        target: CardId,
+        power_bonus: i32,
+        toughness_bonus: i32,
+        keywords_granted: &[Keyword],
+        keyword_args_granted: &[KeywordArgs],
+    ) -> Result<()> {
+        // Skip if target is still placeholder (0) or unresolved sentinel
+        if target.is_placeholder() || target.is_reuse_previous() {
+            log::warn!(target: "pump", "PumpCreature fizzled: unresolved target {}", target.as_u32());
+            return Ok(());
+        }
+        log::debug!(
+            target: "pump",
+            "PumpCreature executing: target={}, power_bonus={}, toughness_bonus={}, keywords={:?}, keyword_args={:?}",
+            target.as_u32(),
+            power_bonus,
+            toughness_bonus,
+            keywords_granted,
+            keyword_args_granted
+        );
+        self.apply_pump_bonus_and_log(
+            target,
+            power_bonus,
+            toughness_bonus,
+            keywords_granted,
+            keyword_args_granted,
+        )
     }
 
     /// [`Effect::PumpCreatureVariable`]: pump where the +X/+Y bonus is derived
@@ -112,12 +146,10 @@ impl GameState {
         keywords_granted: &[Keyword],
         keyword_args_granted: &[KeywordArgs],
     ) -> Result<()> {
-        // Variable pump: bonus depends on counting game state
-        // Example: Elephant-Mandrill gets +X/+X where X is artifacts opponents control
-
-        // Skip if target is still placeholder
-        if target.is_placeholder() {
-            log::warn!(target: "pump", "PumpCreatureVariable fizzled: target is still placeholder");
+        // Skip if target is still placeholder (0) or unresolved sentinel.
+        // Mirrors execute_pump_creature's guard (both sentinels).
+        if target.is_placeholder() || target.is_reuse_previous() {
+            log::warn!(target: "pump", "PumpCreatureVariable fizzled: unresolved target {}", target.as_u32());
             return Ok(());
         }
 
@@ -150,38 +182,13 @@ impl GameState {
             keywords_granted
         );
 
-        // Apply the pump
-        let prior_log_size = self.logger.log_count();
-        let card = self.cards.get_mut(target)?;
-        card.power_bonus += power_bonus;
-        card.toughness_bonus += toughness_bonus;
-        // Record ONLY newly-added keywords so undo never strips a
-        // printed/other-source keyword (mtg-731).
-        let mut newly_granted: smallvec::SmallVec<[Keyword; 2]> = smallvec::SmallVec::new();
-        for keyword in keywords_granted.iter() {
-            if card.grant_keyword_until_eot(*keyword) {
-                newly_granted.push(*keyword);
-            }
-        }
-        let mut newly_args_granted: Vec<KeywordArgs> = Vec::new();
-        for kw_args in keyword_args_granted.iter() {
-            if card.grant_keyword_args_until_eot(kw_args) {
-                newly_args_granted.push(kw_args.clone());
-            }
-        }
-
-        // Log for undo
-        self.undo_log.log(
-            crate::undo::GameAction::PumpCreature {
-                card_id: target,
-                power_delta: power_bonus,
-                toughness_delta: toughness_bonus,
-                keywords_granted: newly_granted,
-                keyword_args_granted: newly_args_granted,
-            },
-            prior_log_size,
-        );
-        Ok(())
+        self.apply_pump_bonus_and_log(
+            target,
+            power_bonus,
+            toughness_bonus,
+            keywords_granted,
+            keyword_args_granted,
+        )
     }
 
     /// [`Effect::DebuffCreature`]: remove `keywords_removed` from the target
