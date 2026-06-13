@@ -153,8 +153,7 @@
             overflow: hidden;
             display: flex;
             flex-direction: column;
-            /* `position: relative` so children with `position: absolute`
-               (notably the .graveyard-overlay on the battlefield panes)
+            /* `position: relative` so any absolutely-positioned children
                are positioned against the pane, not the page. */
             position: relative;
         }
@@ -274,8 +273,9 @@
             gap: 4px;
             grid-row: 1 / 3;
         }
-        #pane-card-details { flex: 1; }
-        #pane-hand { flex: 1; }
+        #pane-card-details { flex: 2; }
+        #pane-hand { flex: 1; min-height: 0; }
+        #pane-graveyard { flex: 1; min-height: 0; }
 
         /* Status bar */
         .status-bar {
@@ -615,8 +615,7 @@
 
         /* Graveyard in card details (legacy detail-pane list — kept for
            the card details renderer if it ever surfaces a graveyard
-           preview). The new battlefield overlay below is what
-           native_game.html actually uses for the per-player graveyard view. */
+           preview). The per-player graveyard view now lives in #pane-graveyard. */
         .graveyard-list {
             font-size: 11px;
             color: #888;
@@ -626,35 +625,14 @@
             border-bottom: 1px solid rgba(255,255,255,0.05);
         }
 
-        /* Graveyard overlay — bottom-right of each battlefield pane.
-           Mirrors the native ratatui TUI's `render_graveyard_overlay`
-           (fancy_tui_renderer.rs:3304): a small text widget showing
-           "Graveyard (N):" header + a clickable list of card names.
-           Position absolute against .pane (which is `position: relative`
-           — see above). The pane.body has `overflow: hidden` so the
-           overlay sits visually on top of the card grid in the
-           bottom-right corner without participating in the grid's
-           flow / scroll. Hidden when the graveyard is empty so it
-           doesn't visually clutter empty corners. */
-        .graveyard-overlay {
-            position: absolute;
-            right: 6px;
-            bottom: 6px;
-            max-width: 30%;
-            max-height: 50%;
-            padding: 4px 6px;
-            background: rgba(10, 14, 26, 0.85);
-            border: 1px solid rgba(255, 255, 255, 0.08);
-            border-radius: 4px;
-            font-size: 11px;
-            color: #888;
-            line-height: 1.35;
-            overflow-y: auto;
-            pointer-events: auto;
-            z-index: 2;
-            display: none; /* shown by JS when graveyard is non-empty */
-        }
-        .graveyard-overlay.has-cards { display: block; }
+        /* Graveyard pane — replaces the old .graveyard-overlay floating
+           elements in the battlefield panes AND the .hand-graveyard block
+           pinned to the Hand pane. Both players' graveyards now live in a
+           dedicated #pane-graveyard with Ours | Theirs columns. */
+
+        /* Shared card-name row style used by the new graveyard pane.
+           (The .graveyard-overlay-* classes are kept only for the G-key
+           popup dialog which still uses them.) */
         .graveyard-overlay-header {
             color: #aaa;
             font-weight: 600;
@@ -668,6 +646,9 @@
             white-space: nowrap;
             overflow: hidden;
             text-overflow: ellipsis;
+            font-size: 11px;
+            color: #888;
+            line-height: 1.35;
         }
         .graveyard-overlay-card:hover {
             background: rgba(76, 201, 240, 0.18);
@@ -678,33 +659,44 @@
             color: #ffd700;
         }
 
-        /* Graveyard listing pinned to the BOTTOM of the Hand pane. The
-           Hand pane is a flex column: #hand-body flexes to fill and
-           scrolls, while #hand-graveyard takes only the room it needs at
-           the bottom (capped at ~45% so the hand always stays readable).
-           Best-effort: when there isn't room for the full graveyard,
-           renderHandGraveyard shows the most-recent K cards + an
-           "… N more cards" line (see graveyardDisplayPlan). */
+        /* Two-column layout inside the graveyard pane body */
+        .graveyard-pane-columns {
+            display: flex;
+            gap: 6px;
+            height: 100%;
+        }
+        .graveyard-col {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            min-width: 0;
+            overflow-y: auto;
+            border-right: 1px solid rgba(255, 255, 255, 0.07);
+            padding-right: 4px;
+        }
+        .graveyard-col:last-child {
+            border-right: none;
+            padding-right: 0;
+        }
+        .graveyard-col-header {
+            color: #aaa;
+            font-weight: 600;
+            font-size: 11px;
+            white-space: nowrap;
+            padding-bottom: 4px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.10);
+            margin-bottom: 4px;
+            flex-shrink: 0;
+        }
+        .graveyard-col-cards {
+            flex: 1;
+            overflow-y: auto;
+            min-height: 0;
+        }
+
+        /* Hand pane: now a simple scrollable list — no graveyard pinned below */
         #pane-hand { display: flex; flex-direction: column; }
         #pane-hand #hand-body { flex: 1 1 auto; overflow-y: auto; }
-        .hand-graveyard {
-            flex: 0 0 auto;
-            max-height: 45%;
-            overflow-y: auto;
-            border-top: 1px solid rgba(255, 255, 255, 0.12);
-            padding: 4px 6px;
-            font-size: 11px;
-            color: #888;
-            line-height: 1.35;
-            display: none; /* shown by JS when graveyard is non-empty */
-        }
-        .hand-graveyard.has-cards { display: block; }
-        .hand-graveyard-ellision {
-            color: #666;
-            font-style: italic;
-            padding: 1px 2px;
-            white-space: nowrap;
-        }
 
         /* Player info */
         .player-info-block {
@@ -994,23 +986,12 @@
                 <div class="pane-body">
                     <div class="card-grid" id="opp-field-cards"></div>
                 </div>
-                <!-- Graveyard overlay — bottom-right corner of the
-                     battlefield pane. Mirrors the native ratatui TUI's
-                     render_graveyard_overlay (fancy_tui_renderer.rs:3304),
-                     including the cards-clickable behaviour. Sibling of
-                     pane-body (not a child) so it doesn't scroll with the
-                     card grid. Positioned absolutely against .pane. -->
-                <div class="graveyard-overlay" id="opp-graveyard-overlay"></div>
             </div>
             <div id="pane-player-field" class="pane">
                 <div class="pane-header">Your Battlefield</div>
                 <div class="pane-body">
                     <div class="card-grid" id="player-field-cards"></div>
                 </div>
-                <!-- The local player's graveyard now lives at the bottom of
-                     the Hand pane (see #hand-graveyard), so no overlay here.
-                     Only the opponent (who has no hand pane) keeps a
-                     battlefield graveyard overlay. -->
             </div>
             <div id="pane-player-info" class="pane info-bar">
                 <div class="info-bar-content" id="player-info-body"></div>
@@ -1026,12 +1007,22 @@
             </div>
             <div id="pane-hand" class="pane">
                 <div class="pane-header" id="hand-header">Hand</div>
-                <!-- Hand is the critical display and always shown in full at
-                     the top; the graveyard listing is best-effort and pinned
-                     to the bottom of this pane (with most-recent-K + an
-                     "… N more cards" ellision line when space-constrained). -->
                 <div class="pane-body" id="hand-body"></div>
-                <div class="hand-graveyard" id="hand-graveyard"></div>
+            </div>
+            <div id="pane-graveyard" class="pane">
+                <div class="pane-header">Graveyard</div>
+                <div class="pane-body">
+                    <div class="graveyard-pane-columns">
+                        <div class="graveyard-col">
+                            <div class="graveyard-col-header" id="graveyard-our-header">Ours (0)</div>
+                            <div class="graveyard-col-cards" id="graveyard-our-cards"></div>
+                        </div>
+                        <div class="graveyard-col">
+                            <div class="graveyard-col-header" id="graveyard-opp-header">Theirs (0)</div>
+                            <div class="graveyard-col-cards" id="graveyard-opp-cards"></div>
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
 
@@ -2481,12 +2472,9 @@
 
             renderBattlefield(ourPlayer, 'player-field-cards', cardSizes.your);
             renderBattlefield(oppPlayer, 'opp-field-cards',    cardSizes.opp);
-            // Opponent has no Hand pane, so their graveyard stays as a
-            // battlefield overlay. The local player's graveyard is rendered
-            // at the bottom of the Hand pane (renderHand → renderHandGraveyard).
-            renderGraveyard(oppPlayer,  'opp-graveyard-overlay',    state.selected_card?.card_id);
             renderHand(ourPlayer);
-            renderHandGraveyard(ourPlayer, state.selected_card?.card_id);
+            // Both graveyards live in the dedicated #pane-graveyard (mtg-815).
+            renderGraveyardPane(ourPlayer, oppPlayer, state.selected_card?.card_id);
             renderStack(state.stack || []);
             // slot05/web-ui-fixes: when an AI seat is paused and it's our move
             // to advance, present "Play next move" / "Auto-run" as NORMAL
@@ -2630,44 +2618,35 @@
             }
         }
 
-        /// Render the per-player graveyard overlay in the bottom-right
-        /// corner of that player's battlefield pane. Mirrors the native
-        /// ratatui TUI's `render_graveyard_overlay`
-        /// (mtg-engine/src/game/fancy_tui_renderer.rs:3304):
-        ///
-        ///   - Header: "Graveyard (N):"
-        ///   - One row per card, oldest first, full card name.
-        ///   - Click a row → `tui_select_card(card_id)` → details pane.
-        ///
-        /// Hidden when the graveyard is empty so it doesn't clutter
-        /// empty corners. The overlay is `position: absolute` against
-        /// `.pane` (NOT inside `.pane-body`'s scroll container) so it
-        /// stays pinned even as the card grid grows / scrolls.
-        function renderGraveyard(player, overlayId, selectedCardId) {
-            const overlay = document.getElementById(overlayId);
-            if (!overlay) return;
+        /// Render both players' graveyards into the dedicated #pane-graveyard
+        /// (mtg-815). Left column = "Ours", right column = "Theirs". Each
+        /// column scrolls independently and shows the FULL list (most-recent
+        /// first = tail of the zone, matching the G-key dialog). Click a card
+        /// row → tui_select_card → card details pane, same as before.
+        function renderGraveyardPane(ourPlayer, oppPlayer, selectedCardId) {
+            const ourCards   = document.getElementById('graveyard-our-cards');
+            const ourHeader  = document.getElementById('graveyard-our-header');
+            const oppCards   = document.getElementById('graveyard-opp-cards');
+            const oppHeader  = document.getElementById('graveyard-opp-header');
+            if (!ourCards || !ourHeader || !oppCards || !oppHeader) return;
 
-            const graveyard = player?.graveyard || [];
-            if (graveyard.length === 0) {
-                overlay.classList.remove('has-cards');
-                overlay.innerHTML = '';
-                return;
+            function renderCol(player, cardsEl, headerEl, label) {
+                const graveyard = (player?.graveyard || []).slice().reverse(); // most-recent first
+                headerEl.textContent = `${label} (${graveyard.length})`;
+                if (graveyard.length === 0) {
+                    cardsEl.innerHTML = '<div style="color:#444; font-size:11px;">(empty)</div>';
+                    return;
+                }
+                cardsEl.innerHTML = graveyard.map(card => {
+                    const cls = 'graveyard-overlay-card' +
+                        (card.card_id === selectedCardId ? ' selected-card' : '');
+                    return `<div class="${cls}" data-card-id="${card.card_id}" ` +
+                        `title="${escapeAttr(card.name)}">${escapeHtml(card.name)}</div>`;
+                }).join('');
             }
 
-            // Header includes the count so the player can see at a
-            // glance how many cards are in the graveyard without
-            // hovering / counting rows.
-            const headerHtml =
-                `<div class="graveyard-overlay-header">Graveyard (${graveyard.length}):</div>`;
-            const rowsHtml = graveyard.map(card => {
-                const cls = 'graveyard-overlay-card' +
-                    (card.card_id === selectedCardId ? ' selected-card' : '');
-                return `<div class="${cls}" data-card-id="${card.card_id}" ` +
-                    `title="${escapeAttr(card.name)}">${escapeHtml(card.name)}</div>`;
-            }).join('');
-
-            overlay.innerHTML = headerHtml + rowsHtml;
-            overlay.classList.add('has-cards');
+            renderCol(ourPlayer, ourCards, ourHeader, 'Ours');
+            renderCol(oppPlayer, oppCards, oppHeader, 'Theirs');
         }
 
         /// Render the hand as a text list. Cards are already in display order
@@ -2690,74 +2669,6 @@
                     : '';
                 return `<div class="${classes.join(' ')}" data-card-id="${card.card_id}" data-idx="${i}">${escapeHtml(card.name)}${mana}</div>`;
             }).join('');
-        }
-
-        /// Best-effort graveyard top-K + ellision plan. Mirrors the shared
-        /// Rust helper `plan_graveyard_display`
-        /// (mtg-engine/src/game/graveyard_display.rs) EXACTLY — keep the two
-        /// in sync. `lineBudget` is the number of rows available for the
-        /// listing (header + card rows + optional ellision line).
-        const GRAVEYARD_HEADER_LINES = 1;
-        function graveyardDisplayPlan(total, lineBudget) {
-            if (lineBudget < GRAVEYARD_HEADER_LINES || total === 0) {
-                return { total, shown: 0, elided: total };
-            }
-            const cardLines = lineBudget - GRAVEYARD_HEADER_LINES;
-            if (total <= cardLines) {
-                return { total, shown: total, elided: 0 };
-            }
-            const shown = Math.max(0, cardLines - 1); // reserve a line for ellision
-            return { total, shown, elided: total - shown };
-        }
-
-        /// Render the local player's graveyard at the BOTTOM of the Hand
-        /// pane (best-effort). The Hand always renders in full above; the
-        /// graveyard only consumes leftover vertical room. When constrained,
-        /// shows the most-recent K cards (tail of the zone) + an
-        /// "… N more cards" line. Rows remain clickable (same selection
-        /// pipeline as before).
-        function renderHandGraveyard(player, selectedCardId) {
-            const el = document.getElementById('hand-graveyard');
-            if (!el) return;
-            const graveyard = player?.graveyard || [];
-            const total = graveyard.length;
-            if (total === 0) {
-                el.classList.remove('has-cards');
-                el.innerHTML = '';
-                return;
-            }
-
-            // Compute how many rows fit. The CSS caps #hand-graveyard at
-            // 45% of the pane and the hand-body flexes above it; we estimate
-            // a per-row line height (~18px incl. line-height) against the
-            // pane's height to get a budget, so the listing degrades
-            // gracefully on short windows.
-            const pane = document.getElementById('pane-hand');
-            const rowPx = 18;
-            const capPx = pane ? pane.clientHeight * 0.45 : 200;
-            const lineBudget = Math.max(0, Math.floor(capPx / rowPx));
-            const plan = graveyardDisplayPlan(total, lineBudget);
-
-            // Most-recent `plan.shown` cards = tail of the zone.
-            const start = total - plan.shown;
-            const visible = graveyard.slice(start);
-            const headerHtml =
-                `<div class="graveyard-overlay-header">Graveyard (${total}):</div>`;
-            const rowsHtml = visible.map(card => {
-                const cls = 'graveyard-overlay-card' +
-                    (card.card_id === selectedCardId ? ' selected-card' : '');
-                return `<div class="${cls}" data-card-id="${card.card_id}" ` +
-                    `title="${escapeAttr(card.name)}">${escapeHtml(card.name)}</div>`;
-            }).join('');
-            let ellisionHtml = '';
-            if (plan.elided > 0) {
-                const noun = plan.elided === 1 ? 'card' : 'cards';
-                ellisionHtml =
-                    `<div class="hand-graveyard-ellision">… ${plan.elided} more ${noun}</div>`;
-            }
-
-            el.innerHTML = headerHtml + rowsHtml + ellisionHtml;
-            el.classList.add('has-cards');
         }
 
         /// Build a battlefield/hand card tile. CSS classes, formatted P/T,
@@ -3574,22 +3485,14 @@
                 selectCardById(parseInt(item.dataset.cardId, 10), 'stack');
             });
 
-            // Graveyard overlay clicks — each card row carries
-            // data-card-id and routes through the same selection
-            // pipeline as hand/battlefield clicks (mirrors the native
-            // ratatui TUI's clickable graveyard list).
-            // The local player's graveyard now lives in #hand-graveyard
-            // (bottom of the Hand pane); the opponent's stays as a
-            // battlefield overlay. Both use .graveyard-overlay-card rows.
-            for (const overlayId of ['hand-graveyard', 'opp-graveyard-overlay']) {
-                const node = document.getElementById(overlayId);
-                if (!node) continue;
-                node.addEventListener('click', (e) => {
-                    const item = e.target.closest('.graveyard-overlay-card');
-                    if (!item) return;
-                    selectCardById(parseInt(item.dataset.cardId, 10), `gy:${overlayId}`);
-                });
-            }
+            // Graveyard pane clicks (mtg-815) — both columns live inside
+            // #pane-graveyard; card rows carry data-card-id and route through
+            // the same selection pipeline as hand/battlefield clicks.
+            document.getElementById('pane-graveyard').addEventListener('click', (e) => {
+                const item = e.target.closest('.graveyard-overlay-card');
+                if (!item) return;
+                selectCardById(parseInt(item.dataset.cardId, 10), 'gy:pane');
+            });
 
             // Action clicks. A real engine choice carries data-idx (→
             // selectAction); a synthetic meta-choice carries data-meta (→
