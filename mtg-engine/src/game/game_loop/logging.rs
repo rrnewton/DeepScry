@@ -841,7 +841,7 @@ impl<'a> GameLoop<'a> {
                 non_legendary,
                 set_power,
                 set_toughness,
-                ref add_types,
+                ref add_subtypes,
                 num_copies,
                 restriction: _, // Not used for logging
             } => {
@@ -863,8 +863,9 @@ impl<'a> GameLoop<'a> {
                 if let Some(t) = set_toughness {
                     mods.push(format!("toughness={}", t));
                 }
-                if !add_types.is_empty() {
-                    mods.push(format!("add types: {}", add_types.join(", ")));
+                if !add_subtypes.is_empty() {
+                    let names: Vec<&str> = add_subtypes.iter().map(|s| s.as_str()).collect();
+                    mods.push(format!("add subtypes: {}", names.join(", ")));
                 }
 
                 let mods_desc = if mods.is_empty() {

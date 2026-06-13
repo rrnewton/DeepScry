@@ -4233,7 +4233,7 @@ impl GameState {
                 non_legendary,
                 set_power,
                 set_toughness,
-                add_types,
+                add_subtypes,
                 num_copies,
                 restriction,
             } if target.is_placeholder() => {
@@ -4248,7 +4248,7 @@ impl GameState {
                         non_legendary: *non_legendary,
                         set_power: *set_power,
                         set_toughness: *set_toughness,
-                        add_types: add_types.clone(),
+                        add_subtypes: add_subtypes.clone(),
                         num_copies: *num_copies,
                         restriction: restriction.clone(),
                     }
@@ -5045,12 +5045,17 @@ impl GameState {
                 non_legendary: _, // TODO(mtg-210): Implement legendary rule removal when legendary is tracked
                 set_power,
                 set_toughness,
-                ref add_types,
+                ref add_subtypes,
                 num_copies,
                 restriction: _, // Used at targeting time, not execution time
-            } => {
-                self.execute_copy_permanent(*target, *controller, *set_power, *set_toughness, add_types, *num_copies)?
-            }
+            } => self.execute_copy_permanent(
+                *target,
+                *controller,
+                *set_power,
+                *set_toughness,
+                add_subtypes,
+                *num_copies,
+            )?,
 
             Effect::Dig {
                 dig_count,

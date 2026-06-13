@@ -239,7 +239,7 @@ impl GameState {
         controller: PlayerId,
         set_power: Option<i32>,
         set_toughness: Option<i32>,
-        add_types: &[String],
+        add_subtypes: &[crate::core::Subtype],
         num_copies: u8,
     ) -> Result<()> {
         // Create token copies of the target permanent
@@ -292,11 +292,10 @@ impl GameState {
                 token.set_base_toughness(Some(toughness as i8));
             }
 
-            // AddTypes$ Type1 & Type2 - add creature types (subtypes)
-            for type_str in add_types {
-                let subtype = crate::core::Subtype::from(type_str.as_str());
-                if !token.subtypes.contains(&subtype) {
-                    token.subtypes.push(subtype);
+            // AddTypes$ Type1 & Type2 - add creature/permanent subtypes (CR 205.3)
+            for subtype in add_subtypes {
+                if !token.subtypes.contains(subtype) {
+                    token.subtypes.push(subtype.clone());
                 }
             }
 
@@ -314,13 +313,14 @@ impl GameState {
             self.battlefield.add(token_id);
 
             // Log token creation
-            let modification_desc = if set_power.is_some() || set_toughness.is_some() || !add_types.is_empty() {
+            let modification_desc = if set_power.is_some() || set_toughness.is_some() || !add_subtypes.is_empty() {
                 let p = set_power.map(|x| x as i8).or(original_base_power).unwrap_or(0);
                 let t = set_toughness.map(|x| x as i8).or(original_base_toughness).unwrap_or(0);
-                let types_str = if add_types.is_empty() {
+                let types_str = if add_subtypes.is_empty() {
                     String::new()
                 } else {
-                    format!(" {}", add_types.join(" "))
+                    let names: Vec<&str> = add_subtypes.iter().map(|s| s.as_str()).collect();
+                    format!(" {}", names.join(" "))
                 };
                 format!(" (as {}/{}{} copy)", p, t, types_str)
             } else {

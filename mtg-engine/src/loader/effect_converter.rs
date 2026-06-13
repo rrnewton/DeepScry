@@ -1276,10 +1276,12 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
             let set_toughness = params.get_i32("SetToughness").ok();
             let num_copies = params.get_u8("NumCopies").unwrap_or(1);
 
-            // Parse AddTypes$ - types are separated by " & "
-            let add_types: Vec<String> = params
+            // Parse AddTypes$ - subtypes separated by " & " (e.g. "Hero & Warrior").
+            // Despite the Forge parameter name these are creature/permanent subtypes
+            // (CR 205.3), not card-type supertypes; we store them as `Subtype`.
+            let add_subtypes: smallvec::SmallVec<[crate::core::Subtype; 2]> = params
                 .get("AddTypes")
-                .map(|s| s.split(" & ").map(|t| t.trim().to_string()).collect())
+                .map(|s| s.split(" & ").map(|t| crate::core::Subtype::from(t.trim())).collect())
                 .unwrap_or_default();
 
             Some(Effect::CopyPermanent {
@@ -1288,7 +1290,7 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
                 non_legendary,
                 set_power,
                 set_toughness,
-                add_types,
+                add_subtypes,
                 num_copies,
                 restriction,
             })
@@ -3911,14 +3913,14 @@ Oracle:Target creature gets +3/+1 until end of turn. Create a Clue token.
                 non_legendary,
                 set_power,
                 set_toughness,
-                add_types,
+                add_subtypes,
                 num_copies,
                 restriction,
             } => {
                 assert!(!non_legendary, "Simple copy should not remove legendary");
                 assert!(set_power.is_none(), "No power override");
                 assert!(set_toughness.is_none(), "No toughness override");
-                assert!(add_types.is_empty(), "No added types");
+                assert!(add_subtypes.is_empty(), "No added subtypes");
                 assert_eq!(num_copies, 1, "Default to 1 copy");
                 // Default restriction should allow any creature
                 assert!(restriction.types.is_empty() || restriction.types.contains(&crate::core::TargetType::Creature));
@@ -3985,14 +3987,18 @@ Oracle:Target creature gets +3/+1 until end of turn. Create a Clue token.
                 non_legendary,
                 set_power,
                 set_toughness,
-                add_types,
+                add_subtypes,
                 num_copies,
                 restriction,
             } => {
                 assert!(non_legendary, "Should remove legendary");
                 assert_eq!(set_power, Some(4), "Power override to 4");
                 assert_eq!(set_toughness, Some(4), "Toughness override to 4");
-                assert_eq!(add_types, vec!["Hero".to_string()], "Should add Hero type");
+                assert_eq!(
+                    add_subtypes.as_slice(),
+                    &[crate::core::Subtype::from("Hero")],
+                    "Should add Hero subtype"
+                );
                 assert_eq!(num_copies, 1, "Default to 1 copy");
                 // Should have YouCtrl controller restriction
                 assert_eq!(
@@ -4013,8 +4019,15 @@ Oracle:Target creature gets +3/+1 until end of turn. Create a Clue token.
         let effect = params_to_effect(&params).unwrap();
 
         match effect {
-            Effect::CopyPermanent { add_types, .. } => {
-                assert_eq!(add_types, vec!["Warrior".to_string(), "Soldier".to_string()]);
+            Effect::CopyPermanent { add_subtypes, .. } => {
+                assert_eq!(
+                    add_subtypes.as_slice(),
+                    &[
+                        crate::core::Subtype::from("Warrior"),
+                        crate::core::Subtype::from("Soldier")
+                    ],
+                    "Should add Warrior and Soldier subtypes"
+                );
             }
             _ => panic!("Expected CopyPermanent effect"),
         }
@@ -4062,13 +4075,17 @@ Oracle:Target creature gets +3/+1 until end of turn. Create a Clue token.
                         non_legendary,
                         set_power,
                         set_toughness,
-                        add_types,
+                        add_subtypes,
                         ..
                     } => {
                         assert!(*non_legendary);
                         assert_eq!(*set_power, Some(4));
                         assert_eq!(*set_toughness, Some(4));
-                        assert_eq!(add_types, &vec!["Hero".to_string()]);
+                        assert_eq!(
+                            add_subtypes.as_slice(),
+                            &[crate::core::Subtype::from("Hero")],
+                            "Mode 1 should add Hero subtype"
+                        );
                     }
                     _ => panic!("Mode 1 should be CopyPermanent"),
                 }
@@ -4079,13 +4096,17 @@ Oracle:Target creature gets +3/+1 until end of turn. Create a Clue token.
                         non_legendary,
                         set_power,
                         set_toughness,
-                        add_types,
+                        add_subtypes,
                         ..
                     } => {
                         assert!(*non_legendary);
                         assert_eq!(*set_power, Some(2));
                         assert_eq!(*set_toughness, Some(2));
-                        assert_eq!(add_types, &vec!["Coward".to_string()]);
+                        assert_eq!(
+                            add_subtypes.as_slice(),
+                            &[crate::core::Subtype::from("Coward")],
+                            "Mode 2 should add Coward subtype"
+                        );
                     }
                     _ => panic!("Mode 2 should be CopyPermanent"),
                 }

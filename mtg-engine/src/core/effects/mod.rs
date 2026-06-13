@@ -2451,8 +2451,14 @@ pub enum Effect {
         set_power: Option<i32>,
         /// Override the copy's toughness (None = use original)
         set_toughness: Option<i32>,
-        /// Types to add to the copy (e.g., ["Hero"], ["Coward"])
-        add_types: Vec<String>,
+        /// Subtypes to add to the token copy (e.g., `[Subtype("Hero")]`, `[Subtype("Coward")]`).
+        ///
+        /// These are creature/permanent *subtypes* (CR 205.3), not card-type
+        /// supertypes. Parsed from the `AddTypes$` parameter of `DB$ CopyPermanent`
+        /// (despite the Forge parameter name, the values are subtypes). Using
+        /// `Subtype` rather than `String` makes the domain explicit and eliminates
+        /// free-form string comparisons at execution time.
+        add_subtypes: smallvec::SmallVec<[crate::core::Subtype; 2]>,
         /// Number of copies to create (default 1)
         num_copies: u8,
         /// Target restriction from ValidTgts$ (e.g., Creature.YouCtrl, Creature.OppCtrl)
