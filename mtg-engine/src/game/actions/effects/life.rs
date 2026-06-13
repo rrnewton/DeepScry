@@ -12,6 +12,7 @@
 //! variant and delegates here. Behavior-preserving: bodies moved verbatim.
 
 use crate::core::{DynamicAmount, PlayerId};
+use crate::game::log_event::LogEvent;
 use crate::game::GameState;
 use crate::Result;
 
@@ -34,6 +35,11 @@ impl GameState {
         if amount > 0 {
             self.logger
                 .gamelog(&format!("{} gains {} life (life: {})", player_name, amount, new_life));
+            self.logger.push_event(LogEvent::LifeChanged {
+                player,
+                delta: amount,
+                new_total: new_life,
+            });
         }
 
         // Log the life gain
@@ -74,6 +80,13 @@ impl GameState {
             "{} gains {} life (life: {})",
             player_name, resolved_amount, new_life
         ));
+        if resolved_amount > 0 {
+            self.logger.push_event(LogEvent::LifeChanged {
+                player,
+                delta: resolved_amount,
+                new_total: new_life,
+            });
+        }
 
         self.undo_log.log(
             crate::undo::GameAction::ModifyLife {
@@ -97,6 +110,11 @@ impl GameState {
 
         self.logger
             .gamelog(&format!("{} loses {} life (life: {})", player_name, amount, new_life));
+        self.logger.push_event(LogEvent::LifeChanged {
+            player,
+            delta: -amount,
+            new_total: new_life,
+        });
 
         self.undo_log.log(
             crate::undo::GameAction::ModifyLife {

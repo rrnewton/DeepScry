@@ -27,6 +27,9 @@ use std::path::PathBuf;
 /// Load and run a puzzle file, then return the game and result for assertion
 /// evaluation. Uses HeuristicController for both players so the game plays out
 /// realistically.
+///
+/// The event log is always enabled so event-level assertions (`trigger fired`,
+/// `spell cast`, `creature died`, `life gained`) work out of the box.
 async fn run_puzzle(
     path: &str,
 ) -> Result<(
@@ -42,6 +45,8 @@ async fn run_puzzle(
     let card_db = CardDatabase::new(cardsfolder);
     let mut game = load_puzzle_into_game(&puzzle, &card_db).await?;
     game.seed_rng(42);
+    // Enable structured event log so event-level assertions can query it.
+    game.logger.enable_event_log();
 
     let players: Vec<_> = game.players.iter().map(|p| p.id).collect();
     let p0_id = players[0];
@@ -76,7 +81,8 @@ async fn test_assert_final_state_demo_assertions_pass() -> Result<()> {
     println!("P0 life: {}", game.players[0].life);
     println!("P1 life: {}", game.players[1].life);
 
-    let report = evaluate_assertions(&puzzle.assertions, &game, &result);
+    let events = game.logger.events();
+    let report = evaluate_assertions(&puzzle.assertions, &game, &result, Some(&events));
     println!("{}", report.summary());
 
     assert!(
@@ -102,7 +108,8 @@ async fn test_deliberately_wrong_assertion_fails() -> Result<()> {
         "opponent life eq 20".to_string(), // Wrong: should be lt 20
     ])?;
 
-    let report = evaluate_assertions(&wrong_assertions, &game, &result);
+    let events = game.logger.events();
+    let report = evaluate_assertions(&wrong_assertions, &game, &result, Some(&events));
     println!("Deliberate failure report:\n{}", report.summary());
 
     // The wrong assertion should have produced at least one failure.

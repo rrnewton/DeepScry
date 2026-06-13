@@ -22,3 +22,9 @@ p1battlefield=
 p1library=Forest; Forest; Forest; Forest; Forest
 p1graveyard=
 p1exile=
+
+[assertions]
+# Spirit Link must trigger when the enchanted Prodigal Sorcerer deals 1
+# non-combat damage (CR 119.3). P0 starts at 10 life and must gain at
+# least 1 life from the trigger.
+life gained ge 1

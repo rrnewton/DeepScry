@@ -22,3 +22,8 @@ p1battlefield=
 p1library=Forest; Forest; Forest; Forest; Forest
 p1graveyard=
 p1exile=
+
+[assertions]
+# After casting Spirit Link on Savannah Lions and attacking, the trigger
+# must fire and P0 must gain at least 1 life.
+life gained ge 1

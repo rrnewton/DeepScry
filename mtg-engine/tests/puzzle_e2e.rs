@@ -3137,8 +3137,10 @@ async fn test_spirit_link_aura_targeting() -> Result<()> {
     let card_db = CardDatabase::new(cardsfolder);
     let mut game = load_puzzle_into_game(&puzzle, &card_db).await?;
 
-    // Capture the gamelog so we can assert on the triggered lifegain line (mtg-r9po1).
+    // Capture the gamelog and enable structured event log so we can assert on
+    // the triggered lifegain via LifeChanged events (mtg-r9po1).
     game.logger.enable_capture();
+    game.logger.enable_event_log();
 
     // Set deterministic seed
     game.seed_rng(42);
@@ -3219,15 +3221,18 @@ async fn test_spirit_link_aura_targeting() -> Result<()> {
         p0_life_after
     );
 
-    // The gamelog must contain the triggered life-gain evidence (no sentinels).
-    let logs = game_loop.game.logger.logs();
-    let gained_line = logs
+    // Structured event-log evidence: at least one LifeChanged event with a
+    // positive delta for P0, proving Spirit Link's trigger fired (mtg-r9po1).
+    use mtg_engine::game::log_event::LogEvent;
+    let events = game_loop.game.logger.events();
+    let gained_from_trigger = events
         .iter()
-        .any(|l| l.message.contains("Player 1 gains") && l.message.contains("life"));
+        .any(|e| matches!(e, LogEvent::LifeChanged { player, delta, .. } if *player == p0_id && *delta > 0));
     assert!(
-        gained_line,
-        "Expected a 'Player 1 gains N life' log line from Spirit Link's trigger. Logs:\n{}",
-        logs.iter().map(|l| l.message.clone()).collect::<Vec<_>>().join("\n")
+        gained_from_trigger,
+        "Expected a positive LifeChanged event for P0 from Spirit Link's trigger. \
+         Events: {:?}",
+        events.iter().collect::<Vec<_>>()
     );
 
     assert!(result.turns_played >= 1, "Game should progress at least 1 turn");
@@ -5049,6 +5054,7 @@ async fn test_spirit_link_lifelink_on_combat_damage_to_creature() -> Result<()> 
     let card_db = CardDatabase::new(cardsfolder);
     let mut game = load_puzzle_into_game(&puzzle, &card_db).await?;
     game.logger.enable_capture();
+    game.logger.enable_event_log();
     game.seed_rng(42);
 
     let players: Vec<_> = game.players.iter().map(|p| p.id).collect();
@@ -5108,15 +5114,18 @@ async fn test_spirit_link_lifelink_on_combat_damage_to_creature() -> Result<()> 
          trigger must fire on damage to a creature, not only to a player (mtg-m43mc)"
     );
 
-    // Game-log evidence: a "Player 1 gains 3 life" line from the trigger.
-    let logs = game.logger.logs();
-    let gained_line = logs
+    // Structured event-log evidence: a LifeChanged event with delta >= 3 for P0
+    // from Spirit Link's trigger firing on creature combat damage (CR 510.2 / 119.3).
+    use mtg_engine::game::log_event::LogEvent;
+    let events = game.logger.events();
+    let gained_from_trigger = events
         .iter()
-        .any(|l| l.message.contains("gains 3 life") || (l.message.contains("gains") && l.message.contains("3")));
+        .any(|e| matches!(e, LogEvent::LifeChanged { player, delta, .. } if *player == p0_id && *delta >= 3));
     assert!(
-        gained_line,
-        "Expected a 'gains 3 life' log line from Spirit Link's trigger firing on creature combat damage. Logs:\n{}",
-        logs.iter().map(|l| l.message.clone()).collect::<Vec<_>>().join("\n")
+        gained_from_trigger,
+        "Expected a LifeChanged event with delta >= 3 for P0 from Spirit Link's trigger \
+         firing on creature combat damage. Events: {:?}",
+        events.iter().collect::<Vec<_>>()
     );
 
     Ok(())
@@ -5147,6 +5156,7 @@ async fn test_spirit_link_lifelink_on_noncombat_damage() -> Result<()> {
     let card_db = CardDatabase::new(cardsfolder);
     let mut game = load_puzzle_into_game(&puzzle, &card_db).await?;
     game.logger.enable_capture();
+    game.logger.enable_event_log();
     game.seed_rng(42);
 
     let players: Vec<_> = game.players.iter().map(|p| p.id).collect();
@@ -5210,13 +5220,18 @@ async fn test_spirit_link_lifelink_on_noncombat_damage() -> Result<()> {
          off the general deal_damage path, not only combat (mtg-r9po1, CR 119.3)"
     );
 
-    // Game-log evidence: a "gains 1 life" line from the trigger.
-    let logs = game.logger.logs();
-    let gained_line = logs.iter().any(|l| l.message.contains("gains 1 life"));
+    // Structured event-log evidence: a LifeChanged event with delta >= 1 for P0
+    // from Spirit Link's trigger firing on non-combat damage (CR 119.3).
+    use mtg_engine::game::log_event::LogEvent;
+    let events = game.logger.events();
+    let gained_from_trigger = events
+        .iter()
+        .any(|e| matches!(e, LogEvent::LifeChanged { player, delta, .. } if *player == p0_id && *delta >= 1));
     assert!(
-        gained_line,
-        "Expected a 'gains 1 life' log line from Spirit Link's trigger firing on non-combat damage. Logs:\n{}",
-        logs.iter().map(|l| l.message.clone()).collect::<Vec<_>>().join("\n")
+        gained_from_trigger,
+        "Expected a LifeChanged event with delta >= 1 for P0 from Spirit Link's trigger \
+         firing on non-combat damage. Events: {:?}",
+        events.iter().collect::<Vec<_>>()
     );
 
     Ok(())

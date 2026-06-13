@@ -194,8 +194,11 @@ fn run_one(path: &Path, card_db: &Arc<CardDatabase>) -> PuzzleOutcome {
 
                 let final_game = game_loop.game.clone();
 
-                // Evaluate assertions if present
-                let report = evaluate_assertions(&puzzle.assertions, &final_game, &game_result);
+                // Evaluate assertions if present. Pass the structured event-log
+                // view so event assertions (trigger fired / spell cast /
+                // creature died / life gained) can resolve against it.
+                let events = final_game.logger.events();
+                let report = evaluate_assertions(&puzzle.assertions, &final_game, &game_result, Some(&events));
 
                 Ok::<_, mtg_engine::MtgError>((puzzle.assertions.len(), report))
             })

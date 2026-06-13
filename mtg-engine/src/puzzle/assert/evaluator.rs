@@ -20,7 +20,10 @@
 
 use crate::{
     core::PlayerId,
-    game::{GameEndReason, GameResult, GameState},
+    game::{
+        log_event::{EventLogView, LogEvent},
+        GameEndReason, GameResult, GameState,
+    },
     puzzle::assert::{AssertZone, Assertion, AssertionKind, GameResultPred, PlayerScope},
 };
 
@@ -64,7 +67,17 @@ pub struct AssertionFailure {
 ///
 /// The "me" player is always `game.players[0]` (P0, the puzzle's human player).
 /// The "opponent" is `game.players[1]` (P1).
-pub fn evaluate_assertions(assertions: &[Assertion], game: &GameState, result: &GameResult) -> AssertionReport {
+///
+/// Pass `Some(game.logger.events())` to enable event-log assertions
+/// (`trigger fired`, `spell cast`, `creature died`, `life gained`).
+/// Pass `None` to skip event log; event assertions will fail with a clear
+/// message "event log not enabled for this puzzle run".
+pub fn evaluate_assertions(
+    assertions: &[Assertion],
+    game: &GameState,
+    result: &GameResult,
+    events: Option<&EventLogView<'_>>,
+) -> AssertionReport {
     let mut passed = Vec::new();
     let mut failed = Vec::new();
 
@@ -74,7 +87,7 @@ pub fn evaluate_assertions(assertions: &[Assertion], game: &GameState, result: &
     let opp_id = game.players.get(1).map(|p| p.id);
 
     for assertion in assertions {
-        let outcome = eval_one(assertion, game, result, me_id, opp_id);
+        let outcome = eval_one(assertion, game, result, me_id, opp_id, events);
         match outcome {
             Ok(true) => passed.push(assertion.source_line.clone()),
             Ok(false) => failed.push(AssertionFailure {
@@ -99,8 +112,9 @@ fn eval_one(
     result: &GameResult,
     me_id: Option<PlayerId>,
     opp_id: Option<PlayerId>,
+    events: Option<&EventLogView<'_>>,
 ) -> Result<bool, String> {
-    let raw = eval_kind(&assertion.kind, game, result, me_id, opp_id)?;
+    let raw = eval_kind(&assertion.kind, game, result, me_id, opp_id, events)?;
     Ok(if assertion.negated { !raw } else { raw })
 }
 
@@ -110,6 +124,7 @@ fn eval_kind(
     result: &GameResult,
     me_id: Option<PlayerId>,
     opp_id: Option<PlayerId>,
+    events: Option<&EventLogView<'_>>,
 ) -> Result<bool, String> {
     match kind {
         AssertionKind::Life { scope, cmp, value } => {
@@ -148,6 +163,53 @@ fn eval_kind(
         AssertionKind::GameResult(pred) => Ok(eval_game_result(*pred, result, me_id)),
 
         AssertionKind::TurnNumber { cmp, value } => Ok(cmp.eval(result.turns_played, *value)),
+
+        AssertionKind::TriggerFired { source_name } => {
+            let ev = events.ok_or("event log not enabled for this puzzle run")?;
+            if source_name.is_empty() {
+                Ok(ev.iter().any(|e| matches!(e, LogEvent::TriggerFired { .. })))
+            } else {
+                Ok(ev.any_trigger_fired_from(source_name))
+            }
+        }
+
+        AssertionKind::SpellCast { card_name } => {
+            let ev = events.ok_or("event log not enabled for this puzzle run")?;
+            if card_name.is_empty() {
+                Ok(ev.iter().any(|e| matches!(e, LogEvent::SpellCast { .. })))
+            } else {
+                Ok(ev.any_spell_cast_named(card_name))
+            }
+        }
+
+        AssertionKind::CreatureDied { card_name } => {
+            let ev = events.ok_or("event log not enabled for this puzzle run")?;
+            if card_name.is_empty() {
+                Ok(ev.iter().any(|e| matches!(e, LogEvent::CreatureDied { .. })))
+            } else {
+                Ok(ev.any_creature_died_named(card_name))
+            }
+        }
+
+        AssertionKind::LifeGained { scope, cmp, value } => {
+            let ev = events.ok_or("event log not enabled for this puzzle run")?;
+            let player_id = resolve_id(*scope, me_id, opp_id)?;
+            let total_gained: i32 = ev
+                .iter()
+                .filter_map(|e| {
+                    if let LogEvent::LifeChanged { player, delta, .. } = e {
+                        if *player == player_id && *delta > 0 {
+                            Some(*delta)
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                })
+                .sum();
+            Ok(cmp.eval(total_gained, *value))
+        }
     }
 }
 
@@ -254,7 +316,10 @@ mod tests {
     use super::*;
     use crate::{
         core::PlayerId,
-        game::{GameEndReason, GameResult},
+        game::{
+            log_event::{EventLogView, LogEvent},
+            GameEndReason, GameResult,
+        },
         puzzle::assert::{Comparator, GameResultPred},
     };
 
@@ -355,5 +420,241 @@ mod tests {
         assert!(Le.eval(5i32, 5));
         assert!(Gt.eval(6i32, 5));
         assert!(Ge.eval(5i32, 5));
+    }
+
+    // ── Event-log assertion helpers ───────────────────────────────────────────
+
+    fn make_view(events: &[LogEvent]) -> EventLogView<'_> {
+        EventLogView { events }
+    }
+
+    fn make_result_simple() -> GameResult {
+        make_result(None, 1, GameEndReason::TurnLimit)
+    }
+
+    /// Evaluate an event-only AssertionKind using the provided events slice.
+    ///
+    /// For event-only assertions (TriggerFired, SpellCast, CreatureDied,
+    /// LifeGained) the GameState is never accessed, so we build a real
+    /// two-player GameState to satisfy the type signature.
+    fn eval_event_kind(kind: &AssertionKind, events: &[LogEvent], me: PlayerId, opp: PlayerId) -> Result<bool, String> {
+        use crate::game::GameState;
+        let game = GameState::new_two_player(format!("P{}", me.as_u32()), format!("P{}", opp.as_u32()), 20);
+        let view = make_view(events);
+        eval_kind(kind, &game, &make_result_simple(), Some(me), Some(opp), Some(&view))
+    }
+
+    fn eval_event_kind_no_log(kind: &AssertionKind, me: PlayerId, opp: PlayerId) -> Result<bool, String> {
+        use crate::game::GameState;
+        let game = GameState::new_two_player(format!("P{}", me.as_u32()), format!("P{}", opp.as_u32()), 20);
+        eval_kind(kind, &game, &make_result_simple(), Some(me), Some(opp), None)
+    }
+
+    // ── TriggerFired ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_trigger_fired_any_matches() {
+        let events = vec![LogEvent::TriggerFired {
+            source_id: crate::core::CardId::new(1),
+            source_name: "Fecundity".to_string(),
+            controller: pid(0),
+            description: "Creature dies".to_string(),
+        }];
+        let kind = AssertionKind::TriggerFired {
+            source_name: String::new(),
+        };
+        assert!(eval_event_kind(&kind, &events, pid(0), pid(1)).unwrap());
+    }
+
+    #[test]
+    fn test_trigger_fired_named_matches() {
+        let events = vec![LogEvent::TriggerFired {
+            source_id: crate::core::CardId::new(1),
+            source_name: "Fecundity".to_string(),
+            controller: pid(0),
+            description: "Creature dies".to_string(),
+        }];
+        let kind = AssertionKind::TriggerFired {
+            source_name: "fecundity".to_string(),
+        };
+        assert!(eval_event_kind(&kind, &events, pid(0), pid(1)).unwrap());
+    }
+
+    #[test]
+    fn test_trigger_fired_named_no_match() {
+        let events = vec![LogEvent::TriggerFired {
+            source_id: crate::core::CardId::new(1),
+            source_name: "Fecundity".to_string(),
+            controller: pid(0),
+            description: "Creature dies".to_string(),
+        }];
+        let kind = AssertionKind::TriggerFired {
+            source_name: "Gravepact".to_string(),
+        };
+        assert!(!eval_event_kind(&kind, &events, pid(0), pid(1)).unwrap());
+    }
+
+    #[test]
+    fn test_trigger_fired_no_event_log_returns_err() {
+        let kind = AssertionKind::TriggerFired {
+            source_name: String::new(),
+        };
+        let result = eval_event_kind_no_log(&kind, pid(0), pid(1));
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("event log not enabled"));
+    }
+
+    // ── SpellCast ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_spell_cast_any_matches() {
+        let events = vec![LogEvent::SpellCast {
+            card_id: crate::core::CardId::new(1),
+            card_name: "Lightning Bolt".to_string(),
+            caster: pid(0),
+        }];
+        let kind = AssertionKind::SpellCast {
+            card_name: String::new(),
+        };
+        assert!(eval_event_kind(&kind, &events, pid(0), pid(1)).unwrap());
+    }
+
+    #[test]
+    fn test_spell_cast_named_matches_case_insensitive() {
+        let events = vec![LogEvent::SpellCast {
+            card_id: crate::core::CardId::new(1),
+            card_name: "Lightning Bolt".to_string(),
+            caster: pid(0),
+        }];
+        let kind = AssertionKind::SpellCast {
+            card_name: "lightning bolt".to_string(),
+        };
+        assert!(eval_event_kind(&kind, &events, pid(0), pid(1)).unwrap());
+    }
+
+    #[test]
+    fn test_spell_cast_any_empty_log() {
+        let events: Vec<LogEvent> = vec![];
+        let kind = AssertionKind::SpellCast {
+            card_name: String::new(),
+        };
+        assert!(!eval_event_kind(&kind, &events, pid(0), pid(1)).unwrap());
+    }
+
+    // ── CreatureDied ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_creature_died_any_matches() {
+        let events = vec![LogEvent::CreatureDied {
+            card_id: crate::core::CardId::new(1),
+            card_name: "Grizzly Bears".to_string(),
+            controller: pid(0),
+        }];
+        let kind = AssertionKind::CreatureDied {
+            card_name: String::new(),
+        };
+        assert!(eval_event_kind(&kind, &events, pid(0), pid(1)).unwrap());
+    }
+
+    #[test]
+    fn test_creature_died_named_matches() {
+        let events = vec![LogEvent::CreatureDied {
+            card_id: crate::core::CardId::new(1),
+            card_name: "Grizzly Bears".to_string(),
+            controller: pid(0),
+        }];
+        let kind = AssertionKind::CreatureDied {
+            card_name: "Grizzly Bears".to_string(),
+        };
+        assert!(eval_event_kind(&kind, &events, pid(0), pid(1)).unwrap());
+    }
+
+    #[test]
+    fn test_creature_died_named_no_match() {
+        let events = vec![LogEvent::CreatureDied {
+            card_id: crate::core::CardId::new(1),
+            card_name: "Grizzly Bears".to_string(),
+            controller: pid(0),
+        }];
+        let kind = AssertionKind::CreatureDied {
+            card_name: "Hill Giant".to_string(),
+        };
+        assert!(!eval_event_kind(&kind, &events, pid(0), pid(1)).unwrap());
+    }
+
+    // ── LifeGained ───────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_life_gained_sums_positive_deltas() {
+        let events = vec![
+            LogEvent::LifeChanged {
+                player: pid(0),
+                delta: 3,
+                new_total: 23,
+            },
+            LogEvent::LifeChanged {
+                player: pid(0),
+                delta: 2,
+                new_total: 25,
+            },
+            LogEvent::LifeChanged {
+                player: pid(0),
+                delta: -1,
+                new_total: 24,
+            }, // loss: excluded
+            LogEvent::LifeChanged {
+                player: pid(1),
+                delta: 5,
+                new_total: 25,
+            }, // opponent: excluded
+        ];
+        // P0 gained 3+2=5 total
+        let kind = AssertionKind::LifeGained {
+            scope: PlayerScope::Me,
+            cmp: Comparator::Eq,
+            value: 5,
+        };
+        assert!(eval_event_kind(&kind, &events, pid(0), pid(1)).unwrap());
+    }
+
+    #[test]
+    fn test_life_gained_ge_passes() {
+        let events = vec![LogEvent::LifeChanged {
+            player: pid(0),
+            delta: 3,
+            new_total: 13,
+        }];
+        let kind = AssertionKind::LifeGained {
+            scope: PlayerScope::Me,
+            cmp: Comparator::Ge,
+            value: 1,
+        };
+        assert!(eval_event_kind(&kind, &events, pid(0), pid(1)).unwrap());
+    }
+
+    #[test]
+    fn test_life_gained_zero_when_no_events() {
+        let events: Vec<LogEvent> = vec![];
+        let kind = AssertionKind::LifeGained {
+            scope: PlayerScope::Me,
+            cmp: Comparator::Eq,
+            value: 0,
+        };
+        assert!(eval_event_kind(&kind, &events, pid(0), pid(1)).unwrap());
+    }
+
+    #[test]
+    fn test_opponent_life_gained() {
+        let events = vec![LogEvent::LifeChanged {
+            player: pid(1),
+            delta: 7,
+            new_total: 27,
+        }];
+        let kind = AssertionKind::LifeGained {
+            scope: PlayerScope::Opponent,
+            cmp: Comparator::Ge,
+            value: 7,
+        };
+        assert!(eval_event_kind(&kind, &events, pid(0), pid(1)).unwrap());
     }
 }

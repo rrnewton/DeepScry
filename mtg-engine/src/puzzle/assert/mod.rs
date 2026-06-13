@@ -138,6 +138,35 @@ pub enum AssertionKind {
     GameResult(GameResultPred),
     /// Number of turns played comparison
     TurnNumber { cmp: Comparator, value: u32 },
+
+    /// A triggered ability fired from the named source (case-insensitive).
+    /// Empty `source_name` matches any trigger.
+    TriggerFired {
+        /// Source card name to match (empty = any trigger)
+        source_name: String,
+    },
+
+    /// A spell was cast with the given name (case-insensitive).
+    /// Empty `card_name` matches any spell cast.
+    SpellCast {
+        /// Card name to match (empty = any spell)
+        card_name: String,
+    },
+
+    /// A creature with the given name died (case-insensitive).
+    /// Empty `card_name` matches any creature death.
+    CreatureDied {
+        /// Card name to match (empty = any creature death)
+        card_name: String,
+    },
+
+    /// A player gained life (sum of positive `LifeChanged` deltas in event log).
+    LifeGained {
+        scope: PlayerScope,
+        cmp: Comparator,
+        /// Total life gained to compare against
+        value: i32,
+    },
 }
 
 /// A single parsed assertion from an `[assertions]` line

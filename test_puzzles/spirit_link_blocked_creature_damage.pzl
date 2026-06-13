@@ -22,3 +22,9 @@ p1battlefield=Wall of Stone
 p1library=Forest; Forest; Forest; Forest; Forest
 p1graveyard=
 p1exile=
+
+[assertions]
+# Spirit Link must trigger when the enchanted Hill Giant deals combat damage
+# to the blocking Wall of Stone (CR 510.2 / 119.3). P0 starts at 10 life and
+# must gain at least 3 life from the trigger.
+life gained ge 3

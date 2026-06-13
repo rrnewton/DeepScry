@@ -111,9 +111,17 @@ fn parse_predicate(
 
     match keyword {
         "life" => {
-            let cmp = expect_comparator(tokens, source)?;
-            let value = expect_i32(tokens, source)?;
-            Ok(AssertionKind::Life { scope, cmp, value })
+            // Check if next token is "gained" (LifeGained) or a comparator (Life)
+            if tokens.front().copied() == Some("gained") {
+                tokens.pop_front();
+                let cmp = expect_comparator(tokens, source)?;
+                let value = expect_i32(tokens, source)?;
+                Ok(AssertionKind::LifeGained { scope, cmp, value })
+            } else {
+                let cmp = expect_comparator(tokens, source)?;
+                let value = expect_i32(tokens, source)?;
+                Ok(AssertionKind::Life { scope, cmp, value })
+            }
         }
 
         "hand" | "graveyard" | "battlefield" | "exile" | "library" => {
@@ -150,9 +158,58 @@ fn parse_predicate(
             Ok(AssertionKind::TurnNumber { cmp, value })
         }
 
+        "trigger" => {
+            let fired_kw = tokens
+                .pop_front()
+                .ok_or_else(|| MtgError::ParseError(format!("Expected 'fired' after 'trigger' in '{}'", source)))?;
+            if fired_kw != "fired" {
+                return Err(MtgError::ParseError(format!(
+                    "Expected 'fired' after 'trigger', got '{}' in '{}'",
+                    fired_kw, source
+                )));
+            }
+            // Optional: "from <CardName>"
+            let source_name = if tokens.front().copied() == Some("from") {
+                tokens.pop_front(); // consume "from"
+                collect_remaining(tokens)
+            } else {
+                String::new()
+            };
+            Ok(AssertionKind::TriggerFired { source_name })
+        }
+
+        "spell" => {
+            let cast_kw = tokens
+                .pop_front()
+                .ok_or_else(|| MtgError::ParseError(format!("Expected 'cast' after 'spell' in '{}'", source)))?;
+            if cast_kw != "cast" {
+                return Err(MtgError::ParseError(format!(
+                    "Expected 'cast' after 'spell', got '{}' in '{}'",
+                    cast_kw, source
+                )));
+            }
+            let card_name = collect_remaining(tokens);
+            Ok(AssertionKind::SpellCast { card_name })
+        }
+
+        "creature" => {
+            let died_kw = tokens
+                .pop_front()
+                .ok_or_else(|| MtgError::ParseError(format!("Expected 'died' after 'creature' in '{}'", source)))?;
+            if died_kw != "died" {
+                return Err(MtgError::ParseError(format!(
+                    "Expected 'died' after 'creature', got '{}' in '{}'",
+                    died_kw, source
+                )));
+            }
+            let card_name = collect_remaining(tokens);
+            Ok(AssertionKind::CreatureDied { card_name })
+        }
+
         other => Err(MtgError::ParseError(format!(
             "Unknown assertion keyword '{}' in '{}'. \
-             Expected: life, hand, graveyard, battlefield, exile, library, game, turn",
+             Expected: life, hand, graveyard, battlefield, exile, library, game, turn, \
+             trigger, spell, creature",
             other, source
         ))),
     }
@@ -533,6 +590,126 @@ mod tests {
     fn test_error_unknown_game_result() {
         let err = parse_err("game survived");
         assert!(err.contains("survived") || err.contains("won"), "Error: {err}");
+    }
+
+    // ── Event-log assertions ─────────────────────────────────────────────────
+
+    #[test]
+    fn test_trigger_fired_any() {
+        let a = parse("trigger fired");
+        assert!(!a.negated);
+        if let AssertionKind::TriggerFired { source_name } = a.kind {
+            assert!(source_name.is_empty(), "source_name should be empty for 'any trigger'");
+        } else {
+            panic!("Expected TriggerFired");
+        }
+    }
+
+    #[test]
+    fn test_trigger_fired_from() {
+        let a = parse("trigger fired from Fecundity");
+        if let AssertionKind::TriggerFired { source_name } = a.kind {
+            assert_eq!(source_name, "Fecundity");
+        } else {
+            panic!("Expected TriggerFired");
+        }
+    }
+
+    #[test]
+    fn test_trigger_fired_from_multiword() {
+        let a = parse("trigger fired from Grave Pact");
+        if let AssertionKind::TriggerFired { source_name } = a.kind {
+            assert_eq!(source_name, "Grave Pact");
+        } else {
+            panic!("Expected TriggerFired");
+        }
+    }
+
+    #[test]
+    fn test_spell_cast_any() {
+        let a = parse("spell cast");
+        if let AssertionKind::SpellCast { card_name } = a.kind {
+            assert!(card_name.is_empty(), "card_name should be empty for 'any spell'");
+        } else {
+            panic!("Expected SpellCast");
+        }
+    }
+
+    #[test]
+    fn test_spell_cast_named() {
+        let a = parse("spell cast Chain Lightning");
+        if let AssertionKind::SpellCast { card_name } = a.kind {
+            assert_eq!(card_name, "Chain Lightning");
+        } else {
+            panic!("Expected SpellCast");
+        }
+    }
+
+    #[test]
+    fn test_spell_cast_negated() {
+        let a = parse("NOT spell cast Chain Lightning");
+        assert!(a.negated);
+        if let AssertionKind::SpellCast { card_name } = a.kind {
+            assert_eq!(card_name, "Chain Lightning");
+        } else {
+            panic!("Expected SpellCast");
+        }
+    }
+
+    #[test]
+    fn test_creature_died_any() {
+        let a = parse("creature died");
+        if let AssertionKind::CreatureDied { card_name } = a.kind {
+            assert!(card_name.is_empty(), "card_name should be empty for 'any creature'");
+        } else {
+            panic!("Expected CreatureDied");
+        }
+    }
+
+    #[test]
+    fn test_creature_died_named() {
+        let a = parse("creature died Grizzly Bears");
+        if let AssertionKind::CreatureDied { card_name } = a.kind {
+            assert_eq!(card_name, "Grizzly Bears");
+        } else {
+            panic!("Expected CreatureDied");
+        }
+    }
+
+    #[test]
+    fn test_life_gained_ge() {
+        let a = parse("life gained ge 3");
+        assert!(!a.negated);
+        if let AssertionKind::LifeGained { scope, cmp, value } = a.kind {
+            assert_eq!(scope, PlayerScope::Me);
+            assert_eq!(cmp, Comparator::Ge);
+            assert_eq!(value, 3);
+        } else {
+            panic!("Expected LifeGained");
+        }
+    }
+
+    #[test]
+    fn test_opponent_life_gained_ge() {
+        let a = parse("opponent life gained ge 5");
+        if let AssertionKind::LifeGained { scope, cmp, value } = a.kind {
+            assert_eq!(scope, PlayerScope::Opponent);
+            assert_eq!(cmp, Comparator::Ge);
+            assert_eq!(value, 5);
+        } else {
+            panic!("Expected LifeGained");
+        }
+    }
+
+    #[test]
+    fn test_life_gained_eq_zero() {
+        let a = parse("life gained eq 0");
+        if let AssertionKind::LifeGained { cmp, value, .. } = a.kind {
+            assert_eq!(cmp, Comparator::Eq);
+            assert_eq!(value, 0);
+        } else {
+            panic!("Expected LifeGained");
+        }
     }
 
     #[test]
