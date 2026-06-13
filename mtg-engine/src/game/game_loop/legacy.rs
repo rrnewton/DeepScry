@@ -41,7 +41,7 @@ impl<'a> GameLoop<'a> {
                     && !card.tapped
                     && !self.game.combat.is_attacking(card_id)
                 {
-                    // TODO: Check for summoning sickness
+                    // TODO(mtg-290): Check for summoning sickness (legacy interface, low priority)
                     actions.push(PlayerAction::DeclareAttacker(card_id));
                 }
             }

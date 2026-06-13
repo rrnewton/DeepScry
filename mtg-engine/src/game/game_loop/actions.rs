@@ -1566,8 +1566,7 @@ impl<'a> GameLoop<'a> {
                         }
                     }
 
-                    // TODO: Check other cost types (discard, etc.)
-                    // TODO: Check activation limits
+                    // TODO(mtg-32f9h): Check other cost types (discard, etc.) and activation limits
 
                     // Check sorcery-speed timing restrictions (CR 602.5d, CR 307.5)
                     // Sorcery-speed abilities require: main phase, your turn, stack empty
