@@ -349,153 +349,108 @@ impl HeuristicController {
         })
     }
 
-    /// Classify the type of activated ability based on its effects
+    /// Classify the type of activated ability based on its effects.
+    ///
+    /// Priority order (top wins): DealDamage → PumpCreature → DestroyPermanent
+    /// → Regenerate → PreventDamage → DebuffCreature → TapPermanent →
+    /// MoveSelfBetweenZones → AttachEquipment → DrawCards → LevelUp (sorcery
+    /// speed self-counter) → ModalChoice → Other.
+    ///
+    /// References: DestroyAi.java, TapAi.java, DamageDealAi.java (forge-ai).
+    /// CR 701.4a (mtg-911 B3 fix), CR 702.87 (Level Up).
+    #[allow(clippy::wildcard_enum_match_arm)] // catch-all `_ => {}` intentional: Effect variants not handled here fall through to `Other`
     pub(crate) fn classify_activated_ability(&self, ability: &crate::core::ActivatedAbility) -> ActivatedAbilityType {
-        // Check for damage-dealing effects (ping abilities)
         for effect in &ability.effects {
-            if let crate::core::Effect::DealDamage { amount, .. } = effect {
-                return ActivatedAbilityType::Ping { damage: *amount };
-            }
-        }
-
-        // Check for pump effects
-        for effect in &ability.effects {
-            if let crate::core::Effect::PumpCreature {
-                power_bonus,
-                toughness_bonus,
-                ..
-            } = effect
-            {
-                return ActivatedAbilityType::Pump {
-                    power: *power_bonus,
-                    toughness: *toughness_bonus,
-                };
-            }
-        }
-
-        // Check for destroy effects (Royal Assassin, Chaos Orb, etc.)
-        // Reference: DestroyAi.java in forge-ai
-        //
-        // Carry the `requires_tapped_target` flag so the heuristic knows
-        // whether to restrict its target search to tapped creatures (Royal
-        // Assassin) or any opponent permanent (Chaos Orb).
-        for effect in &ability.effects {
-            if matches!(effect, crate::core::Effect::DestroyPermanent { .. }) {
-                return ActivatedAbilityType::Destroy {
-                    requires_tapped_target: ability.cache.targets_tapped,
-                };
-            }
-        }
-
-        // Check for regeneration effects (Drudge Skeletons, Sedge Troll, etc.)
-        for effect in &ability.effects {
-            if matches!(effect, crate::core::Effect::Regenerate { .. }) {
-                return ActivatedAbilityType::Regenerate;
-            }
-        }
-
-        // Check for damage prevention effects (Militant Monk, Master Healer,
-        // and the source-filtered Circles of Protection).
-        for effect in &ability.effects {
-            if matches!(
-                effect,
-                crate::core::Effect::PreventDamage { .. } | crate::core::Effect::PreventDamageFromSource { .. }
-            ) {
-                return ActivatedAbilityType::PreventDamage;
-            }
-        }
-
-        // Check for debuff effects (Grozoth, Gargoyle Sentinel - lose Defender, etc.)
-        for effect in &ability.effects {
-            if matches!(effect, crate::core::Effect::DebuffCreature { .. }) {
-                return ActivatedAbilityType::Debuff;
-            }
-        }
-
-        // Check for tap-target effects (Icy Manipulator, etc.)
-        // Reference: TapAi.java in forge-ai
-        for effect in &ability.effects {
-            if matches!(effect, crate::core::Effect::TapPermanent { .. }) {
-                return ActivatedAbilityType::TapTarget;
-            }
-        }
-
-        // Check for zone-return self-move (graveyard→hand, etc.)
-        // E.g. Earthquake Dragon's ActivationZone$ Graveyard ability.
-        for effect in &ability.effects {
-            if matches!(effect, crate::core::Effect::MoveSelfBetweenZones { .. }) {
-                return ActivatedAbilityType::ZoneReturn;
-            }
-        }
-
-        // Check for equip (attach this Equipment to a creature you control).
-        // E.g. Trusty Boomerang's `K:Equip:1`. (mtg-721)
-        for effect in &ability.effects {
-            if matches!(effect, crate::core::Effect::AttachEquipment { .. }) {
-                return ActivatedAbilityType::Equip;
-            }
-        }
-
-        // Check for card-draw abilities (crack a Clue token, etc.). (mtg-721)
-        for effect in &ability.effects {
-            if matches!(
-                effect,
-                crate::core::Effect::DrawCards { .. } | crate::core::Effect::DrawCardsXPaid { .. }
-            ) {
-                return ActivatedAbilityType::DrawCard;
-            }
-        }
-
-        // Check for Level Up / self-counter-placement abilities (CR 702.87).
-        // A sorcery-speed PutCounter targeting Self (CardId::self_target()) is
-        // characteristic of leveler creatures (Joraga Treespeaker, etc.).
-        // Distinguish from counter-removal (ClassLevelUp) and planeswalker
-        // loyalty: we look specifically for PutCounter on a self-target.
-        for effect in &ability.effects {
-            if let crate::core::Effect::PutCounter { target, .. } = effect {
-                if target.is_self_target() && ability.sorcery_speed {
-                    return ActivatedAbilityType::LevelUp;
+            match effect {
+                // Damage-dealing effects (ping abilities).
+                crate::core::Effect::DealDamage { amount, .. } => {
+                    return ActivatedAbilityType::Ping { damage: *amount };
                 }
-            }
-        }
 
-        // Check for modal (Charm) abilities — Umezawa's Jitte and similar.
-        // Classify based on the most "aggressive" mode in the choice set:
-        // PumpCreature mode → Pump (use same timing heuristic as firebreathing),
-        // no pump modes → Charm so the `should_activate` Charm arm fires at
-        //   sorcery speed (main phase, stack empty).
-        // MTG CR 701.4a (mtg-911 B3 fix).
-        for effect in &ability.effects {
-            if let crate::core::Effect::ModalChoice { modes, .. } = effect {
-                // Look for the best pump-type mode.
-                let mut best_power = 0i32;
-                let mut best_toughness = 0i32;
-                for mode in modes {
-                    if let crate::core::Effect::PumpCreature {
-                        power_bonus,
-                        toughness_bonus,
-                        ..
-                    } = mode.effect.as_ref()
-                    {
-                        // Track the mode with the highest total bonus (positive pumps).
-                        if *power_bonus > best_power || *toughness_bonus > best_toughness {
-                            best_power = *power_bonus;
-                            best_toughness = *toughness_bonus;
-                        }
-                    }
-                }
-                // If any mode is a positive pump, classify as Pump so the AI will
-                // activate this during combat / pre-combat main phase.
-                if best_power > 0 || best_toughness > 0 {
+                // Pump effects (firebreathing, etc.).
+                crate::core::Effect::PumpCreature {
+                    power_bonus,
+                    toughness_bonus,
+                    ..
+                } => {
                     return ActivatedAbilityType::Pump {
-                        power: best_power,
-                        toughness: best_toughness,
+                        power: *power_bonus,
+                        toughness: *toughness_bonus,
                     };
                 }
-                // No positive pump mode — fall back to Charm so the modal
-                // ability is still activated at sorcery speed rather than
-                // never. (e.g. a life-gain-only Charm ability.)
-                return ActivatedAbilityType::Charm;
+
+                // Destroy effects (Royal Assassin, Chaos Orb, etc.).
+                // Carry `requires_tapped_target` so the heuristic can restrict
+                // its target search to tapped creatures when appropriate.
+                crate::core::Effect::DestroyPermanent { .. } => {
+                    return ActivatedAbilityType::Destroy {
+                        requires_tapped_target: ability.cache.targets_tapped,
+                    };
+                }
+
+                // Regeneration (Drudge Skeletons, Sedge Troll, etc.).
+                crate::core::Effect::Regenerate { .. } => return ActivatedAbilityType::Regenerate,
+
+                // Damage prevention (Militant Monk, Master Healer, Circles of Protection).
+                crate::core::Effect::PreventDamage { .. } | crate::core::Effect::PreventDamageFromSource { .. } => {
+                    return ActivatedAbilityType::PreventDamage;
+                }
+
+                // Debuff effects (Gargoyle Sentinel — lose Defender, etc.).
+                crate::core::Effect::DebuffCreature { .. } => return ActivatedAbilityType::Debuff,
+
+                // Tap-target effects (Icy Manipulator, etc.).
+                crate::core::Effect::TapPermanent { .. } => return ActivatedAbilityType::TapTarget,
+
+                // Zone-return self-move (graveyard→hand, e.g. Earthquake Dragon).
+                crate::core::Effect::MoveSelfBetweenZones { .. } => return ActivatedAbilityType::ZoneReturn,
+
+                // Equip (attach Equipment to a creature — e.g. Trusty Boomerang). (mtg-721)
+                crate::core::Effect::AttachEquipment { .. } => return ActivatedAbilityType::Equip,
+
+                // Card-draw (crack a Clue token, etc.). (mtg-721)
+                crate::core::Effect::DrawCards { .. } | crate::core::Effect::DrawCardsXPaid { .. } => {
+                    return ActivatedAbilityType::DrawCard;
+                }
+
+                // Level Up / self-counter-placement (CR 702.87).
+                // Sorcery-speed PutCounter targeting Self distinguishes leveler
+                // creatures (Joraga Treespeaker) from planeswalker loyalty / other
+                // counter abilities.
+                crate::core::Effect::PutCounter { target, .. } if target.is_self_target() && ability.sorcery_speed => {
+                    return ActivatedAbilityType::LevelUp;
+                }
+
+                // Modal (Charm) abilities — Umezawa's Jitte and similar (mtg-911 B3 fix).
+                // Classify as Pump if any mode is a positive pump (so combat timing
+                // fires); fall back to Charm so the ability is still activated at
+                // sorcery speed rather than never.
+                crate::core::Effect::ModalChoice { modes, .. } => {
+                    let mut best_power = 0i32;
+                    let mut best_toughness = 0i32;
+                    for mode in modes {
+                        if let crate::core::Effect::PumpCreature {
+                            power_bonus,
+                            toughness_bonus,
+                            ..
+                        } = mode.effect.as_ref()
+                        {
+                            if *power_bonus > best_power || *toughness_bonus > best_toughness {
+                                best_power = *power_bonus;
+                                best_toughness = *toughness_bonus;
+                            }
+                        }
+                    }
+                    if best_power > 0 || best_toughness > 0 {
+                        return ActivatedAbilityType::Pump {
+                            power: best_power,
+                            toughness: best_toughness,
+                        };
+                    }
+                    return ActivatedAbilityType::Charm;
+                }
+
+                _ => {}
             }
         }
 
