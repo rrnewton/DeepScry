@@ -9959,6 +9959,7 @@ Oracle:As Phyrexian Processor enters, pay any amount of life.\n{4}, {T}: Create 
     /// The trigger must have `fires_for_any_caster = true` and `requires_instant = true`,
     /// and carry a CounterSpell with `target = CardId::triggered_spell()`.
     #[test]
+    #[allow(clippy::wildcard_enum_match_arm)]
     fn test_parse_in_the_eye_of_chaos_global_spellcast_trigger() {
         use crate::core::{Effect, TriggerEvent};
 
@@ -10040,6 +10041,7 @@ Oracle:Whenever a player casts an instant spell, counter it unless that player p
     /// enchantment spells — `ValidCard$ Enchantment` and no `ValidActivatingPlayer$ You`.
     /// The trigger must have `fires_for_any_caster = true` and `requires_enchantment = true`.
     #[test]
+    #[allow(clippy::wildcard_enum_match_arm)]
     fn test_parse_presence_of_the_master_global_spellcast_trigger() {
         use crate::core::{Effect, TriggerEvent};
 
