@@ -1049,6 +1049,7 @@ fn test_should_cast_board_wipe_opponent_advantage() {
     wrath.effects.push(crate::core::Effect::DestroyAll {
         restriction: TargetRestriction::from_types([TargetType::Creature]),
         no_regenerate: true,
+        cmc_eq_source: None,
     });
     game.cards.insert(wrath_id, wrath);
 
@@ -1102,6 +1103,7 @@ fn test_should_not_cast_board_wipe_own_advantage() {
     wrath.effects.push(crate::core::Effect::DestroyAll {
         restriction: TargetRestriction::from_types([TargetType::Creature]),
         no_regenerate: true,
+        cmc_eq_source: None,
     });
     game.cards.insert(wrath_id, wrath);
 
@@ -1148,6 +1150,7 @@ fn test_should_cast_board_wipe_low_life() {
     wrath.effects.push(crate::core::Effect::DestroyAll {
         restriction: TargetRestriction::from_types([TargetType::Creature]),
         no_regenerate: true,
+        cmc_eq_source: None,
     });
     game.cards.insert(wrath_id, wrath);
 
@@ -1374,6 +1377,7 @@ fn test_should_cast_spell_routes_board_wipe() {
     wrath.effects.push(crate::core::Effect::DestroyAll {
         restriction: TargetRestriction::from_types([TargetType::Creature]),
         no_regenerate: true,
+        cmc_eq_source: None,
     });
     game.cards.insert(wrath_id, wrath);
 
@@ -2947,6 +2951,8 @@ fn test_should_cast_put_counter_all() {
             min_cmc: None,
             max_cmc: None,
             requires_defender: false,
+            exact_cmc: None,
+            cmc_eq_svar: false,
         },
         counter_type: CounterType::P1P1,
         amount: 1,
@@ -3003,6 +3009,8 @@ fn test_should_cast_put_counter_all() {
             min_cmc: None,
             max_cmc: None,
             requires_defender: false,
+            exact_cmc: None,
+            cmc_eq_svar: false,
         },
         counter_type: CounterType::P1P1,
         amount: 1,
@@ -3085,6 +3093,8 @@ fn test_should_cast_change_zone_all() {
             min_cmc: None,
             max_cmc: None,
             requires_defender: false,
+            exact_cmc: None,
+            cmc_eq_svar: false,
         },
         origins: smallvec![crate::zones::Zone::Battlefield],
         destination: crate::zones::Zone::Hand,

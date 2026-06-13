@@ -845,6 +845,20 @@ pub struct TargetRestriction {
     /// Checked via `card.has_keyword(Keyword::Defender)`.
     #[serde(default)]
     pub requires_defender: bool,
+    /// Exact mana value (CMC) restriction (`cmcEQ<N>` qualifier, static form).
+    ///
+    /// Corresponds to `ValidCards$ Permanent.nonLand+cmcEQ2` (literal N) when
+    /// the CMC is known at load time. For the dynamic SVar form (`cmcEQX`),
+    /// `cmc_eq_svar` is set instead and the caller resolves it at runtime.
+    /// `None` means no exact-CMC restriction.
+    #[serde(default)]
+    pub exact_cmc: Option<u8>,
+    /// If true, the exact-CMC filter (`cmcEQX`) references an SVar whose value
+    /// is not known until resolution time (Ratchet Bomb: CMC must equal the
+    /// number of charge counters). The caller is responsible for resolving the
+    /// SVar and writing the result into `exact_cmc` before matching.
+    #[serde(default)]
+    pub cmc_eq_svar: bool,
 }
 
 impl TargetRestriction {
@@ -869,6 +883,8 @@ impl TargetRestriction {
             min_cmc: None,
             max_cmc: None,
             requires_defender: false,
+            exact_cmc: None,
+            cmc_eq_svar: false,
         }
     }
 
@@ -893,6 +909,8 @@ impl TargetRestriction {
             min_cmc: None,
             max_cmc: None,
             requires_defender: false,
+            exact_cmc: None,
+            cmc_eq_svar: false,
         }
     }
 
@@ -1046,6 +1064,15 @@ impl TargetRestriction {
             }
         }
 
+        // Check exact CMC restriction (Ratchet Bomb: Permanent.nonLand+cmcEQ<N>).
+        // `exact_cmc` is populated by the caller from a static `cmcEQ<N>` qualifier
+        // or by resolving the SVar X (charge-counter count) at activation time.
+        if let Some(eq) = self.exact_cmc {
+            if card.mana_cost.cmc() != eq {
+                return false;
+            }
+        }
+
         // Check `withDefender` — target must have the Defender keyword (CR 702.6).
         // Overgrown Battlement, Axebane Guardian, Clear a Path, etc.
         if self.requires_defender && !card.has_keyword(crate::core::Keyword::Defender) {
@@ -1087,6 +1114,8 @@ impl TargetRestriction {
             && !self.requires_other
             && self.min_cmc.is_none()
             && self.max_cmc.is_none()
+            && self.exact_cmc.is_none()
+            && !self.cmc_eq_svar
     }
 
     /// Like [`TargetRestriction::matches`] but also honors the `Other`
@@ -1173,6 +1202,8 @@ impl TargetRestriction {
     /// - "Creature.powerLE2" -> [Creature] with power_le=2
     /// - "Card.nonCreature" -> requires_noncreature=true (Negate: counter any noncreature spell)
     /// - "Card.cmcGE4" -> min_cmc=4 (Disdainful Stroke: counter spells with CMC >= 4)
+    /// - "Permanent.nonLand+cmcEQ2" -> exact_cmc=2 (static literal form)
+    /// - "Permanent.nonLand+cmcEQX" -> cmc_eq_svar=true (dynamic SVar form; caller resolves X)
     pub fn parse(valid_tgts: &str) -> Self {
         let mut types = SmallVec::new();
         let mut requires_no_counters = false;
@@ -1184,6 +1215,8 @@ impl TargetRestriction {
         let mut requires_defender = false;
         let mut min_cmc = None;
         let mut max_cmc = None;
+        let mut exact_cmc: Option<u8> = None;
+        let mut cmc_eq_svar = false;
         let mut controller = ControllerRestriction::Any;
         let mut power_ge = None;
         let mut power_le = None;
@@ -1233,6 +1266,18 @@ impl TargetRestriction {
                             // Parse cmcLE3 -> max_cmc = 3 (Consume the Meek, Past in Flames)
                             if let Ok(n) = m.trim_start_matches("cmcLE").parse::<u8>() {
                                 max_cmc = Some(n);
+                            }
+                        }
+                        // `cmcEQX` — dynamic exact-CMC filter: CMC must equal SVar X at
+                        // resolution time (Ratchet Bomb: charge-counter count). Mark the
+                        // flag; the caller resolves X and populates `exact_cmc` before use.
+                        // MUST precede the numeric `cmcEQ<N>` arm because "cmcEQX" also
+                        // starts with "cmcEQ" (and "X" is not a number).
+                        "cmcEQX" => cmc_eq_svar = true,
+                        m if m.starts_with("cmcEQ") => {
+                            // Parse cmcEQ2 -> exact_cmc = 2 (static literal form)
+                            if let Ok(n) = m.trim_start_matches("cmcEQ").parse::<u8>() {
+                                exact_cmc = Some(n);
                             }
                         }
                         // Set-origin qualifier `set<CODE>` (e.g. `setARN`):
@@ -1311,6 +1356,8 @@ impl TargetRestriction {
             min_cmc,
             max_cmc,
             requires_defender,
+            exact_cmc,
+            cmc_eq_svar,
         }
     }
 
@@ -1552,6 +1599,12 @@ pub enum Effect {
         restriction: TargetRestriction,
         /// If true, destroyed permanents can't be regenerated (CR 701.15)
         no_regenerate: bool,
+        /// Source card for dynamic SVar resolution (Ratchet Bomb: `cmcEQX`
+        /// where X = charge-counter count on the Bomb itself). Set by
+        /// `resolve_self_target` to the resolving card's `CardId`; `None` if
+        /// the restriction needs no SVar resolution.
+        #[serde(default)]
+        cmc_eq_source: Option<CardId>,
     },
 
     /// Each player sacrifices all permanents matching a filter

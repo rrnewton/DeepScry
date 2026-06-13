@@ -307,6 +307,23 @@ impl HeuristicController {
                         return true;
                     }
                 }
+                ActivatedAbilityType::LevelUp => {
+                    // Level Up abilities (Joraga Treespeaker, etc.): place a LEVEL
+                    // counter on self to unlock stat / ability thresholds (CR 702.87).
+                    // Activate at sorcery speed in Main2 when the stack is empty,
+                    // so we spend leftover mana after our main-phase plays.
+                    let current_step = view.current_step();
+                    if current_step == crate::game::Step::Main2 && self.is_stack_empty(view) {
+                        return true;
+                    }
+                    // Also activate in Main1 if we have plenty of mana (at least
+                    // 2 × the ability cost available after paying), so we don't
+                    // cost ourselves a better play. For simplicity: always allow
+                    // in Main1 too — the leveler itself is usually the key card.
+                    if current_step == crate::game::Step::Main1 && self.is_stack_empty(view) {
+                        return true;
+                    }
+                }
                 ActivatedAbilityType::Other => {
                     // For now, don't activate other types
                     // Will expand as we implement more ability types
@@ -426,6 +443,19 @@ impl HeuristicController {
                 crate::core::Effect::DrawCards { .. } | crate::core::Effect::DrawCardsXPaid { .. }
             ) {
                 return ActivatedAbilityType::DrawCard;
+            }
+        }
+
+        // Check for Level Up / self-counter-placement abilities (CR 702.87).
+        // A sorcery-speed PutCounter targeting Self (CardId::self_target()) is
+        // characteristic of leveler creatures (Joraga Treespeaker, etc.).
+        // Distinguish from counter-removal (ClassLevelUp) and planeswalker
+        // loyalty: we look specifically for PutCounter on a self-target.
+        for effect in &ability.effects {
+            if let crate::core::Effect::PutCounter { target, .. } = effect {
+                if target.is_self_target() && ability.sorcery_speed {
+                    return ActivatedAbilityType::LevelUp;
+                }
             }
         }
 

@@ -546,6 +546,13 @@ impl HeuristicController {
                     // Modal abilities on Equipment (e.g. Jitte) add flexibility value.
                     value += 10;
                 }
+                ActivatedAbilityType::LevelUp => {
+                    // Leveler creatures (Joraga Treespeaker) gain stats and abilities
+                    // as they accumulate LEVEL counters. The potential upside is real
+                    // but hard to quantify without knowing the level bands. Use a
+                    // modest bonus — the creature is already functional at level 0.
+                    value += 8;
+                }
                 ActivatedAbilityType::Other => {}
             }
         }

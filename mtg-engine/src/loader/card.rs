@@ -1064,6 +1064,24 @@ impl CardDefinition {
             }
         }
 
+        // Add Level Up activated ability for leveler creatures (CR 702.87).
+        // K:Level up:<cost> — places a LEVEL counter on the card, sorcery-speed only.
+        // The S: lines on the card use `counters_GEN_LEVEL` IsPresent conditions to
+        // apply the stat / ability grants at the relevant level bands.
+        if let Some(KeywordArgs::LevelUp { cost }) = card.keywords.get_args(Keyword::LevelUp) {
+            use crate::core::{ActivatedAbility, CardId, Cost, CounterType, Effect};
+            let ability_cost = Cost::Mana(*cost);
+            let effects = vec![Effect::PutCounter {
+                target: CardId::self_target(),
+                counter_type: CounterType::Level,
+                amount: 1,
+            }];
+            let description = format!("Level up {cost} (place a level counter on {})", card.name);
+            // CR 702.87b: "Level up only as a sorcery."
+            card.activated_abilities
+                .push(ActivatedAbility::new_sorcery_speed(ability_cost, effects, description));
+        }
+
         // Copy SVars for SubAbility resolution during effect execution
         card.svars = self.svars.clone();
 

@@ -98,6 +98,12 @@ pub(crate) enum ActivatedAbilityType {
     /// Example: Umezawa's Jitte "Remove a charge counter: choose pump / curse / life".
     /// Activated at sorcery speed; AI picks the best available mode. (mtg-911 B3)
     Charm,
+    /// Level Up / counter-placement self-improvement ability (CR 702.87).
+    /// Example: Joraga Treespeaker "{1}{G}: Put a level counter on CARDNAME".
+    /// The creature gains stats / abilities at level thresholds. Activate at
+    /// sorcery speed in Main2 when we have spare mana. Not urgent — the
+    /// creature is already functional at level 0.
+    LevelUp,
     /// Other abilities not yet categorized
     Other,
 }
@@ -350,16 +356,39 @@ impl PlayerController for HeuristicController {
                 .copied()
                 .collect();
 
-            // If we have killable creatures, prioritize those
-            // Otherwise fall back to any opponent creature (damage still useful)
+            // If we have killable creatures, prioritize those.
+            // Otherwise: target any opponent creature, or — for "any target" abilities
+            // like Sorin Markov +2 — an opponent player sentinel (CR 114.1a: players
+            // are legal targets for spells/abilities that say "any target").
             if !killable_targets.is_empty() {
                 killable_targets
             } else {
-                valid_targets
+                let opp_creatures: Vec<CardId> = valid_targets
                     .iter()
                     .filter(|&&id| view.get_card(id).map(|c| c.owner != self.player_id).unwrap_or(false))
                     .copied()
-                    .collect()
+                    .collect();
+                if !opp_creatures.is_empty() {
+                    opp_creatures
+                } else {
+                    // No opponent creatures — try opponent player sentinels if present.
+                    // These sentinel CardIds have no card entry (view.get_card → None),
+                    // but decode back to a TargetRef::Player at effect-resolution time.
+                    let opp_sentinels: Vec<CardId> = valid_targets
+                        .iter()
+                        .filter(|&&id| {
+                            crate::core::player_target_from_sentinel(id)
+                                .map(|pid| pid != self.player_id)
+                                .unwrap_or(false)
+                        })
+                        .copied()
+                        .collect();
+                    if !opp_sentinels.is_empty() {
+                        opp_sentinels
+                    } else {
+                        valid_targets.to_vec()
+                    }
+                }
             }
         } else if has_pump_effect {
             // Pump effects: Target our best creature

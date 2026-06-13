@@ -1782,6 +1782,7 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
             Some(Effect::DestroyAll {
                 restriction,
                 no_regenerate,
+                cmc_eq_source: None,
             })
         }
 
@@ -4538,6 +4539,46 @@ Oracle:Target creature gets +3/+1 until end of turn. Create a Clue token.
         assert!(effect.is_some(), "DestroyAll should produce a DestroyAll effect");
 
         assert!(matches!(effect.unwrap(), Effect::DestroyAll { .. }));
+    }
+
+    #[test]
+    fn test_ratchet_bomb_cmceq_restriction() {
+        // Ratchet Bomb: "AB$ DestroyAll | ValidCards$ Permanent.nonLand+cmcEQX"
+        // `cmcEQX` is a dynamic exact-CMC filter: at resolution, X = number of
+        // charge counters on Ratchet Bomb. At parse time, only `cmc_eq_svar` is
+        // set; `exact_cmc` remains None until the caller resolves the SVar.
+        let params =
+            AbilityParams::parse("A:AB$ DestroyAll | Cost$ T Sac<1/CARDNAME> | ValidCards$ Permanent.nonLand+cmcEQX")
+                .unwrap();
+        let effect = params_to_effect(&params);
+        assert!(effect.is_some(), "DestroyAll should produce an effect");
+
+        match effect.unwrap() {
+            Effect::DestroyAll { restriction, .. } => {
+                assert!(
+                    restriction.cmc_eq_svar,
+                    "cmcEQX in ValidCards$ should set cmc_eq_svar = true"
+                );
+                assert!(
+                    restriction.exact_cmc.is_none(),
+                    "exact_cmc should be None at parse time (resolved at runtime)"
+                );
+                // Verify a card with CMC 2 matches when we materialise exact_cmc = 2.
+                use crate::core::{Card, CardId, ManaCost};
+                use crate::game::GameState;
+                let game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+                let p1 = game.players[0].id;
+                let mut card = Card::new(CardId::new(1), "Test", p1);
+                card.mana_cost = ManaCost::from_string("1G"); // CMC = 2
+                let mut r = restriction.clone();
+                r.exact_cmc = Some(2);
+                r.cmc_eq_svar = false;
+                assert!(r.matches(&card), "CMC-2 card should match exact_cmc=2");
+                r.exact_cmc = Some(3);
+                assert!(!r.matches(&card), "CMC-2 card should NOT match exact_cmc=3");
+            }
+            _ => panic!("Expected DestroyAll"),
+        }
     }
 
     #[test]

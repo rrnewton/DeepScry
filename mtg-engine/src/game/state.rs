@@ -5020,6 +5020,7 @@ impl GameState {
                         let effect_clone = crate::core::Effect::DestroyAll {
                             restriction,
                             no_regenerate: false,
+                            cmc_eq_source: None,
                         };
                         self.execute_effect(&effect_clone)?;
                     }

@@ -1874,6 +1874,7 @@ mod tests {
         wrath.effects.push(Effect::DestroyAll {
             restriction: crate::core::TargetRestriction::from_types([crate::core::TargetType::Creature]),
             no_regenerate: true,
+            cmc_eq_source: None,
         });
         game.cards.insert(wrath_id, wrath);
         game.stack.add(wrath_id);
@@ -1927,6 +1928,7 @@ mod tests {
         wrath.effects.push(Effect::DestroyAll {
             restriction: crate::core::TargetRestriction::from_types([crate::core::TargetType::Creature]),
             no_regenerate: true,
+            cmc_eq_source: None,
         });
         game.cards.insert(wrath_id, wrath);
         game.stack.add(wrath_id);

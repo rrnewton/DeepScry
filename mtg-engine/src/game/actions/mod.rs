@@ -988,6 +988,18 @@ impl GameState {
     #[allow(clippy::wildcard_enum_match_arm)]
     fn resolve_self_target(effect: Effect, source_card_id: CardId) -> Effect {
         match effect {
+            // `DestroyAll` with a dynamic `cmcEQX` SVar (Ratchet Bomb): record the
+            // source CardId so execute_effect can read its charge-counter count at
+            // resolution time and set `exact_cmc` on the restriction.
+            Effect::DestroyAll {
+                restriction,
+                no_regenerate,
+                cmc_eq_source: None,
+            } if restriction.cmc_eq_svar => Effect::DestroyAll {
+                restriction,
+                no_regenerate,
+                cmc_eq_source: Some(source_card_id),
+            },
             Effect::DestroyPermanent {
                 target,
                 restriction,
@@ -4891,7 +4903,32 @@ impl GameState {
             Effect::DestroyAll {
                 restriction,
                 no_regenerate,
-            } => self.execute_destroy_all(restriction, *no_regenerate)?,
+                cmc_eq_source,
+            } => {
+                // Resolve dynamic `cmcEQX` SVar from the source card's charge-counter
+                // count (Ratchet Bomb). If `cmc_eq_svar` is set and a source is known,
+                // materialise `exact_cmc` on the restriction clone before matching.
+                let resolved_restriction;
+                let effective_restriction = if restriction.cmc_eq_svar {
+                    if let Some(source_id) = cmc_eq_source {
+                        let charge_count = self
+                            .cards
+                            .try_get(*source_id)
+                            .map(|c| c.get_counter(crate::core::CounterType::Charge))
+                            .unwrap_or(0);
+                        let mut r = restriction.clone();
+                        r.exact_cmc = Some(charge_count);
+                        r.cmc_eq_svar = false; // resolved; no further SVar lookup needed
+                        resolved_restriction = r;
+                        &resolved_restriction
+                    } else {
+                        restriction
+                    }
+                } else {
+                    restriction
+                };
+                self.execute_destroy_all(effective_restriction, *no_regenerate)?
+            }
 
             Effect::SacrificeAll { restriction } => self.execute_sacrifice_all(restriction)?,
 
