@@ -9533,4 +9533,192 @@ mod tests {
             "Target must be controlled by an opponent (defending player)"
         );
     }
+
+    /// Card compat: Valley Floodcaller (cardsfolder/v/valley_floodcaller.txt) — mtg-881 wave11.
+    ///
+    /// Script:
+    ///   `K:Flash`
+    ///   `S:Mode$ CastWithFlash | ValidCard$ Card.nonCreature | ValidSA$ Spell | Caster$ You |
+    ///    Description$ You may cast noncreature spells as though they had flash.`
+    ///
+    /// Parser check: verifies `StaticAbility::CastWithFlash` is emitted with
+    ///   `requires_noncreature = true`.
+    ///
+    /// Runtime check (Scenario A): With Valley Floodcaller on P0's battlefield and P1
+    ///   as the active player (P1's Main1, empty stack), P0's Armageddon (Sorcery) IS
+    ///   offered in the castable-spells buffer — flash is granted by the static.
+    ///
+    /// Runtime check (Scenario B): Without Valley Floodcaller, Armageddon is NOT offered
+    ///   to P0 during P1's turn (sorcery-speed restriction applies).
+    #[test]
+    fn test_card_compat_valley_floodcaller_cast_with_flash() {
+        use crate::core::SpellAbility;
+        use crate::core::StaticAbility;
+        use crate::game::game_loop::GameLoop;
+        use crate::game::{Step, VerbosityLevel};
+        use std::path::PathBuf;
+
+        let floodcaller_path = PathBuf::from("../cardsfolder/v/valley_floodcaller.txt");
+        let armageddon_path = PathBuf::from("../cardsfolder/a/armageddon.txt");
+        if !floodcaller_path.exists() || !armageddon_path.exists() {
+            eprintln!("Skipping: cardsfolder not present at {:?}", floodcaller_path);
+            return;
+        }
+
+        // --- 1. Parser check: CastWithFlash static with nonCreature filter ---
+        let def = crate::loader::CardLoader::load_from_file(&floodcaller_path).expect("Valley Floodcaller should load");
+        assert_eq!(def.name.as_str(), "Valley Floodcaller");
+        let card = def.instantiate(CardId::new(1), PlayerId::new(0));
+
+        let cwf_static = card.static_abilities.iter().find_map(|sa| {
+            if let StaticAbility::CastWithFlash { valid_card, .. } = sa {
+                Some(valid_card.clone())
+            } else {
+                None
+            }
+        });
+        let valid_card = cwf_static.expect("Valley Floodcaller must have a CastWithFlash static ability");
+        assert!(
+            valid_card.requires_noncreature,
+            "CastWithFlash filter must have requires_noncreature=true (ValidCard$ Card.nonCreature)"
+        );
+
+        // Confirm the filter matches a sorcery (nonCreature) and does NOT match a creature.
+        let armageddon_def =
+            crate::loader::CardLoader::load_from_file(&armageddon_path).expect("Armageddon should load");
+        let armageddon_card = armageddon_def.instantiate(CardId::new(2), PlayerId::new(0));
+        assert!(
+            valid_card.matches(&armageddon_card),
+            "CastWithFlash filter must match Armageddon (a sorcery / nonCreature)"
+        );
+
+        let grizzly_path = PathBuf::from("../cardsfolder/g/grizzly_bears.txt");
+        if grizzly_path.exists() {
+            let grizzly_def =
+                crate::loader::CardLoader::load_from_file(&grizzly_path).expect("Grizzly Bears should load");
+            let grizzly_card = grizzly_def.instantiate(CardId::new(3), PlayerId::new(0));
+            assert!(
+                !valid_card.matches(&grizzly_card),
+                "CastWithFlash filter must NOT match Grizzly Bears (a creature)"
+            );
+        }
+
+        // --- 2. Runtime check: Scenario A — Floodcaller on battlefield grants flash to sorcery ---
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p0_id = game.players[0].id;
+        let p1_id = game.players[1].id;
+
+        // P0 controls Valley Floodcaller on the battlefield.
+        let floodcaller_id =
+            load_test_card(&mut game, "Valley Floodcaller", p0_id).expect("Valley Floodcaller should load");
+        game.battlefield.add(floodcaller_id);
+        if let Ok(c) = game.cards.get_mut(floodcaller_id) {
+            c.controller = p0_id;
+        }
+
+        // P0 has Armageddon in hand and 4 Plains untapped (to pay {3}{W}).
+        let armageddon_id = load_test_card(&mut game, "Armageddon", p0_id).expect("Armageddon should load");
+        if let Some(zones) = game.get_player_zones_mut(p0_id) {
+            zones.hand.add(armageddon_id);
+        }
+        for _ in 0..4 {
+            let plains_id = load_test_card(&mut game, "Plains", p0_id).expect("Plains should load");
+            game.battlefield.add(plains_id);
+            if let Ok(c) = game.cards.get_mut(plains_id) {
+                c.controller = p0_id;
+                c.tapped = false;
+            }
+        }
+
+        // It is P1's turn, Main1, stack empty → P0 is the non-active player.
+        game.turn.active_player = p1_id;
+        game.turn.current_step = Step::Main1;
+
+        let buffer_a = {
+            let mut gl = GameLoop::new(&mut game).with_verbosity(VerbosityLevel::Silent);
+            gl.push_castable_spells(p0_id);
+            gl.get_abilities_buffer().to_vec()
+        };
+
+        let armageddon_offered_a = buffer_a
+            .iter()
+            .any(|sa| matches!(sa, SpellAbility::CastSpell { card_id, .. } if *card_id == armageddon_id));
+        assert!(
+            armageddon_offered_a,
+            "Valley Floodcaller: P0 MUST be offered Armageddon during P1's turn \
+             (CastWithFlash grants flash to nonCreature sorcery). Buffer: {:?}",
+            buffer_a
+        );
+
+        // --- 3. Runtime check: Scenario B — Without Floodcaller, sorcery is NOT offered ---
+        game.battlefield.remove(floodcaller_id);
+
+        let buffer_b = {
+            let mut gl2 = GameLoop::new(&mut game).with_verbosity(VerbosityLevel::Silent);
+            gl2.push_castable_spells(p0_id);
+            gl2.get_abilities_buffer().to_vec()
+        };
+
+        let armageddon_offered_b = buffer_b
+            .iter()
+            .any(|sa| matches!(sa, SpellAbility::CastSpell { card_id, .. } if *card_id == armageddon_id));
+        assert!(
+            !armageddon_offered_b,
+            "Without Valley Floodcaller: P0 must NOT be offered Armageddon during P1's turn \
+             (sorcery-speed restriction applies). Buffer: {:?}",
+            buffer_b
+        );
+    }
+
+    /// Card compat: The Legend of Kuruk (cardsfolder/t/the_legend_of_kuruk_avatar_kuruk.txt) — mtg-881 wave11.
+    ///
+    /// Script:
+    ///   `Name:The Legend of Kuruk`
+    ///   `Types:Enchantment Saga`
+    ///   `K:Chapter:3:DBScry,DBScry,DBTransform`
+    ///   (front face; back face Avatar Kuruk ignored — DFC back not loaded, CR 715.2)
+    ///
+    /// Parser check:
+    /// 1. Card loads without error (card file now present after wave-11 fix).
+    /// 2. Card type is Enchantment with Saga subtype.
+    /// 3. Saga Chapter keyword is parsed (3 chapters: I+II = Scry+Draw, III = Transform).
+    ///    Chapters I and II (Scry 2 + draw a card) WORKING.
+    ///    Chapter III (exile-and-return-transformed) is PARTIAL — exile fires but
+    ///    `Transformed$ True` not yet implemented; Avatar Kuruk face not loaded.
+    #[test]
+    fn test_card_compat_legend_of_kuruk_saga_parser_shape() {
+        use crate::core::{CardType, Keyword};
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("../cardsfolder/t/the_legend_of_kuruk_avatar_kuruk.txt");
+        if !path.exists() {
+            eprintln!("Skipping: cardsfolder not present at {:?}", path);
+            return;
+        }
+
+        let def =
+            crate::loader::CardLoader::load_from_file(&path).expect("The Legend of Kuruk should load without error");
+
+        assert_eq!(def.name.as_str(), "The Legend of Kuruk");
+        assert!(
+            def.types.contains(&CardType::Enchantment),
+            "Must be an Enchantment (got types {:?})",
+            def.types
+        );
+
+        // Must have Saga subtype
+        let has_saga_subtype = def.subtypes.iter().any(|s| s.as_str() == "Saga");
+        assert!(
+            has_saga_subtype,
+            "Must have Saga subtype (got subtypes {:?})",
+            def.subtypes
+        );
+
+        // Must have Chapter keyword
+        let card = def.instantiate(CardId::new(1), PlayerId::new(0));
+        assert!(
+            card.keywords.contains(Keyword::Chapter),
+            "The Legend of Kuruk must have the Chapter keyword (Saga chapters I-III)"
+        );
+    }
 }
