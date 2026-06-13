@@ -8603,6 +8603,75 @@ mod tests {
         assert_eq!(power4, 0, "Serra Avatar P must be 0 at life=0");
     }
 
+    /// Card compat: Lhurgoyf (cardsfolder/l/lhurgoyf.txt) — mtg-916 B2.
+    ///
+    /// Script:
+    ///   `S:Mode$ Continuous | CharacteristicDefining$ True | SetPower$ X | SetToughness$ Y`
+    ///   `SVar:X:Count$ValidGraveyard Creature`
+    ///   `SVar:Y:Count$ValidGraveyard Creature/Plus.1`
+    ///
+    /// Verifies: Lhurgoyf's power = creature cards in all graveyards; toughness = that + 1.
+    /// Also verifies the count updates when creatures die (enter the graveyard).
+    #[test]
+    fn test_card_compat_lhurgoyf_cda_pt() {
+        use std::path::PathBuf;
+
+        if !PathBuf::from("../cardsfolder/l/lhurgoyf.txt").exists() {
+            eprintln!("Skipping: cardsfolder not present");
+            return;
+        }
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        let p2_id = game.players[1].id;
+
+        // Load Lhurgoyf under P1's control.
+        let lhurgoyf_id = load_test_card(&mut game, "Lhurgoyf", p1_id).expect("Lhurgoyf should load");
+        game.battlefield.add(lhurgoyf_id);
+
+        // No creatures in any graveyard yet: 0/1.
+        let power = game.get_effective_power(lhurgoyf_id).expect("get_effective_power");
+        let toughness = game
+            .get_effective_toughness(lhurgoyf_id)
+            .expect("get_effective_toughness");
+        assert_eq!(power, 0, "Lhurgoyf P should be 0 with empty graveyards");
+        assert_eq!(toughness, 1, "Lhurgoyf T should be 1 (0+1) with empty graveyards");
+
+        // Add a creature card to P1's graveyard: 1/2.
+        let bear_id = load_test_card(&mut game, "Grizzly Bears", p1_id).expect("Grizzly Bears should load");
+        game.get_player_zones_mut(p1_id)
+            .expect("P1 zones")
+            .graveyard
+            .add(bear_id);
+
+        let power2 = game.get_effective_power(lhurgoyf_id).expect("get_effective_power");
+        let toughness2 = game
+            .get_effective_toughness(lhurgoyf_id)
+            .expect("get_effective_toughness");
+        assert_eq!(power2, 1, "Lhurgoyf P should be 1 with 1 creature in graveyards");
+        assert_eq!(
+            toughness2, 2,
+            "Lhurgoyf T should be 2 (1+1) with 1 creature in graveyards"
+        );
+
+        // Add a creature card to P2's graveyard: 2/3.
+        let bear2_id = load_test_card(&mut game, "Grizzly Bears", p2_id).expect("Grizzly Bears should load");
+        game.get_player_zones_mut(p2_id)
+            .expect("P2 zones")
+            .graveyard
+            .add(bear2_id);
+
+        let power3 = game.get_effective_power(lhurgoyf_id).expect("get_effective_power");
+        let toughness3 = game
+            .get_effective_toughness(lhurgoyf_id)
+            .expect("get_effective_toughness");
+        assert_eq!(power3, 2, "Lhurgoyf P should be 2 with creatures in both graveyards");
+        assert_eq!(
+            toughness3, 3,
+            "Lhurgoyf T should be 3 (2+1) with creatures in both graveyards"
+        );
+    }
+
     /// Card compat: Crumbling Sanctuary (cardsfolder/c/crumbling_sanctuary.txt) — mtg-912 B9.
     ///
     /// Script:

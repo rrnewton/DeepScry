@@ -617,6 +617,41 @@ fn creature_dies_filter(valid_card: Option<&str>) -> Option<CreatureDiesFilter> 
     })
 }
 
+/// Parse an SVar body string (e.g. `"Count$YourLifeTotal"`) into a
+/// [`crate::core::CdaPtSource`] for use in a `CharacteristicDefiningPt` static.
+///
+/// Returns `Some(source)` for recognised shapes, `None` for unknown ones.
+///
+/// Recognised shapes:
+/// - `Count$YourLifeTotal` → `CdaPtSource::ControllerLifeTotal`
+/// - `Count$ValidGraveyard Creature` → `CdaPtSource::AllGraveyardCreatures { modifier: None }`
+/// - `Count$ValidGraveyard Creature/Plus.1` → `CdaPtSource::AllGraveyardCreatures { modifier: Plus(1) }`
+fn parse_cda_pt_svar(svar_body: &str) -> Option<crate::core::CdaPtSource> {
+    use crate::core::{CdaPtSource, CountModifier};
+
+    if svar_body == "Count$YourLifeTotal" {
+        return Some(CdaPtSource::ControllerLifeTotal);
+    }
+
+    // Count$ValidGraveyard <filter>[/Modifier]
+    // For CDA purposes we only support the "Creature" filter (all graveyards —
+    // no YouOwn/OppOwn qualifier), matching Lhurgoyf's SVar shape.
+    if let Some(rest) = svar_body.strip_prefix("Count$ValidGraveyard ") {
+        let (filter, modifier) = match rest.split_once('/') {
+            Some((f, suffix)) => (f, CountModifier::parse(suffix)),
+            None => (rest, CountModifier::None),
+        };
+        // Only "Creature" without ownership qualifiers counts ALL graveyards.
+        // Any YouOwn/OppOwn suffix would restrict the search — we do not model
+        // those as a CDA source here (they would need a different enum variant).
+        if filter == "Creature" {
+            return Some(CdaPtSource::AllGraveyardCreatures { modifier });
+        }
+    }
+
+    None
+}
+
 /// Card definition (not yet instantiated in a game)
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CardDefinition {
@@ -5663,11 +5698,13 @@ impl CardDefinition {
             // per turn. Used by Exploration, Oracle of Mul Daya, Azusa, etc.
             let mut adjust_land_plays: u8 = 0;
 
-            // CharacteristicDefining-specific parameters (Serra Avatar Layer 7a CDA).
-            // Tracks `CharacteristicDefining$ True` and resolves the SVar that
-            // backs SetPower$/SetToughness$ into a `CdaPtSource`.
+            // CharacteristicDefining-specific parameters (Serra Avatar / Lhurgoyf Layer 7a CDA).
+            // Tracks `CharacteristicDefining$ True` and resolves the SVars that
+            // back SetPower$/SetToughness$ into `CdaPtSource` values.
+            // Power and toughness may have different sources (e.g. Lhurgoyf).
             let mut is_characteristic_defining = false;
-            let mut cda_pt_source: Option<crate::core::CdaPtSource> = None;
+            let mut cda_power_source: Option<crate::core::CdaPtSource> = None;
+            let mut cda_toughness_source: Option<crate::core::CdaPtSource> = None;
 
             // Opalescence-specific parameters.
             // `add_type_creature` is set when `AddType$ Creature` is present.
@@ -5953,7 +5990,8 @@ impl CardDefinition {
                         "SetPower" => {
                             // `SetPower$ X` / `SetPower$ AffectedX`
                             // Two shapes:
-                            //  (a) CDA (Serra Avatar): value is "X" backed by Count$YourLifeTotal.
+                            //  (a) CDA (Serra Avatar / Lhurgoyf): value is an SVar name backed
+                            //      by Count$YourLifeTotal or Count$ValidGraveyard <filter>[/mod].
                             //  (b) Opalescence: value is "AffectedX" backed by Count$CardManaCost.
                             if value == "AffectedX" {
                                 // Opalescence shape: set_power_affected_x flag.
@@ -5962,12 +6000,10 @@ impl CardDefinition {
                                         set_power_affected_x = true;
                                     }
                                 }
-                            } else if cda_pt_source.is_none() {
-                                // CDA shape (Serra Avatar): value is typically "X".
+                            } else if cda_power_source.is_none() {
+                                // CDA shape: resolve the SVar and parse into a CdaPtSource.
                                 if let Some(svar_body) = self.svars.get(value) {
-                                    if svar_body.trim() == "Count$YourLifeTotal" {
-                                        cda_pt_source = Some(crate::core::CdaPtSource::ControllerLifeTotal);
-                                    }
+                                    cda_power_source = parse_cda_pt_svar(svar_body.trim());
                                 }
                             }
                         }
@@ -5979,11 +6015,9 @@ impl CardDefinition {
                                         set_toughness_affected_x = true;
                                     }
                                 }
-                            } else if cda_pt_source.is_none() {
+                            } else if cda_toughness_source.is_none() {
                                 if let Some(svar_body) = self.svars.get(value) {
-                                    if svar_body.trim() == "Count$YourLifeTotal" {
-                                        cda_pt_source = Some(crate::core::CdaPtSource::ControllerLifeTotal);
-                                    }
+                                    cda_toughness_source = parse_cda_pt_svar(svar_body.trim());
                                 }
                             }
                         }
@@ -6160,12 +6194,16 @@ impl CardDefinition {
 
             // CharacteristicDefining P/T static (Layer 7a, CR 613.4a).
             // Shape: S:Mode$ Continuous | CharacteristicDefining$ True | SetPower$ X
-            //        | SetToughness$ X  with SVar:X:<source>
-            // Currently only supports SVar:X:Count$YourLifeTotal (Serra Avatar).
+            //        | SetToughness$ X/Y  with SVar:X:<source>, SVar:Y:<source>
+            // Supported sources:
+            //   Count$YourLifeTotal                  → CdaPtSource::ControllerLifeTotal (Serra Avatar)
+            //   Count$ValidGraveyard Creature         → CdaPtSource::AllGraveyardCreatures (Lhurgoyf P)
+            //   Count$ValidGraveyard Creature/Plus.1  → CdaPtSource::AllGraveyardCreatures +1 (Lhurgoyf T)
             if is_characteristic_defining {
-                if let Some(cda_source) = cda_pt_source {
+                if let (Some(p_src), Some(t_src)) = (cda_power_source, cda_toughness_source) {
                     abilities.push(StaticAbility::CharacteristicDefiningPt {
-                        source: cda_source,
+                        power_source: p_src,
+                        toughness_source: t_src,
                         description: description.clone(),
                     });
                 }
@@ -9628,7 +9666,8 @@ Oracle:[-6]: You get an emblem with "At the beginning of each opponent's upkeep,
 
     /// Parser unit test: Serra Avatar's `S:Mode$ Continuous | CharacteristicDefining$ True
     /// | SetPower$ X | SetToughness$ X` (SVar:X:Count$YourLifeTotal) must parse to a
-    /// `StaticAbility::CharacteristicDefiningPt { source: ControllerLifeTotal }` (mtg-912 B4).
+    /// `StaticAbility::CharacteristicDefiningPt { power_source: ControllerLifeTotal,
+    /// toughness_source: ControllerLifeTotal }` (mtg-912 B4).
     #[cfg(feature = "native")]
     #[test]
     fn test_parse_serra_avatar_cda_pt() {
@@ -9649,11 +9688,71 @@ Oracle:[-6]: You get an emblem with "At the beginning of each opponent's upkeep,
             .find(|s| matches!(s, StaticAbility::CharacteristicDefiningPt { .. }))
             .expect("Serra Avatar must produce a CharacteristicDefiningPt static ability");
 
-        if let StaticAbility::CharacteristicDefiningPt { source, .. } = sa {
+        if let StaticAbility::CharacteristicDefiningPt {
+            power_source,
+            toughness_source,
+            ..
+        } = sa
+        {
             assert_eq!(
-                *source,
+                *power_source,
                 CdaPtSource::ControllerLifeTotal,
-                "Serra Avatar CDA source must be ControllerLifeTotal"
+                "Serra Avatar CDA power_source must be ControllerLifeTotal"
+            );
+            assert_eq!(
+                *toughness_source,
+                CdaPtSource::ControllerLifeTotal,
+                "Serra Avatar CDA toughness_source must be ControllerLifeTotal"
+            );
+        } else {
+            panic!("Expected CharacteristicDefiningPt");
+        }
+    }
+
+    /// Parser unit test: Lhurgoyf's `S:Mode$ Continuous | CharacteristicDefining$ True
+    /// | SetPower$ X | SetToughness$ Y` (SVar:X:Count$ValidGraveyard Creature,
+    /// SVar:Y:Count$ValidGraveyard Creature/Plus.1) must parse to
+    /// `StaticAbility::CharacteristicDefiningPt { power_source: AllGraveyardCreatures { None },
+    /// toughness_source: AllGraveyardCreatures { Plus(1) } }` (mtg-916 B2).
+    #[cfg(feature = "native")]
+    #[test]
+    fn test_parse_lhurgoyf_cda_pt() {
+        use crate::core::{CdaPtSource, CountModifier, StaticAbility};
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("../cardsfolder/l/lhurgoyf.txt");
+        if !path.exists() {
+            eprintln!("Skipping: cardsfolder not present");
+            return;
+        }
+        let def = CardLoader::load_from_file(&path).expect("Lhurgoyf should load");
+        let card = def.instantiate(crate::core::CardId::new(1), crate::core::PlayerId::new(0));
+
+        let sa = card
+            .static_abilities
+            .iter()
+            .find(|s| matches!(s, StaticAbility::CharacteristicDefiningPt { .. }))
+            .expect("Lhurgoyf must produce a CharacteristicDefiningPt static ability");
+
+        if let StaticAbility::CharacteristicDefiningPt {
+            power_source,
+            toughness_source,
+            ..
+        } = sa
+        {
+            assert_eq!(
+                *power_source,
+                CdaPtSource::AllGraveyardCreatures {
+                    modifier: CountModifier::None
+                },
+                "Lhurgoyf power_source must be AllGraveyardCreatures with no modifier"
+            );
+            assert_eq!(
+                *toughness_source,
+                CdaPtSource::AllGraveyardCreatures {
+                    modifier: CountModifier::Plus(1)
+                },
+                "Lhurgoyf toughness_source must be AllGraveyardCreatures+1"
             );
         } else {
             panic!("Expected CharacteristicDefiningPt");

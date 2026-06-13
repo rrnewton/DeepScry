@@ -4271,8 +4271,10 @@ pub enum StaticAbility {
     ///
     /// Applied in `GameState::get_pt_breakdown`, layer 7a (characteristic_value).
     CharacteristicDefiningPt {
-        /// What value to set power and toughness to.
-        source: CdaPtSource,
+        /// What value to set power to.
+        power_source: CdaPtSource,
+        /// What value to set toughness to (often the same as `power_source`).
+        toughness_source: CdaPtSource,
         /// Description for logging.
         description: String,
     },
@@ -4417,12 +4419,26 @@ pub enum AltCostCondition {
 
 /// Source expression for a CharacteristicDefiningPt static ability.
 ///
+/// Each variant evaluates to a single integer used as power or toughness.
 /// Evaluated dynamically at game-state layer-7a resolution.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CdaPtSource {
     /// P/T = controller's current life total.
     /// Serra Avatar: `SVar:X:Count$YourLifeTotal`
     ControllerLifeTotal,
+
+    /// Count of creature cards across ALL players' graveyards, with an optional
+    /// arithmetic post-modifier.
+    ///
+    /// Lhurgoyf power: `SVar:X:Count$ValidGraveyard Creature` → modifier None.
+    /// Lhurgoyf toughness: `SVar:Y:Count$ValidGraveyard Creature/Plus.1` → modifier Plus(1).
+    ///
+    /// Graveyard contents are public (CR 400.2), so this is information-independent
+    /// and safe for network determinism.
+    AllGraveyardCreatures {
+        /// Arithmetic post-modifier applied to the raw count (`/Plus.N`, `/Minus.N`).
+        modifier: crate::core::CountModifier,
+    },
 }
 
 /// Target selector for cost reduction abilities

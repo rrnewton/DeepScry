@@ -731,22 +731,51 @@ impl GameState {
 
         let creature = self.cards.get(creature_id)?;
         for sa in &creature.static_abilities {
-            if let StaticAbility::CharacteristicDefiningPt { source, .. } = sa {
-                let value = match source {
-                    CdaPtSource::ControllerLifeTotal => {
-                        // Serra Avatar: P/T = controller's current life total.
-                        // Life total is public state (CR 119.1), so this is
-                        // information-independent and network-determinism-safe.
-                        let life = self
-                            .players
-                            .iter()
-                            .find(|p| p.id == creature.controller)
-                            .map(|p| p.life)
-                            .unwrap_or(0);
-                        (life, life)
+            if let StaticAbility::CharacteristicDefiningPt {
+                power_source,
+                toughness_source,
+                ..
+            } = sa
+            {
+                let eval = |src: &CdaPtSource| -> i32 {
+                    match src {
+                        CdaPtSource::ControllerLifeTotal => {
+                            // Serra Avatar: P/T = controller's current life total.
+                            // Life total is public state (CR 119.1), so this is
+                            // information-independent and network-determinism-safe.
+                            self.players
+                                .iter()
+                                .find(|p| p.id == creature.controller)
+                                .map(|p| p.life)
+                                .unwrap_or(0)
+                        }
+                        CdaPtSource::AllGraveyardCreatures { modifier } => {
+                            // Lhurgoyf: count creature cards across ALL players'
+                            // graveyards. Graveyard contents are public (CR 400.2),
+                            // so this is information-independent.
+                            let raw: i32 = self
+                                .player_zones
+                                .iter()
+                                .map(|(_, zones)| {
+                                    zones
+                                        .graveyard
+                                        .cards
+                                        .iter()
+                                        .filter(|&&cid| {
+                                            self.cards.try_get(cid).map(|c| c.is_creature()).unwrap_or(false)
+                                        })
+                                        .count()
+                                })
+                                .sum::<usize>()
+                                .try_into()
+                                .unwrap_or(i32::MAX);
+                            modifier.apply(raw)
+                        }
                     }
                 };
-                return Ok(Some(value));
+                let power = eval(power_source);
+                let toughness = eval(toughness_source);
+                return Ok(Some((power, toughness)));
             }
         }
         Ok(None)
