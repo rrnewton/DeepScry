@@ -224,6 +224,39 @@
         }
         /* ── end active-turn glow ─────────────────────────────────────────── */
 
+        /* ── Drag-and-drop: hand → battlefield ────────────────────────────
+           Cards being dragged get reduced opacity; the player battlefield
+           pane lights up as the valid drop zone while a hand card is in
+           flight. The .drag-drop-zone class is toggled by JS during the
+           drag. Tune the colors / animation here without touching JS.
+        */
+        @keyframes drop-zone-pulse {
+            0%   { box-shadow: 0 0 10px 3px rgba(100, 220, 255, 0.50),
+                               inset 0 0 0 2px rgba(100, 220, 255, 0.40); }
+            50%  { box-shadow: 0 0 20px 8px rgba(100, 220, 255, 0.80),
+                               0 0 40px 14px rgba(100, 220, 255, 0.30),
+                               inset 0 0 0 2px rgba(100, 220, 255, 0.70); }
+            100% { box-shadow: 0 0 10px 3px rgba(100, 220, 255, 0.50),
+                               inset 0 0 0 2px rgba(100, 220, 255, 0.40); }
+        }
+        /* Active drop zone: cyan/blue dashed border + pulsing glow */
+        .pane.drag-drop-zone {
+            border: 2px dashed #64dcff !important;
+            animation: drop-zone-pulse 1.0s ease-in-out infinite;
+            z-index: 3;
+        }
+        .pane.drag-drop-zone .pane-header {
+            background: #001a2e;
+            color: #64dcff;
+            border-bottom-color: #64dcff;
+        }
+        /* Dragging card: ghost it slightly */
+        .hand-entry.dragging,
+        .hand-card-visual.dragging {
+            opacity: 0.45;
+        }
+        /* ── end drag-and-drop ─────────────────────────────────────────────── */
+
         /* Left column */
         .left-col {
             display: flex;
@@ -3855,6 +3888,191 @@
             });
         }
         setupEventDelegation();
+
+        // ==================== DRAG-AND-DROP: hand → player battlefield ====================
+        //
+        // Design: HTML5 drag-and-drop (draggable attribute + dragstart/dragover/
+        // drop events). Works for both visual (.hand-card-visual) and text
+        // (.hand-entry) hand elements since both carry data-card-id.
+        //
+        // Submission path: identical to the Action pane click handler.
+        //   1. selectCardById(cardId) — selects the card in the WASM engine.
+        //   2. Search _viewModel.choices for a "Cast X" / "Play X" action whose
+        //      text contains the card's name (case-insensitive prefix match on
+        //      common play verbs: "cast", "play", "put").
+        //   3. If exactly one unambiguous match is found → selectAction(idx).
+        //   4. If none or multiple matches → fall back to the click-to-select
+        //      flow (card detail pane opens, user picks action manually).
+        //
+        // Limitation: cards that require follow-up choices (targets, X cost,
+        // modal selections) land in case 4 above — the drag selects the card
+        // and opens the details pane but does NOT auto-submit. The user then
+        // picks the action from the Actions pane as normal. This is intentional:
+        // auto-submitting an ambiguous or multi-step cast would bypass engine
+        // validation. Genuinely unambiguous permanents (lands, most creatures,
+        // enchantments, artifacts) play immediately on drop.
+        //
+        // Drop-zone highlight: .drag-drop-zone CSS class on #pane-player-field.
+        // It is set on dragenter and cleared on dragleave / dragend / drop so it
+        // never gets stuck. The class name is deliberately generic — when we
+        // later add per-permanent targeting, we will add the same class to
+        // additional panes/cards to light up valid targets.
+
+        (function setupDragDrop() {
+            const DROP_PANE_ID = 'pane-player-field';
+            const DRAG_DATA_KEY = 'text/x-mtg-card-id'; // opaque key for our payload
+
+            // The element currently being dragged from the hand (for .dragging class).
+            let _dragSourceEl = null;
+
+            // ── Make hand cards draggable ──────────────────────────────────────
+            // Called after each hand render (both text and visual modes) to
+            // attach draggable=true and the dragstart handler to every card
+            // element. We use event delegation on hand-body to keep it DRY.
+            const handBody = document.getElementById('hand-body');
+            if (!handBody) return; // paranoia; hand-body is always present post-launch
+
+            handBody.addEventListener('dragstart', (e) => {
+                const el = e.target.closest('.hand-entry, .hand-card-visual');
+                if (!el) { e.preventDefault(); return; }
+                const cardId = parseInt(el.dataset.cardId, 10);
+                if (isNaN(cardId)) { e.preventDefault(); return; }
+
+                _dragSourceEl = el;
+                el.classList.add('dragging');
+
+                // Store card_id and name in the drag payload. Name is read from
+                // the view model's card index so both hand modes share the same
+                // lookup without re-parsing the DOM.
+                const cardView = _cardIndex.get(cardId);
+                const cardName = cardView?.name ?? el.textContent?.trim() ?? '';
+
+                e.dataTransfer.effectAllowed = 'move';
+                e.dataTransfer.setData(DRAG_DATA_KEY, JSON.stringify({ cardId, cardName }));
+                debugLog(`dragstart: card_id=${cardId} name="${cardName}"`);
+            });
+
+            handBody.addEventListener('dragend', (e) => {
+                if (_dragSourceEl) {
+                    _dragSourceEl.classList.remove('dragging');
+                    _dragSourceEl = null;
+                }
+                // Always clear drop-zone highlight on dragend (catches the case
+                // where the user releases outside the drop target).
+                clearDropZone();
+            });
+
+            // ── Drop-zone helpers ──────────────────────────────────────────────
+            const dropPane = document.getElementById(DROP_PANE_ID);
+            if (!dropPane) return;
+
+            // Track enter/leave nesting so we don't flicker the highlight when
+            // the pointer moves over children of the drop pane.
+            let _enterCount = 0;
+
+            function activateDropZone() {
+                dropPane.classList.add('drag-drop-zone');
+            }
+            function clearDropZone() {
+                _enterCount = 0;
+                dropPane.classList.remove('drag-drop-zone');
+            }
+
+            dropPane.addEventListener('dragenter', (e) => {
+                // Only respond to drags carrying our MTG card payload.
+                if (!e.dataTransfer.types.includes(DRAG_DATA_KEY)) return;
+                e.preventDefault();
+                _enterCount++;
+                activateDropZone();
+            });
+
+            dropPane.addEventListener('dragover', (e) => {
+                if (!e.dataTransfer.types.includes(DRAG_DATA_KEY)) return;
+                e.preventDefault(); // required to allow drop
+                e.dataTransfer.dropEffect = 'move';
+            });
+
+            dropPane.addEventListener('dragleave', (e) => {
+                _enterCount = Math.max(0, _enterCount - 1);
+                if (_enterCount === 0) clearDropZone();
+            });
+
+            dropPane.addEventListener('drop', (e) => {
+                e.preventDefault();
+                clearDropZone();
+                if (_dragSourceEl) {
+                    _dragSourceEl.classList.remove('dragging');
+                    _dragSourceEl = null;
+                }
+
+                // Parse the drag payload.
+                let payload;
+                try {
+                    payload = JSON.parse(e.dataTransfer.getData(DRAG_DATA_KEY));
+                } catch (_) { return; }
+                const { cardId, cardName } = payload;
+                if (!cardId || !cardName) return;
+
+                debugLog(`drop on ${DROP_PANE_ID}: card_id=${cardId} name="${cardName}"`);
+
+                // Step 1: select the card in the engine (same as clicking it).
+                selectCardById(cardId, 'hand-drag');
+
+                // Step 2: find the play/cast action in the current choices.
+                // We match on the card name (case-insensitive) inside the choice
+                // text. Accepted prefixes (MTG play verbs): Cast, Play, Put.
+                // We look at the view model choices cached from the LAST updateUI
+                // tick. After tui_select_card the engine may update available
+                // choices; for simple permanents (lands, creatures, etc.) the
+                // same actions are available regardless of selection, so this
+                // is reliable in the common case.
+                const choices = _viewModel?.choices ?? [];
+                const nameLower = cardName.toLowerCase();
+                const playVerbs = ['cast ', 'play ', 'put '];
+                const matches = choices.filter((c) => {
+                    const t = c.text.toLowerCase();
+                    return playVerbs.some(v => t.startsWith(v)) && t.includes(nameLower);
+                });
+
+                if (matches.length === 1) {
+                    // Unambiguous match → submit the action directly.
+                    debugLog(`drag-drop play: found action idx=${matches[0].index} "${matches[0].text}"`);
+                    selectAction(matches[0].index);
+                } else if (matches.length === 0) {
+                    // No play action found. The card is selected in the details
+                    // pane; the user can pick an action from the Actions list.
+                    debugLog(`drag-drop: no matching play action for "${cardName}" — card selected, user picks action`);
+                    // updateUI to ensure the details pane reflects the selection.
+                    setTimeout(updateUI, 50);
+                } else {
+                    // Multiple matches (ambiguous). Select the card and let the
+                    // user choose from the Actions pane.
+                    debugLog(`drag-drop: ${matches.length} matching actions for "${cardName}" — falling back to manual pick`);
+                    setTimeout(updateUI, 50);
+                }
+            });
+
+            // Make the hand-body a drag container: set draggable=true on card
+            // children dynamically. We do this via a MutationObserver so any
+            // re-renders (hand size changes, mode toggles) keep cards draggable
+            // without re-running setup code.
+            function applyDraggableToHandCards() {
+                for (const el of handBody.querySelectorAll('.hand-entry, .hand-card-visual')) {
+                    if (!el.getAttribute('draggable')) {
+                        el.setAttribute('draggable', 'true');
+                    }
+                }
+            }
+
+            // Initial pass (cards already in DOM on first setup call).
+            applyDraggableToHandCards();
+
+            // Watch for DOM changes inside hand-body and keep cards draggable.
+            const handObserver = new MutationObserver(applyDraggableToHandCards);
+            handObserver.observe(handBody, { childList: true, subtree: true });
+        })();
+
+        // ==================== END DRAG-AND-DROP ====================
 
         // ==================== START ====================
         main();
