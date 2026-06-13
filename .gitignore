@@ -70,6 +70,9 @@ agentplay/*.game/
 agentplay/current.game
 full_deck_list.txt
 *.log
+# Golden game-log snapshot files are TRACKED (committed) — they are the oracle.
+# Exception to *.log above: test_puzzles/goldens/ and puzzles/goldens/ are version-controlled.
+!*.golden.log
 *.data
 backfill_benchmarks.log
 experiment_results/**/perf_history.csv.backfill*

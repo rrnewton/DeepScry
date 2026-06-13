@@ -381,6 +381,18 @@ def build_registry():
              "bulk puzzle runner: all ~694 .pzl files, N-way parallel, assertions+smoke",
              "make puzzle-bulk-check",
              deps=["build.mtg-release"], env=_REUSE))
+    # --- puzzle golden-log snapshot oracle (locally-authored puzzles only) ---
+    # Captures the human-readable game log for each of the ~331 local .pzl files
+    # (test_puzzles/ + puzzles/; forge-java corpus excluded — too many pre-existing
+    # panics) and compares against committed golden files in
+    # test_puzzles/goldens/ and puzzles/goldens/.
+    # A mismatch = unexpected log change = fails CI.
+    # Deliberate log-format change? Re-bless in ONE command: `make puzzle-bless`.
+    # Tracking issue: mtg-0oopj
+    add(Step("puzzle", "golden-check",
+             "puzzle golden game-log oracle: local puzzles only, committed diffs = regression",
+             "make puzzle-golden-check",
+             deps=["build.mtg-release"], env=_REUSE))
     # --- examples (build-once debug build, then run pre-built binaries in parallel) ---
     # run_examples.sh does ONE `cargo build --examples` then runs the pre-built
     # binaries with `xargs -P$(nproc)`.  No per-example cargo invocation, no

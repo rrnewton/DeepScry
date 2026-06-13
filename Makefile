@@ -1,7 +1,7 @@
 # MTG Forge Rust - Development Makefile
 #
 # Quick reference for common development tasks
-.PHONY: help build build-release build-profiling test puzzle-bulk-check validate validate-desync-canary fuzz-determinism fuzz-equivalence fuzz-network fuzz-native-wasm fuzz-snapshot fuzz-expedition clean run check fmt fmt-check clippy clippy-wasm doc docs examples full-benchmark bench-snapshot bench-logging coverage coverage-full validate-coverage-step profile callgrindprofile perfprofile heapprofile dhatprofile count setup-claude claude-github claude-beads happy code-dups beads-check bench wasm wasm-export wasm-serve wasm-dev play-web-local-dev wasm-test wasm-test-fancy wasm-test-fancy-dev wasm-test-human wasm-test-game-gui-rebuild wasm-test-game-gui-playtest wasm-e2e wasm-e2e-dev wasm-e2e-network wasm-e2e-network-human play-web play-web-pvp play-web-local build-network
+.PHONY: help build build-release build-profiling test puzzle-bulk-check puzzle-golden-check puzzle-bless validate validate-desync-canary fuzz-determinism fuzz-equivalence fuzz-network fuzz-native-wasm fuzz-snapshot fuzz-expedition clean run check fmt fmt-check clippy clippy-wasm doc docs examples full-benchmark bench-snapshot bench-logging coverage coverage-full validate-coverage-step profile callgrindprofile perfprofile heapprofile dhatprofile count setup-claude claude-github claude-beads happy code-dups beads-check bench wasm wasm-export wasm-serve wasm-dev play-web-local-dev wasm-test wasm-test-fancy wasm-test-fancy-dev wasm-test-human wasm-test-game-gui-rebuild wasm-test-game-gui-playtest wasm-e2e wasm-e2e-dev wasm-e2e-network wasm-e2e-network-human play-web play-web-pvp play-web-local build-network
 
 # Configuration variables
 # NODE: Node.js binary (Playwright requires Node 18+)
@@ -125,6 +125,44 @@ puzzle-bulk-check:
 		cargo nextest run --features network \
 			--test puzzle_bulk_runner --test-threads 1; \
 	fi
+
+# Golden game-log snapshot oracle for locally-authored puzzles.
+# Compares each puzzle's captured game log against committed golden files in
+# test_puzzles/goldens/ and puzzles/goldens/.  A mismatch FAILS this step.
+# Forge-java corpus is excluded (too many pre-existing panics).
+# Tracking issue: mtg-0oopj
+puzzle-golden-check:
+	@echo "=== Running puzzle golden-log check (local puzzles only) ==="
+	@if [ -n "$(NEXTEST_ARCHIVE)" ]; then \
+		echo "=== Reusing prebuilt nextest archive: $(NEXTEST_ARCHIVE) ==="; \
+		cargo nextest run --archive-file "$(NEXTEST_ARCHIVE)" --workspace-remap . \
+			--test puzzle_golden_check --test-threads 1; \
+	else \
+		cargo nextest run --features network \
+			--test puzzle_golden_check --test-threads 1; \
+	fi
+
+# Re-bless ALL golden game-log files from the current engine output.
+#
+# Use this after an INTENTIONAL log-format change (e.g. a formatting tweak or
+# a new log message added to the engine).  One command regenerates every golden
+# so the next `make validate` / `make puzzle-golden-check` is green again.
+#
+#   make puzzle-bless
+#
+# After blessing, review the diff (`git diff test_puzzles/goldens/ puzzles/goldens/`)
+# to confirm the changes are what you expected, then commit the updated goldens.
+puzzle-bless:
+	@echo "=== Blessing puzzle golden logs (writing from current engine output) ==="
+	@if [ -n "$(NEXTEST_ARCHIVE)" ]; then \
+		echo "=== Reusing prebuilt nextest archive: $(NEXTEST_ARCHIVE) ==="; \
+		MTG_BLESS_GOLDEN=1 cargo nextest run --archive-file "$(NEXTEST_ARCHIVE)" --workspace-remap . \
+			--test puzzle_golden_check --test-threads 1; \
+	else \
+		MTG_BLESS_GOLDEN=1 cargo nextest run --features network \
+			--test puzzle_golden_check --test-threads 1; \
+	fi
+	@echo "=== Golden files updated. Review with: git diff test_puzzles/goldens/ puzzles/goldens/ ==="
 
 # Fast compilation check (no codegen)
 check:
