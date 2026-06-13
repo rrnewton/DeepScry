@@ -4570,7 +4570,7 @@ Oracle:Target creature gets +3/+1 until end of turn. Create a Clue token.
                 let p1 = game.players[0].id;
                 let mut card = Card::new(CardId::new(1), "Test", p1);
                 card.mana_cost = ManaCost::from_string("1G"); // CMC = 2
-                let mut r = restriction.clone();
+                let mut r = restriction;
                 r.exact_cmc = Some(2);
                 r.cmc_eq_svar = false;
                 assert!(r.matches(&card), "CMC-2 card should match exact_cmc=2");
