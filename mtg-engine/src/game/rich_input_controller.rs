@@ -1071,6 +1071,6 @@ mod tests {
         // Should not panic; the malformed directive is consumed and "pass" runs
         let result = controller.choose_spell_ability_to_play(&view, &abilities);
         // Either passes priority or runs "pass" — either way, ChoiceResult::Ok(None)
-        assert!(matches!(result, ChoiceResult::Ok(None) | ChoiceResult::Ok(Some(_))));
+        assert!(matches!(result, ChoiceResult::Ok(None | Some(_))));
     }
 }
