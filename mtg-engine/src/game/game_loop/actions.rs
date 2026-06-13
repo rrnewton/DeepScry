@@ -644,6 +644,15 @@ impl<'a> GameLoop<'a> {
     pub(crate) fn push_castable_spells(&mut self, player_id: PlayerId) {
         use crate::core::SpellAbility;
 
+        // CR 702.88b: Epic — player can't cast spells for the rest of the game.
+        if self
+            .game
+            .try_get_player(player_id)
+            .map_or(false, |p| p.cant_cast_spells)
+        {
+            return;
+        }
+
         // Update the mana engine for this player
         self.mana_engine.update_mut(self.game, player_id);
 

@@ -531,11 +531,13 @@ impl HeuristicController {
             return true;
         }
 
-        // Check for UntapAll effects
-        let has_untap_all = spell
-            .effects
-            .iter()
-            .any(|e| matches!(e, crate::core::Effect::UntapAll { .. }));
+        // Check for UntapAll / UntapOne effects
+        let has_untap_all = spell.effects.iter().any(|e| {
+            matches!(
+                e,
+                crate::core::Effect::UntapAll { .. } | crate::core::Effect::UntapOne { .. }
+            )
+        });
         if has_untap_all && self.should_cast_untap_all(view) {
             return true;
         }

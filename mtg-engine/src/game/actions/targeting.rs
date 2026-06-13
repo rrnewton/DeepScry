@@ -683,6 +683,7 @@ impl GameState {
                             | Effect::SacrificeSelf { .. }
                             | Effect::TapAll { .. }
                             | Effect::UntapAll { .. }
+                            | Effect::UntapOne { .. }
                             | Effect::SetLife { .. }
                             | Effect::CreateDelayedTrigger { .. }
                             | Effect::CopySpellAbility { .. }
@@ -767,6 +768,7 @@ impl GameState {
                 | Effect::SacrificeSelf { .. }
                 | Effect::TapAll { .. }
                 | Effect::UntapAll { .. }
+                | Effect::UntapOne { .. }
                 | Effect::SetLife { .. }
                 | Effect::ChooseColor { .. }
                 | Effect::Clone { .. }
@@ -1428,6 +1430,7 @@ impl GameState {
                 | Effect::DestroyAll { .. }
                 | Effect::PutCounterAll { .. }
                 | Effect::UntapAll { .. }
+                | Effect::UntapOne { .. }
                 | Effect::Unimplemented { .. }
                 | Effect::NoOp { .. }
                 | Effect::ClassLevelUp { .. }
@@ -1853,6 +1856,7 @@ impl GameState {
             | Effect::SacrificeSelf { .. }
             | Effect::TapAll { .. }
             | Effect::UntapAll { .. }
+            | Effect::UntapOne { .. }
             | Effect::SetLife { .. }
             | Effect::GainControl { .. }
             | Effect::PutCounterAll { .. }

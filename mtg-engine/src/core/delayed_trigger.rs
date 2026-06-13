@@ -60,6 +60,13 @@ pub struct DelayedTrigger {
     /// resolution, and so it is part of serialized game state.
     #[serde(default)]
     pub remembered_amount: Option<u32>,
+
+    /// If true, this trigger re-registers itself after firing (for the rest of
+    /// the game). Used by the Epic mechanic (CR 702.88): "at the beginning of
+    /// each of your upkeeps, copy this spell except for its epic ability." The
+    /// trigger fires every upkeep and never expires.
+    #[serde(default)]
+    pub repeating: bool,
 }
 
 impl DelayedTrigger {
@@ -81,12 +88,20 @@ impl DelayedTrigger {
             effect,
             expiry: None,
             remembered_amount: None,
+            repeating: false,
         }
     }
 
     /// Add an expiry condition
     pub fn with_expiry(mut self, expiry: DelayedTriggerExpiry) -> Self {
         self.expiry = Some(expiry);
+        self
+    }
+
+    /// Mark this trigger as repeating (re-registers itself after firing).
+    /// Used by the Epic mechanic (CR 702.88).
+    pub fn repeating(mut self) -> Self {
+        self.repeating = true;
         self
     }
 

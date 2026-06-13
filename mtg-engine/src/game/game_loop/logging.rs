@@ -1122,6 +1122,10 @@ impl<'a> GameLoop<'a> {
                 let message = format!("{source_name} ({source_id}) untaps all matching permanents");
                 self.game.logger.gamelog(&message);
             }
+            Effect::UntapOne { .. } => {
+                let message = format!("{source_name} ({source_id}) untaps one matching permanent");
+                self.game.logger.gamelog(&message);
+            }
             Effect::DrainMana { .. } => {
                 // The "loses all unspent mana" line is emitted by execute_effect
                 // once the player sentinel is resolved and the actual drained

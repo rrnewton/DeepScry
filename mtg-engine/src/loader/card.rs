@@ -3207,6 +3207,20 @@ impl CardDefinition {
                                     svar_params,
                                 ));
                             }
+                            // DB$ Untap | UntapExactly$ True | UntapType$ <filter> | Amount$ 1
+                            // | Defined$ TriggeredPlayer
+                            // Hokori, Dust Drinker's upkeep trigger: "at the beginning of each
+                            // player's upkeep, that player untaps a land they control."
+                            // UntapExactly$ True + Amount$ 1 means exactly one permanent.
+                            // UntapType$ provides the filter; Defined$ TriggeredPlayer means
+                            // the triggering player's resources are untapped (resolved by the
+                            // ActivePlayerCtrl controller restriction at fire-time).
+                            if svar_params.api_type == ApiType::Untap && svar_params.get("UntapExactly") == Some("True")
+                            {
+                                let untap_type = svar_params.get("UntapType").unwrap_or("Permanent");
+                                let restriction = crate::core::effects::TargetRestriction::parse(untap_type);
+                                effects.push(Effect::UntapOne { restriction });
+                            }
                             // DB$ Earthbend effects
                             // Example: "DB$ Earthbend | Num$ 8"
                             if svar_params.api_type == ApiType::Earthbend {

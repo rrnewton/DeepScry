@@ -1657,6 +1657,11 @@ pub enum Effect {
     /// Example: "Untap all creatures you control"
     UntapAll { restriction: TargetRestriction },
 
+    /// Untap exactly one (the first tapped) permanent matching a filter.
+    /// Used for Hokori, Dust Drinker's upkeep trigger: "that player untaps a
+    /// land they control" — one land, player's choice resolved as first tapped.
+    UntapOne { restriction: TargetRestriction },
+
     /// Set a player's life total to a specific value
     /// Example: "Target opponent's life total becomes 10" (Sorin Markov)
     SetLife { player: PlayerId, amount: i32 },
@@ -3253,6 +3258,7 @@ impl Effect {
             | Effect::DamageAll { .. }
             | Effect::TapAll { .. }
             | Effect::UntapAll { .. }
+            | Effect::UntapOne { .. }
             | Effect::PutCounterAll { .. }
             | Effect::ChangeZoneAll { .. }
             | Effect::TapPermanentsMatchingFilter { .. } => EffectTargetCategory::UsesFilter,

@@ -4,7 +4,8 @@
 //! Groups the effects that tap or untap permanents (CR 701.21 / 701.22):
 //! - [`Effect::TapPermanent`] / [`Effect::UntapPermanent`] / single-target,
 //! - [`Effect::TapOrUntapPermanent`] (AI chooses),
-//! - [`Effect::TapAll`] / [`Effect::UntapAll`] (mass, filtered).
+//! - [`Effect::TapAll`] / [`Effect::UntapAll`] (mass, filtered),
+//! - [`Effect::UntapOne`] (untap exactly one matching permanent, e.g. Hokori).
 //!
 //! All handlers route tap/untap through the `tap_permanent` / `untap_permanent`
 //! helpers (NOT direct `card.tapped` writes) so the undo log, the
@@ -213,6 +214,29 @@ impl GameState {
             // Route through untap_permanent so the undo log, ManaSourceCache
             // untapped counts, and mana_state_version stay consistent (see
             // the matching note in Effect::TapAll above).
+            let card_name = self.cards.get(card_id)?.name.clone();
+            self.untap_permanent(card_id)?;
+            self.logger.gamelog(&format!("{} ({}) is untapped", card_name, card_id));
+        }
+        Ok(())
+    }
+
+    /// [`Effect::UntapOne`]: untap the first tapped permanent matching
+    /// `restriction` (controller-aware). Used by Hokori, Dust Drinker's upkeep
+    /// trigger — "that player untaps a land they control" (CR 701.22).
+    pub(in crate::game::actions) fn execute_untap_one(
+        &mut self,
+        restriction: &crate::core::effects::TargetRestriction,
+    ) -> Result<()> {
+        let spell_controller = self.turn.active_player;
+        let target = self.battlefield.cards.iter().copied().find(|&card_id| {
+            self.cards
+                .get(card_id)
+                .map(|card| card.tapped && restriction.matches_with_controller(card, spell_controller, card.controller))
+                .unwrap_or(false)
+        });
+
+        if let Some(card_id) = target {
             let card_name = self.cards.get(card_id)?.name.clone();
             self.untap_permanent(card_id)?;
             self.logger.gamelog(&format!("{} ({}) is untapped", card_name, card_id));

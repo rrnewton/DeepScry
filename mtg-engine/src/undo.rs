@@ -519,6 +519,15 @@ pub enum GameAction {
         new_value: bool,
     },
 
+    /// Set the `Player::cant_cast_spells` flag (Epic mechanic, CR 702.88b).
+    ///
+    /// Once set this flag is permanent (never cleared during normal play).
+    SetCantCastSpells {
+        player_id: PlayerId,
+        /// Value before this action (always false on the way in).
+        old_value: bool,
+    },
+
     /// Records that a brand-new entity (a token, via `Effect::CreateToken`) was
     /// minted: `next_card_id()` advanced `next_entity_id`, the instance was
     /// inserted into the EntityStore, and it was added to the battlefield — all
@@ -937,6 +946,9 @@ impl fmt::Display for GameAction {
                 old_value,
                 new_value
             ),
+            GameAction::SetCantCastSpells { player_id, old_value } => {
+                write!(f, "SetCantCastSpells(P{} {} -> true)", player_id.as_u32(), old_value,)
+            }
             GameAction::CreateEntity { card_id } => {
                 write!(f, "CreateEntity(card={})", card_id.as_u32())
             }
@@ -1735,6 +1747,12 @@ impl GameAction {
                 // Restore the previous skip_untap_next_turn flag value.
                 if let Some(player) = game.players.iter_mut().find(|p| p.id == *player_id) {
                     player.skip_untap_next_turn = *old_value;
+                }
+            }
+            GameAction::SetCantCastSpells { player_id, old_value } => {
+                // Restore the previous cant_cast_spells flag value (Epic undo).
+                if let Some(player) = game.players.iter_mut().find(|p| p.id == *player_id) {
+                    player.cant_cast_spells = *old_value;
                 }
             }
             GameAction::CreateEntity { card_id } => {

@@ -4655,6 +4655,26 @@ impl GameState {
         let card_id = trigger.tracked_card;
         let controller = trigger.controller;
         let remembered_amount = trigger.remembered_amount;
+        let repeating = trigger.repeating;
+
+        // CR 702.88c/d: snapshot for re-registration BEFORE the match consumes
+        // `trigger`. Epic upkeep triggers are repeating and must fire every
+        // subsequent upkeep for the rest of the game.
+        let re_trigger_snapshot: Option<crate::core::DelayedTrigger> = if repeating {
+            Some(crate::core::DelayedTrigger {
+                id: crate::core::DelayedTriggerId::new(0), // assigned by add()
+                tracked_card: trigger.tracked_card,
+                source_card: trigger.source_card,
+                controller: trigger.controller,
+                trigger_condition: trigger.trigger_condition.clone(),
+                effect: trigger.effect.clone(),
+                expiry: None,
+                remembered_amount: None,
+                repeating: true,
+            })
+        } else {
+            None
+        };
 
         match trigger.effect {
             DelayedEffect::ReturnToBattlefield { tapped, to_owner } => {
@@ -5040,6 +5060,41 @@ impl GameState {
                         self.execute_effect(&effect_clone)?;
                     }
 
+                    // CR 702.88c: Epic upkeep copy — re-execute the original
+                    // spell's SearchLibrary effect (search library for an
+                    // enchantment, put it onto the battlefield). This is the
+                    // Enduring Ideal case: every upkeep the trigger fires and
+                    // fetches the next enchantment from the library.
+                    crate::core::Effect::SearchLibrary {
+                        player: _player,
+                        ref card_type_filter,
+                        destination,
+                        enters_tapped,
+                        shuffle,
+                    } => {
+                        // Re-execute with controller as the searching player (the
+                        // trigger was registered with the Epic spell's owner as
+                        // `controller`). Cloning the string here is the same cost
+                        // as the spell's first resolution; no hot-path concern.
+                        let filter = card_type_filter.clone();
+                        let dest = destination;
+                        let tapped = enters_tapped;
+                        let do_shuffle = shuffle;
+                        let resolved_effect = crate::core::Effect::SearchLibrary {
+                            player: controller,
+                            card_type_filter: filter,
+                            destination: dest,
+                            enters_tapped: tapped,
+                            shuffle: do_shuffle,
+                        };
+                        let player_name = self.get_player(controller).map(|p| p.name.to_string()).ok();
+                        self.logger.gamelog(&format!(
+                            "{} copies Epic effect (search library → {:?})",
+                            player_name.as_deref().unwrap_or("Player"),
+                            dest,
+                        ));
+                        self.execute_effect(&resolved_effect)?;
+                    }
                     crate::core::Effect::DealDamage { .. }
                     | crate::core::Effect::DealDamageDivided { .. }
                     | crate::core::Effect::DealDamageDynamic { .. }
@@ -5089,6 +5144,7 @@ impl GameState {
                     | crate::core::Effect::SacrificeSelf { .. }
                     | crate::core::Effect::TapAll { .. }
                     | crate::core::Effect::UntapAll { .. }
+                    | crate::core::Effect::UntapOne { .. }
                     | crate::core::Effect::SetLife { .. }
                     | crate::core::Effect::ModalChoice { .. }
                     | crate::core::Effect::Dig { .. }
@@ -5143,6 +5199,11 @@ impl GameState {
                     }
                 }
             }
+        }
+
+        // Re-register after firing if this is a repeating (Epic) trigger.
+        if let Some(re_trigger) = re_trigger_snapshot {
+            self.delayed_triggers.add(re_trigger);
         }
 
         Ok(())

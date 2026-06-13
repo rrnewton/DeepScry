@@ -106,6 +106,11 @@ pub struct Player {
     /// mana cost (see `push_castable_spells` in `actions.rs`).
     #[serde(default)]
     pub had_creature_countered_this_turn: bool,
+
+    /// When true, this player can't cast spells for the rest of the game
+    /// (CR 702.88b: Epic — "For the rest of the game, you can't cast spells.").
+    #[serde(default)]
+    pub cant_cast_spells: bool,
 }
 
 impl Player {
@@ -130,6 +135,7 @@ impl Player {
             skip_untap_next_turn: false,
             island_sanctuary_protected: false,
             had_creature_countered_this_turn: false,
+            cant_cast_spells: false,
         }
     }
 

@@ -195,6 +195,7 @@ fn expand_all_players_effect(effect: &Effect, player_ids: &[PlayerId]) -> smallv
         | Effect::DamageAll { .. }
         | Effect::TapAll { .. }
         | Effect::UntapAll { .. }
+        | Effect::UntapOne { .. }
         | Effect::GainControl { .. }
         | Effect::Fight { .. }
         | Effect::TapPermanent { .. }
@@ -337,6 +338,7 @@ fn expand_all_players_effect(effect: &Effect, player_ids: &[PlayerId]) -> smallv
             | Effect::DamageAll { .. }
             | Effect::TapAll { .. }
             | Effect::UntapAll { .. }
+            | Effect::UntapOne { .. }
             | Effect::GainControl { .. }
             | Effect::Fight { .. }
             | Effect::TapPermanent { .. }
@@ -1114,6 +1116,97 @@ impl GameState {
         };
         if is_adventure_spell && self.stack.contains(card_id) {
             return self.finalize_adventure_spell(card_id);
+        }
+
+        // CR 702.88: Epic — handle before determining the normal destination.
+        // If the resolving spell has the Epic keyword (e.g. Enduring Ideal):
+        //   (a) Exile the card instead of sending it to the graveyard.
+        //   (b) Register a repeating upkeep delayed trigger that re-executes the
+        //       spell's effects (excluding the Epic keyword itself) at the
+        //       beginning of each subsequent upkeep for the rest of the game.
+        //   (c) The controller can't cast spells for the rest of the game.
+        let has_epic = self
+            .cards
+            .get(card_id)
+            .map(|c| c.keywords.contains(crate::core::Keyword::Epic))
+            .unwrap_or(false);
+        if has_epic {
+            let owner = self.cards.get(card_id)?.owner;
+
+            // (c) CR 702.88b: controller can't cast spells for the rest of the game.
+            {
+                let old_value = self.get_player(owner).map(|p| p.cant_cast_spells).unwrap_or(false);
+                if let Ok(player) = self.get_player_mut(owner) {
+                    player.cant_cast_spells = true;
+                    log::debug!(target: "epic", "Epic: player {:?} can no longer cast spells", owner);
+                }
+                let prior_log_size = self.logger.log_count();
+                self.undo_log.log(
+                    crate::undo::GameAction::SetCantCastSpells {
+                        player_id: owner,
+                        old_value,
+                    },
+                    prior_log_size,
+                );
+            }
+
+            // (b) Register a repeating upkeep delayed trigger. The effect clones
+            // the card's spell effects so the library-search fires every upkeep.
+            // We use DelayedEffect::ExecuteEffect wrapping a ChangeZone (search
+            // library for enchantment → battlefield) — the exact effect list from
+            // the card is not yet available in a clone-free way, so we re-execute
+            // the card's effects by firing a "copy spell" approach:
+            // use DelayedEffect::CopySpellAbility on a saved card ref.
+            //
+            // Implementation: store the resolving card id as tracked_card so the
+            // trigger can re-execute its effects. Since the card will be in Exile
+            // after resolution (not the Stack), we store each effect of the spell
+            // body (the non-Epic part — all effects the parser produced) for
+            // replay by wrapping them in ExecuteEffect on the first one.
+            // For Enduring Ideal the single effect is ChangeZone(Library→Battlefield,Enchantment).
+            //
+            // CR 702.88c: "copy the spell except for its epic ability" — the
+            // copy doesn't have Epic (so it won't self-exile / re-trigger again
+            // from THIS copy; the original delayed trigger handles looping).
+            // We implement this by executing each effect from the card's effect
+            // list directly (using execute_effect) inside the trigger.
+            //
+            // For now we wrap the FIRST non-trivial effect as an ExecuteEffect.
+            // TODO(mtg-920): For spells with multiple non-Epic effects, wrap each
+            // one separately or extend to an EffectList variant.
+            {
+                use crate::core::{DelayedEffect, DelayedTrigger, DelayedTriggerCondition, TriggerPhase, TurnOwner};
+                use smallvec::smallvec;
+
+                // Collect the spell's effects (non-Epic body) to re-execute.
+                let spell_effects: Vec<crate::core::Effect> =
+                    self.cards.get(card_id).map(|c| c.effects.clone()).unwrap_or_default();
+
+                if let Some(first_effect) = spell_effects.into_iter().next() {
+                    let epic_trigger = DelayedTrigger::new(
+                        crate::core::DelayedTriggerId::new(0),
+                        card_id,
+                        card_id,
+                        owner,
+                        DelayedTriggerCondition::Phase {
+                            phases: smallvec![TriggerPhase::Upkeep],
+                            whose_turn: TurnOwner::You,
+                        },
+                        DelayedEffect::ExecuteEffect {
+                            effect: Box::new(first_effect),
+                        },
+                    )
+                    .repeating();
+                    self.delayed_triggers.add(epic_trigger);
+                    log::debug!(target: "epic", "Epic: registered repeating upkeep trigger for {:?}", card_id);
+                }
+            }
+
+            // (a) Exile the card instead of graveyard.
+            if self.stack.contains(card_id) {
+                self.move_card(card_id, Zone::Stack, Zone::Exile, owner)?;
+            }
+            return Ok(());
         }
 
         // Determine destination based on card type
@@ -4965,6 +5058,7 @@ impl GameState {
 
             Effect::TapAll { restriction } => self.execute_tap_all(restriction)?,
             Effect::UntapAll { restriction } => self.execute_untap_all(restriction)?,
+            Effect::UntapOne { restriction } => self.execute_untap_one(restriction)?,
 
             Effect::SetLife { player, amount } => self.execute_set_life(*player, *amount)?,
 
