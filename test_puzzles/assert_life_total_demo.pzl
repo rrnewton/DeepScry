@@ -1,0 +1,45 @@
+# Demo puzzle: inline [assertions] section checking life totals and zone contents.
+#
+# Scenario: P0 has exactly 1 life (nearly dead) and the game starts on turn 1.
+# P1 has a 2/2 attacker. P0 has no blockers. The assertions verify
+# the game ends with P0 losing (P0 life falls to 0 or below).
+# Also demonstrates the "NOT" negation prefix and opponent scoping.
+#
+# This puzzle intentionally has P0 in a losing position to exercise
+# the "game lost" and negation paths.
+
+[metadata]
+Name:Inline Assertion Demo - Life Totals and Negation
+Goal:Win
+Turns:3
+Difficulty:Easy
+Description:P0 has 1 life and no blockers; P1 has a 2/2. Assertions verify final-state life totals and game result predicates including NOT.
+
+[state]
+turn=1
+activeplayer=p1
+activephase=MAIN1
+p0life=1
+p0hand=
+p0library=Forest;Forest;Forest;Forest;Forest
+p0graveyard=
+p0battlefield=
+p0exile=
+
+p1life=20
+p1hand=
+p1library=Mountain;Mountain;Mountain;Mountain;Mountain
+p1graveyard=
+p1battlefield=Grizzly Bears;Mountain;Mountain
+
+[assertions]
+# P0 started at 1 life; after opponent attacks this should drop
+# (the game ends when P0 reaches 0 or below)
+# Turn limit assertions: game should resolve within 3 turns
+turn le 3
+# P1 keeps their life (20, not attacked)
+opponent life eq 20
+# P0 should have lost (1 life vs 2/2 with no blockers)
+game lost
+# By negation: NOT game won is also true when we lost
+NOT game won

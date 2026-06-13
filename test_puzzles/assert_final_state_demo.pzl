@@ -1,0 +1,46 @@
+# Demo puzzle: inline [assertions] section exercising final-state checks.
+#
+# Scenario: P0 has a Grizzly Bears (2/2) on an empty board with no hand.
+# P1 starts at 20 life. After 5 turns P0 should deal at least 2 damage per
+# turn (10 total), so P1 should end below 20 life.
+#
+# Assertions checked (tracking issue: mtg-0oopj):
+#   - P0 did not lose (NOT game lost)
+#   - P1 lost some life (opponent life lt 20)
+#   - P0 has permanents on the battlefield (battlefield count ge 1)
+#   - No cards in P0's exile zone (exile count eq 0)
+
+[metadata]
+Name:Inline Assertion Demo - Final State
+Goal:Win
+Turns:10
+Difficulty:Easy
+Description:Demonstrates [assertions] section for final-state checks. P0 controls a Grizzly Bears; assertions verify P1 takes damage and P0 keeps their permanent.
+
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=
+p0library=Forest;Forest;Forest;Forest;Forest;Forest;Forest;Forest;Forest;Forest
+p0graveyard=
+p0battlefield=Grizzly Bears;Forest;Forest;Forest
+p0exile=
+
+p1life=20
+p1hand=
+p1library=Mountain;Mountain;Mountain;Mountain;Mountain;Mountain;Mountain;Mountain;Mountain;Mountain
+p1graveyard=
+p1battlefield=Mountain;Mountain;Mountain
+p1exile=
+
+[assertions]
+# P0 must not have lost
+NOT game lost
+# P1 must have taken some damage (bears attacks every turn)
+opponent life lt 20
+# P0's permanents survive (Grizzly Bears + lands)
+battlefield count ge 1
+# P0 has nothing in exile
+exile count eq 0

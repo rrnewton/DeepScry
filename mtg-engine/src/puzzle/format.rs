@@ -1,6 +1,7 @@
 //! PZL file format parser
 //!
-//! Parses .pzl files with \[metadata\] and \[state\] sections
+//! Parses .pzl files with `[metadata]`, `[state]`, and (when `puzzle-assert`
+//! is enabled) optional `[assertions]` sections.
 
 use crate::{
     puzzle::{metadata::PuzzleMetadata, state::GameStateDefinition},
@@ -12,6 +13,11 @@ use crate::{
 pub struct PuzzleFile {
     pub metadata: PuzzleMetadata,
     pub state: GameStateDefinition,
+    /// Inline assertions parsed from the `[assertions]` section.
+    /// Empty when no `[assertions]` section exists or when the `puzzle-assert`
+    /// cargo feature is disabled.
+    #[cfg(feature = "puzzle-assert")]
+    pub assertions: Vec<crate::puzzle::assert::Assertion>,
 }
 
 /// Parse a complete puzzle file from string contents
@@ -36,12 +42,28 @@ pub fn parse_puzzle(contents: &str) -> Result<PuzzleFile> {
         ));
     };
 
-    Ok(PuzzleFile { metadata, state })
+    #[cfg(feature = "puzzle-assert")]
+    let assertions = {
+        if let Some(assert_lines) = sections.get("assertions") {
+            crate::puzzle::assert::parse_assertions(assert_lines)?
+        } else {
+            Vec::new()
+        }
+    };
+
+    Ok(PuzzleFile {
+        metadata,
+        state,
+        #[cfg(feature = "puzzle-assert")]
+        assertions,
+    })
 }
 
 /// Parse INI-style sections from file contents
 ///
-/// Returns a map of section name to lines in that section
+/// Returns a map of section name to lines in that section.
+/// Unknown sections are preserved for forward compatibility — the
+/// `[assertions]` section is simply another key in this map.
 fn parse_sections(contents: &str) -> Result<std::collections::HashMap<String, Vec<String>>> {
     let mut sections = std::collections::HashMap::new();
     let mut current_section: Option<String> = None;
@@ -256,5 +278,93 @@ aibattlefield=Aura Gnarlid|Id:18;Slippery Bogle|Id:19;Ethereal Armor|AttachedTo:
         let sections = parse_sections(contents).unwrap();
         assert!(sections.contains_key("metadata"));
         assert!(sections.contains_key("state"));
+    }
+
+    /// The [assertions] section is parsed as a section like any other.
+    /// This test verifies the section parser captures it without error.
+    #[test]
+    fn test_parse_sections_assertions_captured() {
+        let contents = r#"
+[metadata]
+Name:Assertion Test
+Goal:Win
+Turns:1
+Difficulty:Easy
+
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p1life=10
+
+[assertions]
+life eq 20
+opponent life lt 20
+game won
+"#;
+
+        let sections = parse_sections(contents).unwrap();
+        assert!(sections.contains_key("assertions"));
+        assert_eq!(sections["assertions"].len(), 3);
+    }
+
+    /// When puzzle-assert feature is on, assertions are parsed into typed structs.
+    #[cfg(feature = "puzzle-assert")]
+    #[test]
+    fn test_parse_puzzle_with_assertions() {
+        let contents = r#"
+[metadata]
+Name:Assertion Puzzle
+Goal:Win
+Turns:1
+Difficulty:Easy
+
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p1life=10
+
+[assertions]
+# P0 must stay at full health
+life eq 20
+# Game should end
+game won
+"#;
+
+        let puzzle = parse_puzzle(contents).unwrap();
+        assert_eq!(puzzle.assertions.len(), 2);
+    }
+
+    /// Without the puzzle-assert feature, [assertions] is silently ignored at
+    /// the PuzzleFile level (the section is still parsed by parse_sections,
+    /// but PuzzleFile does not carry an assertions field).
+    #[cfg(not(feature = "puzzle-assert"))]
+    #[test]
+    fn test_parse_puzzle_assertions_section_ignored_without_feature() {
+        let contents = r#"
+[metadata]
+Name:Assertion Puzzle
+Goal:Win
+Turns:1
+Difficulty:Easy
+
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p1life=10
+
+[assertions]
+life eq 20
+game won
+"#;
+
+        // Must parse successfully — [assertions] is a forward-compat unknown section
+        let puzzle = parse_puzzle(contents).unwrap();
+        assert_eq!(puzzle.metadata.name, "Assertion Puzzle");
     }
 }

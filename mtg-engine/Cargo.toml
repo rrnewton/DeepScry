@@ -183,6 +183,21 @@ default = ["native", "verbose-logging"]
 # Disable this feature for maximum performance in benchmarks
 verbose-logging = []
 
+# Enable the inline assertion DSL for .pzl puzzle files.
+#
+# When enabled, PuzzleFile carries a typed Vec<Assertion> parsed from the
+# optional [assertions] section. The evaluator (puzzle::assert::evaluate_assertions)
+# can then be called after a puzzle run to verify expected outcomes.
+#
+# When disabled (the default), all assertion code compiles out entirely —
+# the engine hot path is never affected. Zero runtime overhead.
+#
+# Does NOT require the `native` feature: works in unit tests and WASM contexts
+# that operate on puzzle strings in memory without filesystem access.
+#
+# See ai_docs/reference/PUZZLE_ASSERTION_DSL.md and tracking issue mtg-0oopj.
+puzzle-assert = []
+
 # Native platform features (CLI, TUI, file I/O, threading)
 native = [
     "clap",
@@ -243,6 +258,7 @@ network = [
     "tokio",  # Needs async runtime
     "web-server",  # Unified HTTP+WS server (axum)
     "rustls",  # `mtg connect wss://...` against the deployed TLS WS lobby
+    "puzzle-assert",  # Inline puzzle assertion DSL; included so CI exercises it (mtg-0oopj)
 ]
 
 # Unified axum web server: static files + lobby WS proxy + optional TLS.

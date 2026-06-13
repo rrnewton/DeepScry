@@ -4,6 +4,17 @@
 //! creating specific mid-game states for testing and puzzle scenarios.
 //!
 //! See docs/PZL_FORMAT_ANALYSIS.md for detailed format documentation.
+//!
+//! ## Inline assertions (`puzzle-assert` feature)
+//!
+//! When built with `--features puzzle-assert`, `.pzl` files can include an
+//! optional `[assertions]` section whose lines describe expected outcomes.
+//! The assertions are evaluated after a puzzle run and produce a pass/fail
+//! report.  The engine hot-path is never affected: all assertion code
+//! compiles out when the feature is off.
+//!
+//! See `ai_docs/reference/PUZZLE_ASSERTION_DSL.md` for the full specification
+//! and tracking issue mtg-0oopj.
 
 pub mod card_notation;
 pub mod format;
@@ -12,12 +23,18 @@ pub mod loader;
 pub mod metadata;
 pub mod state;
 
+#[cfg(feature = "puzzle-assert")]
+pub mod assert;
+
 pub use card_notation::CardModifier;
 pub use format::PuzzleFile;
 #[cfg(feature = "native")]
 pub use loader::load_puzzle_into_game;
 pub use metadata::{Difficulty, GoalType, PuzzleMetadata};
 pub use state::{CardDefinition, GameStateDefinition, PlayerStateDefinition};
+
+#[cfg(feature = "puzzle-assert")]
+pub use assert::{evaluate_assertions, parse_assertions, Assertion, AssertionReport};
 
 use crate::Result;
 
