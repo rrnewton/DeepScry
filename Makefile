@@ -101,6 +101,13 @@ build-network:
 	@echo "=== Building release with network support ==="
 	cargo build --release --features network
 
+# Build DEV (debug) binary with network feature — fast compile for the local
+# `mtg server-web` dev loop. The debug binary is plenty fast as a static+lobby
+# server (solo games run in WASM in the browser, not the native binary).
+build-network-dev:
+	@echo "=== Building dev (debug) with network support ==="
+	cargo build --features network
+
 # Run unit tests (including network tests)
 # Note: human_input_e2e tests for WASM pattern don't require wasm feature
 # mtg-717 build-once: if NEXTEST_ARCHIVE is set (CI `--use-prebuilt` shard), run
@@ -712,15 +719,12 @@ play-web-pvp: build-network wasm-network
 		--server-port $(SERVER_PORT) \
 		--pvp
 
-# Build WASM and start local web server
-wasm-serve: wasm-network
+# Build WASM and serve via the real axum server (mtg server-web), not python.
+wasm-serve: build-network wasm-network
 	@echo ""
-	@echo "=== Starting web server ==="
-	@echo "Open http://localhost:$(PORT) in your browser"
-	@echo "Log file: $(WASM_SERVER_LOG)"
+	@echo "=== Starting mtg server-web on http://127.0.0.1:$(PORT) ==="
 	@echo "Press Ctrl+C to stop"
-	@echo ""
-	@cd web && python3 -m http.server $(PORT) 2>&1 | tee server.log
+	@./target/release/mtg server-web --bind 127.0.0.1:$(PORT) --static-dir web
 
 # Quick dev build - skips wasm-opt optimization for faster iteration
 wasm-dev: wasm-export ensure-wasm-pack
@@ -731,15 +735,16 @@ wasm-dev: wasm-export ensure-wasm-pack
 	@echo ""
 	@echo "=== WASM dev build complete! ==="
 
-# Quick dev build and serve (local-only, no network/AI opponent)
-play-web-local-dev: wasm-dev
+# Quick dev loop: fast DEBUG binary + dev WASM, served by the real axum server
+# (`mtg server-web`) so the lobby / login / /auth / /health endpoints all work.
+# A plain `python3 -m http.server` only serves static files and 404s on /lobby,
+# which silently breaks the login screen — that footgun is why it's gone.
+play-web-local-dev: build-network-dev wasm-dev
 	@echo ""
-	@echo "=== Starting web server (dev build) ==="
-	@echo "Open http://localhost:$(PORT) in your browser"
-	@echo "Log file: $(WASM_SERVER_LOG)"
+	@echo "=== Starting mtg server-web (dev/debug) on http://127.0.0.1:$(PORT) ==="
+	@echo "Lobby + static UI on one port. Solo (no login): http://127.0.0.1:$(PORT)/solo_launcher.html?ui=native"
 	@echo "Press Ctrl+C to stop"
-	@echo ""
-	@cd web && python3 -m http.server $(PORT) 2>&1 | tee server.log
+	@./target/debug/mtg server-web --bind 127.0.0.1:$(PORT) --static-dir web
 
 # Build WASM with network feature (for browser multiplayer)
 wasm-network: wasm-export ensure-wasm-pack
@@ -772,14 +777,13 @@ serve-web: build-network wasm-network
 		--static-dir ./web \
 		--mem-cap-pct $(SERVER_WEB_MEM_CAP_PCT)
 
-# Build WASM with network feature and start web server (no AI opponent)
-play-web-local: wasm-network
+# Network WASM + RELEASE binary, served by the real axum server (mtg server-web).
+play-web-local: build-network wasm-network
 	@echo ""
-	@echo "=== Starting web server (network build) ==="
-	@echo "Open http://localhost:$(PORT)/tui_game.html in your browser"
+	@echo "=== Starting mtg server-web (release) on http://127.0.0.1:$(PORT) ==="
+	@echo "Lobby + static UI on one port. Solo (no login): http://127.0.0.1:$(PORT)/solo_launcher.html?ui=native"
 	@echo "Press Ctrl+C to stop"
-	@echo ""
-	@cd web && python3 -m http.server $(PORT) 2>&1 | tee server.log
+	@./target/release/mtg server-web --bind 127.0.0.1:$(PORT) --static-dir web
 
 # Test WASM module in headless browser (basic API test)
 wasm-test: wasm
