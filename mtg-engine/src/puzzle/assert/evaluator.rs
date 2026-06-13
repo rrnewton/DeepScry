@@ -255,7 +255,7 @@ mod tests {
     use crate::{
         core::PlayerId,
         game::{GameEndReason, GameResult},
-        puzzle::assert::{AssertionKind, Comparator, GameResultPred, PlayerScope},
+        puzzle::assert::{Comparator, GameResultPred},
     };
 
     fn pid(n: u32) -> PlayerId {
