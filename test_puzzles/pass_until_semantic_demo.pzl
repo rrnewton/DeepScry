@@ -1,0 +1,56 @@
+# Demo puzzle: PASS_UNTIL semantic command (anti-overfitting primitive)
+#
+# Scenario: P0 has Grizzly Bears in hand. On turn 1, P0 plays a Forest in
+# Main1. We want to wait until turn 2's Main1 to cast Grizzly Bears (when
+# two Forests are untapped). This puzzle tests the PASS_UNTIL command — the
+# controller script says WHAT to do and WHEN, not WHICH ACTION INDEX to pick.
+#
+# Before PASS_UNTIL, a script would need to know the exact action index of
+# "pass priority" for every intermediate step (untap, upkeep, draw, opponent
+# priority window, etc.). After, the script just says:
+#   PASS_UNTIL turn=2,phase=MAIN1
+# and the controller passes priority through all intervening steps
+# automatically, regardless of what triggers or state changes occur.
+#
+# The semantic-command version (this file) is immune to action-index drift:
+#   - Adding a new permanent to the starting board doesn't shift indices
+#   - Adding triggered abilities that fire during upkeep doesn't break the script
+#   - Reordering the hand doesn't affect the name-based "cast grizzly"
+#
+# Controller script for P0 (in [metadata] via Description — actual hookup
+# is in the test file that loads this puzzle with RichInputController):
+#
+#   play forest
+#   PASS_UNTIL turn=2,phase=MAIN1
+#   cast grizzly bears
+#   PASS_UNTIL phase=declareAttackers
+#   attack Grizzly Bears
+
+[metadata]
+Name:PASS_UNTIL Semantic Controller Demo
+Goal:Win
+Turns:5
+Difficulty:Easy
+Description:Tests the PASS_UNTIL semantic command. P0 plays Forest T1, passes to T2 Main1 via PASS_UNTIL, then casts Grizzly Bears by name (not index). Demonstrates that the script survives action-order changes that would break an index-based script.
+
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Grizzly Bears
+p0battlefield=Forest;Forest
+p0library=Mountain;Mountain;Mountain;Mountain;Mountain
+p0graveyard=
+p0exile=
+
+p1life=10
+p1hand=
+p1battlefield=Mountain;Mountain;Mountain
+p1library=Mountain;Mountain;Mountain;Mountain;Mountain
+p1graveyard=
+p1exile=
+
+[assertions]
+# P1 should take damage from Grizzly Bears attacking
+opponent life lt 10

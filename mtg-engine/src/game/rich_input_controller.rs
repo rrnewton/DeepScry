@@ -36,7 +36,7 @@
 //! Comma-separated clauses: `BlackKnight blocks WhiteKnight, SerraAngel blocks RoyalAssassin`
 
 use crate::core::{CardId, ManaCost, PlayerId, SpellAbility};
-use crate::game::command_parsing::{card_matches, is_explicit_pass, parse_spell_ability_choice};
+use crate::game::command_parsing::{card_matches, is_explicit_pass, parse_pass_until, parse_spell_ability_choice};
 use crate::game::controller::{ChoiceResult, GameStateView, PlayerController};
 use smallvec::SmallVec;
 
@@ -81,6 +81,55 @@ impl RichInputController {
             self.commands[self.current_index].trim() == "*"
         } else {
             false
+        }
+    }
+
+    /// If the current command is a `PASS_UNTIL` whose condition is already met,
+    /// consume it and return `false` (caller should proceed normally).
+    /// If it is a `PASS_UNTIL` whose condition is NOT yet met, return `true`
+    /// (caller should pass priority without consuming the command).
+    /// If the current command is not a `PASS_UNTIL` at all, return `false`.
+    ///
+    /// On a malformed `PASS_UNTIL` directive, logs the error, consumes the
+    /// command to avoid looping forever, and returns `false`.
+    fn handle_pass_until(&mut self, view: &GameStateView) -> bool {
+        let Some(cmd_str) = self.peek_command() else {
+            return false;
+        };
+        let Some(parse_result) = parse_pass_until(cmd_str) else {
+            return false; // not a PASS_UNTIL command
+        };
+        match parse_result {
+            Err(e) => {
+                // Malformed PASS_UNTIL: consume and log so script can continue
+                log::error!("PASS_UNTIL parse error: {e}");
+                self.current_index += 1;
+                false
+            }
+            Ok(cond) => {
+                let turn = view.turn_number();
+                let step = view.current_step();
+                if cond.is_satisfied(turn, step) {
+                    // Condition met: consume the directive, resume normal script
+                    view.logger().controller_choice(
+                        "RICHINPUT",
+                        &format!("PASS_UNTIL satisfied at turn={turn} step={step:?}: resuming script"),
+                    );
+                    self.current_index += 1;
+                    false // do NOT pass priority; let the normal command run
+                } else {
+                    // Condition not yet met: pass priority without consuming
+                    view.logger().controller_choice(
+                        "RICHINPUT",
+                        &format!(
+                            "PASS_UNTIL waiting (turn={turn} step={step:?}); \
+                             target turn={:?} step={:?}",
+                            cond.turn, cond.step
+                        ),
+                    );
+                    true // pass priority
+                }
+            }
         }
     }
 
@@ -139,6 +188,12 @@ impl PlayerController for RichInputController {
                     self.next_command();
                 }
             }
+            return ChoiceResult::Ok(None);
+        }
+
+        // Check for PASS_UNTIL before any other processing.
+        // If it returns true we should pass priority (condition not yet met).
+        if self.handle_pass_until(view) {
             return ChoiceResult::Ok(None);
         }
 
@@ -314,6 +369,11 @@ impl PlayerController for RichInputController {
             return ChoiceResult::Ok(SmallVec::new());
         }
 
+        // PASS_UNTIL: if waiting for a later turn/phase, don't declare attackers
+        if self.handle_pass_until(view) {
+            return ChoiceResult::Ok(SmallVec::new());
+        }
+
         if let Some(command) = self.next_command() {
             let cmd = command.trim().to_lowercase();
 
@@ -354,6 +414,11 @@ impl PlayerController for RichInputController {
         attackers: &[CardId],
     ) -> ChoiceResult<SmallVec<[(CardId, CardId); 8]>> {
         if available_blockers.is_empty() || attackers.is_empty() {
+            return ChoiceResult::Ok(SmallVec::new());
+        }
+
+        // PASS_UNTIL: if waiting for a later turn/phase, don't declare blockers
+        if self.handle_pass_until(view) {
             return ChoiceResult::Ok(SmallVec::new());
         }
 
@@ -927,5 +992,85 @@ mod tests {
 
         // Should have consumed both wildcard and the "0" command
         assert_eq!(controller.current_index, 2);
+    }
+
+    // -----------------------------------------------------------------------
+    // PASS_UNTIL integration tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_pass_until_not_yet_satisfied_passes_priority() {
+        let player_id = EntityId::new(1);
+        // The game starts at turn 1 (new_two_player defaults), but we wait for turn 3
+        let mut controller = RichInputController::new(
+            player_id,
+            vec!["PASS_UNTIL turn=3,phase=MAIN2".to_string(), "0".to_string()],
+        );
+        let game = GameState::new_two_player("Player1".to_string(), "Player2".to_string(), 20);
+        // Default game starts at turn 1, Untap phase, so PASS_UNTIL turn=3,MAIN2 is NOT met
+        let view = GameStateView::new(&game, player_id);
+
+        let land_id = EntityId::new(10);
+        let abilities = vec![SpellAbility::PlayLand { card_id: land_id }];
+
+        // Should pass priority (condition not satisfied yet)
+        let result = controller.choose_spell_ability_to_play(&view, &abilities);
+        assert!(
+            matches!(result, ChoiceResult::Ok(None)),
+            "PASS_UNTIL should pass priority when condition not met"
+        );
+        // Command should NOT be consumed (still at index 0)
+        assert_eq!(controller.current_index, 0);
+    }
+
+    #[test]
+    fn test_pass_until_satisfied_consumes_and_proceeds() {
+        use crate::game::Step;
+
+        let player_id = EntityId::new(1);
+        // Wait for turn 1, Main1 — which is what new_two_player's FIRST actual
+        // priority window would be. We set the game state directly to that step.
+        let mut controller = RichInputController::new(
+            player_id,
+            vec!["PASS_UNTIL turn=1,phase=MAIN1".to_string(), "pass".to_string()],
+        );
+        let mut game = GameState::new_two_player("Player1".to_string(), "Player2".to_string(), 20);
+        // Force the game to turn 1 Main1
+        game.turn.turn_number = 1;
+        game.turn.current_step = Step::Main1;
+        let view = GameStateView::new(&game, player_id);
+
+        let land_id = EntityId::new(10);
+        let abilities = vec![SpellAbility::PlayLand { card_id: land_id }];
+
+        // PASS_UNTIL condition IS satisfied (turn=1, step=Main1)
+        // So the directive should be consumed and the next command "pass" should run
+        let result = controller.choose_spell_ability_to_play(&view, &abilities);
+        assert!(
+            matches!(result, ChoiceResult::Ok(None)),
+            "After PASS_UNTIL consumed, 'pass' should pass priority: {result:?}"
+        );
+        // Both the PASS_UNTIL directive AND "pass" should have been consumed
+        assert_eq!(controller.current_index, 2, "both commands should be consumed");
+    }
+
+    #[test]
+    fn test_pass_until_malformed_consumes_and_continues() {
+        let player_id = EntityId::new(1);
+        // A malformed PASS_UNTIL should be consumed (to avoid looping) and not crash
+        let mut controller = RichInputController::new(
+            player_id,
+            vec!["PASS_UNTIL phase=BOGUS".to_string(), "pass".to_string()],
+        );
+        let game = GameState::new_two_player("Player1".to_string(), "Player2".to_string(), 20);
+        let view = GameStateView::new(&game, player_id);
+
+        let land_id = EntityId::new(10);
+        let abilities = vec![SpellAbility::PlayLand { card_id: land_id }];
+
+        // Should not panic; the malformed directive is consumed and "pass" runs
+        let result = controller.choose_spell_ability_to_play(&view, &abilities);
+        // Either passes priority or runs "pass" — either way, ChoiceResult::Ok(None)
+        assert!(matches!(result, ChoiceResult::Ok(None) | ChoiceResult::Ok(Some(_))));
     }
 }

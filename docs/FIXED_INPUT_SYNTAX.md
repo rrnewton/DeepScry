@@ -84,6 +84,62 @@ Commands are separated by semicolons (`;`):
 --p1-fixed-inputs="play mountain;pass;cast bolt;target player2"
 ```
 
+## PASS_UNTIL: Semantic Anti-Overfitting Command
+
+`PASS_UNTIL` is the primary anti-brittleness primitive. Instead of counting
+action indices across turns, you declare the turn+phase you want to act in,
+and the controller passes priority through all intervening steps automatically —
+regardless of what triggers fire, how many actions are offered, or what state
+changes occur in between.
+
+### Syntax
+
+```bash
+PASS_UNTIL turn=N,phase=PHASE   # wait for specific turn + phase
+PASS_UNTIL phase=PHASE           # wait for next occurrence of PHASE (any turn)
+PASS_UNTIL turn=N                # wait for start of turn N (any phase)
+```
+
+`phase` (or `step`) accepts case-insensitive names:
+`untap`, `upkeep`, `draw`, `main1`, `combat`, `beginCombat`,
+`declareAttackers`, `declareBlockers`, `combatDamage`, `endCombat`,
+`main2`, `end`, `cleanup`
+
+### Examples
+
+```bash
+# Pass all priority windows until Turn 3 post-combat main phase
+PASS_UNTIL turn=3,phase=MAIN2
+
+# Pass until combat phase (begin-combat step) of any turn
+PASS_UNTIL phase=COMBAT
+
+# Combine: reach a specific state, then act by name
+PASS_UNTIL turn=2,phase=MAIN1
+cast Grizzly Bears
+PASS_UNTIL phase=declareAttackers
+attack Grizzly Bears
+```
+
+### Why Use PASS_UNTIL vs Wildcard (`*`)
+
+| | Wildcard `*` | `PASS_UNTIL` |
+|---|---|---|
+| Passes until | Next command matches available action | Turn+phase reached |
+| Affected by trigger order? | Yes (command must be available) | No |
+| Affected by new actions in menu? | No | No |
+| Affected by action count changes? | No | No |
+| Expressiveness | "wait until castable" | "wait until this turn+step" |
+
+Use `*` when you care about availability; use `PASS_UNTIL` when you care
+about timing. Scripts that mix both are fine.
+
+### Information Independence
+
+`PASS_UNTIL` only uses the public game state (turn number and current step).
+It does not inspect the stack, hand, opponent's choices, or any hidden
+information. This makes it safe for both local and network-mode play.
+
 ## Wildcard Mode
 
 Use `*` to skip commands until the next one matches:

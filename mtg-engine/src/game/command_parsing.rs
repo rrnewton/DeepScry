@@ -8,15 +8,162 @@
 //! - **Verbs**: Play, Cast, Equip, Activate, Attack, Block, Discard, Pass (case-insensitive)
 //! - **Card names**: Case-insensitive, spaces/underscores equivalent, prefix matching allowed
 //! - **Numeric choices**: 0 = pass, 1-N = select from available options
+//! - **Semantic anti-overfitting**: `PASS_UNTIL turn=N,phase=PHASE` — pass priority until a
+//!   specific turn+phase combination, indifferent to what triggers fire in between.
 //! - **Examples**:
 //!   - `play swamp` - Play a land
 //!   - `cast "Black Knight"` - Cast a spell
 //!   - `equip accorder` - Activate Equipment's Equip ability
 //!   - `activate forest` - Activate mana ability (first ability if multiple)
 //!   - `activate forest[2]` - Activate second ability (1-indexed)
+//!   - `PASS_UNTIL turn=3,phase=MAIN2` - Pass until turn 3 post-combat main phase
+//!   - `PASS_UNTIL phase=COMBAT` - Pass until combat phase this (or the next) turn
 
 use crate::core::SpellAbility;
 use crate::game::controller::{sort_spell_abilities, GameStateView};
+use crate::game::Step;
+
+// ---------------------------------------------------------------------------
+// PASS_UNTIL: semantic anti-overfitting primitive
+// ---------------------------------------------------------------------------
+
+/// The parsed target of a `PASS_UNTIL` command.
+///
+/// A `PASS_UNTIL` command causes the controller to pass priority on every
+/// callback until the game reaches the specified turn+phase combination.
+/// Once the condition is satisfied, the command is consumed and the
+/// controller resumes normal script execution.
+///
+/// Only public game information (turn number and current step) is used —
+/// this is information-independent and network-deterministic.
+///
+/// # Syntax
+///
+/// ```text
+/// PASS_UNTIL turn=N,phase=PHASE
+/// PASS_UNTIL turn=N phase=PHASE   (spaces as delimiter)
+/// PASS_UNTIL phase=PHASE          (omit turn to match any future turn)
+/// ```
+///
+/// `PHASE` is matched against [`Step::from_script_name`] (case-insensitive,
+/// whitespace-stripped). Both `turn=` and `phase=` accept any ordering.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PassUntilCondition {
+    /// If `Some(n)`, pass until this turn number (1-based). If `None`, match
+    /// any turn (useful for "pass until the next MAIN2 of any turn").
+    pub turn: Option<u32>,
+    /// The step to wait for. `None` means "any step of the target turn".
+    pub step: Option<Step>,
+}
+
+impl PassUntilCondition {
+    /// Returns `true` when the current game state satisfies this condition.
+    ///
+    /// The condition is met when BOTH:
+    ///  - `turn` is `None`, OR the current turn number >= the target turn
+    ///  - `step` is `None`, OR the current step == the target step
+    ///
+    /// We use `>=` for turn so that a condition for turn 3 is also satisfied
+    /// if turns are skipped somehow (extra-turn effects, etc.).
+    #[must_use]
+    pub fn is_satisfied(&self, turn_number: u32, current_step: Step) -> bool {
+        let turn_ok = match self.turn {
+            None => true,
+            Some(t) => turn_number >= t,
+        };
+        let step_ok = match self.step {
+            None => true,
+            Some(s) => current_step == s,
+        };
+        turn_ok && step_ok
+    }
+}
+
+/// Parse a `PASS_UNTIL` command string into a [`PassUntilCondition`].
+///
+/// Accepts `PASS_UNTIL` (case-insensitive) as the verb, followed by
+/// one or more `key=value` pairs separated by commas or whitespace:
+///
+/// - `turn=N`   — target turn number (positive integer)
+/// - `phase=P`  — target step name (parsed via [`Step::from_script_name`])
+///
+/// Returns `None` if the command does not start with `PASS_UNTIL`, or
+/// `Err(String)` with a diagnostic if the verb matches but the arguments
+/// are malformed.
+///
+/// # Examples
+/// ```ignore
+/// assert!(parse_pass_until("PASS_UNTIL turn=3,phase=MAIN2").is_some());
+/// assert!(parse_pass_until("pass_until phase=COMBAT").is_some());
+/// assert!(parse_pass_until("cast bolt").is_none());
+/// ```
+pub fn parse_pass_until(command: &str) -> Option<Result<PassUntilCondition, String>> {
+    let trimmed = command.trim();
+    // Case-insensitive prefix check
+    let rest = trimmed
+        .to_lowercase()
+        .strip_prefix("pass_until")
+        .map(|_| &trimmed[10..])?; // keep original case for value parsing
+
+    // Split the remainder on commas and whitespace tokens
+    // e.g. " turn=3,phase=MAIN2" → ["turn=3", "phase=MAIN2"]
+    let tokens: Vec<&str> = rest
+        .split(|c: char| c == ',' || c.is_ascii_whitespace())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .collect();
+
+    let mut turn: Option<u32> = None;
+    let mut step: Option<Step> = None;
+
+    for token in &tokens {
+        // Each token must be key=value
+        let mut parts = token.splitn(2, '=');
+        let key = match parts.next() {
+            Some(k) => k.trim().to_lowercase(),
+            None => return Some(Err(format!("PASS_UNTIL: malformed token '{token}'"))),
+        };
+        let value = match parts.next() {
+            Some(v) => v.trim(),
+            None => return Some(Err(format!("PASS_UNTIL: token '{token}' is missing '=' separator"))),
+        };
+
+        match key.as_str() {
+            "turn" => {
+                let n: u32 = match value.parse() {
+                    Ok(n) => n,
+                    Err(_) => {
+                        return Some(Err(format!(
+                            "PASS_UNTIL: 'turn' value '{value}' is not a valid positive integer"
+                        )))
+                    }
+                };
+                turn = Some(n);
+            }
+            "phase" | "step" => {
+                let s = match Step::from_script_name(value) {
+                    Some(s) => s,
+                    None => {
+                        return Some(Err(format!(
+                            "PASS_UNTIL: unknown phase/step name '{value}'. \
+                             Valid names: untap, upkeep, draw, main1, beginCombat, \
+                             declareAttackers, declareBlockers, combatDamage, endCombat, \
+                             main2, end, cleanup"
+                        )))
+                    }
+                };
+                step = Some(s);
+            }
+            other => {
+                return Some(Err(format!(
+                    "PASS_UNTIL: unknown key '{other}' (expected 'turn' or 'phase')"
+                )));
+            }
+        }
+    }
+
+    Some(Ok(PassUntilCondition { turn, step }))
+}
 
 /// Normalize a string for comparison
 ///
@@ -288,5 +435,150 @@ mod tests {
         assert!(!is_explicit_pass("1"));
         assert!(!is_explicit_pass("play swamp"));
         assert!(!is_explicit_pass("cast bolt"));
+    }
+
+    // -----------------------------------------------------------------------
+    // PASS_UNTIL parsing tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_parse_pass_until_not_matched() {
+        assert!(parse_pass_until("cast bolt").is_none());
+        assert!(parse_pass_until("play swamp").is_none());
+        assert!(parse_pass_until("pass").is_none());
+        assert!(parse_pass_until("0").is_none());
+    }
+
+    #[test]
+    fn test_parse_pass_until_turn_and_phase() {
+        let result = parse_pass_until("PASS_UNTIL turn=3,phase=MAIN2")
+            .expect("should match")
+            .expect("should parse ok");
+        assert_eq!(result.turn, Some(3));
+        assert_eq!(result.step, Some(Step::Main2));
+    }
+
+    #[test]
+    fn test_parse_pass_until_case_insensitive() {
+        let result = parse_pass_until("pass_until turn=1,phase=main1")
+            .expect("should match")
+            .expect("should parse ok");
+        assert_eq!(result.turn, Some(1));
+        assert_eq!(result.step, Some(Step::Main1));
+    }
+
+    #[test]
+    fn test_parse_pass_until_phase_only() {
+        let result = parse_pass_until("PASS_UNTIL phase=COMBAT")
+            .expect("should match")
+            .expect("should parse ok");
+        assert_eq!(result.turn, None);
+        assert_eq!(result.step, Some(Step::BeginCombat));
+    }
+
+    #[test]
+    fn test_parse_pass_until_turn_only() {
+        let result = parse_pass_until("PASS_UNTIL turn=5")
+            .expect("should match")
+            .expect("should parse ok");
+        assert_eq!(result.turn, Some(5));
+        assert_eq!(result.step, None);
+    }
+
+    #[test]
+    fn test_parse_pass_until_space_separator() {
+        // Spaces as delimiter (alternative to commas)
+        let result = parse_pass_until("PASS_UNTIL turn=2 phase=MAIN2")
+            .expect("should match")
+            .expect("should parse ok");
+        assert_eq!(result.turn, Some(2));
+        assert_eq!(result.step, Some(Step::Main2));
+    }
+
+    #[test]
+    fn test_parse_pass_until_various_phase_names() {
+        let cases = [
+            ("PASS_UNTIL phase=beginCombat", Step::BeginCombat),
+            ("PASS_UNTIL phase=declareAttackers", Step::DeclareAttackers),
+            ("PASS_UNTIL phase=declareBlockers", Step::DeclareBlockers),
+            ("PASS_UNTIL phase=combatDamage", Step::CombatDamage),
+            ("PASS_UNTIL phase=endCombat", Step::EndCombat),
+            ("PASS_UNTIL phase=end", Step::End),
+            ("PASS_UNTIL phase=cleanup", Step::Cleanup),
+            ("PASS_UNTIL phase=upkeep", Step::Upkeep),
+            ("PASS_UNTIL phase=draw", Step::Draw),
+        ];
+        for (cmd, expected) in &cases {
+            let result = parse_pass_until(cmd)
+                .unwrap_or_else(|| panic!("no match for '{cmd}'"))
+                .unwrap_or_else(|e| panic!("parse error for '{cmd}': {e}"));
+            assert_eq!(result.step, Some(*expected), "phase mismatch for '{cmd}'");
+        }
+    }
+
+    #[test]
+    fn test_parse_pass_until_bad_turn_value() {
+        let result = parse_pass_until("PASS_UNTIL turn=abc")
+            .expect("should match")
+            .expect_err("should fail to parse");
+        assert!(result.contains("turn"), "error should mention 'turn': {result}");
+    }
+
+    #[test]
+    fn test_parse_pass_until_unknown_phase() {
+        let result = parse_pass_until("PASS_UNTIL phase=NOTAPHASE")
+            .expect("should match")
+            .expect_err("should fail to parse");
+        assert!(
+            result.contains("NOTAPHASE"),
+            "error should mention the bad name: {result}"
+        );
+    }
+
+    #[test]
+    fn test_parse_pass_until_unknown_key() {
+        let result = parse_pass_until("PASS_UNTIL foo=bar")
+            .expect("should match")
+            .expect_err("should fail to parse");
+        assert!(result.contains("foo"), "error should mention bad key: {result}");
+    }
+
+    #[test]
+    fn test_pass_until_condition_is_satisfied() {
+        let cond = PassUntilCondition {
+            turn: Some(3),
+            step: Some(Step::Main2),
+        };
+        // Not satisfied yet
+        assert!(!cond.is_satisfied(1, Step::Main1));
+        assert!(!cond.is_satisfied(2, Step::Main2));
+        assert!(!cond.is_satisfied(3, Step::Main1));
+        // Satisfied
+        assert!(cond.is_satisfied(3, Step::Main2));
+        // Over-shot turn is also satisfied
+        assert!(cond.is_satisfied(4, Step::Main2));
+    }
+
+    #[test]
+    fn test_pass_until_condition_phase_only() {
+        let cond = PassUntilCondition {
+            turn: None,
+            step: Some(Step::BeginCombat),
+        };
+        assert!(!cond.is_satisfied(1, Step::Main1));
+        assert!(cond.is_satisfied(1, Step::BeginCombat));
+        assert!(cond.is_satisfied(99, Step::BeginCombat));
+    }
+
+    #[test]
+    fn test_pass_until_condition_turn_only() {
+        let cond = PassUntilCondition {
+            turn: Some(3),
+            step: None,
+        };
+        assert!(!cond.is_satisfied(2, Step::Main2));
+        // Any step on turn 3+ satisfies
+        assert!(cond.is_satisfied(3, Step::Untap));
+        assert!(cond.is_satisfied(4, Step::End));
     }
 }

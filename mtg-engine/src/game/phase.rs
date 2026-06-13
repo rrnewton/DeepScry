@@ -133,7 +133,10 @@ impl Step {
             // Bare "Main" (Forge writes `ActivationPhases$ Main` / `Upkeep->Main`)
             // denotes the pre-combat main phase.
             "main" | "main1" | "premaincombat" | "precombatmain" => Step::Main1,
-            "begincombat" | "beginningofcombat" => Step::BeginCombat,
+            // "combat" is a user-friendly alias for the begin-combat step;
+            // puzzle scripts naturally say "PASS_UNTIL phase=COMBAT" to mean
+            // "wait until I get priority at the start of the combat phase".
+            "combat" | "begincombat" | "beginningofcombat" => Step::BeginCombat,
             "declareattackers" => Step::DeclareAttackers,
             "declareblockers" => Step::DeclareBlockers,
             "combatdamage" => Step::CombatDamage,
