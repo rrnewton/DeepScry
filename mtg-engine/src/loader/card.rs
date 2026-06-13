@@ -6949,9 +6949,10 @@ impl CardDefinition {
                 // → ForceSacrifice placeholder resolved at trigger time to the
                 // triggered player (opponent whose upkeep it is).
                 let sac_valid = exec_params.get("SacValid").map(|s| s.as_str()).unwrap_or("Creature");
+                let sac_restriction = crate::core::TargetRestriction::parse(sac_valid);
                 effects.push(Effect::ForceSacrifice {
                     player: PlayerId::placeholder(),
-                    sac_type: sac_valid.to_string(),
+                    sac_restriction,
                     count: 1,
                 });
             }
@@ -9668,14 +9669,16 @@ Oracle:[-6]: You get an emblem with "At the beginning of each opponent's upkeep,
         );
         // Should have ForceSacrifice with placeholder player
         let has_force_sac = trigger.effects.iter().any(|e| {
-            matches!(
-                e,
-                Effect::ForceSacrifice {
-                    player,
-                    sac_type,
-                    count: 1,
-                } if player.is_placeholder() && sac_type == "Creature"
-            )
+            if let Effect::ForceSacrifice {
+                player,
+                sac_restriction,
+                count: 1,
+            } = e
+            {
+                player.is_placeholder() && sac_restriction.types.contains(&crate::core::TargetType::Creature)
+            } else {
+                false
+            }
         });
         assert!(
             has_force_sac,

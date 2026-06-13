@@ -1104,12 +1104,13 @@ impl<'a> GameLoop<'a> {
             }
             Effect::ForceSacrifice {
                 player,
-                sac_type,
+                sac_restriction,
                 count,
             } => {
                 let player_name = self.get_player_name(*player);
+                let type_desc = sac_restriction.describe();
                 let message =
-                    format!("{source_name} ({source_id}) forces {player_name} to sacrifice {count} {sac_type}");
+                    format!("{source_name} ({source_id}) forces {player_name} to sacrifice {count} {type_desc}");
                 self.game.logger.gamelog(&message);
             }
             Effect::SacrificeSelf { source } => {

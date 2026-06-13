@@ -2061,7 +2061,7 @@ mod tests {
         edict.mana_cost = ManaCost::from_string("1B");
         edict.effects.push(Effect::ForceSacrifice {
             player: p2_id,
-            sac_type: "Creature".to_string(),
+            sac_restriction: crate::core::TargetRestriction::parse("Creature"),
             count: 1,
         });
         game.cards.insert(edict_id, edict);
@@ -2119,7 +2119,7 @@ mod tests {
         spell.add_type(CardType::Sorcery);
         spell.effects.push(Effect::ForceSacrifice {
             player: p2_id,
-            sac_type: "Creature".to_string(),
+            sac_restriction: crate::core::TargetRestriction::parse("Creature"),
             count: 2,
         });
         game.cards.insert(spell_id, spell);
@@ -2182,7 +2182,7 @@ mod tests {
         spell.add_type(CardType::Sorcery);
         spell.effects.push(Effect::ForceSacrifice {
             player: p2_id,
-            sac_type: "Creature,Planeswalker".to_string(),
+            sac_restriction: crate::core::TargetRestriction::parse("Creature,Planeswalker"),
             count: 1,
         });
         game.cards.insert(spell_id, spell);

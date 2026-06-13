@@ -1843,7 +1843,13 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
             // ForceSacrifice: Target player sacrifices permanents of a type
             // Examples: "SP$ Sacrifice | ValidTgts$ Player | SacValid$ Creature" (Diabolic Edict)
             //           "SP$ Sacrifice | Amount$ 2 | SacValid$ Creature | Defined$ Player" (Barter in Blood)
-            let sac_type = params.get("SacValid").unwrap_or("Creature").to_string();
+            let sac_valid = params.get("SacValid").unwrap_or("Creature");
+            // Parse the SacValid$ filter once at load time (rather than per-resolve),
+            // so ForceSacrifice carries a strongly-typed TargetRestriction rather than
+            // a raw String. TargetRestriction handles comma-lists, subtypes, qualifiers,
+            // etc. correctly (CR 109.1/205), whereas the previous String required a
+            // hand-rolled match at every call site.
+            let sac_restriction = crate::core::TargetRestriction::parse(sac_valid);
             let count = params.get_i32("Amount").unwrap_or(1) as u8;
 
             // Placeholder - resolved at cast time.
@@ -1851,7 +1857,7 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
             // Defined$ Opponent or ValidTgts$ Player means opponent (default for placeholder)
             Some(Effect::ForceSacrifice {
                 player: PlayerId::new(0),
-                sac_type,
+                sac_restriction,
                 count,
             })
         }

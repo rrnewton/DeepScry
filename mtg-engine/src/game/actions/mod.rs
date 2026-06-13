@@ -168,11 +168,11 @@ fn resolve_saga_effect_controller(effect: Effect, controller: PlayerId, opponent
         },
         Effect::ForceSacrifice {
             player,
-            sac_type,
+            sac_restriction,
             count,
         } => Effect::ForceSacrifice {
             player: resolve(player),
-            sac_type,
+            sac_restriction,
             count,
         },
         Effect::SetLife { player, amount } => Effect::SetLife {
@@ -343,9 +343,11 @@ fn expand_all_players_effect(effect: &Effect, player_ids: &[PlayerId]) -> smallv
                 player: pid,
                 count: *count,
             },
-            Effect::ForceSacrifice { sac_type, count, .. } => Effect::ForceSacrifice {
+            Effect::ForceSacrifice {
+                sac_restriction, count, ..
+            } => Effect::ForceSacrifice {
                 player: pid,
-                sac_type: sac_type.clone(),
+                sac_restriction: sac_restriction.clone(),
                 count: *count,
             },
             Effect::SetLife { amount, .. } => Effect::SetLife {
@@ -4034,12 +4036,12 @@ impl GameState {
             },
             Effect::ForceSacrifice {
                 player,
-                sac_type,
+                sac_restriction,
                 count,
             } if player.is_placeholder() => Effect::ForceSacrifice {
                 // ForceSacrifice defaults to opponent (Diabolic Edict pattern)
                 player: opponent_id.unwrap_or(card_owner),
-                sac_type: sac_type.clone(),
+                sac_restriction: sac_restriction.clone(),
                 count: *count,
             },
             Effect::SetLife { player, amount } if player.is_placeholder() => {
@@ -4984,9 +4986,9 @@ impl GameState {
 
             Effect::ForceSacrifice {
                 player,
-                sac_type,
+                sac_restriction,
                 count,
-            } => self.execute_force_sacrifice(*player, sac_type, *count)?,
+            } => self.execute_force_sacrifice(*player, sac_restriction, *count)?,
 
             // SacrificeSelf: sacrifice the source card itself.
             // Resolved from placeholder at phase-trigger fire time; if the

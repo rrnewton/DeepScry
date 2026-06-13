@@ -201,7 +201,7 @@ impl GameState {
                 "Trigger: {} — Annihilator {n} (defending player sacrifices {n} permanents)",
                 card_name
             ));
-            self.execute_force_sacrifice(defending_player, "Permanent", n)?;
+            self.execute_force_sacrifice(defending_player, &crate::core::TargetRestriction::any(), n)?;
         }
 
         Ok(())

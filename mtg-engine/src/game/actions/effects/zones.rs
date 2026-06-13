@@ -750,45 +750,34 @@ impl GameState {
     }
 
     /// [`Effect::ForceSacrifice`]: force `player` to sacrifice `count`
-    /// permanents matching the `SacValid$` `sac_type` (CR 701.17). The AI picks
+    /// permanents matching `sac_restriction` (CR 701.17). The AI picks
     /// the least-valuable matching permanents (P/T sum for creatures, CMC else).
     ///
-    /// mtg-907: `sac_type` is parsed with the canonical `TargetRestriction`,
-    /// fixing the old hand-rolled `match` that mis-handled comma-lists, subtypes,
-    /// and qualifiers (see the inline comment + commit rules review).
+    /// The restriction is pre-parsed at card-load time into a `TargetRestriction`
+    /// (see `effect_converter.rs` / `ApiType::Sacrifice`) so no string parsing
+    /// happens here. This handles comma-lists, subtypes, and qualifiers correctly
+    /// (CR 109.1/205 card types, multi-type OR, subtype membership, nonArtifact).
     ///
-    /// KNOWN LIMITATION (NOT introduced here, deferred — see mtg-907): a few
-    /// `SacValid$` strings carry DYNAMIC predicates that neither the old code nor
-    /// `TargetRestriction::parse` resolves — `.attacking`, `.untapped`,
-    /// `.withFlying`, `.sharesCardTypeWith…`, and the `Self` selector. The old
-    /// `match` silently defaulted those to "any creature"; `TargetRestriction`
-    /// silently ignores the unknown qualifier (so `Creature.attacking` degrades
-    /// to bare `Creature`). Both are imperfect; extending `TargetRestriction` to
-    /// model board-state predicates is the proper fix and is tracked in mtg-907.
+    /// KNOWN LIMITATION (tracked in mtg-907): a few `SacValid$` strings carry
+    /// DYNAMIC predicates that `TargetRestriction` does not yet model —
+    /// `.attacking`, `.untapped`, `.withFlying`, `.sharesCardTypeWith…`, and the
+    /// `Self` selector. These qualifiers are silently ignored (e.g.
+    /// `Creature.attacking` degrades to bare `Creature`). Extending
+    /// `TargetRestriction` to model board-state predicates is the proper fix and
+    /// is tracked in mtg-907.
     pub(in crate::game::actions) fn execute_force_sacrifice(
         &mut self,
         player: PlayerId,
-        sac_type: &str,
+        sac_restriction: &crate::core::TargetRestriction,
         count: u8,
     ) -> Result<()> {
-        // Force a player to sacrifice permanents matching a type
-        // CR 701.17: "sacrifice a permanent" means its controller moves it to graveyard
+        // Force a player to sacrifice permanents matching the restriction.
+        // CR 701.17: "sacrifice a permanent" means its controller moves it to graveyard.
         let player_name = self
             .get_player(player)
             .map(|p| p.name.clone())
             .unwrap_or_else(|_| "Unknown".to_string().into());
 
-        // mtg-907: parse the `SacValid$` filter once with the canonical
-        // TargetRestriction instead of the old hand-rolled `match sac_type`. The
-        // old code only handled SINGLE bare types and fell through to
-        // `is_creature()` for everything else — so it MIS-handled real shipping
-        // filters: `SacValid$ Creature,Planeswalker` (comma-list — Planeswalkers
-        // were never sacrificed), bare subtypes like `SacValid$ Food` / `Mountain`
-        // (a Food artifact was treated as "creature" and skipped), and qualifiers
-        // like `.nonArtifact`. TargetRestriction::matches handles all of these
-        // correctly (CR 109.1/205 card types, multi-type OR, subtype membership,
-        // nonArtifact). See the commit's rules review.
-        let restriction = crate::core::TargetRestriction::parse(sac_type);
         // Find matching permanents controlled by the target player
         let mut candidates: Vec<(CardId, i32)> = self
             .battlefield
@@ -800,7 +789,7 @@ impl GameState {
                 if card.controller != player {
                     return None;
                 }
-                if restriction.matches(card) {
+                if sac_restriction.matches(card) {
                     // Score: lower value = sacrifice first
                     // Use P/T sum for creatures, CMC for non-creatures
                     let value = if card.is_creature() {
@@ -829,8 +818,9 @@ impl GameState {
         }
 
         if to_sac == 0 {
+            let type_desc = sac_restriction.describe();
             self.logger
-                .gamelog(&format!("{} has no {} to sacrifice", player_name, sac_type));
+                .gamelog(&format!("{} has no {} to sacrifice", player_name, type_desc));
         }
         Ok(())
     }
