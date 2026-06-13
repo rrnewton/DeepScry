@@ -2457,7 +2457,9 @@ impl CardDefinition {
         svar_params: &super::ability_parser::AbilityParams,
     ) -> Vec<crate::core::Effect> {
         use super::ability_parser::ApiType;
-        use super::effect_converter::{params_to_charm_effect_with_svars, params_to_effect};
+        use super::effect_converter::{
+            params_to_charm_effect_with_svars, params_to_effect, params_to_effect_with_svars,
+        };
         use crate::core::{CardId, Effect, Keyword, PlayerId};
 
         let mut effects = Vec::new();
@@ -2490,6 +2492,19 @@ impl CardDefinition {
         // follow_sub_ability_chain (same rule: Charm always gets the SVar builder).
         if svar_params.api_type == ApiType::Charm {
             if let Some(effect) = params_to_charm_effect_with_svars(svar_params, &self.svars) {
+                effects.push(effect);
+            }
+            return effects;
+        }
+
+        // RepeatEach (DB$ RepeatEach | RepeatSubAbility$ <svar> | ...) needs the
+        // SVar-aware converter so that the RepeatSubAbility$ SVar reference (e.g.
+        // DBToken in Terastodon) can be resolved to real sub-effects at parse time.
+        // params_to_effect (without svars) cannot handle this and produces an
+        // Unimplemented effect; route through params_to_effect_with_svars instead.
+        // Mirrors the Charm pattern above. (mtg-914 B2: Terastodon Elephant tokens)
+        if svar_params.api_type == ApiType::RepeatEach {
+            if let Some(effect) = params_to_effect_with_svars(svar_params, &self.svars) {
                 effects.push(effect);
             }
             return effects;

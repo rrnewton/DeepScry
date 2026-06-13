@@ -4371,11 +4371,28 @@ impl GameState {
                         require_in_graveyard,
                     },
             } if targets.is_empty() && !chosen_targets.is_empty() => {
-                // Consume ALL remaining chosen targets for this RepeatEach.
-                // target_index is left at chosen_targets.len() so subsequent
-                // effects in the same spell do not re-consume the same targets.
-                let resolved_targets = chosen_targets[*target_index..].to_vec();
-                *target_index = chosen_targets.len();
+                // Determine which chosen targets belong to this RepeatEach.
+                // Two cases:
+                // (a) RepeatEach appears BEFORE the Destroy/ChangeZone effects in
+                //     the chain (unusual): take remaining chosen targets
+                //     (chosen_targets[target_index..]).
+                // (b) RepeatEach appears AFTER the consuming effects (Terastodon):
+                //     the Destroy effects already advanced target_index past all
+                //     chosen targets, so chosen_targets[target_index..] is empty.
+                //     In this case, iterate over ALL chosen targets (0..target_index),
+                //     since RepeatEach with DefinedCards$ Targeted means "for each of
+                //     the targets we chose at cast time", not "new targets". target_index
+                //     is not advanced (RepeatEach does not consume additional targets).
+                let remaining = &chosen_targets[*target_index..];
+                let resolved_targets = if remaining.is_empty() {
+                    // Terastodon case: consuming effects ran first; re-use all chosen targets.
+                    chosen_targets.to_vec()
+                } else {
+                    // Standard case: take remaining targets and mark them consumed.
+                    let v = remaining.to_vec();
+                    *target_index = chosen_targets.len();
+                    v
+                };
                 Effect::RepeatEach {
                     sub_effects: sub_effects.clone(),
                     iterate_over: crate::core::RepeatEachIterate::Cards {
@@ -6244,6 +6261,14 @@ impl GameState {
             // where the Pump must apply to the same creature the Attach picked.
             let mut last_chosen_target: Option<CardId> = None;
 
+            // Accumulate all DestroyPermanent targets chosen during this trigger's
+            // effect chain. Used by RepeatEach with DefinedCards$ Targeted to iterate
+            // over every permanent the Destroy effect picked — e.g. Terastodon's ETB
+            // destroys up to 3 permanents then creates one 3/3 Elephant token per
+            // destroyed permanent for its controller. (mtg-914 B2 fix: RepeatEach
+            // iterates over trigger_destroy_targets when its own targets list is empty.)
+            let mut trigger_destroy_targets: smallvec::SmallVec<[CardId; 4]> = smallvec::SmallVec::new();
+
             // Execute all trigger effects with placeholder resolution
             for effect in trigger_to_exec.effects {
                 // Step 1: Apply shared placeholder resolution for simple cases
@@ -6315,6 +6340,9 @@ impl GameState {
                                 restriction: restriction.clone(),
                                 no_regenerate: *no_regenerate,
                             };
+                            // Record for RepeatEach (DefinedCards$ Targeted / ChangeZoneTable$ True)
+                            // so Terastodon's token sub-ability can iterate over all destroyed targets.
+                            trigger_destroy_targets.push(target_id);
                         }
                     }
                     // AttachEquipment: target_creature placeholder → find a creature
@@ -6548,6 +6576,31 @@ impl GameState {
                     _ => {}
                 }
 
+                // RepeatEach (Pattern A — DefinedCards$ Targeted) in a trigger: if the
+                // targets list is empty and DestroyPermanent already picked targets in
+                // this same trigger chain, fill in those targets now. This covers
+                // Terastodon's ETB: "destroy up to 3 noncreature permanents; for each,
+                // its controller creates a 3/3 Elephant token" (mtg-914 B2 fix).
+                if let Effect::RepeatEach {
+                    sub_effects,
+                    iterate_over:
+                        crate::core::RepeatEachIterate::Cards {
+                            ref targets,
+                            require_in_graveyard,
+                        },
+                } = effect.clone()
+                {
+                    if targets.is_empty() && !trigger_destroy_targets.is_empty() {
+                        effect = Effect::RepeatEach {
+                            sub_effects,
+                            iterate_over: crate::core::RepeatEachIterate::Cards {
+                                targets: trigger_destroy_targets.to_vec(),
+                                require_in_graveyard,
+                            },
+                        };
+                    }
+                }
+
                 // A discard FORCED by this triggered ability (Hypnotic Specter's
                 // "that player discards a card at random", The Rack-family, etc.)
                 // carries the trigger's CONTROLLER as the discard cause, so a
@@ -6702,6 +6755,9 @@ impl GameState {
             };
 
             let mut last_chosen_target: Option<CardId> = None;
+            // Accumulate DestroyPermanent targets for RepeatEach (DefinedCards$ Targeted).
+            // See check_triggers for detailed comments; same logic applies here.
+            let mut trigger_destroy_targets: smallvec::SmallVec<[CardId; 4]> = smallvec::SmallVec::new();
 
             for effect in trigger_to_exec.effects {
                 let mut effect = resolve_effect_placeholder(&effect, &ctx);
@@ -6748,6 +6804,9 @@ impl GameState {
                                 &trigger_source_colors,
                             ) {
                                 *target_id = chosen_id;
+                                // Record for RepeatEach (DefinedCards$ Targeted / ChangeZoneTable$ True)
+                                // so Terastodon's token sub-ability can iterate over all destroyed targets.
+                                trigger_destroy_targets.push(chosen_id);
                             }
                         }
                     }
@@ -6948,6 +7007,29 @@ impl GameState {
                         }
                     }
                     _ => {}
+                }
+
+                // RepeatEach (Pattern A — DefinedCards$ Targeted) in a trigger: populate
+                // targets from what DestroyPermanent picked in this same trigger chain.
+                // See check_triggers for detailed comments (mtg-914 B2 fix).
+                if let Effect::RepeatEach {
+                    sub_effects,
+                    iterate_over:
+                        crate::core::RepeatEachIterate::Cards {
+                            ref targets,
+                            require_in_graveyard,
+                        },
+                } = effect.clone()
+                {
+                    if targets.is_empty() && !trigger_destroy_targets.is_empty() {
+                        effect = Effect::RepeatEach {
+                            sub_effects,
+                            iterate_over: crate::core::RepeatEachIterate::Cards {
+                                targets: trigger_destroy_targets.to_vec(),
+                                require_in_graveyard,
+                            },
+                        };
+                    }
                 }
 
                 self.execute_effect(&effect)?;

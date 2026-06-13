@@ -1,0 +1,23 @@
+[metadata]
+Name:Terastodon ETB destroys permanents and creates Elephant tokens
+Goal:Win
+Turns:5
+Difficulty:Medium
+Description:P0 casts Terastodon (9/9). ETB trigger fires: P0 targets Island (noncreature permanent) for destruction (TargetMax$3, TargetMin$0). Island is destroyed (goes to graveyard). RepeatEach then creates a 3/3 green Elephant token for P1 (the destroyed Island's controller). Regression test for mtg-914: RepeatEach in ETB-trigger sub-ability chain was silently a no-op because extract_effects_from_svar called params_to_effect (no-SVars) instead of params_to_effect_with_svars for RepeatEach, so the DBToken SVar reference could not be resolved.
+
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Terastodon
+p0library=Forest; Forest; Forest; Forest; Forest
+p0graveyard=
+p0battlefield=Forest; Forest; Forest; Forest; Forest; Forest; Forest; Forest
+
+p1life=20
+p1hand=
+p1library=Island; Island; Island; Island
+p1graveyard=
+p1battlefield=Island; Island; Plains
+p1exile=
