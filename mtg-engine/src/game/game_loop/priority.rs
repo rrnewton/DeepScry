@@ -992,6 +992,17 @@ impl<'a> GameLoop<'a> {
                                     }
                                 }
 
+                                // Structured event: SpellCast
+                                if !self.replaying {
+                                    self.game
+                                        .logger
+                                        .push_event(crate::game::log_event::LogEvent::SpellCast {
+                                            card_id,
+                                            card_name: card_name.clone(),
+                                            caster: current_priority,
+                                        });
+                                }
+
                                 // MTG Rule 601.2b: Modal choice happens BEFORE targeting
                                 // Check if this is a modal spell and prompt for mode selection
                                 if let Ok(Some(Effect::ModalChoice {

@@ -3081,6 +3081,7 @@ impl GameState {
         // Destroy all creatures with lethal damage
         for (card_id, owner) in creatures_to_destroy {
             let card_name = self.cards.try_get(card_id).map(|c| c.name.clone());
+            let card_controller = self.cards.try_get(card_id).map(|c| c.controller);
             let dest = self.death_destination_for_card(card_id);
 
             // Check death triggers BEFORE moving to graveyard (MTG Rules 603.6c)
@@ -3095,6 +3096,14 @@ impl GameState {
                 } else {
                     self.logger
                         .gamelog(&format!("{} ({}) dies from lethal damage", name, card_id));
+                    // Structured event: creature died
+                    if let Some(controller) = card_controller {
+                        self.logger.push_event(crate::game::log_event::LogEvent::CreatureDied {
+                            card_id,
+                            card_name: name.to_string(),
+                            controller,
+                        });
+                    }
                 }
             }
         }

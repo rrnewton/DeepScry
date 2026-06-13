@@ -7949,6 +7949,13 @@ impl GameState {
                     if trigger.event == TriggerEvent::LeavesBattlefield {
                         self.logger
                             .gamelog(&format!("Trigger: {} - {}", card.name, trigger.description));
+                        // Structured event: trigger fired (dies trigger)
+                        self.logger.push_event(crate::game::log_event::LogEvent::TriggerFired {
+                            source_id: dying_card_id,
+                            source_name: card.name.to_string(),
+                            controller,
+                            description: trigger.description.clone(),
+                        });
                     }
                 }
             }

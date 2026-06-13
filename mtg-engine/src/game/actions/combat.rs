@@ -1368,12 +1368,13 @@ impl GameState {
                 continue;
             }
 
-            // Get creature name before moving to graveyard (for logging)
+            // Get creature name and controller before moving to graveyard (for logging/LKI)
             let creature_name = self
                 .cards
                 .get(creature_id)
                 .map(|c| c.name.clone())
                 .unwrap_or_else(|_| "Unknown".into());
+            let creature_controller = self.cards.get(creature_id).map(|c| c.controller).ok();
 
             // Check death triggers BEFORE moving the card (trigger still has access to card data)
             // This handles cards like Su-Chi which adds mana when it dies
@@ -1394,6 +1395,14 @@ impl GameState {
                 } else {
                     self.logger
                         .gamelog(&format!("{} ({}) dies from combat damage", creature_name, creature_id));
+                    // Structured event: creature died in combat
+                    if let Some(controller) = creature_controller {
+                        self.logger.push_event(crate::game::log_event::LogEvent::CreatureDied {
+                            card_id: creature_id,
+                            card_name: creature_name.to_string(),
+                            controller,
+                        });
+                    }
                 }
             }
         }

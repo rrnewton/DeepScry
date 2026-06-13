@@ -28,6 +28,7 @@ pub mod heuristic_controller;
 pub mod interactive_controller;
 #[cfg(feature = "ratatui")]
 pub mod layout;
+pub mod log_event;
 pub mod logger;
 pub mod mana_colors;
 pub mod mana_engine;
