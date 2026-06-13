@@ -700,8 +700,9 @@ impl<'a> GameLoop<'a> {
                 zone,
                 sub_ability: _,
             } => {
-                let type_str = if card_type.is_empty() { "permanents" } else { card_type };
-                let zone_str = if zone == "Hand" { "hands" } else { "battlefields" };
+                use crate::zones::Zone;
+                let type_str = card_type.map(|ct| ct.as_str()).unwrap_or("permanents");
+                let zone_str = if *zone == Zone::Hand { "hands" } else { "battlefields" };
                 let message = format!(
                     "{source_name} ({source_id}) balances {} across all players' {}",
                     type_str, zone_str

@@ -1721,6 +1721,29 @@ impl Card {
         self.is_type(&CardType::Planeswalker)
     }
 
+    /// Check whether this card matches a card-type string from a card-script
+    /// type filter (e.g. `"Land"`, `"Creature"`, `"Planeswalker"`).
+    ///
+    /// Routes through the O(1) cached flag where available; falls back to
+    /// `types.contains` for `Sorcery` and `Planeswalker` which are rarer
+    /// and not separately cached.  Returns `false` for unrecognised strings.
+    ///
+    /// Use this to consolidate the repeated `match card_type { "Land" => .is_land(), ... }`
+    /// patterns that would otherwise be duplicated across action/balance helpers.
+    #[inline]
+    pub fn has_card_type_str(&self, type_str: &str) -> bool {
+        match type_str {
+            "Land" => self.is_land(),
+            "Creature" => self.is_creature(),
+            "Artifact" => self.is_artifact(),
+            "Enchantment" => self.is_enchantment(),
+            "Instant" => self.is_instant(),
+            "Sorcery" => self.is_sorcery(),
+            "Planeswalker" => self.is_planeswalker(),
+            _ => false,
+        }
+    }
+
     /// Check if this card is an Aura (uses cached value for O(1) lookup)
     #[inline]
     pub fn is_aura(&self) -> bool {

@@ -1058,14 +1058,7 @@ impl GameState {
                     return true;
                 }
                 if let Some(card) = self.cards.try_get(id) {
-                    filter_types.iter().any(|&t| match t {
-                        "Instant" => card.is_instant(),
-                        "Sorcery" => card.is_sorcery(),
-                        "Creature" => card.is_creature(),
-                        "Land" => card.is_land(),
-                        "Artifact" => card.is_artifact(),
-                        _ => false,
-                    })
+                    filter_types.iter().any(|&t| card.has_card_type_str(t))
                 } else {
                     false
                 }
@@ -1171,15 +1164,10 @@ impl GameState {
             if filter_types.is_empty() {
                 return true;
             }
-            filter_types.iter().any(|&t| match t {
-                "Card" => true,
-                "Creature" => card.is_creature(),
-                "Instant" => card.is_instant(),
-                "Sorcery" => card.is_sorcery(),
-                "Land" => card.is_land(),
-                "Artifact" => card.is_artifact(),
-                "Enchantment" => card.is_enchantment(),
-                other => card.subtypes.iter().any(|st| st.as_str().eq_ignore_ascii_case(other)),
+            filter_types.iter().any(|&t| {
+                t == "Card"
+                    || card.has_card_type_str(t)
+                    || card.subtypes.iter().any(|st| st.as_str().eq_ignore_ascii_case(t))
             })
         };
 
@@ -1315,15 +1303,10 @@ impl GameState {
             if filter_types.is_empty() {
                 return true;
             }
-            filter_types.iter().any(|&t| match t {
-                "Card" => true,
-                "Creature" => card.is_creature(),
-                "Instant" => card.is_instant(),
-                "Sorcery" => card.is_sorcery(),
-                "Land" => card.is_land(),
-                "Artifact" => card.is_artifact(),
-                "Enchantment" => card.is_enchantment(),
-                other => card.subtypes.iter().any(|st| st.as_str().eq_ignore_ascii_case(other)),
+            filter_types.iter().any(|&t| {
+                t == "Card"
+                    || card.has_card_type_str(t)
+                    || card.subtypes.iter().any(|st| st.as_str().eq_ignore_ascii_case(t))
             })
         };
 

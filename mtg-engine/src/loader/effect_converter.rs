@@ -901,11 +901,13 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
 
         ApiType::Balance => {
             // Balance effect: SP$ Balance | Valid$ Land/Creature | Zone$ Hand/Battlefield | SubAbility$ SvarName
-            // Valid$ defaults to "Land" (most common use)
+            // Valid$ defaults to "Land" (most common use; None = any permanent)
             // Zone$ defaults to "Battlefield" for permanents
             // SubAbility$ references an SVar for the next effect in the chain
-            let card_type = params.get("Valid").unwrap_or("Land").to_string();
-            let zone = params.get("Zone").unwrap_or("Battlefield").to_string();
+            use crate::core::CardType;
+            use crate::zones::Zone;
+            let card_type = CardType::parse(params.get("Valid").unwrap_or("Land"));
+            let zone = Zone::from_str_lenient(params.get("Zone").unwrap_or("Battlefield")).unwrap_or(Zone::Battlefield);
             let sub_ability = params.get("SubAbility").map(|s| s.to_string());
 
             Some(Effect::Balance {

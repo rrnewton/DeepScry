@@ -2706,17 +2706,9 @@ impl GameState {
                     if !ownership_ok {
                         continue;
                     }
-                    let type_ok = match type_filter {
-                        "" | "Card" | "Permanent" => true,
-                        "Land" => c.is_land(),
-                        "Artifact" => c.is_artifact(),
-                        "Creature" => c.is_creature(),
-                        "Enchantment" => c.is_enchantment(),
-                        "Instant" => c.types.contains(&crate::core::CardType::Instant),
-                        "Sorcery" => c.types.contains(&crate::core::CardType::Sorcery),
-                        "Planeswalker" => c.types.contains(&crate::core::CardType::Planeswalker),
-                        other => c.subtypes.contains(&crate::core::Subtype::new(other)),
-                    };
+                    let type_ok = matches!(type_filter, "" | "Card" | "Permanent")
+                        || c.has_card_type_str(type_filter)
+                        || c.subtypes.contains(&crate::core::Subtype::new(type_filter));
                     if type_ok {
                         matched.insert(cid);
                     }
@@ -2820,18 +2812,10 @@ impl GameState {
 
                 // Check the base type filter. "Card"/"Permanent" are wildcards;
                 // card types (Land/Artifact/Creature/Enchantment/Instant/Sorcery/…)
-                // match c.types; otherwise treat as a creature subtype.
-                let type_ok = match type_filter {
-                    "" | "Card" | "Permanent" => true,
-                    "Land" => c.is_land(),
-                    "Artifact" => c.is_artifact(),
-                    "Creature" => c.is_creature(),
-                    "Enchantment" => c.is_enchantment(),
-                    "Instant" => c.types.contains(&crate::core::CardType::Instant),
-                    "Sorcery" => c.types.contains(&crate::core::CardType::Sorcery),
-                    "Planeswalker" => c.types.contains(&crate::core::CardType::Planeswalker),
-                    other => c.subtypes.contains(&crate::core::Subtype::new(other)),
-                };
+                // match c.types via has_card_type_str; otherwise treat as a subtype.
+                let type_ok = matches!(type_filter, "" | "Card" | "Permanent")
+                    || c.has_card_type_str(type_filter)
+                    || c.subtypes.contains(&crate::core::Subtype::new(type_filter));
                 if !type_ok {
                     return false;
                 }
@@ -3004,17 +2988,16 @@ impl GameState {
     /// `TargetRestriction::parse` (the `ValidTgts` `.`-modifier grammar) — those
     /// are genuinely different DSLs, not duplicates of this one.
     pub(crate) fn card_matches_type_filter_static(card: &crate::core::Card, type_filter: &str) -> bool {
-        match type_filter {
-            "Land" => card.is_land(),
-            "Creature" => card.is_creature(),
-            "Artifact" => card.is_artifact(),
-            "Enchantment" => card.is_enchantment(),
-            "Permanent" => true,
-            _ => {
-                let subtype = crate::core::Subtype::new(type_filter);
-                card.subtypes.contains(&subtype)
-            }
+        if type_filter == "Permanent" {
+            return true;
         }
+        // Try the strong-type map first; fall back to subtype check for
+        // unrecognised tokens (creature subtypes, set-specific types, etc.).
+        if card.has_card_type_str(type_filter) {
+            return true;
+        }
+        // Not a recognised main type — treat as a subtype (e.g. "Goblin", "Island").
+        card.subtypes.contains(&crate::core::Subtype::new(type_filter))
     }
 
     /// Cast a spell following the full 8-step process (MTG Rules 601.2)
@@ -5486,17 +5469,10 @@ impl GameState {
 
     /// Check if a card matches a card type
     fn card_matches_type(card: &crate::core::Card, type_name: &str) -> bool {
-        match type_name {
-            "Card" => true, // Any card
-            "Land" => card.is_land(),
-            "Creature" => card.is_creature(),
-            "Artifact" => card.is_artifact(),
-            "Enchantment" => card.is_enchantment(),
-            "Instant" => card.is_instant(),
-            "Sorcery" => card.types.contains(&CardType::Sorcery),
-            "Planeswalker" => card.types.contains(&CardType::Planeswalker),
-            _ => false,
+        if type_name == "Card" {
+            return true; // Any card
         }
+        card.has_card_type_str(type_name)
     }
 
     /// Check if a card matches a subtype
@@ -9293,8 +9269,8 @@ impl GameState {
     /// Each player with more than the minimum must sacrifice/discard down to the minimum.
     ///
     /// # Arguments
-    /// * `card_type` - Type filter (e.g., "Creature", "Land", or empty for any)
-    /// * `zone` - Zone to balance ("Battlefield" or "Hand")
+    /// * `card_type` - Card type to balance (`None` = any permanent).
+    /// * `zone` - Zone to balance (`Zone::Hand` → discard; `Zone::Battlefield` → sacrifice).
     ///
     /// # MTG Rules
     /// - 701.17: To sacrifice means to move a permanent to graveyard
@@ -9307,12 +9283,12 @@ impl GameState {
     /// # Errors
     ///
     /// Returns an error if balance effect execution fails.
-    pub fn execute_balance_effect(&mut self, card_type: &str, zone: &str) -> Result<()> {
+    pub fn execute_balance_effect(&mut self, card_type: Option<CardType>, zone: Zone) -> Result<()> {
         // Get all player IDs
         let player_ids: Vec<PlayerId> = self.players.iter().map(|p| p.id).collect();
 
         // Handle Hand zone (discard) vs Battlefield zone (sacrifice)
-        if zone == "Hand" {
+        if zone == Zone::Hand {
             // Count cards in each player's hand
             let hand_counts: Vec<(PlayerId, usize)> = player_ids
                 .iter()
@@ -9402,15 +9378,8 @@ impl GameState {
                                 if card.controller != pid {
                                     return false;
                                 }
-                                // Filter by card type
-                                match card_type {
-                                    "Creature" => card.is_creature(),
-                                    "Land" => card.is_land(),
-                                    "Artifact" => card.is_artifact(),
-                                    "Enchantment" => card.is_enchantment(),
-                                    "" => true, // Any permanent
-                                    _ => true,  // Default to any
-                                }
+                                // None = any permanent
+                                card_type.is_none() || card_type.is_some_and(|ct| card.has_card_type_str(ct.as_str()))
                             } else {
                                 false
                             }
@@ -9427,7 +9396,7 @@ impl GameState {
             let min_count = counts_and_permanents.iter().map(|(_, c, _)| *c).min().unwrap_or(0);
 
             // Log the balance action
-            let type_str = if card_type.is_empty() { "permanents" } else { card_type };
+            let type_str = card_type.map(|ct| ct.as_str()).unwrap_or("permanents");
             self.logger
                 .gamelog(&format!("Balance: {} equalize to {}", type_str, min_count));
 
@@ -9853,22 +9822,21 @@ impl GameState {
                     // `Count$Valid Swamp.ActivePlayerCtrl` counts Swamps.
                     let type_token = filter.split('.').next().unwrap_or(filter);
                     let type_matches = match type_token {
-                        "Artifact" => card.is_artifact(),
-                        "Creature" => card.is_creature(),
-                        "Land" => card.is_land(),
-                        "Enchantment" => card.is_enchantment(),
                         "Permanent" | "Card" => true, // Any permanent
+                        // Basic-land subtypes: use O(1) cached flags so that e.g.
+                        // Karma's `Count$Valid Swamp.ActivePlayerCtrl` is fast.
                         "Swamp" => card.definition.cache.has_swamp_subtype,
                         "Plains" => card.definition.cache.has_plains_subtype,
                         "Island" => card.definition.cache.has_island_subtype,
                         "Mountain" => card.definition.cache.has_mountain_subtype,
                         "Forest" => card.definition.cache.has_forest_subtype,
                         other => {
-                            // Fall back to a subtype check (e.g. "Shrine", "Sliver",
-                            // "Goblin"). Subtypes are stored as `Subtype` wrappers
-                            // whose `as_str()` returns the raw string. CR 205.3
-                            // (enchantment subtypes), 205.2 (creature types), etc.
-                            card.subtypes.iter().any(|st| st.as_str().eq_ignore_ascii_case(other))
+                            // Try the shared card-type map (Land/Creature/Artifact/…),
+                            // then fall back to a subtype check (e.g. "Shrine",
+                            // "Sliver", "Goblin"). CR 205.3 (enchantment subtypes),
+                            // 205.2 (creature types), etc.
+                            card.has_card_type_str(other)
+                                || card.subtypes.iter().any(|st| st.as_str().eq_ignore_ascii_case(other))
                                 || card
                                     .temp_animate_subtypes
                                     .iter()
@@ -9920,17 +9888,13 @@ fn matches_taps_for_mana_filter(
 ) -> bool {
     let type_token = filter.split('.').next().unwrap_or(filter);
     let type_matches = match type_token {
-        "Artifact" => card.is_artifact(),
-        "Creature" => card.is_creature(),
-        "Land" => card.is_land(),
-        "Enchantment" => card.is_enchantment(),
         "Permanent" | "Card" => true,
         "Swamp" => card.definition.cache.has_swamp_subtype,
         "Plains" => card.definition.cache.has_plains_subtype,
         "Island" => card.definition.cache.has_island_subtype,
         "Mountain" => card.definition.cache.has_mountain_subtype,
         "Forest" => card.definition.cache.has_forest_subtype,
-        _ => false,
+        other => card.has_card_type_str(other),
     };
     if !type_matches {
         if type_token == "Mountain,Forest,Plains" {

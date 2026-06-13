@@ -2115,15 +2115,8 @@ impl GraveyardTargetFilter<'_> {
         if self.type_filter.is_empty() {
             return true;
         }
-        self.type_filter.split(',').any(|t| match t.trim() {
-            "Instant" => card.is_instant(),
-            "Sorcery" => card.is_sorcery(),
-            "Creature" => card.is_creature(),
-            "Land" => card.is_land(),
-            "Artifact" => card.is_artifact(),
-            "Enchantment" => card.is_enchantment(),
-            "Card" => true,
-            _ => false,
-        })
+        self.type_filter
+            .split(',')
+            .any(|t| t.trim() == "Card" || card.has_card_type_str(t.trim()))
     }
 }

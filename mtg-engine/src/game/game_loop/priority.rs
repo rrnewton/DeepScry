@@ -3837,7 +3837,8 @@ impl<'a> GameLoop<'a> {
                             sub_ability,
                         } = e
                         {
-                            Some((card_type.clone(), zone.clone(), sub_ability.clone()))
+                            // CardType and Zone are Copy; clone only sub_ability (String)
+                            Some((*card_type, *zone, sub_ability.clone()))
                         } else {
                             None
                         }
@@ -3907,8 +3908,8 @@ impl<'a> GameLoop<'a> {
         // Now handle any Balance effects interactively, including SubAbility chains
         for (card_type, zone, sub_ability) in balance_effects {
             self.resolve_balance_effect_chain(
-                &card_type,
-                &zone,
+                card_type,
+                zone,
                 sub_ability.as_deref(),
                 &svars,
                 controller1,
@@ -5051,8 +5052,8 @@ impl<'a> GameLoop<'a> {
     /// Each player with more than the minimum must choose which permanents to sacrifice.
     fn resolve_balance_effect_interactive(
         &mut self,
-        card_type: &str,
-        zone: &str,
+        card_type: Option<crate::core::CardType>,
+        zone: crate::zones::Zone,
         controller1: &mut dyn PlayerController,
         controller2: &mut dyn PlayerController,
     ) -> Result<()> {
@@ -5060,7 +5061,7 @@ impl<'a> GameLoop<'a> {
 
         let player_ids: Vec<_> = self.game.players.iter().map(|p| p.id).collect();
 
-        if zone == "Hand" {
+        if zone == Zone::Hand {
             // Hand balancing - use existing non-interactive implementation for now
             // TODO(mtg-144): Make hand discard interactive too
             self.game.execute_balance_effect(card_type, zone)?;
@@ -5080,14 +5081,8 @@ impl<'a> GameLoop<'a> {
                                 if card.controller != pid {
                                     return false;
                                 }
-                                match card_type {
-                                    "Creature" => card.is_creature(),
-                                    "Land" => card.is_land(),
-                                    "Artifact" => card.is_artifact(),
-                                    "Enchantment" => card.is_enchantment(),
-                                    "" => true,
-                                    _ => true,
-                                }
+                                // None = any permanent
+                                card_type.is_none() || card_type.is_some_and(|ct| card.has_card_type_str(ct.as_str()))
                             } else {
                                 false
                             }
@@ -5102,7 +5097,7 @@ impl<'a> GameLoop<'a> {
             let min_count = counts_and_permanents.iter().map(|(_, c, _)| *c).min().unwrap_or(0);
 
             // Log the balance action
-            let type_str = if card_type.is_empty() { "permanents" } else { card_type };
+            let type_str = card_type.map(|ct| ct.as_str()).unwrap_or("permanents");
             self.game
                 .logger
                 .gamelog(&format!("Balance: {} equalize to {}", type_str, min_count));
@@ -5201,8 +5196,8 @@ impl<'a> GameLoop<'a> {
     /// - Execute: Creature balancing (no sub_ability)
     fn resolve_balance_effect_chain(
         &mut self,
-        card_type: &str,
-        zone: &str,
+        card_type: Option<crate::core::CardType>,
+        zone: crate::zones::Zone,
         sub_ability: Option<&str>,
         svars: &std::collections::HashMap<String, String>,
         controller1: &mut dyn PlayerController,
@@ -5220,8 +5215,8 @@ impl<'a> GameLoop<'a> {
                 if let Some((next_card_type, next_zone, next_sub_ability)) = Self::parse_balance_svar(svar_body) {
                     // Recursively execute the chained effect
                     self.resolve_balance_effect_chain(
-                        &next_card_type,
-                        &next_zone,
+                        next_card_type,
+                        next_zone,
                         next_sub_ability.as_deref(),
                         svars,
                         controller1,
@@ -5234,36 +5229,43 @@ impl<'a> GameLoop<'a> {
         Ok(())
     }
 
-    /// Parse a Balance SVar body to extract card_type, zone, and sub_ability
+    /// Parse a Balance SVar body to extract card_type, zone, and sub_ability.
     ///
     /// Input: "DB$ Balance | Zone$ Hand | SubAbility$ BalanceCreatures"
-    /// Output: Some(("Land", "Hand", Some("BalanceCreatures")))
+    /// Output: `Some((Some(CardType::Land), Zone::Hand, Some("BalanceCreatures")))`
     ///
     /// Input: "DB$ Balance | Valid$ Creature"
-    /// Output: Some(("Creature", "Battlefield", None))
-    fn parse_balance_svar(svar_body: &str) -> Option<(String, String, Option<String>)> {
+    /// Output: `Some((Some(CardType::Creature), Zone::Battlefield, None))`
+    fn parse_balance_svar(
+        svar_body: &str,
+    ) -> Option<(Option<crate::core::CardType>, crate::zones::Zone, Option<String>)> {
+        use crate::zones::Zone;
+
         // Only process Balance SVars
         if !svar_body.contains("DB$ Balance") && !svar_body.contains("DB$Balance") {
             return None;
         }
 
         // Parse parameters by splitting on |
-        let mut card_type = "Land".to_string(); // Default for Balance
-        let mut zone = "Battlefield".to_string(); // Default for Balance
+        // Valid$ defaults to "Land" (Balance card's own default); Zone$ defaults to "Battlefield".
+        let mut card_type_str = "Land"; // Default for Balance
+        let mut zone_str = "Battlefield"; // Default for Balance
         let mut sub_ability = None;
 
         for param in svar_body.split('|') {
             let param = param.trim();
             if let Some((key, value)) = param.split_once('$') {
                 match key.trim() {
-                    "Valid" => card_type = value.trim().to_string(),
-                    "Zone" => zone = value.trim().to_string(),
+                    "Valid" => card_type_str = value.trim(),
+                    "Zone" => zone_str = value.trim(),
                     "SubAbility" => sub_ability = Some(value.trim().to_string()),
                     _ => {}
                 }
             }
         }
 
+        let card_type = crate::core::CardType::parse(card_type_str);
+        let zone = Zone::from_str_lenient(zone_str).unwrap_or(Zone::Battlefield);
         Some((card_type, zone, sub_ability))
     }
 }

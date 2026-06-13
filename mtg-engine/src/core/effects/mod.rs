@@ -1,6 +1,7 @@
 //! Card effects and ability system
 
-use crate::core::{CardId, Color, Keyword, KeywordArgs, PlayerId};
+use crate::core::{CardId, CardType, Color, Keyword, KeywordArgs, PlayerId};
+use crate::zones::Zone;
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 
@@ -2507,10 +2508,13 @@ pub enum Effect {
     /// is looked up in the card's SVars and executed. This enables Balance's full
     /// Land → Hand → Creature chain.
     Balance {
-        /// What type of card to balance ("Creature", "Land", or empty for any permanent)
-        card_type: String,
-        /// Zone to balance ("Battlefield" or "Hand")
-        zone: String,
+        /// Card type to balance. `None` means any permanent; `Some(t)` restricts to
+        /// cards of that type (e.g. `Some(CardType::Land)` for Balance's default,
+        /// `Some(CardType::Creature)` for the creature-equalizing sub-chain).
+        card_type: Option<CardType>,
+        /// Zone in which to balance. Only `Zone::Battlefield` (sacrifice permanents)
+        /// and `Zone::Hand` (discard) are used in practice.
+        zone: Zone,
         /// Optional SubAbility$ reference (SVar name to execute after this effect)
         sub_ability: Option<String>,
     },

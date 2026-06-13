@@ -146,12 +146,7 @@ impl GameState {
                     .map(|card| {
                         card.controller == player
                             && !card.tapped
-                            && filter_types.iter().any(|&t| match t {
-                                "Artifact" => card.is_artifact(),
-                                "Creature" => card.is_creature(),
-                                "Land" => card.is_land(),
-                                _ => false,
-                            })
+                            && filter_types.iter().any(|&t| card.has_card_type_str(t))
                     })
                     .unwrap_or(false)
             })

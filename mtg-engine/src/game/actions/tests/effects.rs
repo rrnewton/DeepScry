@@ -1782,7 +1782,8 @@ mod tests {
         );
 
         // Execute Balance effect for creatures
-        let result = game.execute_balance_effect("Creature", "Battlefield");
+        let result =
+            game.execute_balance_effect(Some(crate::core::CardType::Creature), crate::zones::Zone::Battlefield);
         assert!(
             result.is_ok(),
             "Balance effect should execute successfully: {:?}",
@@ -1867,7 +1868,7 @@ mod tests {
         assert_eq!(p2_hand_size_before, 4, "P2 should have 4 cards in hand");
 
         // Execute Balance effect for hands
-        let result = game.execute_balance_effect("", "Hand");
+        let result = game.execute_balance_effect(None, crate::zones::Zone::Hand);
         assert!(
             result.is_ok(),
             "Balance effect should execute successfully: {:?}",
