@@ -691,6 +691,7 @@ impl GameState {
                             | Effect::ClearRemembered
                             | Effect::AddTurn { .. }
                             | Effect::AddPhase { .. }
+                            | Effect::ChooseName { .. }
                             | Effect::ChooseColor { .. }
                             | Effect::Clone { .. }
                             | Effect::Proliferate
@@ -770,6 +771,7 @@ impl GameState {
                 | Effect::UntapAll { .. }
                 | Effect::UntapOne { .. }
                 | Effect::SetLife { .. }
+                | Effect::ChooseName { .. }
                 | Effect::ChooseColor { .. }
                 | Effect::Clone { .. }
                 | Effect::Unimplemented { .. }
@@ -1439,6 +1441,7 @@ impl GameState {
                 | Effect::SacrificeSelf { .. }
                 | Effect::TapAll { .. }
                 | Effect::SetLife { .. }
+                | Effect::ChooseName { .. }
                 | Effect::ChooseColor { .. }
                 | Effect::Clone { .. }
                 | Effect::Proliferate
@@ -1861,6 +1864,7 @@ impl GameState {
             | Effect::GainControl { .. }
             | Effect::PutCounterAll { .. }
             | Effect::ChangeZoneAll { .. }
+            | Effect::ChooseName { .. }
             | Effect::ChooseColor { .. }
             | Effect::Clone { .. }
             | Effect::Proliferate

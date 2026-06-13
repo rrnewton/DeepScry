@@ -2951,6 +2951,7 @@ fn test_should_cast_put_counter_all() {
             min_cmc: None,
             max_cmc: None,
             requires_defender: false,
+            requires_named_card: false,
             exact_cmc: None,
             cmc_eq_svar: false,
         },
@@ -3009,6 +3010,7 @@ fn test_should_cast_put_counter_all() {
             min_cmc: None,
             max_cmc: None,
             requires_defender: false,
+            requires_named_card: false,
             exact_cmc: None,
             cmc_eq_svar: false,
         },
@@ -3093,12 +3095,14 @@ fn test_should_cast_change_zone_all() {
             min_cmc: None,
             max_cmc: None,
             requires_defender: false,
+            requires_named_card: false,
             exact_cmc: None,
             cmc_eq_svar: false,
         },
         origins: smallvec![crate::zones::Zone::Battlefield],
         destination: crate::zones::Zone::Hand,
         shuffle: false,
+        target_player: None,
     }];
 
     // Scenario 1: Opponent has 3 big creatures, we have 1 small one → should cast
@@ -3170,6 +3174,7 @@ fn test_should_cast_change_zone_all() {
         origins: smallvec![crate::zones::Zone::Graveyard],
         destination: crate::zones::Zone::Exile,
         shuffle: false,
+        target_player: None,
     }];
 
     let mut game3 = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);

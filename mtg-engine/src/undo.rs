@@ -77,6 +77,10 @@ pub enum GameAction {
     /// storing the PREVIOUS value so a mid-turn rewind restores `Card::chosen_name`.
     SetChosenName { card_id: CardId, prev: Option<String> },
 
+    /// Set the GameState-level remembered name (Cranial Extraction: `SP$ NameCard`),
+    /// storing the PREVIOUS value so a mid-resolution rewind restores it.
+    SetRememberedName { prev: Option<String> },
+
     /// Set a card's `stored_int` (e.g. Phyrexian Processor's ETB life payment),
     /// storing the PREVIOUS value so a mid-turn rewind restores `Card::stored_int`.
     SetStoredInt { card_id: CardId, prev: Option<u32> },
@@ -723,6 +727,9 @@ impl fmt::Display for GameAction {
             GameAction::SetChosenName { card_id, prev } => {
                 write!(f, "SetChosenName({}, prev={:?})", card_id.as_u32(), prev)
             }
+            GameAction::SetRememberedName { prev } => {
+                write!(f, "SetRememberedName(prev={:?})", prev)
+            }
             GameAction::SetStoredInt { card_id, prev } => {
                 write!(f, "SetStoredInt({}, prev={:?})", card_id.as_u32(), prev)
             }
@@ -1164,6 +1171,11 @@ impl GameAction {
                 } else {
                     return Err(format!("Card {} not found for SetChosenName undo", card_id.as_u32()));
                 }
+            }
+
+            GameAction::SetRememberedName { prev } => {
+                // Restore the previous GameState-level remembered name (Cranial Extraction).
+                game.remembered_name = prev.clone();
             }
 
             GameAction::SetStoredInt { card_id, prev } => {

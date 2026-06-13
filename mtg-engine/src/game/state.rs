@@ -231,6 +231,18 @@ pub struct GameState {
     #[serde(default)]
     pub remembered_amount: Option<u32>,
 
+    /// Remembered card name for effect-resolution chains (`SP$ NameCard`).
+    ///
+    /// Set when a `ChooseName` effect resolves (Cranial Extraction: "choose a
+    /// nonland card name").  Subsequent sub-abilities in the same resolution
+    /// chain read this to filter cards by name (e.g. `ChangeType$ Card.NamedCard`
+    /// in `ChangeZoneAll`). Cleared by `DB$ Cleanup | ClearRemembered$ True`.
+    /// Serialized so snapshot/resume and network-shadow stay identical (CR 614 /
+    /// information-independence invariant — the AI's name choice is deterministic
+    /// from public information, so both server and shadow pick the same name).
+    #[serde(default)]
+    pub remembered_name: Option<String>,
+
     /// Queue of extra turns granted by effects (e.g., Time Walk).
     ///
     /// Each entry is the PlayerId who gets the extra turn.
@@ -539,6 +551,7 @@ impl GameState {
             remembered_cards: smallvec::SmallVec::new(),
             remembered_players: smallvec::SmallVec::new(),
             remembered_amount: None,
+            remembered_name: None,
             extra_turns: std::collections::VecDeque::new(),
             extra_combat_phases: 0,
             is_shadow_game: false, // Default: not a shadow game
@@ -5244,6 +5257,7 @@ impl GameState {
                     | crate::core::Effect::ClearRemembered
                     | crate::core::Effect::AddTurn { .. }
                     | crate::core::Effect::AddPhase { .. }
+                    | crate::core::Effect::ChooseName { .. }
                     | crate::core::Effect::ChooseColor { .. }
                     | crate::core::Effect::Clone { .. }
                     | crate::core::Effect::UnlessCostWrapper { .. }
@@ -5381,6 +5395,7 @@ impl Clone for GameState {
             remembered_cards: self.remembered_cards.clone(),
             remembered_players: self.remembered_players.clone(),
             remembered_amount: self.remembered_amount,
+            remembered_name: self.remembered_name.clone(),
             extra_turns: self.extra_turns.clone(),
             extra_combat_phases: self.extra_combat_phases,
             is_shadow_game: self.is_shadow_game,

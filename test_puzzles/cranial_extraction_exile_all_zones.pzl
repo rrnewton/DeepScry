@@ -1,0 +1,24 @@
+[metadata]
+Name:Cranial Extraction Exiles Named Card From All Zones
+Goal:Win
+Turns:5
+Difficulty:Easy
+Description:P0 casts Cranial Extraction (3B sorcery). The AI heuristic sees two Grizzly Bears in P1's graveyard and names "Grizzly Bears". All matching copies must then be exiled from P1's graveyard (2), hand (1), and library (1). P1's library is shuffled afterward.
+
+[state]
+turn=2
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Cranial Extraction
+p0library=Swamp; Swamp; Swamp; Swamp
+p0graveyard=
+p0battlefield=Swamp; Swamp; Swamp; Swamp
+p0exile=
+
+p1life=20
+p1hand=Grizzly Bears
+p1library=Grizzly Bears; Plains; Plains; Plains
+p1graveyard=Grizzly Bears; Grizzly Bears
+p1battlefield=
+p1exile=

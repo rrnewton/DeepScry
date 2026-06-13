@@ -515,6 +515,36 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
                     source: CardId::new(0), // Placeholder — resolved in check_death_triggers
                 });
             }
+            // Named-card multi-zone exile sub-ability (Cranial Extraction / Memoricide):
+            //   DB$ ChangeZone | Origin$ Hand | Destination$ Exile | DefinedPlayer$ Targeted
+            //     | ChangeType$ Card.NamedCard | ChangeNum$ NumInHand
+            //   DB$ ChangeZone | Origin$ Library | Destination$ Exile | DefinedPlayer$ Targeted
+            //     | ChangeType$ Card.NamedCard | ChangeNum$ NumInLib | Shuffle$ True
+            //
+            // These sub-abilities ("ExileHand" / "ExileLib") are scripted as ChangeZone
+            // but semantically they move ALL matching cards (ChangeNum is the whole
+            // hand/library count).  We convert them to ChangeZoneAll here so the same
+            // named-card filter logic in execute_change_zone_all handles them — no
+            // duplication in the executor.
+            if params.get("ChangeType") == Some("Card.NamedCard")
+                && params.get("Destination") == Some("Exile")
+                && params.get("DefinedPlayer") == Some("Targeted")
+            {
+                let origin_str = params.get("Origin").unwrap_or("Hand");
+                let origin = crate::zones::Zone::from_str_lenient(origin_str).unwrap_or(crate::zones::Zone::Hand);
+                let shuffle = params
+                    .get("Shuffle")
+                    .map(|v| v.eq_ignore_ascii_case("true"))
+                    .unwrap_or(false);
+                let restriction = TargetRestriction::parse("Card.NamedCard");
+                return Some(Effect::ChangeZoneAll {
+                    restriction,
+                    origins: smallvec::smallvec![origin],
+                    destination: crate::zones::Zone::Exile,
+                    shuffle,
+                    target_player: Some(PlayerId::target_opponent()),
+                });
+            }
             // Bounce: return a permanent from battlefield to its owner's hand.
             // Covers Teferi −3, Petty Theft, and any other
             // `Origin$ Battlefield | Destination$ Hand | ValidTgts$ <filter>` ability.
@@ -1994,11 +2024,24 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
                 .map(|v| v.eq_ignore_ascii_case("true"))
                 .unwrap_or(false);
 
+            // Detect the Cranial Extraction / Memoricide named-card exile pattern:
+            // `ChangeType$ Card.NamedCard | ValidTgts$ Player` — exile all copies of
+            // a chosen name from the targeted player's zone.  We emit a ChangeZoneAll
+            // with `target_player = Some(placeholder_opponent)` (the spell always
+            // targets an opponent in 2-player play) so the executor only touches that
+            // player's zone rather than everyone's.
+            let target_player = if restriction.requires_named_card && params.get("ValidTgts") == Some("Player") {
+                Some(PlayerId::target_opponent())
+            } else {
+                None
+            };
+
             Some(Effect::ChangeZoneAll {
                 restriction,
                 origins,
                 destination,
                 shuffle,
+                target_player,
             })
         }
 
@@ -2017,6 +2060,24 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
             // Example: "DB$ TapOrUntap | ValidTgts$ Creature" (Bounding Krasis)
             Some(Effect::TapOrUntapPermanent {
                 target: CardId::placeholder(),
+            })
+        }
+
+        ApiType::NameCard => {
+            // NameCard (spell-ability form): Choose a card name at resolution time.
+            //
+            // Example: "SP$ NameCard | Defined$ You | ValidCards$ Card.nonLand | SubAbility$ ExileYard"
+            //   (Cranial Extraction, Memoricide)
+            //
+            // The chosen name is stored in `GameState::remembered_name` and read by
+            // subsequent sub-abilities (e.g. `ChangeType$ Card.NamedCard` in ExileYard).
+            //
+            // Note: The ETB form (Pithing Needle: K:ETBReplacement:Other:DBNameCard)
+            // is handled in loader/card.rs via `etb_choose_name` and stores the name
+            // on `Card::chosen_name` — that is a DIFFERENT, per-card-persistent path.
+            // This converter arm handles the SPELL resolution-time NameCard only.
+            Some(Effect::ChooseName {
+                player: PlayerId::placeholder(), // Placeholder — resolved to card_owner at cast time
             })
         }
 
@@ -4860,5 +4921,112 @@ Oracle:Target creature gets +3/+1 until end of turn. Create a Clue token.
             !r.requires_remembered,
             "IsRemembered flag must NOT be set when only !IsRemembered is present"
         );
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Cranial Extraction (compat-2005-wave6) converter tests
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// The main spell ability (SP$ NameCard) must produce Effect::ChooseName.
+    #[test]
+    fn test_cranial_extraction_name_card_converts_to_choose_name() {
+        let params = AbilityParams::parse(
+            "A:SP$ NameCard | Defined$ You | ValidCards$ Card.nonLand | SubAbility$ ExileYard \
+             | SpellDescription$ Choose a nonland card name.",
+        )
+        .unwrap();
+        assert_eq!(params.api_type, ApiType::NameCard);
+        let effect = params_to_effect(&params).expect("NameCard should produce ChooseName");
+        assert!(
+            matches!(effect, Effect::ChooseName { .. }),
+            "Expected Effect::ChooseName, got {:?}",
+            effect
+        );
+    }
+
+    /// The ExileYard sub-ability uses ChangeZoneAll with ValidTgts$ Player and
+    /// ChangeType$ Card.NamedCard — must produce a scoped ChangeZoneAll.
+    #[test]
+    fn test_cranial_extraction_exile_yard_converts_to_change_zone_all() {
+        let params = AbilityParams::parse_svar_body(
+            "DB$ ChangeZoneAll | Origin$ Graveyard | Destination$ Exile \
+             | ValidTgts$ Player | ChangeType$ Card.NamedCard | SubAbility$ ExileHand",
+        )
+        .expect("ExileYard SVar body should parse");
+        let effect = params_to_effect(&params).expect("ExileYard should produce ChangeZoneAll");
+        match effect {
+            Effect::ChangeZoneAll {
+                restriction,
+                target_player,
+                destination,
+                ..
+            } => {
+                assert!(restriction.requires_named_card, "restriction must require named card");
+                assert!(
+                    target_player.is_some(),
+                    "target_player must be Some (scoped to opponent)"
+                );
+                assert_eq!(destination, crate::zones::Zone::Exile);
+            }
+            other => panic!("Expected ChangeZoneAll, got {:?}", other),
+        }
+    }
+
+    /// The ExileHand sub-ability (DB$ ChangeZone | Origin$ Hand | Destination$ Exile
+    /// | DefinedPlayer$ Targeted | ChangeType$ Card.NamedCard) must also convert to
+    /// a scoped ChangeZoneAll (not MoveSelfBetweenZones or anything else).
+    #[test]
+    fn test_cranial_extraction_exile_hand_converts_to_change_zone_all() {
+        let params = AbilityParams::parse_svar_body(
+            "DB$ ChangeZone | Origin$ Hand | Destination$ Exile | DefinedPlayer$ Targeted \
+             | ChangeType$ Card.NamedCard | ChangeNum$ NumInHand | Chooser$ You",
+        )
+        .expect("ExileHand SVar body should parse");
+        let effect = params_to_effect(&params).expect("ExileHand should produce ChangeZoneAll");
+        match effect {
+            Effect::ChangeZoneAll {
+                restriction,
+                target_player,
+                destination,
+                origins,
+                shuffle,
+            } => {
+                assert!(restriction.requires_named_card, "restriction must require named card");
+                assert!(target_player.is_some(), "target_player must be Some");
+                assert_eq!(destination, crate::zones::Zone::Exile);
+                assert_eq!(origins.as_slice(), &[crate::zones::Zone::Hand]);
+                assert!(!shuffle, "ExileHand does not shuffle");
+            }
+            other => panic!("Expected ChangeZoneAll, got {:?}", other),
+        }
+    }
+
+    /// The ExileLib sub-ability (DB$ ChangeZone | Origin$ Library | Destination$ Exile
+    /// | DefinedPlayer$ Targeted | ChangeType$ Card.NamedCard | Shuffle$ True) must
+    /// convert to a scoped ChangeZoneAll with shuffle=true.
+    #[test]
+    fn test_cranial_extraction_exile_lib_converts_to_change_zone_all_with_shuffle() {
+        let params = AbilityParams::parse_svar_body(
+            "DB$ ChangeZone | Origin$ Library | Destination$ Exile | DefinedPlayer$ Targeted \
+             | ChangeType$ Card.NamedCard | ChangeNum$ NumInLib | Chooser$ You | Shuffle$ True",
+        )
+        .expect("ExileLib SVar body should parse");
+        let effect = params_to_effect(&params).expect("ExileLib should produce ChangeZoneAll");
+        match effect {
+            Effect::ChangeZoneAll {
+                restriction,
+                target_player,
+                destination,
+                origins,
+                shuffle,
+            } => {
+                assert!(restriction.requires_named_card, "restriction must require named card");
+                assert!(target_player.is_some(), "target_player must be Some");
+                assert_eq!(destination, crate::zones::Zone::Exile);
+                assert_eq!(origins.as_slice(), &[crate::zones::Zone::Library]);
+                assert!(shuffle, "ExileLib must shuffle");
+            }
+            other => panic!("Expected ChangeZoneAll, got {:?}", other),
+        }
     }
 }

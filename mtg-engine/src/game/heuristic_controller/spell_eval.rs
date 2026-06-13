@@ -1507,6 +1507,7 @@ impl HeuristicController {
                 origins,
                 destination,
                 shuffle: _,
+                target_player: _,
             } = e
             {
                 Some((restriction, origins, destination))

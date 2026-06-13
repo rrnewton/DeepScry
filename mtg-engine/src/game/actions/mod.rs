@@ -244,6 +244,7 @@ fn expand_all_players_effect(effect: &Effect, player_ids: &[PlayerId]) -> smallv
         | Effect::ChooseAndRememberOneOfEach { .. }
         | Effect::AddTurn { .. }
         | Effect::AddPhase { .. }
+        | Effect::ChooseName { .. }
         | Effect::ChooseColor { .. }
         | Effect::Clone { .. }
         | Effect::SelfExileFromStack { .. }
@@ -387,6 +388,7 @@ fn expand_all_players_effect(effect: &Effect, player_ids: &[PlayerId]) -> smallv
             | Effect::ChooseAndRememberOneOfEach { .. }
             | Effect::AddTurn { .. }
             | Effect::AddPhase { .. }
+            | Effect::ChooseName { .. }
             | Effect::ChooseColor { .. }
             | Effect::Clone { .. }
             | Effect::SelfExileFromStack { .. }
@@ -4156,6 +4158,7 @@ impl GameState {
                 player: card_owner,
                 source: *source,
             },
+            Effect::ChooseName { player } if player.is_placeholder() => Effect::ChooseName { player: card_owner },
             Effect::Loot {
                 player,
                 discard_count,
@@ -4826,7 +4829,8 @@ impl GameState {
                 origins,
                 destination,
                 shuffle,
-            } => self.execute_change_zone_all(restriction, origins, *destination, *shuffle)?,
+                target_player,
+            } => self.execute_change_zone_all(restriction, origins, *destination, *shuffle, *target_player)?,
             Effect::RemoveCounter {
                 target,
                 counter_type,
@@ -5141,6 +5145,8 @@ impl GameState {
             } => self.execute_unless_cost_wrapper(inner_effect, unless_cost)?,
 
             Effect::ChooseColor { player, source } => self.execute_choose_color(*player, *source)?,
+
+            Effect::ChooseName { player } => self.execute_choose_name(*player)?,
 
             Effect::AddPhase { count } => self.execute_add_phase(*count)?,
             Effect::Clone { .. } => self.execute_clone_fallback()?,

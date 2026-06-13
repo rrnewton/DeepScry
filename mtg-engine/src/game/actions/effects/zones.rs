@@ -1491,7 +1491,23 @@ impl GameState {
         origins: &[Zone],
         destination: Zone,
         shuffle: bool,
+        target_player: Option<crate::core::PlayerId>,
     ) -> Result<()> {
+        // Resolve the target_player sentinel: `PlayerId::target_opponent()` means
+        // "the opponent of whoever controls the resolving spell" — in a 2-player game
+        // that is the sole non-self player. Real IDs are used as-is; `None` means
+        // all players (Timetwister / Wheel / Tormod's Crypt behaviour).
+        let scoped_player: Option<crate::core::PlayerId> = match target_player {
+            Some(pid) if pid.is_target_opponent() => {
+                // Find the first player that is NOT the controller (placeholder for
+                // "opponent"). In a 2-player game this is always unique.
+                self.players
+                    .iter()
+                    .find(|p| p.id != self.turn.active_player)
+                    .map(|p| p.id)
+            }
+            other => other,
+        };
         // Move all cards matching the restriction from EACH origin zone
         // to the destination. Timetwister/Diminishing-Returns style mass
         // shuffles list two origins (Hand + Graveyard); single-origin
@@ -1510,12 +1526,31 @@ impl GameState {
         // later shuffle/draw. Only reached in shadow games (the server
         // and native clients always have real instances).
         let move_reserved_in_shadow = self.is_shadow_game && restriction.is_unrestricted();
+        // Named-card filter (Cranial Extraction: `ChangeType$ Card.NamedCard`):
+        // clone the name now so we hold no GameState borrow while iterating below.
+        let remembered_name: Option<String> = if restriction.requires_named_card {
+            self.remembered_name.clone()
+        } else {
+            None
+        };
+        // Closure: returns true iff the card passes the restriction, handling the
+        // named-card case via `matches_with_name` when appropriate.
+        let card_matches = |card: &crate::core::Card| -> bool {
+            if restriction.requires_named_card {
+                match remembered_name.as_deref() {
+                    Some(name) => restriction.matches_with_name(card, name),
+                    None => false, // no name chosen yet → no card exiled
+                }
+            } else {
+                restriction.matches(card)
+            }
+        };
         for &origin in origins {
             match origin {
                 Zone::Battlefield => {
                     for card_id in self.battlefield.cards.iter().copied() {
                         if let Some(card) = self.cards.try_get(card_id) {
-                            if restriction.matches(card) {
+                            if card_matches(card) {
                                 cards_to_move.push((card_id, card.owner, origin));
                             }
                         }
@@ -1525,6 +1560,13 @@ impl GameState {
                 // player's own zone so ownership is exact.
                 Zone::Graveyard | Zone::Hand | Zone::Library | Zone::Exile => {
                     for (player_id, zones) in &self.player_zones {
+                        // When scoped to a specific player (Cranial Extraction targets
+                        // one opponent), skip all other players' zones.
+                        if let Some(scope) = scoped_player {
+                            if *player_id != scope {
+                                continue;
+                            }
+                        }
                         let zone_cards = match origin {
                             Zone::Graveyard => &zones.graveyard.cards,
                             Zone::Hand => &zones.hand.cards,
@@ -1536,7 +1578,7 @@ impl GameState {
                         for &card_id in zone_cards {
                             match self.cards.try_get(card_id) {
                                 Some(card) => {
-                                    if restriction.matches(card) {
+                                    if card_matches(card) {
                                         cards_to_move.push((card_id, *player_id, origin));
                                     }
                                 }
@@ -1565,12 +1607,16 @@ impl GameState {
         // Mnemonic Nexus) requires shuffling the affected libraries so
         // the moved cards land in random order. Ordered moves
         // (`LibraryPosition$ -1`, e.g. Manifold Insights) set
-        // shuffle=false and are left untouched. The effect is symmetric
-        // across players, so shuffle every library; a library that
-        // received no cards only advances RNG (deterministic /
-        // replay-safe).
-        if shuffle && matches!(destination, Zone::Library) {
-            let player_ids: smallvec::SmallVec<[PlayerId; 4]> = self.players.iter().map(|p| p.id).collect();
+        // shuffle=false and are left untouched.
+        // When scoped to one player (Cranial Extraction) only that
+        // player's library is shuffled; otherwise all libraries are
+        // shuffled (symmetric — a library that received no cards only
+        // advances RNG, which is deterministic / replay-safe).
+        if shuffle {
+            let player_ids: smallvec::SmallVec<[PlayerId; 4]> = match scoped_player {
+                Some(pid) => smallvec::smallvec![pid],
+                None => self.players.iter().map(|p| p.id).collect(),
+            };
             for pid in player_ids {
                 self.shuffle_library(pid);
             }
