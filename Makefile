@@ -724,7 +724,7 @@ wasm-serve: build-network wasm-network
 	@echo ""
 	@echo "=== Starting mtg server-web on http://127.0.0.1:$(PORT) ==="
 	@echo "Press Ctrl+C to stop"
-	@./target/release/mtg server-web --bind 127.0.0.1:$(PORT) --static-dir web
+	@./target/release/mtg server-web --bind 0.0.0.0:$(PORT) --static-dir web
 
 # Quick dev build - skips wasm-opt optimization for faster iteration
 wasm-dev: wasm-export ensure-wasm-pack
@@ -744,7 +744,7 @@ play-web-local-dev: build-network-dev wasm-dev
 	@echo "=== Starting mtg server-web (dev/debug) on http://127.0.0.1:$(PORT) ==="
 	@echo "Lobby + static UI on one port. Solo (no login): http://127.0.0.1:$(PORT)/solo_launcher.html?ui=native"
 	@echo "Press Ctrl+C to stop"
-	@./target/debug/mtg server-web --bind 127.0.0.1:$(PORT) --static-dir web
+	@./target/debug/mtg server-web --bind 0.0.0.0:$(PORT) --static-dir web
 
 # Build WASM with network feature (for browser multiplayer)
 wasm-network: wasm-export ensure-wasm-pack
@@ -783,7 +783,7 @@ play-web-local: build-network wasm-network
 	@echo "=== Starting mtg server-web (release) on http://127.0.0.1:$(PORT) ==="
 	@echo "Lobby + static UI on one port. Solo (no login): http://127.0.0.1:$(PORT)/solo_launcher.html?ui=native"
 	@echo "Press Ctrl+C to stop"
-	@./target/release/mtg server-web --bind 127.0.0.1:$(PORT) --static-dir web
+	@./target/release/mtg server-web --bind 0.0.0.0:$(PORT) --static-dir web
 
 # Test WASM module in headless browser (basic API test)
 wasm-test: wasm
