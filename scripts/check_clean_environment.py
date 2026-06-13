@@ -123,10 +123,30 @@ def is_conflicting_process(proc_line, current_dir):
         if cargo_conflicts_with_worktree(pid, cmd, current_dir):
             return True, f"cargo (PID {pid}): {cmd[:100]}"
 
-    # Check for chromium/playwright (E2E test remnants)
+    # Check for chromium/playwright (E2E test remnants).
+    #
+    # We only want to flag *actual* browser/driver processes: chromium
+    # headless-shell binaries and the playwright Node.js CLI driver.  We must
+    # NOT flag generic shell processes (bash, sh, python) that merely mention
+    # "playwright" in their argv because they are sourcing or eval-ing a script
+    # that exports PLAYWRIGHT_BROWSERS_PATH — those are launcher processes, not
+    # leftover browser instances.
+    #
+    # Heuristic: the real culprits have "chromium" or "chrome-headless-shell"
+    # in their executable path, OR are a `node` process running the playwright
+    # CLI (`playwright/driver/package/cli.js`).  Generic shell interpreters
+    # (bash, sh, python) that happen to mention "playwright" in their args are
+    # excluded via the is_shell_interpreter guard.
     if "chromium" in cmd.lower() or "playwright" in cmd.lower():
-        # Only flag if it seems related to our tests
-        if current_dir in cmd or "localhost" in cmd:
+        # Exclude shell interpreter processes — they are launchers, not browsers.
+        _is_shell = any(cmd.startswith(interp) or f"/{interp} " in cmd
+                        for interp in ("/bin/bash", "/bin/sh", "/usr/bin/bash",
+                                       "/usr/bin/sh", "bash ", "sh "))
+        # Also exclude python processes (only flag actual browser executables).
+        _is_python = "python" in cmd.lower() and "node" not in cmd.lower()
+        if _is_shell or _is_python:
+            pass  # Launcher process — not a leftover browser instance; skip.
+        elif current_dir in cmd or "localhost" in cmd:
             return True, f"Browser/Playwright (PID {pid}): {cmd[:100]}"
 
     # Check for python mtg scripts
