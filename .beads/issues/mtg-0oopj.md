@@ -4,7 +4,7 @@ status: closed
 priority: 3
 issue_type: task
 created_at: 2026-06-13T18:02:55.030872108+00:00
-updated_at: 2026-06-13T18:55:30.694810005+00:00
+updated_at: 2026-06-13T23:17:06.087890929+00:00
 ---
 
 # Description
@@ -20,17 +20,20 @@ Phase 1:
 - [x] Unit tests for parser + evaluator
 - [x] Integration: demo puzzle files, wired into make validate
 - [x] Zero-overhead proof: engine builds clean with puzzle-assert OFF
+- [x] Bulk parallel runner (puzzle_bulk_runner.rs) - Phase 4, landed on claude/puzzle-bulk-runner
+- [x] Migration of existing external Rust assertions into DSL (Phase 6 first wave) - on claude/puzzle-migration
 
-## Completion
+## Migration wave 1 (claude/puzzle-migration branch, 2026-06-13)
+10 puzzle files received inline [assertions] migrating final-state Rust assertions.
+14 test functions had event/log-based assertions deferred to Phase 2 (structured GameEvent stream).
+See mtg-wtb11 for the full catalog of deferred assertions.
+
+## Completion (Phase 1)
 - Branch: claude/puzzle-format-phase1 (pushed to origin)
 - Final SHA: 9ed749cf84964a68981fb09ca3a5cb3a00d4379c
 - Validate log: validate_logs/validate_9ed749cf84964a68981fb09ca3a5cb3a00d4379c.log
-- All 17 steps passed (1831 unit+integration tests, 108 pytest, clippy clean, fmt clean)
-- Validate ran with --no-wasm-e2e (wasm.npm-install pre-existing infra gap in WSL)
 
 ## Later phases (NOT in scope here)
-- Log-derived (event) assertions: blocked on structured game log (log entries are string messages only; substring matching violates NO HACKY STRING OPERATIONS rule). Requires adding a structured GameEvent enum to the logger first - tracked separately.
+- Log-derived (event) assertions: blocked on structured game log (mtg-wtb11 catalogs demand)
 - Golden game-log oracle + one-command re-bless
-- Bulk parallel puzzle runner
 - Rewind-determinism mode
-- Migration of existing 668 .pzl external Rust assertions into the DSL

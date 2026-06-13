@@ -19,3 +19,9 @@ p1hand=
 p1battlefield=Plains;Plains;Plains;Plains;Serra Angel
 p1library=Plains;Plains;Plains
 p1graveyard=
+
+[assertions]
+# Life race: one player must win (game must end — not a draw).
+# Earth Elemental (4/5 ground) vs Serra Angel (4/4 flying).
+# P0 at 8 life can't block the flier, making this a race scenario.
+game ended

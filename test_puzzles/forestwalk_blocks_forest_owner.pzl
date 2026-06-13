@@ -22,3 +22,11 @@ p1library=Plains; Plains; Plains
 p1graveyard=
 p1battlefield=Grizzly Bears; Forest
 p1exile=
+
+[assertions]
+# Cat Warriors (2/2 Forestwalk) attacks into opponent who controls a Forest.
+# Forestwalk makes Cat Warriors unblockable; Grizzly Bears cannot block.
+# Opponent at 2 life, Cat Warriors deals 2 damage = lethal.
+game won
+# Opponent must have reached 0 life (Forestwalk made the attack unblockable)
+opponent life eq 0

@@ -19,3 +19,10 @@ p1hand=
 p1battlefield=Forest;Forest;Grizzly Bears;Grizzly Bears
 p1library=Forest;Forest;Forest
 p1graveyard=
+
+[assertions]
+# P0 has 4 attackers (8 total power) vs P1's 2 blockers. P1 at 5 life.
+# At least 2 attackers must get through for >= 4 damage, which is lethal.
+game won
+# P0 should win quickly given the overwhelming board advantage
+turn le 5

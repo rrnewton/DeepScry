@@ -351,7 +351,10 @@ async fn test_flying_vs_ground_blockers() -> Result<()> {
     println!("Winner: {:?}", result.winner);
     println!("End reason: {:?}", result.end_reason);
 
-    // P1 should win (Serra Angel attacks unblocked twice)
+    // P1 should win (Serra Angel attacks unblocked twice).
+    // Assertion migrated to inline [assertions] in flying_vs_ground.pzl;
+    // the bulk runner (puzzle-bulk-check) now verifies `game won` + `opponent life lt 8`.
+    // We still assert here as a belt-and-suspenders in the non-feature-gated Rust test.
     assert_eq!(
         result.winner,
         Some(p1_id),
@@ -503,8 +506,10 @@ async fn test_vigilance_blocks_back() -> Result<()> {
     println!("Game ended after {} turns", result.turns_played);
     println!("Winner: {:?}", result.winner);
 
-    // P1 should win with flying+vigilance advantage
-    // This tests that the AI correctly values vigilance
+    // P1 should win with flying+vigilance advantage.
+    // Assertion migrated to inline [assertions] in vigilance_blocks_back.pzl:
+    // `game won` + `NOT game lost`. The bulk runner verifies this via puzzle-bulk-check.
+    // Belt-and-suspenders: also assert here in the Rust test.
     assert_eq!(
         result.winner,
         Some(p1_id),
@@ -2914,7 +2919,10 @@ async fn test_lethal_through_blockers() -> Result<()> {
     println!("End reason: {:?}", result.end_reason);
 
     // P0 should win - with 4 attackers vs 2 blockers, 2 get through for 4 damage
-    // which is lethal against 5 life
+    // which is lethal against 5 life.
+    // Assertions migrated to inline [assertions] in lethal_through_blockers.pzl:
+    // `game won` + `turn le 5`. The bulk runner verifies these via puzzle-bulk-check.
+    // Belt-and-suspenders: also assert here in the Rust test.
     assert_eq!(
         result.winner,
         Some(p0_id),
@@ -2922,7 +2930,6 @@ async fn test_lethal_through_blockers() -> Result<()> {
     );
 
     // Should win reasonably quickly - even with careful play, P0 has overwhelming advantage
-    // The game might take 2-4 turns depending on attack/block decisions
     assert!(
         result.turns_played <= 5,
         "Should win within 5 turns when having lethal - took {} turns",

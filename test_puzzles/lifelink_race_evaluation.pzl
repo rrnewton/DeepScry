@@ -19,3 +19,8 @@ p1hand=
 p1battlefield=Plains;Plains;Plains;Plains;Serra Angel
 p1library=Plains;Plains;Plains
 p1graveyard=
+
+[assertions]
+# Lifelink race: Serra Angel (4/4 flying lifelink) vs Earth Elemental (4/5 ground).
+# Each player has equal starting life (10). One player must win (no draw expected).
+game ended

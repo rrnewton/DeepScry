@@ -19,3 +19,10 @@ p1hand=
 p1battlefield=Forest;Forest;Grizzly Bears
 p1library=Forest;Forest;Forest
 p1graveyard=
+
+[assertions]
+# P0's Serra Angel (4/4 flying) is unblockable by P2's Grizzly Bears (2/2 ground).
+# P1 starts at 8 life; two attacks of 4 = lethal. P0 must win.
+game won
+# Opponent must have taken combat damage (flew over ground blockers)
+opponent life lt 8

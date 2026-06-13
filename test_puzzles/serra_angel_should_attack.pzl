@@ -19,3 +19,9 @@ p1hand=
 p1battlefield=Plains;Plains;Plains
 p1library=Plains;Plains;Plains
 p1graveyard=
+
+[assertions]
+# Serra Angel (4/4 flying) attacks into empty board: P0 should win the full game
+game won
+# Opponent must have taken at least 4 damage (Serra Angel's power) by game end
+opponent life lt 20

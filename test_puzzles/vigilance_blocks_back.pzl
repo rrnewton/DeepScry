@@ -19,3 +19,10 @@ p1hand=
 p1battlefield=Forest;Forest;Forest;Grizzly Bears;Grizzly Bears
 p1library=Forest;Forest;Forest
 p1graveyard=
+
+[assertions]
+# P0's Serra Angel (4/4 flying+vigilance) survives while trading or attacking through.
+# P1 (12 life, 2x Grizzly Bears) cannot block flying; Serra Angel wins.
+game won
+# P0 must survive (vigilance means Serra Angel can both attack and block, keeping P0 alive)
+NOT game lost

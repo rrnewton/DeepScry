@@ -5,7 +5,6 @@ priority: 2
 issue_type: task
 created_at: 2026-06-13T22:51:28.730546644+00:00
 updated_at: 2026-06-13T23:40:19.908884646+00:00
-updated_at: 2026-06-13T22:51:28.730546644+00:00
 ---
 
 # Description

@@ -19,3 +19,10 @@ p1hand=
 p1battlefield=Forest;Forest;Grizzly Bears
 p1library=Forest;Forest;Forest
 p1graveyard=
+
+[assertions]
+# Earth Elemental (4/5) vs Grizzly Bears (2/2): Earth Elemental wins the combat
+# trade or attacks unblocked; P1 starts at 12 life, so P0 wins the full game.
+game won
+# Opponent must have taken combat damage (Earth Elemental attacked)
+opponent life lt 12

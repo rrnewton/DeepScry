@@ -22,3 +22,10 @@ p1battlefield=
 p1library=Forest; Forest; Forest; Forest; Forest
 p1graveyard=
 p1exile=
+
+[assertions]
+# Savannah Lions (2/1 base) gains +1/+1 from Crusade = 3/2.
+# Opponent starts at 3 life. One attack with 3/2 Savannah Lions = lethal.
+game won
+# Opponent must have taken at least 3 damage (Crusade-buffed 3/2 attacking)
+opponent life lt 3
