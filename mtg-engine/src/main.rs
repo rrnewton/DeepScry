@@ -885,6 +885,17 @@ enum Commands {
         /// Maximum host memory utilisation as a percentage (0..=100).
         #[arg(long, default_value = "80")]
         max_memory_percent: u32,
+
+        /// Hard-cap this server's memory to N% of total system RAM by
+        /// re-execing itself inside a transient `systemd-run --user --scope`
+        /// cgroup with `MemoryMax = N% of RAM`. If a memory leak blows the
+        /// cap, only THIS server's cgroup is OOM-killed — the host stays up —
+        /// and Ctrl-C brings down the whole scope (server + embedded lobby +
+        /// any children) together. 0 disables the cgroup wrap. Degrades to
+        /// running uncapped (with a warning) if `systemd-run --user` is
+        /// unavailable. See web_server::mem_cgroup.
+        #[arg(long, value_name = "PCT")]
+        mem_cap_pct: Option<u32>,
     },
 
     /// Connect to a multiplayer game server
@@ -1340,6 +1351,7 @@ async fn async_main() -> Result<()> {
             network_debug,
             no_color_logs,
             max_memory_percent,
+            mem_cap_pct,
         } => {
             run_server_web(
                 bind,
@@ -1358,6 +1370,7 @@ async fn async_main() -> Result<()> {
                 network_debug,
                 no_color_logs,
                 max_memory_percent,
+                mem_cap_pct,
             )
             .await?
         }
@@ -1536,9 +1549,20 @@ async fn run_server_web(
     network_debug: bool,
     no_color_logs: bool,
     max_memory_percent: u32,
+    mem_cap_pct: Option<u32>,
 ) -> Result<()> {
     use mtg_engine::network::ServerConfig;
-    use mtg_engine::web_server::{run_web_server, WebServerConfig};
+    use mtg_engine::web_server::{mem_cgroup, run_web_server, WebServerConfig};
+
+    // If `--mem-cap-pct N` was given and we are NOT already inside the managed
+    // cgroup, re-exec this process under a transient `systemd-run --user
+    // --scope` with `MemoryMax = N% of total RAM`. On success this call does
+    // not return (it `exec`s); on a recoverable problem (systemd-run
+    // unavailable, etc.) it logs a warning and returns so we run uncapped.
+    if let Some(pct) = mem_cap_pct {
+        mem_cgroup::reexec_under_mem_cgroup_if_requested(pct)
+            .map_err(|e| mtg_engine::MtgError::InvalidAction(format!("mem-cgroup re-exec: {e}")))?;
+    }
 
     let verbosity_level: VerbosityLevel = verbosity.into();
 
