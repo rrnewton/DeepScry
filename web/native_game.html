@@ -4233,17 +4233,26 @@
 
                 // Step 2: find the play/cast action in the current choices.
                 // We match on the card name (case-insensitive) inside the choice
-                // text. Accepted prefixes (MTG play verbs): Cast, Play, Put.
+                // text. Accepted verbs (MTG play verbs): Cast, Play, Put.
                 // We look at the view model choices cached from the LAST updateUI
                 // tick. After tui_select_card the engine may update available
                 // choices; for simple permanents (lands, creatures, etc.) the
                 // same actions are available regardless of selection, so this
                 // is reliable in the common case.
+                //
+                // IMPORTANT: choice.text is shaped "[<index>] <verb> <name>"
+                // (e.g. "[1] play Plains") — it carries a leading "[N] " index
+                // prefix from the engine's choice renderer. Match the verb on the
+                // text with that bracket prefix STRIPPED, otherwise startsWith()
+                // never fires and no play action is ever found (the original bug:
+                // a dropped card lit the zone but never played, because every
+                // choice failed the `startsWith('play ')` test against "[1] …").
                 const choices = _viewModel?.choices ?? [];
                 const nameLower = cardName.toLowerCase();
                 const playVerbs = ['cast ', 'play ', 'put '];
+                const stripIdxPrefix = (t) => t.replace(/^\s*\[\d+\]\s*/, '');
                 const matches = choices.filter((c) => {
-                    const t = c.text.toLowerCase();
+                    const t = stripIdxPrefix(c.text.toLowerCase());
                     return playVerbs.some(v => t.startsWith(v)) && t.includes(nameLower);
                 });
 
