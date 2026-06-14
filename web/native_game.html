@@ -768,11 +768,21 @@
         /* The body is a 2-D cascade container in visual mode.
            overflow: hidden clips cards to the pane; individual selected/hovered
            cards use z-index to rise above siblings but not outside the pane. */
-        #hand-body.visual-hand {
+        /* NOTE: the selector is intentionally `#pane-hand #hand-body.visual-hand`
+           (not just `#hand-body.visual-hand`) so it OUT-SPECIFIES the
+           `#pane-hand #hand-body { overflow-y: auto }` rule above.  In visual
+           mode we want the diagonal stack to CROP at the bottom edge, not
+           scroll — when the hand is large the cascade deliberately spills past
+           the pane bottom and the cropped cards keep their titles visible.
+           overflow:hidden (both axes) is what does the bottom-cropping. */
+        #pane-hand #hand-body.visual-hand {
             overflow: hidden;
             padding: 4px;
             position: relative;
-            /* Height is driven by the pane flex; min-height is just a safety floor. */
+            /* Height is driven by the pane flex (flex:1 1 auto); the stack may be
+               taller than this and spill below — overflow:hidden crops it.
+               min-height is just a safety floor so a tiny hand still reserves
+               room for one full card. */
             min-height: calc(var(--hand-card-h) + 16px);
         }
 
@@ -2930,6 +2940,12 @@
             maxDy: 28,   // downward step per card
             padX:   6,   // left/right padding inside the pane
             padY:   4,   // top/bottom padding inside the pane
+            // Extra px added to --hand-title-h to compute the MINIMUM dy.
+            // dy never shrinks below (titleH + titleGap) even if that makes the
+            // stack taller than the pane — the overflow spills below the bottom
+            // edge and is cropped (#hand-body.visual-hand has overflow:hidden).
+            // This guarantees every card's title strip stays visible.
+            titleGap: 4,
         };
         // ───────────────────────────────────────────────────────────────────
 
@@ -2974,17 +2990,25 @@
             const maxDxFit = (n > 1) ? (innerW - cardW) / (n - 1) : HAND_CASCADE.maxDx;
             const dx = Math.max(2, Math.min(maxDxFit, HAND_CASCADE.maxDx));
 
-            // dy: every card's TITLE strip must remain visible (title at each
-            // card's top must be above pane bottom).
-            // The bottom-most card (index 0) is at top=0; the top card (index n-1)
-            // is at top=(n-1)*dy.  The title of the bottom-most card (index 0)
-            // is at top=0 — always fine.  We need:
-            //   (n-1)*dy + titleH ≤ innerH   (title of the last card stays inside)
-            // AND
-            //   (n-1)*dy + cardH  ≤ innerH   (entire top card fits inside)
-            //   → binding: (n-1)*dy ≤ innerH - cardH
+            // dy: TITLE VISIBILITY FIRST.  Each card sits dy below the one above
+            // it; the title strip of the card above occupies titleH px.  So to
+            // keep EVERY card's title peeking out we need dy ≥ titleH + a small
+            // margin.  We enforce that as a hard MINIMUM and never shrink below
+            // it to make the stack fit the pane.
+            //
+            // Old behaviour shrank dy so the whole stack fit inside innerH:
+            //   (n-1)*dy ≤ innerH - cardH  → dy collapsed as the hand grew,
+            // squishing titles together.  We drop that fit-the-pane clamp.
+            //
+            // Now: start from maxDy (the comfortable spread), but if the stack
+            // would exceed the pane height, COMPRESS dy down toward minDy — and
+            // STOP at minDy.  Below minDy we let the stack spill past the pane
+            // bottom; #hand-body.visual-hand has overflow:hidden, so the excess
+            // bottom cards are cropped while their tops/titles stay visible.
+            const minDy = titleH + HAND_CASCADE.titleGap;
             const maxDyFit = (n > 1) ? (innerH - cardH) / (n - 1) : HAND_CASCADE.maxDy;
-            const dy = Math.max(2, Math.min(maxDyFit, HAND_CASCADE.maxDy));
+            // Prefer maxDy; compress toward the pane-fit value but never below minDy.
+            const dy = Math.max(minDy, Math.min(maxDyFit, HAND_CASCADE.maxDy));
 
             // Stack origin: we want the BOTTOM-LEFT card to start at the top-left
             // of the pane, and the stack to grow right+down, so the TOP card
@@ -3805,6 +3829,11 @@
             // Single source of truth (slot05): mirror the 'A' keydown path.
             applyAutoRunState(!autoRunning);
         });
+        // Exit Game button: same effect as the Esc / 'Q' keydown path
+        // (case 'Escape': exitGame()) — returns to the lobby. exitGame()
+        // already tears down the game-area/controls, so no need to also
+        // close the controls-panel here.
+        document.getElementById('btn-exit').addEventListener('click', exitGame);
         function exitGame() {
             if (!tuiLaunched) return;
             cleanup_tui_state();
