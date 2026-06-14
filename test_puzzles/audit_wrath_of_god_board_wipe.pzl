@@ -54,5 +54,5 @@ opponent graveyard contains Black Knight
 # DestroyAll effect goes to the graveyard without firing CreatureDied. The
 # destruction itself is fully verified by the graveyard-contains assertions
 # above (and the "is destroyed" / NoRegen marker in the golden log). The
-# missing event for destroy-based deaths is tracked as mtg-ngf7s, not a
+# missing event for destroy-based deaths is tracked as mtg-961, not a
 # Wrath of God card defect.

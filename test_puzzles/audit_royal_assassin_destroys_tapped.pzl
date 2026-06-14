@@ -46,7 +46,7 @@ activate Royal Assassin targeting Serra Angel
 # (We do NOT assert the `creature died` EVENT: a creature removed by a Destroy
 # activated ability does not fire CreatureDied, which is only emitted on
 # lethal-DAMAGE deaths. The destruction is fully verified by graveyard-contains;
-# the event gap is tracked as mtg-ngf7s, not a Royal Assassin defect.)
+# the event gap is tracked as mtg-961, not a Royal Assassin defect.)
 opponent graveyard contains Serra Angel
 # Royal Assassin survives (it only tapped, it was not sacrificed).
 me battlefield contains Royal Assassin
