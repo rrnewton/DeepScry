@@ -15,55 +15,30 @@ version = "0.1.0"
 edition = "2021"
 
 [profile.release]
+# Release is the ordinary optimized profile used by validation, CI artifacts,
+# and normal local release builds. Keep full debuginfo out of this profile so
+# `target/release/` stays reasonably small.
+#
+# If CI/runtime backtraces need file:line information without full profiling
+# debuginfo, consider enabling this compromise:
+# debug = "line-tables-only"
+
+# Profiling keeps release optimizations while preserving full debuginfo for
+# flamegraphs, perf, heaptrack, and other source-level profiling tools.
+[profile.profiling]
+inherits = "release"
 debug = true
 
 # Slim profile used by `scripts/deploy-cloud.sh` for the deployed `mtg`
-# server binary. Design:
-#   - The default `release` profile intentionally keeps `debug = true` so
-#     local engineers can run flamegraphs / `perf` / `samply` against the
-#     same binary they ship-test. That produces a ~430 MB artifact, which
-#     is fine on a workstation but wasteful to rsync to a VM.
-#   - This profile strips symbols and tightens codegen so the deployed
-#     binary lands around ~25 MB. It does NOT touch `[profile.release]`,
-#     so `cargo build --release` keeps its debug symbols.
-#   - `panic = "abort"` is a meaningful size win and acceptable for the
-#     server: it runs under systemd and shuts down via SIGTERM, so it
-#     never relies on unwinding for cleanup. The tradeoff is that any
-#     panic terminates the process immediately (no `catch_unwind`).
-#   - Cargo profiles cannot enable features, so the deploy script must
-#     pass `--features network` on the build invocation explicitly.
+# server binary. It currently keeps deployment-specific size/codegen choices
+# separate from normal release so we can measure whether they still pay for
+# themselves after `[profile.release]` stops carrying full debuginfo.
 [profile.release-deploy]
 inherits = "release"
-debug = false
 strip = "symbols"
 lto = "fat"
 codegen-units = 1
 panic = "abort"
-
-# Slim profile used by the GitHub CI `build-nextest-arch` job (and any local
-# `cargo nextest archive --cargo-profile ci-archive`). Design:
-#   - The default `release` profile intentionally keeps `debug = true` so local
-#     engineers can run flamegraphs / `perf` / `samply`. Across the ~37
-#     integration-test binaries nextest archives, that full-debuginfo bloats the
-#     CI nextest archive to ~2.34 GB, which EVERY validate shard downloads
-#     before testing (~16 GB of transfer across the fan-out). Real CI latency.
-#   - This profile inherits `release` (so optimisation level + codegen match the
-#     `--release` native binary the e2e scripts run) but emits only
-#     line-tables-only debuginfo. That keeps file:line in test backtraces /
-#     panic locations while dropping the heavy variable/type DWARF, cutting the
-#     archive size dramatically. It does NOT touch `[profile.release]`, so
-#     `cargo build --release` and local profiling keep full debug symbols.
-#   - Build-once-test-many is preserved: `cargo nextest archive` embeds the
-#     built binaries + metadata in the archive, and the consuming
-#     `cargo nextest run --archive-file` shards reuse those binaries verbatim
-#     (no rebuild, no `--cargo-profile` on the run side), so there is no
-#     profile-name mismatch between the archive producer and the run shards.
-#   - Cargo profiles cannot enable features, so the CI job passes
-#     `--features network` on the archive invocation explicitly (matching
-#     BUILD_FLAGS' feature set).
-[profile.ci-archive]
-inherits = "release"
-debug = "line-tables-only"
 
 # Workspace-wide lint configuration
 [workspace.lints.clippy]

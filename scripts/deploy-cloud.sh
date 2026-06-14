@@ -484,10 +484,11 @@ cmd_deploy() {
     done
 
     # --- 2. Local native release binary ---
-    # Use the slim `release-deploy` profile: strip + lto=fat + panic=abort,
-    # produces a ~25 MB binary vs ~430 MB from `release` (which keeps debug
-    # symbols for local profiling). Profiles cannot enable features, so we
-    # always pass `--features network` explicitly on the build invocation.
+    # Use the slim `release-deploy` profile: strip + lto=fat + panic=abort.
+    # Normal `release` is already slim enough for CI/local use; deploy keeps
+    # this separate profile for the extra rsync/startup size win. Profiles
+    # cannot enable features, so we always pass `--features network` explicitly
+    # on the build invocation.
     local native_bin="target/release-deploy/mtg"
     if [[ "$SKIP_BUILD" != "1" ]]; then
         # Always rebuild on deploy: a deploy must ship the CURRENT source's

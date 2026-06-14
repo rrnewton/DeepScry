@@ -14,6 +14,9 @@ trim-paths = "all"
 [profile.release]
 trim-paths = "all"
 
+[profile.profiling]
+trim-paths = "all"
+
 # NOTE: rustc-wrapper = "sccache" was tried in Phase 2 and removed. It yielded
 # only ~1.4% cross-worktree hit rate and added 15-18 s of overhead because
 # trim-paths injects a per-worktree --remap-path-prefix into every rustc

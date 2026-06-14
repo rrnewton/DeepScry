@@ -1,7 +1,7 @@
 # MTG Forge Rust - Development Makefile
 #
 # Quick reference for common development tasks
-.PHONY: help build test puzzle-bulk-check validate validate-desync-canary fuzz-determinism fuzz-equivalence fuzz-network fuzz-native-wasm fuzz-snapshot fuzz-expedition clean run check fmt fmt-check clippy clippy-wasm doc docs examples full-benchmark bench-snapshot bench-logging coverage coverage-full validate-coverage-step profile callgrindprofile perfprofile heapprofile dhatprofile count setup-claude claude-github claude-beads happy code-dups beads-check bench wasm wasm-export wasm-serve wasm-dev play-web-local-dev wasm-test wasm-test-fancy wasm-test-fancy-dev wasm-test-human wasm-test-game-gui-rebuild wasm-test-game-gui-playtest wasm-e2e wasm-e2e-dev wasm-e2e-network wasm-e2e-network-human play-web play-web-pvp play-web-local build-network
+.PHONY: help build build-release build-profiling test puzzle-bulk-check validate validate-desync-canary fuzz-determinism fuzz-equivalence fuzz-network fuzz-native-wasm fuzz-snapshot fuzz-expedition clean run check fmt fmt-check clippy clippy-wasm doc docs examples full-benchmark bench-snapshot bench-logging coverage coverage-full validate-coverage-step profile callgrindprofile perfprofile heapprofile dhatprofile count setup-claude claude-github claude-beads happy code-dups beads-check bench wasm wasm-export wasm-serve wasm-dev play-web-local-dev wasm-test wasm-test-fancy wasm-test-fancy-dev wasm-test-human wasm-test-game-gui-rebuild wasm-test-game-gui-playtest wasm-e2e wasm-e2e-dev wasm-e2e-network wasm-e2e-network-human play-web play-web-pvp play-web-local build-network
 
 # Configuration variables
 # NODE: Node.js binary (Playwright requires Node 18+)
@@ -37,6 +37,8 @@ help:
 	@echo "MTG Forge Rust - Available Commands:"
 	@echo ""
 	@echo "  make build          - Build the project (cargo build)"
+	@echo "  make build-release  - Build optimized release binaries"
+	@echo "  make build-profiling - Build optimized binaries with full debuginfo"
 	@echo "  make test           - Run unit tests (cargo test)"
 	@echo "  make validate       - Full pre-commit validation (tests + examples + lint)"
 	@echo "  make examples       - Run all examples"
@@ -77,6 +79,11 @@ build:
 build-release:
 	@echo "=== Building release ==="
 	cargo build --release
+
+# Build profiling binaries with release optimizations and full debuginfo
+build-profiling:
+	@echo "=== Building profiling binaries ==="
+	cargo build --profile profiling
 
 # Build release binary with network feature (required for server/connect subcommands)
 build-network:
@@ -386,6 +393,7 @@ validate-coverage-step:
 profile:
 	@echo "=== Profiling game execution with flamegraph (CPU time) ==="
 	@echo "This will run 1000 games (seed 42) and generate a flamegraph"
+	@echo "Using Cargo profile: profiling"
 	@echo "Output will be saved to experiment_results/flamegraph.svg"
 	@echo ""
 	@mkdir -p experiment_results
@@ -394,7 +402,7 @@ profile:
 		echo "Install with: cargo install flamegraph"; \
 		exit 1; \
 	fi
-	cargo flamegraph --bin mtg --output experiment_results/flamegraph.svg -- profile --games 1000 --seed 42
+	cargo flamegraph --profile profiling --bin mtg --output experiment_results/flamegraph.svg -- profile --games 1000 --seed 42
 	@echo ""
 	@echo "Flamegraph saved to: experiment_results/flamegraph.svg"
 	@echo "Open with: firefox experiment_results/flamegraph.svg (or your browser of choice)"
@@ -402,12 +410,13 @@ profile:
 # Profile with Valgrind Callgrind (CPU profiling that works in containers)
 # Requires valgrind: apt-get install valgrind (or equivalent)
 # This is the recommended CPU profiler for containerized environments
-callgrindprofile: build-release
+callgrindprofile: build-profiling
 	@echo "=== Valgrind Callgrind CPU Profiling ==="
 	@echo ""
 	@echo "This profiles CPU instruction counts and call graphs using Callgrind."
 	@echo "Callgrind works in containers without special permissions."
 	@echo "The rewind_bench binary runs 250 games (reduced due to ~50x slowdown)."
+	@echo "Using Cargo profile: profiling"
 	@echo ""
 	@if ! command -v valgrind >/dev/null 2>&1; then \
 		echo "Error: valgrind not found"; \
@@ -425,7 +434,7 @@ callgrindprofile: build-release
 		--dump-instr=yes \
 		--collect-jumps=yes \
 		--cache-sim=yes \
-		target/release/rewind_bench -n 250 -m sequential
+		target/profiling/rewind_bench -n 250 -m sequential
 	@echo ""
 	@echo "=== Profiling complete! Analyzing results... ==="
 	@echo ""
@@ -453,11 +462,12 @@ callgrindprofile: build-release
 # Requires perf: apt-get install linux-tools-common linux-tools-generic (or equivalent)
 # May require elevated permissions. Run with sudo or adjust /proc/sys/kernel/perf_event_paranoid
 # NOTE: Use 'make callgrindprofile' for containerized environments (no special permissions needed)
-perfprofile: build-release
+perfprofile: build-profiling
 	@echo "=== Linux perf CPU + Cache Profiling ==="
 	@echo ""
 	@echo "This profiles CPU hotspots and cache behavior using Linux perf."
 	@echo "The rewind_bench binary runs 5000 games to get statistically significant samples."
+	@echo "Using Cargo profile: profiling"
 	@echo ""
 	@if ! command -v perf >/dev/null 2>&1; then \
 		echo "Error: perf not found"; \
@@ -471,7 +481,7 @@ perfprofile: build-release
 	@echo ""
 	@# Run with call-graph recording
 	@(cd experiment_results && perf record -F 997 -g --call-graph dwarf -o perf.data \
-		-- ../target/release/rewind_bench -n 5000 -m sequential 2>&1 | tee perf_record.log) || \
+		-- ../target/profiling/rewind_bench -n 5000 -m sequential 2>&1 | tee perf_record.log) || \
 	(echo ""; \
 	 echo "=== perf profiling failed (likely permission/container issue) ==="; \
 	 echo ""; \
@@ -482,7 +492,7 @@ perfprofile: build-release
 	 echo "  2. Use 'make profile' for flamegraph profiling instead"; \
 	 echo "  3. Use 'make dhatprofile' for allocation profiling"; \
 	 echo "  4. Run manually with perf stat (no recording):"; \
-	 echo "     perf stat -d target/release/rewind_bench -n 1000 -m sequential"; \
+	 echo "     perf stat -d target/profiling/rewind_bench -n 1000 -m sequential"; \
 	 echo ""; \
 	 echo "For reference, here's what a successful perf profile shows:"; \
 	 echo "  - Top CPU hotspots by function name"; \
@@ -517,6 +527,7 @@ perfprofile: build-release
 heapprofile:
 	@echo "=== Profiling allocations with heaptrack ==="
 	@echo "This will run 100 games (seed 42) and generate allocation profile"
+	@echo "Using Cargo profile: profiling"
 	@echo "Output will be saved to experiment_results/heaptrack.profile.*.zst"
 	@echo ""
 	@mkdir -p experiment_results
@@ -530,7 +541,7 @@ heapprofile:
 		echo "  Arch: sudo pacman -S heaptrack"; \
 		exit 1; \
 	fi
-	HEAPTRACK_OUTPUT=experiment_results cargo heaptrack --bin mtg --release -- profile --games 100 --seed 42
+	HEAPTRACK_OUTPUT=experiment_results cargo heaptrack --bin mtg --profile profiling -- profile --games 100 --seed 42
 	@# Move heaptrack files to experiment_results if they were created in root
 	@if ls heaptrack.mtg.*.gz 2>/dev/null; then \
 		for file in heaptrack.mtg.*.gz; do \
