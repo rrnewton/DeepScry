@@ -17,20 +17,47 @@
             flex-direction: column;
         }
 
-        /* Header */
+        /* Header — now lives INSIDE the left column (above the Game Log pane),
+           so it occupies only the left column's width instead of a full-width
+           strip. The middle + right columns therefore start at the very top of
+           the viewport and gain the height the old full-width bar consumed. */
         .header {
-            padding: 10px 20px;
+            padding: 6px 10px;
             background: #16213e;
             display: flex;
-            align-items: center;
-            gap: 20px;
+            align-items: baseline;
+            gap: 12px;
             flex-wrap: wrap;
-            border-bottom: 1px solid #1a2a50;
+            border: 1px solid #1e2d50;
+            border-radius: 6px;
+            flex: 0 0 auto;
         }
-        .header h1 { color: #ffd700; font-size: 18px; }
-        .header a { color: #4cc9f0; text-decoration: none; font-size: 13px; }
+        .header h1 { color: #ffd700; font-size: 15px; margin: 0; }
+        .header a { color: #4cc9f0; text-decoration: none; font-size: 12px; }
         .header a:hover { text-decoration: underline; }
-        #status { color: #888; font-size: 12px; }
+
+        /* "Cards loaded" / boot status: was a permanent inline strip in the
+           header. Now a transient toast pinned to the top-right that auto-fades,
+           freeing its space permanently. Reuses the header palette so it stays
+           visually consistent. */
+        #status {
+            position: fixed;
+            top: 10px;
+            right: 12px;
+            z-index: 1000;
+            max-width: 360px;
+            padding: 6px 12px;
+            background: #16213e;
+            border: 1px solid #1e2d50;
+            border-radius: 6px;
+            color: #cbd5e1;
+            font-size: 12px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.4s ease;
+        }
+        #status.toast-show { opacity: 1; }
 
         /* Launcher */
         .launcher {
@@ -142,7 +169,10 @@
             grid-template-rows: 1fr auto;
             gap: 4px;
             padding: 4px;
-            height: calc(100vh - 80px);
+            /* Full viewport height: the header no longer sits above the grid as
+               a full-width strip — it lives inside the left column instead, so
+               the middle and right columns extend to the very top. */
+            height: 100vh;
         }
 
         /* Pane common styles */
@@ -1198,11 +1228,9 @@
     </style>
 </head>
 <body>
-    <div class="header" id="header-bar">
-        <h1>DeepScry &mdash; Web GUI</h1>
-        <a href="index.html" class="back-to-lobby-link">Back to lobby</a>
-        <span id="status">Loading...</span>
-    </div>
+    <!-- Boot/load status as a transient top-right toast (auto-fades). It is
+         NOT a permanent layout strip anymore — see showStatusToast(). -->
+    <span id="status"></span>
 
     <!-- mtg-35z3s page 3: this page is now a PURE renderer. The old built-in
          launcher (#launcher: deck collections, renderer choice, Custom Network
@@ -1228,6 +1256,12 @@
     <!-- Game Area (3-column grid) -->
     <div id="game-area" class="game-area">
         <div class="left-col">
+            <!-- App title bar: now confined to the LEFT column's width (was a
+                 full-width strip). "Back to lobby" stays reachable here. -->
+            <div class="header" id="header-bar">
+                <h1>DeepScry &mdash; Web GUI</h1>
+                <a href="index.html" class="back-to-lobby-link">Back to lobby</a>
+            </div>
             <div id="pane-log" class="pane">
                 <div class="pane-header">Game Log</div>
                 <div class="pane-body" id="log-body"></div>
@@ -1962,12 +1996,29 @@
             }
         }
 
+        // ==================== STATUS TOAST ====================
+        // The boot/load status (e.g. "Cards loaded for ...") used to occupy a
+        // permanent strip in the full-width header. It is now a transient
+        // top-right toast: set the text, fade in, then auto-fade after a few
+        // seconds so it never holds permanent screen real estate. Single helper
+        // (DRY) routed to by every former `status.textContent = ...` site.
+        let _statusToastTimer = null;
+        function showStatusToast(text, holdMs = 3500) {
+            const el = document.getElementById('status');
+            if (!el) return;
+            el.textContent = text;
+            el.classList.add('toast-show');
+            if (_statusToastTimer) clearTimeout(_statusToastTimer);
+            _statusToastTimer = setTimeout(() => {
+                el.classList.remove('toast-show');
+            }, holdMs);
+        }
+
         // ==================== INIT ====================
         async function main() {
-            const status = document.getElementById('status');
             try {
                 await init();
-                status.textContent = `WASM v${version()} - ${is_ready() ? 'Ready' : 'Error'}`;
+                showStatusToast(`WASM v${version()} - ${is_ready() ? 'Ready' : 'Error'}`);
 
                 // task #7 (mtg-722): load the card→Scryfall-CDN lookup table ONCE
                 // so the image cascade can resolve cards.scryfall.io URLs. The
@@ -2034,7 +2085,7 @@
                 allDeckNames = JSON.parse(cardDb.get_deck_names_json());
                 allDeckNames.sort();
 
-                status.textContent = `WASM v${version()} | ${deckCount} decks ready`;
+                showStatusToast(`WASM v${version()} | ${deckCount} decks ready`);
 
                 applyLocalImageGate();
 
@@ -2138,8 +2189,7 @@
             // Bare direct visit (no boot params): degrade gracefully.
             const msgEl = document.getElementById('no-launch-msg');
             if (msgEl) msgEl.style.display = 'block';
-            const statusEl = document.getElementById('status');
-            if (statusEl) statusEl.textContent = 'Launch from the lobby';
+            showStatusToast('Launch from the lobby');
         }
 
         // Gate the "Local" card-image source behind ?allow_local_img_load=true.
@@ -2198,9 +2248,9 @@
             return toFetch.length;
         }
 
-        async function ensureTokensLoaded(status) {
+        async function ensureTokensLoaded() {
             if (fullTokensLoaded) return;
-            if (status) status.textContent = 'Loading token definitions...';
+            showStatusToast('Loading token definitions...');
             // Manifest-resolved content-addressed name (tokens+decks cache-skew fix).
             const tokensResp = await fetch(`./data/${setIndex.tokens}`);
             if (!tokensResp.ok) {
@@ -2212,7 +2262,6 @@
         }
 
         async function loadCardsForDecks(p1Deck, p2Deck) {
-            const status = document.getElementById('status');
             const uniqueDecks = [...new Set([p1Deck, p2Deck])];
 
             if (!setIndex) throw new Error('Per-set card index not loaded');
@@ -2232,15 +2281,15 @@
                 throw new Error(`Cards not in per-set index: ${missingFromIndex.slice(0, 5).join(', ')}${missingFromIndex.length > 5 ? ` (+${missingFromIndex.length - 5} more)` : ''}`);
             }
 
-            status.textContent = `Fetching ${setFiles.size} set bins for ${uniqueDecks.join(' vs ')}...`;
+            showStatusToast(`Fetching ${setFiles.size} set bins for ${uniqueDecks.join(' vs ')}...`);
             await loadSetFiles(setFiles);
-            await ensureTokensLoaded(status);
+            await ensureTokensLoaded();
 
             for (const deckName of uniqueDecks) {
                 const missing = cardDb.get_missing_cards_for_deck(deckName);
                 if (missing.length > 0) throw new Error(`Missing cards for ${deckName}: ${missing.join(', ')}`);
             }
-            status.textContent = `Cards loaded for ${uniqueDecks.join(' vs ')}`;
+            showStatusToast(`Cards loaded for ${uniqueDecks.join(' vs ')}`);
         }
 
         // ==================== LAUNCH GAME ====================
@@ -2432,8 +2481,7 @@
                         serverUrl, password, playerName, deckJson,
                         window.__mtg_lobby_action || null
                     );
-                    const st = document.getElementById('status');
-                    if (st) st.textContent = 'Connecting...';
+                    showStatusToast('Connecting...');
 
                 } else {
                     // ── Local game path (engine wiring unchanged) ────────────────
@@ -2485,8 +2533,8 @@
                     <p style="margin-top:18px;"><a href="${escapeHtml(stickyUrl('index.html'))}" style="color:#4cc9f0;">&rarr; Back to the Lobby</a></p>
                 </div>`;
             }
-            const st = document.getElementById('status');
-            if (st) st.textContent = msg;
+            // Errors hold longer than routine status so they stay readable.
+            showStatusToast(msg, 12000);
         }
 
         // ==================== SHARED LAYOUT ====================
