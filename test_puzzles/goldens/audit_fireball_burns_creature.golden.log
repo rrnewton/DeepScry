@@ -1,0 +1,49 @@
+  >>> Turn 1 - Player 1 20 (Player 2 20) <<<<
+Player 1 casts Fireball (3) (putting on stack)
+  → X = 3
+  → targeting Grizzly Bears (13)
+Tap Mountain for {R}
+Tap Mountain for {R}
+Tap Mountain for {R}
+Tap Mountain for {R}
+Fireball (3) resolves
+Grizzly Bears (13) takes 3 damage (total: 3)
+Fireball (3) deals 3 damage to Grizzly Bears (13)
+Grizzly Bears (13) goes to graveyard
+Grizzly Bears (13) dies from lethal damage
+
+  >>> Turn 2 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Forest (18)
+<Choice> PASS_UNTIL waiting (turn=2 step=Main1); target turn=Some(5) step=Some(Main1)
+<Choice> PASS_UNTIL waiting (turn=2 step=Main2); target turn=Some(5) step=Some(Main1)
+
+  >>> Turn 3 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Mountain (12)
+<Choice> PASS_UNTIL waiting (turn=3 step=Main1); target turn=Some(5) step=Some(Main1)
+<Choice> PASS_UNTIL waiting (turn=3 step=Main2); target turn=Some(5) step=Some(Main1)
+
+  >>> Turn 4 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Forest (17)
+<Choice> PASS_UNTIL waiting (turn=4 step=Main1); target turn=Some(5) step=Some(Main1)
+<Choice> PASS_UNTIL waiting (turn=4 step=Main2); target turn=Some(5) step=Some(Main1)
+
+  >>> Turn 5 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Mountain (11)
+<Choice> PASS_UNTIL satisfied at turn=5 step=Main1: resuming script
+
+  >>> Turn 6 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Forest (16)
+<Choice> PASS_UNTIL satisfied at turn=6 step=Main1: resuming script
+
+  >>> Turn 7 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Mountain (10)
+
+  >>> Turn 8 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Forest (15)
+
+  >>> Turn 9 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Mountain (9)
+
+  >>> Turn 10 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Forest (14)
+Player 2 has lost the game (decked). Player 1 wins!

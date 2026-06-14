@@ -1,0 +1,46 @@
+  >>> Turn 1 - Player 1 20 (Player 2 20) <<<<
+Player 1 casts Ancestral Recall (3) (putting on stack)
+Tap Island for {U}
+Ancestral Recall (3) resolves
+Player 1 draws Mox Pearl (16)
+Player 1 draws Mox Ruby (15)
+Player 1 draws Mox Jet (14)
+Ancestral Recall (3) causes Player 1 to draw 3 card(s)
+<Choice> PASS_UNTIL waiting (turn=1 step=Main1); target turn=Some(5) step=Some(Main1)
+<Choice> PASS_UNTIL waiting (turn=1 step=Main2); target turn=Some(5) step=Some(Main1)
+
+  >>> Turn 2 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Mountain (21)
+<Choice> PASS_UNTIL waiting (turn=2 step=Main1); target turn=Some(5) step=Some(Main1)
+<Choice> PASS_UNTIL waiting (turn=2 step=Main2); target turn=Some(5) step=Some(Main1)
+
+  >>> Turn 3 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Plains (13)
+<Choice> PASS_UNTIL waiting (turn=3 step=Main1); target turn=Some(5) step=Some(Main1)
+<Choice> PASS_UNTIL waiting (turn=3 step=Main2); target turn=Some(5) step=Some(Main1)
+
+  >>> Turn 4 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Mountain (20)
+<Choice> PASS_UNTIL waiting (turn=4 step=Main1); target turn=Some(5) step=Some(Main1)
+<Choice> PASS_UNTIL waiting (turn=4 step=Main2); target turn=Some(5) step=Some(Main1)
+
+  >>> Turn 5 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Forest (12)
+<Choice> PASS_UNTIL satisfied at turn=5 step=Main1: resuming script
+
+  >>> Turn 6 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Mountain (19)
+<Choice> PASS_UNTIL satisfied at turn=6 step=Main1: resuming script
+
+  >>> Turn 7 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Swamp (11)
+
+  >>> Turn 8 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Mountain (18)
+
+  >>> Turn 9 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Swamp (10)
+
+  >>> Turn 10 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Mountain (17)
+Player 2 has lost the game (decked). Player 1 wins!

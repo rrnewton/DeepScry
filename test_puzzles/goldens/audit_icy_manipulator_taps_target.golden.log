@@ -1,0 +1,62 @@
+  >>> Turn 1 - Player 1 20 (Player 2 20) <<<<
+Icy Manipulator activates ability: Tap target artifact, creature, or land.
+  -> targeting Grizzly Bears (10)
+Tap Island for {U}
+
+  >>> Turn 2 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Forest (15)
+<Choice> PASS_UNTIL waiting (turn=2 step=Main1); target turn=Some(5) step=Some(Main1)
+<Choice> PASS_UNTIL waiting (turn=2 step=DeclareAttackers); target turn=Some(5) step=Some(Main1)
+<Choice> PASS_UNTIL waiting (turn=2 step=Main2); target turn=Some(5) step=Some(Main1)
+
+  >>> Turn 3 - Player 1 20 (Player 2 20) <<<<
+<Choice> PASS_UNTIL waiting (turn=3 step=Upkeep); target turn=Some(5) step=Some(Main1)
+Player 1 draws Island (9)
+<Choice> PASS_UNTIL waiting (turn=3 step=Draw); target turn=Some(5) step=Some(Main1)
+<Choice> PASS_UNTIL waiting (turn=3 step=Main1); target turn=Some(5) step=Some(Main1)
+<Choice> PASS_UNTIL waiting (turn=3 step=BeginCombat); target turn=Some(5) step=Some(Main1)
+<Choice> PASS_UNTIL waiting (turn=3 step=DeclareAttackers); target turn=Some(5) step=Some(Main1)
+<Choice> PASS_UNTIL waiting (turn=3 step=DeclareBlockers); target turn=Some(5) step=Some(Main1)
+<Choice> PASS_UNTIL waiting (turn=3 step=CombatDamage); target turn=Some(5) step=Some(Main1)
+<Choice> PASS_UNTIL waiting (turn=3 step=EndCombat); target turn=Some(5) step=Some(Main1)
+<Choice> PASS_UNTIL waiting (turn=3 step=Main2); target turn=Some(5) step=Some(Main1)
+<Choice> PASS_UNTIL waiting (turn=3 step=End); target turn=Some(5) step=Some(Main1)
+
+  >>> Turn 4 - Player 2 20 (Player 1 20) <<<<
+<Choice> PASS_UNTIL waiting (turn=4 step=Upkeep); target turn=Some(5) step=Some(Main1)
+Player 2 draws Forest (14)
+<Choice> PASS_UNTIL waiting (turn=4 step=Draw); target turn=Some(5) step=Some(Main1)
+<Choice> PASS_UNTIL waiting (turn=4 step=Main1); target turn=Some(5) step=Some(Main1)
+<Choice> PASS_UNTIL waiting (turn=4 step=Main1); target turn=Some(5) step=Some(Main1)
+<Choice> PASS_UNTIL waiting (turn=4 step=BeginCombat); target turn=Some(5) step=Some(Main1)
+<Choice> PASS_UNTIL waiting (turn=4 step=DeclareAttackers); target turn=Some(5) step=Some(Main1)
+<Choice> PASS_UNTIL waiting (turn=4 step=DeclareAttackers); target turn=Some(5) step=Some(Main1)
+<Choice> PASS_UNTIL waiting (turn=4 step=DeclareBlockers); target turn=Some(5) step=Some(Main1)
+<Choice> PASS_UNTIL waiting (turn=4 step=CombatDamage); target turn=Some(5) step=Some(Main1)
+<Choice> PASS_UNTIL waiting (turn=4 step=EndCombat); target turn=Some(5) step=Some(Main1)
+<Choice> PASS_UNTIL waiting (turn=4 step=Main2); target turn=Some(5) step=Some(Main1)
+<Choice> PASS_UNTIL waiting (turn=4 step=Main2); target turn=Some(5) step=Some(Main1)
+<Choice> PASS_UNTIL waiting (turn=4 step=End); target turn=Some(5) step=Some(Main1)
+
+  >>> Turn 5 - Player 1 20 (Player 2 20) <<<<
+<Choice> PASS_UNTIL waiting (turn=5 step=Upkeep); target turn=Some(5) step=Some(Main1)
+Player 1 draws Island (8)
+<Choice> PASS_UNTIL waiting (turn=5 step=Draw); target turn=Some(5) step=Some(Main1)
+<Choice> PASS_UNTIL satisfied at turn=5 step=Main1: resuming script
+
+  >>> Turn 6 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Forest (13)
+<Choice> PASS_UNTIL satisfied at turn=6 step=Main1: resuming script
+
+  >>> Turn 7 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Island (7)
+
+  >>> Turn 8 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Forest (12)
+
+  >>> Turn 9 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Island (6)
+
+  >>> Turn 10 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Forest (11)
+Player 2 has lost the game (decked). Player 1 wins!

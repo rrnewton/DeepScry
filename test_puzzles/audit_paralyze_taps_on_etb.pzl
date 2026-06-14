@@ -1,0 +1,67 @@
+# Card-audit (mtg-948 Part B): Paralyze — Aura ETB taps enchanted creature (scripted).
+#
+# Closed issue mtg-529 closed Paralyze as WORKING but carried NO scripted puzzle
+# with semantic assertions. This audit puzzle SCRIPTS casting the Aura onto an
+# opponent's creature and asserts the enter-the-battlefield tap trigger fires.
+#
+# Paralyze is a {B} Enchantment — Aura "Enchant creature": "When Paralyze enters,
+# tap enchanted creature." (K:Enchant:Creature; T:Mode$ ChangesZone | Destination$
+# Battlefield | ValidCard$ Card.Self | Execute$ TrigTap; SVar:TrigTap:DB$ Tap |
+# Defined$ Enchanted). The ETB trigger taps the creature it is attached to (CR
+# 303.4, 603). It also imposes a "doesn't untap" replacement, but this puzzle
+# asserts the immediate, observable ETB-tap trigger.
+#
+# Aspects exercised (issue mtg-529):
+#   1. Parses + castable as a {B} Aura that attaches to a creature (spell cast).
+#   2. The Aura resolves onto the battlefield ATTACHED to the chosen creature
+#      (battlefield membership).
+#   3. The ETB "tap enchanted creature" trigger FIRES on entry (trigger fired
+#      from Paralyze).
+#
+# Scenario:
+#   - P0: Paralyze in hand, 1 Swamp to pay {B}.
+#   - P1: an untapped Grizzly Bears (2/2) it controls.
+#   - Script: P0 casts Paralyze enchanting the Grizzly Bears; the ETB trigger
+#     taps it.
+
+[metadata]
+Name:Card Audit - Paralyze Taps on ETB
+Goal:Win
+Turns:1
+Difficulty:Easy
+Description:P0 scripts Paralyze ({B} Aura) onto P1's Grizzly Bears. The Aura resolves attached to the Bears and its enter-the-battlefield trigger taps the enchanted creature. Backs issue mtg-529 (Enchant creature + ChangesZone->Battlefield DB$ Tap Defined$ Enchanted; CR 303.4).
+
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Paralyze
+p0battlefield=Swamp
+p0library=Swamp;Swamp;Swamp;Swamp;Swamp
+
+p1life=20
+p1battlefield=Grizzly Bears
+p1library=Forest;Forest;Forest;Forest;Forest
+
+[p0_script]
+# Cast Paralyze enchanting P1's Grizzly Bears (the only creature on board, so the
+# enchant target is unambiguous). Then PASS for the rest of the game so the board
+# stays frozen and the membership assertions stay durable.
+cast Paralyze targeting Grizzly Bears
+PASS_UNTIL turn=5,phase=MAIN1
+
+[p1_script]
+# P1 takes no proactive action (the tapped, locked-down Bears cannot attack).
+PASS_UNTIL turn=5,phase=MAIN1
+
+[assertions]
+# The Aura was actually cast.
+spell cast Paralyze
+# Its enter-the-battlefield "tap enchanted creature" trigger fired on entry.
+trigger fired from Paralyze
+# The Aura resolved onto the battlefield (it is now a permanent P0 controls).
+battlefield contains Paralyze
+# The enchanted creature is still on the board (Paralyze TAPS, it does not
+# destroy): P1 still controls the Grizzly Bears.
+opponent battlefield contains Grizzly Bears

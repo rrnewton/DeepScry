@@ -1,0 +1,65 @@
+# Card-audit (mtg-948 Part B): Braingeyser — target player draws X (scripted).
+#
+# Closed issue mtg-488 closed Braingeyser as WORKING but carried NO scripted
+# puzzle with semantic assertions (only a parser-shape unit test). This audit
+# puzzle SCRIPTS the X-cost cast and asserts the draw-X outcome.
+#
+# Braingeyser is a {X}{U}{U} sorcery: "Target player draws X cards."
+# (A:SP$ Draw | NumCards$ X | ValidTgts$ Player; SVar:X:Count$xPaid). X is locked
+# from the mana paid on cast (CR 107.3, 601.2b). Here P0 has 4 Islands, so paying
+# {X}{U}{U} funds X=2, and the target player draws 2 (CR 120.2).
+#
+# Aspects exercised (issue mtg-488):
+#   1. Parses + castable as a {X}{U}{U} sorcery (spell cast assertion).
+#   2. X is funded from mana paid: 4 Islands -> {2}{U}{U} -> X=2.
+#   3. Draw effect moves exactly X=2 cards library -> hand for the target player
+#      (here the caster P0, whose hand starts empty besides Braingeyser).
+#
+# Scenario:
+#   - P0: Braingeyser in hand, 4 Islands (funds X=2 + {U}{U}), a library whose
+#     top two cards (last two listed) are distinct, named Moxen.
+#   - Script: P0 casts Braingeyser targeting itself; draws the top two cards.
+
+[metadata]
+Name:Card Audit - Braingeyser Draws X
+Goal:Win
+Turns:1
+Difficulty:Easy
+Description:P0 scripts Braingeyser ({X}{U}{U} sorcery) targeting itself with 4 Islands (X=2). It draws the top two library cards (Mox Sapphire then Mox Emerald) into hand. Backs issue mtg-488 (SP$ Draw NumCards$ X over Count$xPaid; CR 120.2).
+
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Braingeyser
+p0battlefield=Island;Island;Island;Island
+# The loader treats the LAST entry as the top of the library: the two drawn
+# cards are Mox Sapphire then Mox Emerald.
+p0library=Swamp;Swamp;Swamp;Swamp;Swamp;Swamp;Forest;Plains;Mountain;Mox Emerald;Mox Sapphire
+
+p1life=20
+p1battlefield=
+p1library=Mountain;Mountain;Mountain;Mountain;Mountain
+
+[p0_script]
+# Cast Braingeyser at P0 itself. With 4 Islands the engine pays {2}{U}{U} (X=2),
+# drawing the top two library cards. Then PASS for the rest of the game so the
+# drawn Moxen are not played out (keeps the hand-membership assertions durable).
+cast Braingeyser targeting p1
+PASS_UNTIL turn=5,phase=MAIN1
+
+[p1_script]
+# P1 takes no proactive action either.
+PASS_UNTIL turn=5,phase=MAIN1
+
+[assertions]
+# The X-cost draw sorcery was actually cast.
+spell cast Braingeyser
+# Braingeyser itself is in P0's graveyard after resolving (sorcery -> GY).
+graveyard contains Braingeyser
+# P0 drew at least X=2 cards: hand has >= 2 (durable lower bound — P0 passes).
+hand count ge 2
+# The two top-of-library cards (X=2) were drawn into hand and stay there.
+hand contains Mox Sapphire
+hand contains Mox Emerald

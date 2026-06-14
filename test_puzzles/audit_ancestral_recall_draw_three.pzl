@@ -1,0 +1,72 @@
+# Card-audit (mtg-948 Part B): Ancestral Recall — target player draws three (scripted).
+#
+# Closed issue mtg-480 closed Ancestral Recall as WORKING but carried NO
+# scripted puzzle with semantic assertions (only a parser-shape unit test). This
+# audit puzzle SCRIPTS the cast and asserts the draw-three outcome.
+#
+# Ancestral Recall is a {U} instant: "Target player draws three cards."
+# (A:SP$ Draw | NumCards$ 3 | ValidTgts$ Player). Card draw moves the top three
+# library cards to the target player's hand (CR 120.2).
+#
+# Aspects exercised (issue mtg-480):
+#   1. Parses + castable as a {U} instant (spell cast assertion).
+#   2. ValidTgts$ Player accepts the caster (P0) as the target player.
+#   3. Draw effect moves exactly three cards library -> hand. P0 starts with an
+#      EMPTY hand (only Ancestral Recall, which leaves the hand on cast), so the
+#      post-resolution hand is exactly 3.
+#
+# Scenario:
+#   - P0: Ancestral Recall in hand, 1 Island to pay {U}, and a 6-card library of
+#     distinct, named cards so the three drawn cards are identifiable.
+#   - Script: P0 casts Ancestral Recall targeting itself (p1 = the first player);
+#     it draws the top three library cards into hand.
+
+[metadata]
+Name:Card Audit - Ancestral Recall Draws Three
+Goal:Win
+Turns:1
+Difficulty:Easy
+Description:P0 scripts Ancestral Recall ({U} instant) targeting itself, drawing the top three library cards into hand (hand goes 0 -> 3 after the spell leaves). Backs issue mtg-480 (SP$ Draw NumCards$ 3 over ValidTgts$ Player; CR 120.2).
+
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Ancestral Recall
+p0battlefield=Island
+# NOTE: the puzzle loader treats the LAST entry as the top of the library, so
+# the three drawn cards are the final three listed (Mox Jet, Mox Ruby, Mox
+# Pearl, drawn in that order).
+p0library=Swamp;Swamp;Swamp;Swamp;Swamp;Swamp;Swamp;Forest;Plains;Mox Jet;Mox Ruby;Mox Pearl
+
+p1life=20
+p1battlefield=
+p1library=Mountain;Mountain;Mountain;Mountain;Mountain
+
+[p0_script]
+# Cast Ancestral Recall at P0 itself (p1 = the first player sentinel), then PASS
+# for the rest of the game so the drawn Moxen are NOT played out of hand (which
+# would shrink the hand and unsettle the membership assertions). The bulk runner
+# plays the game to its natural end, so we keep P0 passive to freeze the
+# post-draw hand.
+cast Ancestral Recall targeting p1
+PASS_UNTIL turn=5,phase=MAIN1
+
+[p1_script]
+# P1 takes no proactive action either (keeps the board stable).
+PASS_UNTIL turn=5,phase=MAIN1
+
+[assertions]
+# The draw instant was actually cast.
+spell cast Ancestral Recall
+# Ancestral Recall itself is in P0's graveyard after resolving (instant -> GY).
+graveyard contains Ancestral Recall
+# P0 drew at least three cards: hand has >= 3 (durable lower bound — P0 passes,
+# so later draw steps only add to the hand, never remove).
+hand count ge 3
+# The three top-of-library cards were drawn into hand and stay there (P0 never
+# plays them out).
+hand contains Mox Pearl
+hand contains Mox Ruby
+hand contains Mox Jet

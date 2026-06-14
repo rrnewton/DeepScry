@@ -1,0 +1,51 @@
+  >>> Turn 1 - Player 1 20 (Player 2 20) <<<<
+Player 1 casts Pyroclasm (3) (putting on stack)
+Tap Mountain for {R}
+Tap Forest for {G}
+Pyroclasm (3) resolves
+Grizzly Bears (6) takes 2 damage (total: 2)
+Savannah Lions (12) takes 2 damage (total: 2)
+Hill Giant (13) takes 2 damage (total: 2)
+Grizzly Bears (6) goes to graveyard
+Grizzly Bears (6) dies from lethal damage
+Savannah Lions (12) goes to graveyard
+Savannah Lions (12) dies from lethal damage
+Pyroclasm (3) deals 2 damage to each matching creature
+
+  >>> Turn 2 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Forest (18)
+<Choice> PASS_UNTIL waiting (turn=2 step=Main1); target turn=Some(5) step=Some(Main1)
+<Choice> PASS_UNTIL waiting (turn=2 step=DeclareAttackers); target turn=Some(5) step=Some(Main1)
+<Choice> PASS_UNTIL waiting (turn=2 step=Main2); target turn=Some(5) step=Some(Main1)
+
+  >>> Turn 3 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Mountain (11)
+<Choice> PASS_UNTIL waiting (turn=3 step=Main1); target turn=Some(5) step=Some(Main1)
+<Choice> PASS_UNTIL waiting (turn=3 step=Main2); target turn=Some(5) step=Some(Main1)
+
+  >>> Turn 4 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Forest (17)
+<Choice> PASS_UNTIL waiting (turn=4 step=Main1); target turn=Some(5) step=Some(Main1)
+<Choice> PASS_UNTIL waiting (turn=4 step=DeclareAttackers); target turn=Some(5) step=Some(Main1)
+<Choice> PASS_UNTIL waiting (turn=4 step=Main2); target turn=Some(5) step=Some(Main1)
+
+  >>> Turn 5 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Mountain (10)
+<Choice> PASS_UNTIL satisfied at turn=5 step=Main1: resuming script
+
+  >>> Turn 6 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Forest (16)
+<Choice> PASS_UNTIL satisfied at turn=6 step=Main1: resuming script
+
+  >>> Turn 7 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Mountain (9)
+
+  >>> Turn 8 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Forest (15)
+
+  >>> Turn 9 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Mountain (8)
+
+  >>> Turn 10 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Forest (14)
+Player 2 has lost the game (decked). Player 1 wins!
