@@ -462,13 +462,9 @@
                 network-game UI). The lobby&rsquo;s Create/Join above is the multiplayer path.
             </p>
             <div class="launchers">
-                <a id="launch-native" class="launcher-link" href="solo_launcher.html?ui=native">
-                    <strong>Native Web GUI</strong>
-                    <small>Set up a solo game (vs AI), card-style interface</small>
-                </a>
-                <a id="launch-tui" class="launcher-link" href="solo_launcher.html?ui=tui">
-                    <strong>Web TUI</strong>
-                    <small>Set up a solo game (vs AI), terminal-style rendering</small>
+                <a id="launch-solo" class="launcher-link" href="solo_launcher.html">
+                    <strong>Solo / Standalone Game</strong>
+                    <small>Set up a solo game (vs AI) — choose Native GUI or Web TUI inside</small>
                 </a>
                 <a id="launch-demo" class="launcher-link" href="demo.html">
                     <strong>AI vs AI Demo</strong>
@@ -1257,12 +1253,11 @@
         // pages are pure renderers that boot only from URL params, so a bare
         // native_game.html/tui_game.html shows a degraded "launch from the lobby"
         // message. solo_launcher.html collects the local-game params and jumps in.
-        // The renderer is pre-selected via ?ui=; sticky params (name/ws/release/
-        // allow_local_img_load) ride along merged.
-        var pNative = new URLSearchParams(p); pNative.set('ui', 'native');
-        var pTui = new URLSearchParams(p); pTui.set('ui', 'tui');
-        document.getElementById('launch-native').href = 'solo_launcher.html?' + pNative.toString();
-        document.getElementById('launch-tui').href = 'solo_launcher.html?' + pTui.toString();
+        // The renderer is chosen by the user inside solo_launcher.html (radio
+        // buttons default to Native GUI); sticky params (name/ws/release/
+        // allow_local_img_load) ride along.
+        var soloSuffix = p.toString() ? '?' + p.toString() : '';
+        document.getElementById('launch-solo').href = 'solo_launcher.html' + soloSuffix;
         document.getElementById('launch-demo').href = 'demo.html' + suffix;
         // Carry the sticky params (name/ws/allow_local_img_load) onto the deck
         // editor too so the gate + identity survive a lobby→editor hop (mtg-695).
