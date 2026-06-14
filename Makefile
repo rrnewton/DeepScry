@@ -756,6 +756,8 @@ wasm-dev: wasm-export ensure-wasm-pack
 # which silently breaks the login screen — that footgun is why it's gone.
 play-web-local-dev: build-network-dev wasm-dev ensure-card-lookup
 	@echo ""
+	@echo "=== (re)building dev binary WITH network/web-server (wasm export-wasm rebuilds it without) ==="
+	@cargo build --features network
 	@echo "=== Starting mtg server-web (dev/debug) on http://127.0.0.1:$(PORT) ==="
 	@echo "Lobby + static UI on one port. Solo (no login): http://127.0.0.1:$(PORT)/solo_launcher.html?ui=native"
 	@echo "Press Ctrl+C to stop"
