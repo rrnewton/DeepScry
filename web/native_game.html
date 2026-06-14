@@ -335,7 +335,21 @@
             gap: 4px;
             grid-row: 1 / 3;
         }
-        #pane-log { flex: 1; }
+        /* Log + Actions vertical split (left column).
+           The split is DYNAMIC: applyActionLogSplit() sizes #pane-actions to
+           its current content (number of choices) and lets #pane-log absorb
+           all remaining height. The CSS here is only the pre-JS fallback /
+           the invariants the JS relies on:
+             - #pane-log: flex:1 so it always grows into the freed space when
+               the action pane is small (few/no choices ⇒ tall log).
+             - #pane-actions: content-sized (flex-grow:0), never below a small
+               floor (still usable with 1 choice), capped at
+               --action-pane-max-frac of the column so it can never crowd the
+               log out entirely; past the cap its body scrolls internally.
+           Both panes keep min-height:0 so their .pane-body scroll containers
+           work inside the flex column. */
+        :root { --action-pane-max-frac: 0.55; }
+        #pane-log { flex: 1 1 0; min-height: 0; }
         #pane-log .pane-body {
             background: #000;
             font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
@@ -343,7 +357,9 @@
             line-height: 1.3;
         }
         .log-entry { padding: 0 4px; }
-        #pane-actions { flex: 1; }
+        /* flex-basis is set in px by applyActionLogSplit(); flex-grow:0 so it
+           never steals space from the log, flex-shrink:1 so the cap clamps it. */
+        #pane-actions { flex: 0 1 auto; min-height: 0; }
 
         /* Center column */
         .center-col {
@@ -2563,13 +2579,14 @@
                 gameArea.style.gridTemplateColumns = `${leftPct}% ${middlePct}% ${rightPct}%`;
             }
 
-            // Apply vertical splits within columns using pane height percentages
-            const logPct = panes.log.h_pct;
-            const actionsPct = panes.actions.h_pct;
-            const logPane = document.getElementById('pane-log');
-            const actionsPane = document.getElementById('pane-actions');
-            if (logPane) logPane.style.flex = `${logPct} 0 0`;
-            if (actionsPane) actionsPane.style.flex = `${actionsPct} 0 0`;
+            // NOTE: the log/actions vertical split is NOT taken from the Rust
+            // layout (panes.log.h_pct / panes.actions.h_pct) anymore — that
+            // gave the action pane a fixed, over-large slice that sat nearly
+            // empty while the log was cramped. The split is now DYNAMIC,
+            // driven by the live choice count in applyActionLogSplit(), which
+            // runs after every render. See that function + the #pane-actions
+            // CSS. (The Rust h_pct values are still the TUI's authority; the
+            // web GUI just sizes this one split to its content instead.)
 
             // Right column: card details + hand + graveyard.
             // Rust only knows about card_details and hand; graveyard is a new JS
@@ -2596,6 +2613,90 @@
             // the flex value does the job; the CSS var is a fallback for the
             // window-load period before the first applySharedLayout() call.
         }
+
+        // ==================== DYNAMIC ACTION/LOG SPLIT ====================
+        // Size the Action pane to its CURRENT content (the number of choices
+        // on offer) and let the Game Log absorb all the remaining height. The
+        // choice count changes constantly through a turn, so this is recomputed
+        // on every render — when there are 0–few choices the action pane
+        // shrinks and the log grows tall (more scrollback); when there are many
+        // choices the action pane grows, capped at --action-pane-max-frac of the
+        // left column so it can never crowd the log out — past the cap the
+        // action-body scrolls internally.
+        //
+        // We measure the action pane's natural content height (scrollHeight of
+        // its non-scrolling parts + the action list) rather than hard-coding a
+        // per-row pixel constant, so it stays correct if a prompt wraps to two
+        // lines or the affordance footer is shown. We then clamp to
+        // [floor, cap] and write it as the flex-basis. #pane-actions is
+        // `flex: 0 1 auto` and #pane-log is `flex: 1 1 0` (see CSS), so this
+        // basis fixes the action pane's size and the log takes the rest.
+        function applyActionLogSplit() {
+            const col = document.querySelector('.left-col');
+            const actionsPane = document.getElementById('pane-actions');
+            const logPane = document.getElementById('pane-log');
+            if (!col || !actionsPane || !logPane) return;
+
+            const header = document.getElementById('header-bar');
+            const gap = 4; // .left-col `gap`
+            // Height available to share between the log + actions panes
+            // (column minus the title bar and the two inter-pane gaps).
+            const headerH = header ? header.offsetHeight : 0;
+            const colH = col.clientHeight;
+            if (colH <= 0) return;
+            const shareH = colH - headerH - gap * 2;
+            if (shareH <= 0) return;
+
+            // Natural content height of the action pane: the fixed header +
+            // prompt + affordance, plus the full (unclipped) action list.
+            // .pane-body has flex:1/overflow:auto, so its offsetHeight is the
+            // CURRENT (possibly clamped) box, not the content; use the list's
+            // scrollHeight for the content measure instead.
+            const paneHeader = actionsPane.querySelector('.pane-header');
+            const promptEl = document.getElementById('actions-prompt');
+            const stackEl = document.getElementById('stack-section');
+            const affordanceEl = document.getElementById('actions-affordance');
+            const body = document.getElementById('actions-body');
+            const visH = (el) => (el && el.offsetParent !== null) ? el.offsetHeight : 0;
+            const chrome = visH(paneHeader) + visH(promptEl) + visH(stackEl) + visH(affordanceEl);
+            // Body content (the choice list) full height, plus its padding.
+            const bodyContent = body ? body.scrollHeight : 0;
+            // Pane border (1px top+bottom) — small but keep the math honest.
+            const border = 2;
+            const natural = chrome + bodyContent + border;
+
+            // Floor: always tall enough for the chrome + ~1 choice row, so the
+            // pane is never unusable. Cap: a fraction of the shared height so a
+            // long choice list can never crowd the log out entirely.
+            const ROW_FLOOR = 28;
+            const maxFrac = parseFloat(
+                getComputedStyle(document.documentElement)
+                    .getPropertyValue('--action-pane-max-frac')) || 0.55;
+            const floor = chrome + border + ROW_FLOOR;
+            const cap = Math.round(shareH * maxFrac);
+            const basis = Math.max(Math.min(natural, cap), Math.min(floor, cap));
+
+            const newFlex = `0 1 ${basis}px`;
+            // Avoid layout thrash: only touch the DOM when the basis changes.
+            if (actionsPane.style.flex !== newFlex) {
+                // The log pane is about to gain/lose height. If its scroll was
+                // pinned to the latest line, keep it pinned after the resize
+                // (a flex height change leaves scrollTop untouched, which would
+                // otherwise unstick a bottom-pinned log). Measure BEFORE the
+                // resize, re-pin AFTER, so auto-scroll-to-bottom survives even
+                // when the log content itself didn't change (renderLog's own
+                // re-pin is skipped on an unchanged log).
+                const logBody = document.getElementById('log-body');
+                const wasPinned = logBody
+                    ? (logBody.scrollHeight - logBody.scrollTop - logBody.clientHeight) <= 2
+                    : false;
+                actionsPane.style.flex = newFlex;
+                if (wasPinned && logBody) logBody.scrollTop = logBody.scrollHeight;
+            }
+        }
+        // Exposed so the visual-review harness (debug/) can re-run the split
+        // after stuffing a synthetic choice list to verify the cap clamps.
+        window.applyActionLogSplit = applyActionLogSplit;
 
         // Re-apply layout on window resize
         window.addEventListener('resize', () => {
@@ -2868,6 +2969,11 @@
             // is now in-list choices, above). autoRunning is in the render-skip
             // key below, so toggling auto-run re-renders this.
             renderActionAffordance(state.choices || [], state.game_over);
+            // Now that the action pane's content (choices + prompt + affordance)
+            // is in the DOM, size it to that content and hand the freed height
+            // to the log. Done BEFORE renderLog so the log renders into its
+            // final height and its scroll-to-bottom (below) sticks.
+            applyActionLogSplit();
             renderLog(state.logs || []);
             renderStatusBar(state);
             renderActiveTurnGlow(ourPlayer, oppPlayer, state);
