@@ -2606,13 +2606,101 @@
             const detailsPane  = document.getElementById('pane-card-details');
             const handPane     = document.getElementById('pane-hand');
             const graveyardPane = document.getElementById('pane-graveyard');
-            if (detailsPane)   detailsPane.style.flex  = `${scaledDetails} 0 0`;
-            if (handPane)      handPane.style.flex      = `${scaledHand} 0 0`;
-            if (graveyardPane) graveyardPane.style.flex = `${scaledGrave} 1 0`;
+            // Stash the proportional baseline so applyDetailsHandSplit can RESTORE
+            // it when the hand grows back to needing all its height (otherwise a
+            // hand that shrank-then-grew would stay pinned too small).
+            const detailsBaseFlex = `${scaledDetails} 0 0`;
+            const handBaseFlex    = `${scaledHand} 0 0`;
+            if (detailsPane) { detailsPane.dataset.baseFlex = detailsBaseFlex; detailsPane.style.flex = detailsBaseFlex; }
+            if (handPane)    { handPane.dataset.baseFlex    = handBaseFlex;    handPane.style.flex    = handBaseFlex; }
+            if (graveyardPane) {
+                const graveBaseFlex = `${scaledGrave} 1 0`;
+                graveyardPane.dataset.baseFlex = graveBaseFlex;
+                graveyardPane.style.flex = graveBaseFlex;
+            }
             // Remove the CSS min-height floor once Rust has sized it properly —
             // the flex value does the job; the CSS var is a fallback for the
             // window-load period before the first applySharedLayout() call.
+
+            // After the baseline split is set, hand off any surplus hand-pane
+            // height to Card Details (see applyDetailsHandSplit). Deferred to the
+            // next frame so the flex values above have laid out and the hand's
+            // needed height (set during renderHand) is current.
+            requestAnimationFrame(applyDetailsHandSplit);
         }
+
+        // ==================== DETAILS / HAND HEIGHT SPLIT ====================
+        // The right column stacks Card Details (top), Hand (middle), Graveyard
+        // (bottom). The diagonal-cascade hand only needs as much height as the
+        // cascade occupies — `container._handNeededH`, computed in
+        // renderHandVisual as padY*2 + (n-1)*maxDy + cardH (the bottom edge of
+        // the lower-rightmost card). When the hand pane is allotted MORE than it
+        // needs, that surplus is wasted while Card Details above is often too
+        // short to show both the card image AND its printed metadata. So:
+        //   * if the hand needs LESS than its current allotment → pin the hand
+        //     pane to exactly its needed pixel height and let Card Details FLEX
+        //     into the freed space (image + metadata both fit);
+        //   * if the hand needs ALL its allotment (large hand) → leave the
+        //     baseline proportional flex from applySharedLayout untouched; the
+        //     cascade compresses/crops as before.
+        // Graveyard keeps its own slice in both cases. Recomputed after every
+        // render and on resize, so it stays responsive to hand-size + container
+        // size changes.
+        function applyDetailsHandSplit() {
+            const detailsPane = document.getElementById('pane-card-details');
+            const handPane    = document.getElementById('pane-hand');
+            const handBody    = document.getElementById('hand-body');
+            const gravePane   = document.getElementById('pane-graveyard');
+            if (!detailsPane || !handPane || !handBody) return;
+            // Only the visual cascade has a bounded "needed" height; in text mode
+            // the hand is a scroll list that should keep its proportional slice.
+            if (handMode !== 'visual') return;
+
+            const neededBodyH = handBody._handNeededH;
+            if (typeof neededBodyH !== 'number') return;
+
+            const baseHandFlex    = handPane.dataset.baseFlex;
+            const baseDetailsFlex = detailsPane.dataset.baseFlex;
+            const baseGraveFlex   = gravePane ? gravePane.dataset.baseFlex : null;
+            if (!baseHandFlex || !baseDetailsFlex) return; // applySharedLayout not run yet
+
+            // RESTORE the proportional baseline first, then measure the hand's and
+            // graveyard's baseline allotments. Deciding against the baseline (not a
+            // stale pin) keeps the split stable whether the hand grew or shrank
+            // since the last call.
+            handPane.style.flex    = baseHandFlex;
+            detailsPane.style.flex = baseDetailsFlex;
+            if (gravePane && baseGraveFlex) gravePane.style.flex = baseGraveFlex;
+            const baselineHandH  = handPane.offsetHeight; // forces a layout read
+            const baselineGraveH = gravePane ? gravePane.offsetHeight : 0;
+            if (baselineHandH <= 0) return;
+
+            // Convert the body's needed content height into a whole-pane height:
+            // pane = header + body + the pane's vertical borders.
+            const handHeader = handPane.querySelector('.pane-header');
+            const headerH = handHeader ? handHeader.offsetHeight : 0;
+            const paneBorder = handPane.offsetHeight - handPane.clientHeight; // top+bottom border
+            const neededPaneH = Math.ceil(neededBodyH + headerH + paneBorder);
+
+            // Floor: never pin the hand below one full card's worth of space, so a
+            // tiny hand still shows its single card comfortably (neededBodyH
+            // already includes one full cardH, so this is naturally satisfied).
+            if (neededPaneH < baselineHandH - 1) {
+                // Surplus exists → pin the hand to its needed height AND pin the
+                // graveyard to its baseline pixel height (so it does NOT grow into
+                // the freed space), then make Card Details the sole grower so ALL
+                // the surplus flows up to it (image + metadata both fit). Without
+                // pinning the graveyard, its baseline flex-grow (much larger than
+                // 1) would swallow the surplus and Card Details would collapse.
+                handPane.style.flex = `0 0 ${neededPaneH}px`;
+                if (gravePane && baselineGraveH > 0) gravePane.style.flex = `0 0 ${baselineGraveH}px`;
+                detailsPane.style.flex = '1 1 0px';
+            }
+            // else: hand needs all (or more than) its baseline allotment — keep
+            // the proportional baseline we just restored above (cascade
+            // compresses/crops as before; Card Details is NOT shrunk further).
+        }
+        window.applyDetailsHandSplit = applyDetailsHandSplit;
 
         // ==================== DYNAMIC ACTION/LOG SPLIT ====================
         // Size the Action pane to its CURRENT content (the number of choices
@@ -2953,6 +3041,10 @@
             renderBattlefield(ourPlayer, 'player-field-cards', cardSizes.your);
             renderBattlefield(oppPlayer, 'opp-field-cards',    cardSizes.opp);
             renderHand(ourPlayer);
+            // Hand just re-rendered → its cascade needed-height may have changed.
+            // Re-balance the Card Details / Hand split so surplus hand height
+            // flows up to Card Details (image + metadata fit). See the function.
+            applyDetailsHandSplit();
             // Both players' graveyard/exile live in the shared tabbed
             // #pane-graveyard (mtg-815). Cache the state so a tab click can
             // re-render the pane immediately without a fresh state tick.
@@ -3278,10 +3370,19 @@
         // Tune dx/dy here; they are also recomputed adaptively in
         // renderHandVisual() to keep all titles visible.
         const HAND_CASCADE = {
-            // Maximum dx/dy before the adaptive clamp kicks in (px).
-            // Raise these to spread cards further apart; lower to compact them.
-            maxDx: 36,   // rightward step per card
+            // dx/dy step per card.  maxDx is the COMFORTABLE (compact) spread used
+            // as the *minimum* horizontal step; dx then expands beyond it to fill
+            // surplus width up to spreadDxCap (see renderHandVisual).  maxDy is the
+            // comfortable vertical step and acts as the natural (uncompressed) step
+            // used to size the hand pane's needed height.
+            // Raise maxDx/maxDy to spread cards further apart; lower to compact them.
+            maxDx: 36,   // baseline rightward step per card (compact floor)
             maxDy: 28,   // downward step per card
+            // Ceiling on the rightward step when spreading to fill width. Capped
+            // below cardW so consecutive cards always overlap a little (the left
+            // card's art/title strip stays partly visible) rather than separating
+            // into a flat fanned-out row. 0.82*cardW reveals most of each card.
+            spreadDxFrac: 0.82,
             padX:   6,   // left/right padding inside the pane
             padY:   4,   // top/bottom padding inside the pane
             // Extra px added to --hand-title-h to compute the MINIMUM dy.
@@ -3315,6 +3416,9 @@
                 pool.clear();
                 // Remove any lingering visual-hand content and show placeholder.
                 container.innerHTML = '<div style="color:#444; font-size:12px; padding:8px;">(empty hand)</div>';
+                // Empty hand needs almost no height — let Card Details take the
+                // surplus (see applyDetailsHandSplit). Just the placeholder line.
+                container._handNeededH = 40;
                 return;
             }
 
@@ -3329,10 +3433,24 @@
             const innerW = Math.max(paneW - HAND_CASCADE.padX * 2, cardW);
             const innerH = Math.max(paneH - HAND_CASCADE.padY * 2, cardH);
 
-            // dx: the top card's right edge must not cross the pane right boundary.
-            // cascade occupies: cardW + (n-1)*dx ≤ innerW
-            const maxDxFit = (n > 1) ? (innerW - cardW) / (n - 1) : HAND_CASCADE.maxDx;
-            const dx = Math.max(2, Math.min(maxDxFit, HAND_CASCADE.maxDx));
+            // dx: SPREAD TO THE RIGHT EDGE when there's room.  The cascade occupies
+            // cardW + (n-1)*dx; the top card's right edge must not cross the pane
+            // right boundary, so the widest step that still fits is:
+            //   dxFit = (innerW - cardW) / (n - 1)
+            // We want the cascade to STRETCH out to that right boundary (reveal more
+            // of each card) rather than sitting compact with dead space on the right,
+            // so dx tracks dxFit directly.  Two clamps bound it:
+            //   * capped at spreadDxFrac*cardW so consecutive cards always overlap a
+            //     little (a small hand in a very wide pane reveals most of each card
+            //     but never fans out into a flat, fully-separated row);
+            //   * floored at 2px so a large hand whose dxFit collapses still steps
+            //     right at least a pixel or two (cards stack tightly, overflow crops
+            //     at the right edge as before — overflow:hidden handles it).
+            // The previous baseline (maxDx=36) left dead space on the right; tracking
+            // dxFit removes it.
+            const dxFit = (n > 1) ? (innerW - cardW) / (n - 1) : HAND_CASCADE.maxDx;
+            const spreadDxCap = HAND_CASCADE.spreadDxFrac * cardW;
+            const dx = Math.max(2, Math.min(dxFit, spreadDxCap));
 
             // dy: TITLE VISIBILITY FIRST.  Each card sits dy below the one above
             // it; the title strip of the card above occupies titleH px.  So to
@@ -3353,6 +3471,21 @@
             const maxDyFit = (n > 1) ? (innerH - cardH) / (n - 1) : HAND_CASCADE.maxDy;
             // Prefer maxDy; compress toward the pane-fit value but never below minDy.
             const dy = Math.max(minDy, Math.min(maxDyFit, HAND_CASCADE.maxDy));
+
+            // ── Needed height (for the details/hand split) ───────────────────
+            // The cascade WANTS to lay out at the comfortable vertical step
+            // (maxDy).  At that step the stack — measured from the pane top to the
+            // bottom edge of the lower-rightmost (last) card — occupies:
+            //     padY (top) + (n-1)*maxDy + cardH (last card full height) + padY
+            // This is the height at which ALL cards fit with the bottom of the
+            // last card visible.  applyDetailsHandSplit() reads it: if the hand
+            // pane is allotted MORE than this, the hand only needs `neededH` and
+            // the surplus is handed UP to the Card Details pane; if the hand needs
+            // all available height (neededH ≥ allotment) the pane keeps its full
+            // flex slice and the cascade compresses/crops as above.
+            const neededH = Math.round(
+                HAND_CASCADE.padY * 2 + (n - 1) * HAND_CASCADE.maxDy + cardH);
+            container._handNeededH = neededH;
 
             // Stack origin: we want the BOTTOM-LEFT card to start at the top-left
             // of the pane, and the stack to grow right+down, so the TOP card
