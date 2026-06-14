@@ -1,0 +1,70 @@
+# Card-audit (mtg-948 Part B): Icy Manipulator — activated tap ability (scripted).
+#
+# Closed issue mtg-511 closed Icy Manipulator as WORKING but carried NO scripted
+# puzzle with semantic assertions. This audit puzzle SCRIPTS the activated
+# ability and asserts the tap-target outcome.
+#
+# Icy Manipulator is a {4} Artifact: "{1}, {T}: Tap target artifact, creature, or
+# land." (A:AB$ Tap | Cost$ 1 T | ValidTgts$ Artifact,Creature,Land). Activating
+# it pays {1} and taps Icy itself, then taps the chosen target permanent (CR
+# 602, 701.21). This puzzle asserts the ability is usable and the artifact's tap
+# does not destroy or move its target (a "soft" lock, not removal).
+#
+# Aspects exercised (issue mtg-511):
+#   1. The {1}{T} activated ability is offered and activatable (a non-creature
+#      artifact's repeatable activated ability).
+#   2. ValidTgts$ Artifact,Creature,Land accepts an opponent's untapped creature.
+#   3. The tap effect leaves the target on the battlefield (it taps, does not
+#      destroy): P1 still controls the Grizzly Bears afterward, and P0 still
+#      controls Icy Manipulator. No creature died.
+#
+# Scenario:
+#   - P0: Icy Manipulator + 1 untapped Island (to pay the {1}) on the
+#     battlefield.
+#   - P1: an untapped Grizzly Bears (2/2) it controls.
+#   - Script: P0 activates Icy Manipulator targeting the Grizzly Bears; it taps.
+
+[metadata]
+Name:Card Audit - Icy Manipulator Taps a Target
+Goal:Win
+Turns:1
+Difficulty:Easy
+Description:P0 scripts Icy Manipulator's {1}{T} ability at P1's Grizzly Bears, tapping it. Both Icy and the Bears stay on the battlefield (tap, not removal). Backs issue mtg-511 (AB$ Tap Cost$ 1 T over ValidTgts$ Artifact,Creature,Land; CR 701.21).
+
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=
+p0battlefield=Icy Manipulator;Island
+p0library=Island;Island;Island;Island;Island
+
+p1life=20
+p1battlefield=Grizzly Bears
+p1library=Forest;Forest;Forest;Forest;Forest
+
+[p0_script]
+# Activate Icy Manipulator's tap ability at P1's Grizzly Bears (the only legal
+# creature; pays {1} from the Island and taps Icy as part of the cost). Then PASS
+# for the rest of the game so the board stays frozen (no combat / new plays),
+# keeping the membership assertions durable.
+activate Icy Manipulator targeting Grizzly Bears
+PASS_UNTIL turn=5,phase=MAIN1
+
+[p1_script]
+# P1 takes no proactive action: it never attacks with the tapped Bears (a tapped
+# creature cannot attack anyway) and plays nothing, so the board is stable.
+PASS_UNTIL turn=5,phase=MAIN1
+
+[assertions]
+# Icy Manipulator is still on P0's battlefield after activating (the ability taps
+# it as a cost; it is not sacrificed/removed). Durable: P0 passes, so nothing
+# moves it.
+battlefield contains Icy Manipulator
+# The tapped target stayed on P1's battlefield — Icy TAPS, it does not destroy.
+# Durable: P1 passes and a tapped creature cannot attack, so the Bears never
+# leaves the battlefield.
+opponent battlefield contains Grizzly Bears
+# No creature died from the tap effect (a soft lock, not removal).
+NOT creature died Grizzly Bears

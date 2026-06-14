@@ -1,0 +1,69 @@
+# Card-audit (mtg-948 Part B): Pyroclasm — 2 damage to each creature (scripted).
+#
+# Closed issue mtg-851 closed Pyroclasm as WORKING but carried NO scripted
+# puzzle with semantic assertions. This audit puzzle SCRIPTS the cast and asserts
+# the symmetric board-sweep outcome.
+#
+# Pyroclasm is a {1}{R} sorcery: "Pyroclasm deals 2 damage to each creature."
+# (A:SP$ DamageAll | NumDmg$ 2 | ValidCards$ Creature). DamageAll is symmetric:
+# it hits EVERY creature on the battlefield, regardless of controller. Any
+# creature with toughness <= 2 dies from lethal damage (CR 704.5g).
+#
+# Aspects exercised (issue mtg-851):
+#   1. Parses + castable as a {1}{R} sorcery (spell cast assertion).
+#   2. DamageAll deals 2 to EACH creature symmetrically (both players').
+#   3. A 2/2 (P0's own Grizzly Bears) and a 1/1 (P1's Savannah Lions, here used
+#      as a 2/1-toughness-1 creature) both take 2 and die; a 3/3 (P1's Hill
+#      Giant, toughness 3) survives with 2 damage marked.
+#
+# Scenario:
+#   - P0: Pyroclasm in hand, 1 Mountain + 1 Forest to pay {1}{R}; a 2/2 Grizzly
+#     Bears it controls (dies to its own sweep — symmetric).
+#   - P1: a Savannah Lions (2/1, dies) and a Hill Giant (3/3, survives).
+#   - Script: P0 casts Pyroclasm; both 2-or-less-toughness creatures die, the
+#     3/3 survives.
+
+[metadata]
+Name:Card Audit - Pyroclasm Sweeps the Board
+Goal:Win
+Turns:1
+Difficulty:Easy
+Description:P0 scripts Pyroclasm ({1}{R} sorcery), dealing 2 to EACH creature. P0's own 2/2 Grizzly Bears and P1's 2/1 Savannah Lions die; P1's 3/3 Hill Giant survives. Backs issue mtg-851 (symmetric SP$ DamageAll NumDmg$ 2 ValidCards$ Creature; CR 704.5g).
+
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Pyroclasm
+p0battlefield=Mountain;Forest;Grizzly Bears
+p0library=Mountain;Mountain;Mountain;Mountain;Mountain
+
+p1life=20
+p1battlefield=Savannah Lions;Hill Giant
+p1library=Forest;Forest;Forest;Forest;Forest
+
+[p0_script]
+# Cast Pyroclasm; it deals 2 to every creature on the board (no targets — it is
+# a DamageAll sweep, so a plain cast suffices). Then PASS for the rest of the
+# game so neither side plays new creatures that would muddy the survivor check.
+cast Pyroclasm
+PASS_UNTIL turn=5,phase=MAIN1
+
+[p1_script]
+# P1 takes no proactive action (keeps the surviving Hill Giant in place).
+PASS_UNTIL turn=5,phase=MAIN1
+
+[assertions]
+# The sweeper sorcery was actually cast.
+spell cast Pyroclasm
+# P0's own 2/2 died to the symmetric sweep (proves it is NOT one-sided).
+creature died Grizzly Bears
+# P1's 2/1 died too.
+creature died Savannah Lions
+# Both dead creatures rest in their owners' graveyards (durable end-state).
+graveyard contains Grizzly Bears
+opponent graveyard contains Savannah Lions
+# The 3/3 Hill Giant survived the 2-damage sweep (2 < 3 toughness): it never
+# died (durable — the event log records no death for it).
+NOT creature died Hill Giant

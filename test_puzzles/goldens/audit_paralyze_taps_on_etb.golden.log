@@ -1,0 +1,49 @@
+  >>> Turn 1 - Player 1 20 (Player 2 20) <<<<
+Player 1 casts Paralyze (3) (putting on stack)
+  → targeting Grizzly Bears (10)
+Tap Swamp for {B}
+Paralyze (3) resolves
+Paralyze enchants Grizzly Bears
+
+  >>> Turn 2 - Player 2 20 (Player 1 20) <<<<
+Paralyze trigger effect
+Player 2 draws Forest (15)
+<Choice> PASS_UNTIL waiting (turn=2 step=Main1); target turn=Some(5) step=Some(Main1)
+<Choice> PASS_UNTIL waiting (turn=2 step=DeclareAttackers); target turn=Some(5) step=Some(Main1)
+<Choice> PASS_UNTIL waiting (turn=2 step=Main2); target turn=Some(5) step=Some(Main1)
+
+  >>> Turn 3 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Swamp (9)
+<Choice> PASS_UNTIL waiting (turn=3 step=Main1); target turn=Some(5) step=Some(Main1)
+<Choice> PASS_UNTIL waiting (turn=3 step=Main2); target turn=Some(5) step=Some(Main1)
+
+  >>> Turn 4 - Player 2 20 (Player 1 20) <<<<
+Paralyze trigger effect
+Player 2 draws Forest (14)
+<Choice> PASS_UNTIL waiting (turn=4 step=Main1); target turn=Some(5) step=Some(Main1)
+<Choice> PASS_UNTIL waiting (turn=4 step=DeclareAttackers); target turn=Some(5) step=Some(Main1)
+<Choice> PASS_UNTIL waiting (turn=4 step=Main2); target turn=Some(5) step=Some(Main1)
+
+  >>> Turn 5 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Swamp (8)
+<Choice> PASS_UNTIL satisfied at turn=5 step=Main1: resuming script
+
+  >>> Turn 6 - Player 2 20 (Player 1 20) <<<<
+Paralyze trigger effect
+Player 2 draws Forest (13)
+<Choice> PASS_UNTIL satisfied at turn=6 step=Main1: resuming script
+
+  >>> Turn 7 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Swamp (7)
+
+  >>> Turn 8 - Player 2 20 (Player 1 20) <<<<
+Paralyze trigger effect
+Player 2 draws Forest (12)
+
+  >>> Turn 9 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Swamp (6)
+
+  >>> Turn 10 - Player 2 20 (Player 1 20) <<<<
+Paralyze trigger effect
+Player 2 draws Forest (11)
+Player 2 has lost the game (decked). Player 1 wins!

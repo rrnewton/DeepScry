@@ -1,0 +1,65 @@
+# Card-audit (mtg-948 Part B): Fireball — X damage kills a creature (scripted).
+#
+# Closed issue mtg-505 closed Fireball as WORKING but carried NO scripted puzzle
+# with semantic assertions. The pre-existing fireball_divide_two_targets.pzl is
+# a golden-log-only puzzle with no [assertions]. This audit puzzle SCRIPTS a
+# single-target X-cost cast and asserts the lethal-damage outcome.
+#
+# Fireball is a {X}{R} sorcery: "Fireball deals X damage divided evenly, rounded
+# down, among any number of targets." (A:SP$ DealDamage | NumDmg$ X | ValidTgts$
+# Any; SVar:X:Count$xPaid). With a single target, all X damage hits it (CR
+# 601.2b X locked from mana paid). Here P0 has 4 Mountains, so {X}{R} funds X=3,
+# enough to kill a 2/2 Grizzly Bears (lethal damage -> creature dies, CR 704.5g).
+#
+# Aspects exercised (issue mtg-505):
+#   1. Parses + castable as a {X}{R} sorcery (spell cast assertion).
+#   2. X funded from mana paid: 4 Mountains -> {3}{R} -> X=3.
+#   3. Single-target DealDamage applies all X=3 to the chosen creature; 3 >= the
+#      Bears' 2 toughness, so it is destroyed by lethal damage and moves to its
+#      owner's graveyard (creature died event + graveyard membership).
+#
+# Scenario:
+#   - P0: Fireball in hand, 4 Mountains (funds X=3 + {R}).
+#   - P1: a Grizzly Bears (2/2) it controls.
+#   - Script: P0 casts Fireball at the Grizzly Bears; 3 damage kills it.
+
+[metadata]
+Name:Card Audit - Fireball Burns a Creature
+Goal:Win
+Turns:1
+Difficulty:Easy
+Description:P0 scripts Fireball ({X}{R} sorcery) at P1's 2/2 Grizzly Bears with 4 Mountains (X=3). The 3 damage is lethal; the Bears dies into P1's graveyard. Backs issue mtg-505 (SP$ DealDamage NumDmg$ X over Count$xPaid; CR 704.5g).
+
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Fireball
+p0battlefield=Mountain;Mountain;Mountain;Mountain
+p0library=Mountain;Mountain;Mountain;Mountain;Mountain
+
+p1life=20
+p1battlefield=Grizzly Bears
+p1library=Forest;Forest;Forest;Forest;Forest
+
+[p0_script]
+# Cast Fireball at P1's Grizzly Bears (the only creature on board). With 4
+# Mountains the engine pays {3}{R} (X=3), dealing 3 lethal damage. Then PASS.
+cast Fireball targeting Grizzly Bears
+PASS_UNTIL turn=5,phase=MAIN1
+
+[p1_script]
+# P1 takes no proactive action.
+PASS_UNTIL turn=5,phase=MAIN1
+
+[assertions]
+# The burn sorcery was actually cast.
+spell cast Fireball
+# X=3 damage was lethal to the 2/2: it died (event record — durable).
+creature died Grizzly Bears
+# The destroyed creature rests in its owner's (P1's) graveyard (a dead creature
+# stays dead — durable end-state).
+opponent graveyard contains Grizzly Bears
+# Fireball itself is in P0's graveyard after resolving (sorcery -> GY).
+graveyard contains Fireball
