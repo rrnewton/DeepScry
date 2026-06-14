@@ -1,0 +1,53 @@
+# Card-audit puzzle (mtg-948 Part B) backing CLOSED issue mtg-401
+# (Card Compatibility: Serra Angel).
+#
+# Aspects exercised:
+#   1. K:Flying — a 4/4 flier can only be blocked by creatures with flying or
+#      reach (CR 702.9). P1's only creature is a ground Grizzly Bears, which
+#      CANNOT block Serra Angel, so all 4 combat damage gets through.
+#   2. K:Vigilance — Serra Angel does not tap to attack (CR 702.21), so it
+#      stays untapped and available to block on the crackback.
+#   3. Parses as a 4/4 Angel for {3}{W}{W}.
+#
+# P0 attacks each turn with the flying, vigilant Serra Angel; P1 at 8 life
+# cannot block the flier and dies within two swings.
+#
+# HOW TO RUN / VERIFY interactively:
+#   mtg tui --start-state test_puzzles/audit_serra_angel_flying_vigilance.pzl \
+#       --p1 heuristic --p2 heuristic --seed 42 -v 2 --no-color-logs
+# The log shows Serra Angel dealing 4 unblocked flying damage per turn and
+# remaining untapped (vigilance) between attacks.
+
+[metadata]
+Name:Serra Angel flying + vigilance beats a ground blocker (audit mtg-401)
+Goal:Win
+Turns:4
+Difficulty:Easy
+Description:P0 attacks with a 4/4 flying, vigilant Serra Angel. P1's only creature is a ground Grizzly Bears, which cannot block the flier (CR 702.9), so 4 damage connects each turn; P1 at 8 life dies in two swings. Vigilance keeps Serra Angel untapped between attacks (CR 702.21). Assertions confirm P0 wins, P1 takes lethal, and Serra Angel survives on P0's battlefield.
+
+[state]
+turn=2
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=
+p0library=Plains; Plains; Plains; Plains; Plains
+p0graveyard=
+p0battlefield=Serra Angel; Plains; Plains; Plains; Plains; Plains
+p0exile=
+
+p1life=8
+p1hand=
+p1library=Forest; Forest; Forest; Forest; Forest
+p1graveyard=
+p1battlefield=Grizzly Bears; Forest; Forest
+p1exile=
+
+[assertions]
+# P0 wins: the flier P1 cannot block carries the game.
+game won
+# P1 takes lethal flying damage (started at 8; ends at 0 or below).
+opponent life le 0
+# Serra Angel is still on P0's battlefield at game end (it was unblockable, so
+# it never died); P0 keeps at least one permanent.
+battlefield count ge 1

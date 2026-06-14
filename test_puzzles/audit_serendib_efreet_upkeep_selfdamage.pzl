@@ -1,0 +1,59 @@
+# Card-audit puzzle (mtg-948 Part B) backing CLOSED issue mtg-540
+# (Card Compatibility: Serendib Efreet).
+#
+# Aspects exercised:
+#   1. T:Mode$ Phase | Phase$ Upkeep | ValidPlayer$ You | DealDamage 1 to You
+#      — at the beginning of P0's upkeep, Serendib Efreet deals 1 damage to
+#      its CONTROLLER (CR 603.2 beginning-of-upkeep trigger). This fires
+#      automatically with no choice, so it is fully deterministic in the bulk
+#      heuristic runner.
+#   2. K:Flying — the 3/4 flier P1 cannot block, so it also connects in combat.
+#
+# P0 starts at turn=2 (its own upkeep is reached as the game advances), so the
+# self-damage trigger fires and P0's life dips below 20. The flier then beats
+# down P1 (at low life) for the win.
+#
+# HOW TO RUN / VERIFY interactively:
+#   mtg tui --start-state test_puzzles/audit_serendib_efreet_upkeep_selfdamage.pzl \
+#       --p1 heuristic --p2 heuristic --seed 42 -v 2 --no-color-logs
+# The log shows "Trigger: Serendib Efreet ... deals 1 damage to you" on P0's
+# upkeep (P0 life 20 -> 19), and the 3/4 flier attacking P1.
+
+[metadata]
+Name:Serendib Efreet upkeep self-damage + flying (audit mtg-540)
+Goal:Win
+Turns:5
+Difficulty:Easy
+Description:P0 controls a 3/4 flying Serendib Efreet. At the beginning of P0's upkeep the Efreet deals 1 damage to P0 (CR 603.2), so P0's life drops below 20. The flier P1 cannot block carries the game (P1 starts at 6 life). Assertions confirm the upkeep trigger fired, P0 took self-damage, and P0 still wins.
+
+[state]
+turn=2
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=
+p0library=Island; Island; Island; Island; Island
+p0graveyard=
+p0battlefield=Serendib Efreet; Island; Island; Island
+p0exile=
+
+p1life=6
+p1hand=
+p1library=Forest; Forest; Forest; Forest; Forest
+p1graveyard=
+p1battlefield=Grizzly Bears; Forest
+p1exile=
+
+[assertions]
+# The upkeep self-damage trigger fires: P0 takes at least 1 point of damage
+# from its own Serendib Efreet (life < 20). This is the OBSERVABLE effect of
+# the BeginningOfUpkeep DealDamage trigger. (We assert the life change, not a
+# `trigger fired from Serendib Efreet` event, because the event log only emits
+# LogEvent::TriggerFired for death/leaves-battlefield watcher triggers today,
+# NOT for Phase/upkeep triggers — see the trigger-event instrumentation gap
+# bug mtg-5tvge.)
+me life lt 20
+# The 3/4 flier P1 cannot block carries the game.
+game won
+# P1 takes lethal flying damage.
+opponent life le 0

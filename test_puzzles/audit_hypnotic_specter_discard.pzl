@@ -1,0 +1,54 @@
+# Card-audit puzzle (mtg-948 Part B) backing CLOSED issue mtg-510
+# (Card Compatibility: Hypnotic Specter).
+#
+# Aspects exercised:
+#   1. K:Flying — the 2/2 flier P1 cannot block (P1 has only a ground
+#      Grizzly Bears), so its combat damage connects.
+#   2. T:Mode$ DamageDone | ValidTarget$ Opponent | Execute$ TrigDiscard —
+#      whenever Hypnotic Specter deals damage to an opponent, that player
+#      discards a card at random (CR 603.2 damage trigger). P1 holds two
+#      cards, so the discard is observable as a hand-size drop.
+#
+# HOW TO RUN / VERIFY interactively:
+#   mtg tui --start-state test_puzzles/audit_hypnotic_specter_discard.pzl \
+#       --p1 heuristic --p2 heuristic --seed 42 -v 2 --no-color-logs
+# The log shows the flier connecting and "Trigger: Hypnotic Specter ...
+# discards a card at random", with P1's hand shrinking.
+
+[metadata]
+Name:Hypnotic Specter flying + discard-on-damage trigger (audit mtg-510)
+Goal:Win
+Turns:5
+Difficulty:Easy
+Description:P0 attacks with a 2/2 flying Hypnotic Specter. P1's only creature is a ground Grizzly Bears that cannot block the flier (CR 702.9), so the Specter connects and its "deals damage to an opponent -> that player discards at random" trigger fires (CR 603.2). P1 holds two cards. Assertions confirm the trigger fired, P1 took damage, and P1's hand shrank from the discard.
+
+[state]
+turn=2
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=
+p0library=Swamp; Swamp; Swamp; Swamp; Swamp
+p0graveyard=
+p0battlefield=Hypnotic Specter; Swamp; Swamp; Swamp
+p0exile=
+
+p1life=12
+p1hand=Forest; Grizzly Bears
+p1library=Forest; Forest; Forest; Forest; Forest
+p1graveyard=
+p1battlefield=Grizzly Bears; Forest
+p1exile=
+
+[assertions]
+# P1 took flying combat damage (the Specter connects past the ground blocker).
+opponent life lt 12
+# The discard-on-combat-damage trigger fires: each connection forces P1 to
+# discard a card at random, which lands in P1's graveyard. P1 began with no
+# graveyard, so a non-empty graveyard is the OBSERVABLE proof the discard
+# trigger fired. (We assert the discard's effect, not a `trigger fired from
+# Hypnotic Specter` event, because the event log only emits
+# LogEvent::TriggerFired for death/leaves-battlefield watcher triggers today,
+# NOT for DamageDone triggers — see the trigger-event instrumentation gap
+# bug mtg-5tvge.)
+opponent graveyard count ge 1

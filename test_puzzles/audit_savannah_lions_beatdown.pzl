@@ -1,0 +1,46 @@
+# Card-audit puzzle (mtg-948 Part B) backing CLOSED issue mtg-538
+# (Card Compatibility: Savannah Lions).
+#
+# Aspect exercised: a vanilla 2/1 Cat for {W} — it attacks and deals its
+# 2 combat damage in real games (the issue's WORKING evidence). No keywords,
+# triggers, or activated abilities. P1 is at 4 life with no blockers, so the
+# heuristic attacks with the 2/1 and connects for lethal over two turns
+# (CR 510.1c combat damage).
+#
+# HOW TO RUN / VERIFY interactively:
+#   mtg tui --start-state test_puzzles/audit_savannah_lions_beatdown.pzl \
+#       --p1 heuristic --p2 heuristic --seed 42 -v 2 --no-color-logs
+# The log shows "Savannah Lions ... deals 2 damage to Player 1" each turn.
+
+[metadata]
+Name:Savannah Lions 2/1 beats down for lethal (audit mtg-538)
+Goal:Win
+Turns:4
+Difficulty:Easy
+Description:P0 attacks with a vanilla 2/1 Savannah Lions. P1 at 4 life has no blockers, so 2 combat damage connects each turn and P0 wins within two swings. Assertions confirm P0 wins and P1 took lethal combat damage.
+
+[state]
+turn=2
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=
+p0library=Plains; Plains; Plains; Plains; Plains
+p0graveyard=
+p0battlefield=Savannah Lions; Plains; Plains
+p0exile=
+
+p1life=4
+p1hand=
+p1library=Forest; Forest; Forest; Forest; Forest
+p1graveyard=
+p1battlefield=Forest; Forest
+p1exile=
+
+[assertions]
+# P0 wins on the back of the 2/1 attacker.
+game won
+# P1 takes lethal combat damage (started at 4, ends at 0 or below).
+opponent life le 0
+# Savannah Lions survives (P1 had no blockers): P0 keeps a permanent.
+battlefield count ge 1

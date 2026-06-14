@@ -1,0 +1,92 @@
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=1)
+Player 1 declares Hypnotic Specter (3) (2/2) as attacker
+Hypnotic Specter (3) deals 2 damage to Player 2 (life: 10)
+Forest is discarded
+Player 2 discards Forest
+
+  >>> Turn 3 - Player 2 10 (Player 1 20) <<<<
+Player 2 draws Forest (20)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (20)
+<Choice> Player 2 chose 0 - cast Grizzly Bears
+Player 2 casts Grizzly Bears (13) (putting on stack)
+Tap Forest for {G}
+Tap Forest for {G}
+Grizzly Bears (13) resolves
+Grizzly Bears (13) enters the battlefield as a 2/2 creature
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 2 declares Grizzly Bears (14) (2/2) as attacker
+Grizzly Bears (14) deals 2 damage to Player 1 (life: 18)
+
+  >>> Turn 4 - Player 1 18 (Player 2 10) <<<<
+Player 1 draws Swamp (11)
+<Choice> Player 1 chose 0 - play Swamp
+Player 1 plays Swamp (11)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=1)
+Player 1 declares Hypnotic Specter (3) (2/2) as attacker
+Hypnotic Specter (3) deals 2 damage to Player 2 (life: 8)
+
+  >>> Turn 5 - Player 2 8 (Player 1 18) <<<<
+Player 2 draws Forest (19)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (19)
+<Choice> chose 2 attackers from 2 available creatures (aggression=3, opponent blockers=0)
+Player 2 declares Grizzly Bears (13) (2/2) as attacker
+Player 2 declares Grizzly Bears (14) (2/2) as attacker
+Grizzly Bears (13) deals 2 damage to Player 1 (life: 16)
+Grizzly Bears (14) deals 2 damage to Player 1 (life: 14)
+
+  >>> Turn 6 - Player 1 14 (Player 2 8) <<<<
+Player 1 draws Swamp (10)
+<Choice> Player 1 chose 0 - play Swamp
+Player 1 plays Swamp (10)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Hypnotic Specter (3) (2/2) as attacker
+Hypnotic Specter (3) deals 2 damage to Player 2 (life: 6)
+
+  >>> Turn 7 - Player 2 6 (Player 1 14) <<<<
+Player 2 draws Forest (18)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (18)
+<Choice> chose 2 attackers from 2 available creatures (aggression=3, opponent blockers=0)
+Player 2 declares Grizzly Bears (13) (2/2) as attacker
+Player 2 declares Grizzly Bears (14) (2/2) as attacker
+Grizzly Bears (13) deals 2 damage to Player 1 (life: 12)
+Grizzly Bears (14) deals 2 damage to Player 1 (life: 10)
+
+  >>> Turn 8 - Player 1 10 (Player 2 6) <<<<
+Player 1 draws Swamp (9)
+<Choice> Player 1 chose 0 - play Swamp
+Player 1 plays Swamp (9)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Hypnotic Specter (3) (2/2) as attacker
+Hypnotic Specter (3) deals 2 damage to Player 2 (life: 4)
+
+  >>> Turn 9 - Player 2 4 (Player 1 10) <<<<
+Player 2 draws Forest (17)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (17)
+<Choice> chose 2 attackers from 2 available creatures (aggression=3, opponent blockers=0)
+Player 2 declares Grizzly Bears (13) (2/2) as attacker
+Player 2 declares Grizzly Bears (14) (2/2) as attacker
+Grizzly Bears (13) deals 2 damage to Player 1 (life: 8)
+Grizzly Bears (14) deals 2 damage to Player 1 (life: 6)
+
+  >>> Turn 10 - Player 1 6 (Player 2 4) <<<<
+Player 1 draws Swamp (8)
+<Choice> Player 1 chose 0 - play Swamp
+Player 1 plays Swamp (8)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Hypnotic Specter (3) (2/2) as attacker
+Hypnotic Specter (3) deals 2 damage to Player 2 (life: 2)
+
+  >>> Turn 11 - Player 2 2 (Player 1 6) <<<<
+Player 2 draws Forest (16)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (16)
+<Choice> chose 2 attackers from 2 available creatures (aggression=3, opponent blockers=0)
+Player 2 declares Grizzly Bears (13) (2/2) as attacker
+Player 2 declares Grizzly Bears (14) (2/2) as attacker
+Grizzly Bears (13) deals 2 damage to Player 1 (life: 4)
+Grizzly Bears (14) deals 2 damage to Player 1 (life: 2)
+Player 2 has lost the game (decked). Player 1 wins!
