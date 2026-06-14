@@ -130,11 +130,14 @@ async function runTest() {
         const gameArea = await page.$('#game-area.show');
         if (!gameArea) throw new Error('Game area not visible');
 
-        // Check all panes exist
+        // Check all panes exist. The title/status-bar overhaul folded the old
+        // per-player info panes (#pane-opp-info / #pane-player-info) into the
+        // pane title bars + bottom status bar, so they no longer exist as
+        // standalone panes; the current layout is log / actions / card-details
+        // / graveyard / opp-field / player-field / hand.
         const paneIds = [
-            'pane-log', 'pane-actions', 'pane-opp-info', 'pane-opp-field',
-            'pane-player-field', 'pane-hand', 'pane-card-details',
-            'pane-player-info'
+            'pane-log', 'pane-actions', 'pane-card-details', 'pane-graveyard',
+            'pane-opp-field', 'pane-player-field', 'pane-hand'
         ];
         for (const id of paneIds) {
             const pane = await page.$(`#${id}`);
