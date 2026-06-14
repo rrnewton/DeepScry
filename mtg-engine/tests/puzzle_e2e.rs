@@ -7344,7 +7344,7 @@ async fn test_presence_of_the_master_counters_enchantment() -> Result<()> {
 /// - Island is in P0's hand (returned as cost, not lost permanently)
 /// - Daze is in P0's graveyard (resolves and goes to GY after countering)
 ///
-/// Regression for mtg-hjp2u (Return<N/Type> AlternativeCost path, wave11).
+/// Regression for mtg-939 (Return<N/Type> AlternativeCost path, wave11).
 ///
 /// Reproducer:
 /// ```sh
@@ -7449,7 +7449,7 @@ fn test_daze_island_return_alt_cost() {
         "P0 (Player 1) must have 20 life after Lightning Bolt is countered. output:\n{all_output}"
     );
 
-    println!("✓ Daze alt-cost: Island returned, Lightning Bolt countered (P2 cannot pay {{1}}), P0 at 20 life (mtg-hjp2u wave11)");
+    println!("✓ Daze alt-cost: Island returned, Lightning Bolt countered (P2 cannot pay {{1}}), P0 at 20 life (mtg-939 wave11)");
 }
 
 /// Test Coral Atoll's ETB trigger: sacrifice it unless you return an untapped Island
@@ -7463,7 +7463,7 @@ fn test_daze_island_return_alt_cost() {
 /// - Coral Atoll stays on battlefield (player paid the unless-cost)
 /// - Island is in P0's hand (returned as payment, not sacrificed)
 ///
-/// Regression for mtg-hjp2u (Return<N/Type> UnlessCost path, wave11).
+/// Regression for mtg-939 (Return<N/Type> UnlessCost path, wave11).
 ///
 /// Reproducer:
 /// ```sh
@@ -7550,5 +7550,5 @@ fn test_coral_atoll_unless_return() {
         "P0 (Player 1) must have 20 life. output:\n{all_output}"
     );
 
-    println!("✓ Coral Atoll unless-return: Island returned, Coral Atoll stays on battlefield (mtg-hjp2u wave11)");
+    println!("✓ Coral Atoll unless-return: Island returned, Coral Atoll stays on battlefield (mtg-939 wave11)");
 }

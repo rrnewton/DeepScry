@@ -1,6 +1,6 @@
 # Puzzle Assertion DSL
 
-**Tracking issue:** mtg-0oopj
+**Tracking issue:** mtg-935
 **Status:** Phase 1 + Phase 2 implemented (final-state + event-log assertions)
 
 This document is the evergreen specification for the inline assertion DSL added

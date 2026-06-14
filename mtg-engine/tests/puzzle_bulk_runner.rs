@@ -21,7 +21,7 @@
 //! report (marked `skipped`), and are counted as known-bad rather than
 //! blocking.  New panics in previously-passing puzzles WILL fail the test.
 //!
-//! Tracking issue: mtg-0oopj
+//! Tracking issue: mtg-935
 //! See: ai_docs/reference/PUZZLE_ASSERTION_DSL.md
 
 #![cfg(all(feature = "puzzle-assert", feature = "native"))]
@@ -52,7 +52,7 @@ use std::{
 // worker calls `block_on` for one puzzle at a time, sequentially on its own
 // thread, so there is no need for tokio-level parallelism inside a single task.
 //
-// Perf fix: mtg-5wds0 + claude/puzzle-runner-perf
+// Perf fix: mtg-946 + claude/puzzle-runner-perf
 thread_local! {
     static TOKIO_RT: RefCell<tokio::runtime::Runtime> = RefCell::new(
         tokio::runtime::Builder::new_current_thread()
@@ -462,9 +462,9 @@ fn bulk_puzzle_check() {
     // Adjust these baselines ONLY when:
     //   a) You have fixed puzzles (decrease the baseline), OR
     //   b) You have confirmed the new failures are pre-existing brokenness in the
-    //      engine and filed a beads issue tracking them (mtg-0oopj or sub-issues).
+    //      engine and filed a beads issue tracking them (mtg-935 or sub-issues).
     //
-    // Tracking issue: mtg-0oopj
+    // Tracking issue: mtg-935
     //
     // 2026-06-13 baseline (first run of the full corpus):
     //   These upper-bound numbers are set generously to allow for variance.
@@ -483,7 +483,7 @@ fn bulk_puzzle_check() {
     //     - "Unknown phase: DECLAREATK" (unsupported phase name)
     //     - "Unknown counter type: TIME" (not in our CounterType enum)
     //     - Missing card (Stormchaser's Talent@L3, c_a_food, etc.)
-    //   All catalogued in mtg-0oopj.
+    //   All catalogued in mtg-935.
     //
     //   Upper bounds with ~30% headroom. Decrease as fixes land; NEVER increase
     //   without a beads issue justification.
@@ -518,7 +518,7 @@ fn bulk_puzzle_check() {
     // Report overall outcome (non-fatal for known-bad puzzles)
     if total_bad > 0 {
         println!(
-            "[puzzle-bulk] {} puzzle(s) failed (within baseline tolerances; see mtg-0oopj). \
+            "[puzzle-bulk] {} puzzle(s) failed (within baseline tolerances; see mtg-935). \
              Validate step still GREEN.",
             total_bad
         );

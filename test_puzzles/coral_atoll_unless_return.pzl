@@ -3,7 +3,7 @@ Name:Coral Atoll unless-return
 Goal:Win
 Turns:4
 Difficulty:Easy
-Description:Verify Coral Atoll's ETB trigger: "sacrifice it unless you return an untapped Island you control to its owner's hand." P0 plays Coral Atoll while controlling an untapped Island. The trigger should fire; P0 pays the UnlessCost by returning the Island (ReturnToHand unless-cost path). Regression for mtg-hjp2u (Return<N/Type> UnlessCost path).
+Description:Verify Coral Atoll's ETB trigger: "sacrifice it unless you return an untapped Island you control to its owner's hand." P0 plays Coral Atoll while controlling an untapped Island. The trigger should fire; P0 pays the UnlessCost by returning the Island (ReturnToHand unless-cost path). Regression for mtg-939 (Return<N/Type> UnlessCost path).
 
 [state]
 turn=1

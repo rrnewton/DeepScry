@@ -97,7 +97,7 @@ impl PlayerController for RandomController {
         min_targets: usize,
         max_targets: usize,
     ) -> ChoiceResult<SmallVec<[CardId; 4]>> {
-        // TODO(mtg-vt4ue): Improve targeting logic based on spell requirements.
+        // TODO(mtg-931): Improve targeting logic based on spell requirements.
         if valid_targets.is_empty() {
             // Only log when there are no targets (could be meaningful)
             if view.logger().is_choice_logging_active() {
@@ -144,7 +144,7 @@ impl PlayerController for RandomController {
         available_sources: &[CardId],
     ) -> ChoiceResult<SmallVec<[CardId; 8]>> {
         // Simple greedy approach: tap sources until we have enough mana
-        // TODO(mtg-vt4ue): Improve to consider mana colors and optimization
+        // TODO(mtg-931): Improve to consider mana colors and optimization
         let mut sources = SmallVec::new();
         let needed = cost.cmc() as usize;
 

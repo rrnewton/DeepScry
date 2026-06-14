@@ -195,7 +195,7 @@ verbose-logging = []
 # Does NOT require the `native` feature: works in unit tests and WASM contexts
 # that operate on puzzle strings in memory without filesystem access.
 #
-# See ai_docs/reference/PUZZLE_ASSERTION_DSL.md and tracking issue mtg-0oopj.
+# See ai_docs/reference/PUZZLE_ASSERTION_DSL.md and tracking issue mtg-935.
 puzzle-assert = []
 
 # Native platform features (CLI, TUI, file I/O, threading)
@@ -258,7 +258,7 @@ network = [
     "tokio",  # Needs async runtime
     "web-server",  # Unified HTTP+WS server (axum)
     "rustls",  # `mtg connect wss://...` against the deployed TLS WS lobby
-    "puzzle-assert",  # Inline puzzle assertion DSL; included so CI exercises it (mtg-0oopj)
+    "puzzle-assert",  # Inline puzzle assertion DSL; included so CI exercises it (mtg-935)
 ]
 
 # Unified axum web server: static files + lobby WS proxy + optional TLS.

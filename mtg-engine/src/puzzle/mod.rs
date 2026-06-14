@@ -14,7 +14,7 @@
 //! compiles out when the feature is off.
 //!
 //! See `ai_docs/reference/PUZZLE_ASSERTION_DSL.md` for the full specification
-//! and tracking issue mtg-0oopj.
+//! and tracking issue mtg-935.
 
 pub mod card_notation;
 pub mod format;

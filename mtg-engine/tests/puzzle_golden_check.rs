@@ -26,7 +26,7 @@
 //!     see `puzzle_bulk_runner.rs` for cataloguing).
 //!   - The forge-java exclusion is logged, not silent.
 //!
-//! Tracking issue: mtg-0oopj (PUZZLE_ASSERTION_DSL Phase 4)
+//! Tracking issue: mtg-935 (PUZZLE_ASSERTION_DSL Phase 4)
 
 #![cfg(all(feature = "puzzle-assert", feature = "native"))]
 
@@ -417,7 +417,7 @@ fn puzzle_golden_check() {
     // Hard fail only on golden mismatches — they indicate an UNEXPECTED change
     // to the game log (potential regression). Missing goldens are soft (just run
     // `make puzzle-bless`). Excluded puzzles are pre-existing failures tracked
-    // by mtg-0oopj; they do not gate this test.
+    // by mtg-935; they do not gate this test.
     if !mismatch_details.is_empty() {
         let names: Vec<_> = mismatch_details
             .iter()

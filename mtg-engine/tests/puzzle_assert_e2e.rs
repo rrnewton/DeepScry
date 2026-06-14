@@ -5,7 +5,7 @@
 //!   2. A deliberately-wrong assertion fails (falsification check).
 //!   3. The engine builds and runs identically whether or not the feature is on.
 //!
-//! Tracking issue: mtg-0oopj
+//! Tracking issue: mtg-935
 //! See: ai_docs/reference/PUZZLE_ASSERTION_DSL.md
 
 #![cfg(feature = "puzzle-assert")]

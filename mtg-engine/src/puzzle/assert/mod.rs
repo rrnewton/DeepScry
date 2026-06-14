@@ -7,7 +7,7 @@
 //!
 //! See `ai_docs/reference/PUZZLE_ASSERTION_DSL.md` for the full specification
 //! and the rationale for deferring log-derived (event) assertions to a later
-//! phase (tracking issue: mtg-0oopj).
+//! phase (tracking issue: mtg-935).
 //!
 //! # Architecture
 //! - `parser.rs`    — text → typed `Vec<Assertion>` AST

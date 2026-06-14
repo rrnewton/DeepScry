@@ -3,7 +3,7 @@ Name:Daze island-return alternative cost
 Goal:Win
 Turns:4
 Difficulty:Easy
-Description:Verify Daze can be cast by returning an Island to its owner's hand rather than paying {1}{U}. Regression for mtg-hjp2u (Return<N/Type> alt-cost path). P0 has 0 mana available but controls an Island; Daze in hand. P1 casts Lightning Bolt at P0. P0 responds by returning the Island (alt-cost) and countering with Daze. P0 life should stay at 20; the Lightning Bolt must be in P1's graveyard (countered); P0 Island must be in P0 hand (returned as cost).
+Description:Verify Daze can be cast by returning an Island to its owner's hand rather than paying {1}{U}. Regression for mtg-939 (Return<N/Type> alt-cost path). P0 has 0 mana available but controls an Island; Daze in hand. P1 casts Lightning Bolt at P0. P0 responds by returning the Island (alt-cost) and countering with Daze. P0 life should stay at 20; the Lightning Bolt must be in P1's graveyard (countered); P0 Island must be in P0 hand (returned as cost).
 
 [state]
 turn=3

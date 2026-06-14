@@ -376,7 +376,7 @@ def build_registry():
     # Behind `puzzle-assert` feature (included by `network`). Runs SEPARATELY from
     # unit.nextest so it is visible in the validate summary and can be sharded in CI.
     # Writes JUnit XML to validate_logs/puzzle_bulk_runner.xml.
-    # Tracking issue: mtg-0oopj  (PUZZLE_ASSERTION_DSL Phase 4)
+    # Tracking issue: mtg-935  (PUZZLE_ASSERTION_DSL Phase 4)
     add(Step("puzzle", "bulk-check",
              "bulk puzzle runner: all ~694 .pzl files, N-way parallel, assertions+smoke",
              "make puzzle-bulk-check",
@@ -388,7 +388,7 @@ def build_registry():
     # test_puzzles/goldens/ and puzzles/goldens/.
     # A mismatch = unexpected log change = fails CI.
     # Deliberate log-format change? Re-bless in ONE command: `make puzzle-bless`.
-    # Tracking issue: mtg-0oopj
+    # Tracking issue: mtg-935
     add(Step("puzzle", "golden-check",
              "puzzle golden game-log oracle: local puzzles only, committed diffs = regression",
              "make puzzle-golden-check",

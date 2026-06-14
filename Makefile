@@ -114,7 +114,7 @@ test:
 # write JUnit XML to validate_logs/puzzle_bulk_runner.xml.
 # Behind puzzle-assert feature (included by network).  Runs as its own
 # validate step (puzzle.bulk-check) so it is visible in the summary and can
-# be sharded independently in CI.  Tracking issue: mtg-0oopj
+# be sharded independently in CI.  Tracking issue: mtg-935
 puzzle-bulk-check:
 	@echo "=== Running bulk puzzle check (all .pzl files) ==="
 	@if [ -n "$(NEXTEST_ARCHIVE)" ]; then \
@@ -130,7 +130,7 @@ puzzle-bulk-check:
 # Compares each puzzle's captured game log against committed golden files in
 # test_puzzles/goldens/ and puzzles/goldens/.  A mismatch FAILS this step.
 # Forge-java corpus is excluded (too many pre-existing panics).
-# Tracking issue: mtg-0oopj
+# Tracking issue: mtg-935
 puzzle-golden-check:
 	@echo "=== Running puzzle golden-log check (local puzzles only) ==="
 	@if [ -n "$(NEXTEST_ARCHIVE)" ]; then \

@@ -4,7 +4,7 @@
 # P1 starts at 20 life. After 5 turns P0 should deal at least 2 damage per
 # turn (10 total), so P1 should end below 20 life.
 #
-# Assertions checked (tracking issue: mtg-0oopj):
+# Assertions checked (tracking issue: mtg-935):
 #   - P0 did not lose (NOT game lost)
 #   - P1 lost some life (opponent life lt 20)
 #   - P0 has permanents on the battlefield (battlefield count ge 1)

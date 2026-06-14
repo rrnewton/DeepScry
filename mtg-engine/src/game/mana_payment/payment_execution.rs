@@ -1018,7 +1018,7 @@ impl GameState {
             }
 
             Cost::Discard { card_id: _ } => {
-                // TODO(mtg-32f9h): Implement discard cost for specific card
+                // TODO(mtg-930): Implement discard cost for specific card
                 Err(MtgError::InvalidAction(format!(
                     "Cost type {cost:?} not yet implemented"
                 )))

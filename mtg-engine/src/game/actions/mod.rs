@@ -2356,7 +2356,7 @@ impl GameState {
         Ok(breakdown.toughness())
     }
 
-    // TODO(mtg-n36vb): Implement get_valid_targets function that filters game entities to find valid targets
+    // TODO(mtg-934): Implement get_valid_targets function that filters game entities to find valid targets
     // based on effect type (damage, destroy, tap, etc.), targeting restrictions (hexproof,
     // shroud, protection), controller ownership, and zone requirements.
 
@@ -3165,7 +3165,7 @@ impl GameState {
         // Step 3: Choose targets
         let chosen_targets = choose_targets_fn(self, card_id);
         let num_targets = chosen_targets.len();
-        // TODO(mtg-n36vb): Store targets on the spell for resolution
+        // TODO(mtg-934): Store targets on the spell for resolution
         // For now, we'll use them to update effects immediately (simplified)
 
         // Step 4: Divide effects
@@ -6293,7 +6293,7 @@ impl GameState {
                                 }
                             }
                         }
-                        // TODO(mtg-32f9h): Check other cost types (mana, life, etc.)
+                        // TODO(mtg-930): Check other cost types (mana, life, etc.)
                     }
                 }
 
@@ -8577,7 +8577,7 @@ impl GameState {
                             }
                         }
                     }
-                    // TODO(mtg-32f9h): Check other cost types (mana, life, etc.)
+                    // TODO(mtg-930): Check other cost types (mana, life, etc.)
                 }
             }
 

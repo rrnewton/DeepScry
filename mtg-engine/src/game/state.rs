@@ -4912,7 +4912,7 @@ impl GameState {
             }
 
             DelayedEffect::CastWithoutPaying => {
-                // TODO(mtg-slric): Implement for Suspend mechanic
+                // TODO(mtg-932): Implement for Suspend mechanic
                 // This requires putting the spell on the stack without paying costs
                 log::warn!(target: "delayed_triggers", "CastWithoutPaying not yet implemented");
             }

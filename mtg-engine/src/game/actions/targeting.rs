@@ -494,7 +494,7 @@ impl GameState {
                 }
                 Effect::RemoveCounter { target, .. } if target.is_placeholder() => {
                     // RemoveCounter targets creatures (e.g., Heartless Act mode 2)
-                    // TODO(mtg-n36vb): Some RemoveCounter effects can target any permanent
+                    // TODO(mtg-934): Some RemoveCounter effects can target any permanent
                     for &card_id in &self.battlefield.cards {
                         if let Ok(target_card) = self.cards.get(card_id) {
                             if target_card.is_creature() && is_legal_target(target_card, spell_owner, &spell_colors) {
@@ -518,7 +518,7 @@ impl GameState {
                 }
                 Effect::PutCounter { target, .. } if target.is_placeholder() => {
                     // PutCounter targets creatures (e.g., +1/+1 counter effects)
-                    // TODO(mtg-n36vb): Some PutCounter effects can target any permanent
+                    // TODO(mtg-934): Some PutCounter effects can target any permanent
                     for &card_id in &self.battlefield.cards {
                         if let Ok(target_card) = self.cards.get(card_id) {
                             if target_card.is_creature() && is_legal_target(target_card, spell_owner, &spell_colors) {
@@ -1251,7 +1251,7 @@ impl GameState {
                     for &card_id in &self.battlefield.cards {
                         if let Ok(card) = self.cards.get(card_id) {
                             // By default, Airbend targets creatures
-                            // TODO(mtg-n36vb): Could be extended with ValidTgts parsing for nonland permanents
+                            // TODO(mtg-934): Could be extended with ValidTgts parsing for nonland permanents
                             let mut is_valid = card.is_creature();
 
                             // Check shroud/hexproof
