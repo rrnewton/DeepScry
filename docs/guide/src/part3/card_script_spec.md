@@ -1,0 +1,1 @@
+../../../../ai_docs/reference/CARD_SCRIPT_SPEC.md

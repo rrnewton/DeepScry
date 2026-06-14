@@ -5,6 +5,9 @@ data/
 dist/
 screenshots/
 server.log
+# Compiled mdbook guide output (source lives in docs/guide/src/; rebuild with
+# `make docs-guide`). Generated, same policy as the other web/ build output above.
+guide/
 # Also ignore the bare names so worktrees that symlink web/pkg, web/data,
 # and web/node_modules to a sibling built checkout don't show those as
 # untracked. The trailing-slash patterns above only match real

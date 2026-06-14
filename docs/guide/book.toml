@@ -1,0 +1,22 @@
+[book]
+title = "The DeepScry Guide"
+description = "User guide, internal architecture, and scripting-language reference for DeepScry, a high-performance Magic: The Gathering engine."
+authors = ["The DeepScry project"]
+language = "en"
+src = "src"
+
+[build]
+# Emit the compiled book into the served web tree so it ships with the site
+# at <site>/guide/.  Path is relative to this book.toml (docs/guide/).
+build-dir = "../../web/guide"
+create-missing = false
+
+[output.html]
+default-theme = "navy"
+preferred-dark-theme = "navy"
+git-repository-url = "https://github.com/rrnewton/deepscry"
+edit-url-template = "https://github.com/rrnewton/deepscry/edit/integration/docs/guide/{path}"
+
+[output.html.fold]
+enable = true
+level = 1

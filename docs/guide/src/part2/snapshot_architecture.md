@@ -1,0 +1,1 @@
+../../../../ai_docs/reference/snapshot_architecture.md
