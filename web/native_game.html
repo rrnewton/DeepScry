@@ -323,22 +323,62 @@
             grid-row: 1 / 3;
             min-height: 0;
         }
-        .info-bar {
-            flex: 0 0 auto;
-            background: #16213e;
-            border: 1px solid #1e2d50;
-            border-radius: 4px;
-        }
-        .info-bar-content {
-            padding: 4px 10px;
-            font-size: 12px;
-            color: #ccc;
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
-        }
         #pane-opp-field { flex: 1; }
         #pane-player-field { flex: 1; }
+
+        /* ── Battlefield title bar (consolidated header + status) ───────────
+           One glowing pane-header per battlefield now carries the player
+           identity on the LEFT and the live stats on the RIGHT, replacing
+           the old standalone "P2 | 20 life | Hand: 6 | …" info-bar. The
+           active-turn glow rules above (`.pane.active-turn .pane-header`)
+           still apply because this is a .pane-header. */
+        .bf-title {
+            display: flex;
+            justify-content: space-between;
+            align-items: baseline;
+            gap: 10px;
+        }
+        .bf-title-left {
+            display: inline-flex;
+            align-items: baseline;
+            gap: 6px;
+            min-width: 0;          /* allow the label to ellipsize, not the stats */
+            overflow: hidden;
+        }
+        .bf-title-label {
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        /* Player-name token: a stable, queryable anchor (future damage/attack
+           arrows + possible logo target). Always present in the DOM with a
+           sensible bounding box even before stats arrive. */
+        .player-name-anchor {
+            flex: 0 0 auto;
+            color: #4cc9f0;        /* cyan, distinct from the gold label */
+            font-weight: 700;
+            white-space: nowrap;
+        }
+        .pane.active-turn .player-name-anchor {
+            color: #8fe3ff;        /* brighten with the turn glow */
+        }
+        .bf-title-stats {
+            flex: 0 0 auto;
+            color: #cdd6e0;
+            font-weight: 500;
+            text-transform: none;  /* keep "20 life | Hand: 6" readable, not SHOUTED */
+            letter-spacing: 0;
+            white-space: nowrap;
+        }
+        /* Bottom-anchored title (Your Battlefield): the header sits AFTER the
+           body, so flip the divider to the top edge. */
+        .bf-title-bottom {
+            border-bottom: none;
+            border-top: 1px solid #1e2d50;
+        }
+        .pane.active-turn .bf-title-bottom {
+            border-top-color: var(--glow-color);
+        }
 
         /* Right column */
         .right-col {
@@ -1216,23 +1256,37 @@
         </div>
 
         <div class="center-col">
-            <div id="pane-opp-info" class="pane info-bar">
-                <div class="info-bar-content" id="opp-info-body"></div>
-            </div>
+            <!-- Opponent battlefield: title bar at TOP of the pane (top of screen).
+                 The header (.bf-title) now carries BOTH the identity/label (left)
+                 and the live stats (right) — the old standalone status info-bar is
+                 gone (its info merged here). See renderTitleBar(). -->
             <div id="pane-opp-field" class="pane">
-                <div class="pane-header">Opponent Battlefield</div>
+                <div class="pane-header bf-title" id="opp-bf-title">
+                    <span class="bf-title-left">
+                        <span class="player-name-anchor" id="player-name-anchor-opp" data-anchor="opp"></span>
+                        <span class="bf-title-label">Opponent Battlefield</span>
+                    </span>
+                    <span class="bf-title-stats" id="opp-bf-stats"></span>
+                </div>
                 <div class="pane-body">
                     <div class="card-grid" id="opp-field-cards"></div>
                 </div>
             </div>
+            <!-- Your battlefield: title bar at BOTTOM of the pane (bottom edge of
+                 screen). Same .bf-title structure as the opponent; only its
+                 DOM order within the pane differs (header AFTER body) so the
+                 two title bars frame the field at far-opposite ends. -->
             <div id="pane-player-field" class="pane">
-                <div class="pane-header">Your Battlefield</div>
                 <div class="pane-body">
                     <div class="card-grid" id="player-field-cards"></div>
                 </div>
-            </div>
-            <div id="pane-player-info" class="pane info-bar">
-                <div class="info-bar-content" id="player-info-body"></div>
+                <div class="pane-header bf-title bf-title-bottom" id="player-bf-title">
+                    <span class="bf-title-left">
+                        <span class="player-name-anchor" id="player-name-anchor-self" data-anchor="self"></span>
+                        <span class="bf-title-label">Your Battlefield</span>
+                    </span>
+                    <span class="bf-title-stats" id="player-bf-stats"></span>
+                </div>
             </div>
         </div>
 
@@ -2730,8 +2784,12 @@
                 }
             }
 
-            renderPlayerInfo(ourPlayer, 'player-info-body');
-            renderPlayerInfo(oppPlayer, 'opp-info-body');
+            // Consolidated battlefield title bars (identity + live stats).
+            // One shared render path; the two seats differ only by which DOM
+            // ids they target (self vs opponent). The old standalone status
+            // info-bar is gone — its counts now live on the right of these bars.
+            renderTitleBar(ourPlayer, 'player-name-anchor-self', 'player-bf-stats');
+            renderTitleBar(oppPlayer, 'player-name-anchor-opp', 'opp-bf-stats');
 
             // Apply the battlefield card sizes measured above (before the
             // change-detection check) so the <img> elements request the right
@@ -2795,14 +2853,44 @@
             }
         }
 
-        /// Render the compact info bar text above each player's zones.
-        /// Uses the Rust-formatted `info_bar_text` so the GUI never disagrees
-        /// with the TUI's `draw_player_info` on label or counts.
-        function renderPlayerInfo(player, bodyId) {
-            if (!player) return;
-            const body = document.getElementById(bodyId);
-            if (!body) return;
-            body.textContent = player.info_bar_text;
+        /// Render one battlefield title bar's dynamic parts: the player-name
+        /// anchor (LEFT) and the live stats line (RIGHT). Shared by both seats
+        /// — they pass different element ids only. The static "Your/Opponent
+        /// Battlefield" label and the glow come from the HTML/CSS and are left
+        /// untouched here.
+        ///
+        /// Name token: "(P1)" / "(P2)" — or "(Name)" when a real display name
+        /// is available and differs from the bare seat label. This <span> is a
+        /// STABLE anchor (#player-name-anchor-self / -opp) for future
+        /// damage/attack arrows.
+        ///
+        /// Stats: "20 life | Hand: 6 | GY: 0 | Lib: 52" — built from the
+        /// structured PlayerView fields (NOT the Rust `info_bar_text`, which
+        /// carries a leading "P1 |" we now drop since the name lives on the
+        /// left). Counts still mirror the engine's per-field view model.
+        function renderTitleBar(player, nameAnchorId, statsId) {
+            const nameEl  = document.getElementById(nameAnchorId);
+            const statsEl = document.getElementById(statsId);
+            if (!player) {
+                if (nameEl)  nameEl.textContent  = '';
+                if (statsEl) statsEl.textContent = '';
+                return;
+            }
+            // Prefer a human display name; fall back to the compact seat badge
+            // (P1/P2). Avoid echoing a name that's just "Player1"-style noise
+            // identical to the seat — show the badge then.
+            const badge = player.seat_badge || `P${(player.index ?? 0) + 1}`;
+            const name  = (player.name && player.name !== badge && !/^Player\d+$/i.test(player.name))
+                ? player.name
+                : badge;
+            if (nameEl) {
+                const want = `(${name})`;
+                if (nameEl.textContent !== want) nameEl.textContent = want;
+            }
+            if (statsEl) {
+                const want = `${player.life} life | Hand: ${player.hand_size} | GY: ${player.graveyard_size} | Lib: ${player.library_size}`;
+                if (statsEl.textContent !== want) statsEl.textContent = want;
+            }
         }
 
         /// Render a player's battlefield as a sequence of section blocks.
