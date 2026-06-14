@@ -33,14 +33,15 @@
 //!
 //! ## Graceful shutdown
 //!
-//! `run_web_server` installs a SIGTERM/Ctrl-C handler. On signal:
-//! - Static-file serving stops accepting new connections.
+//! `run_web_server` installs a SIGTERM/Ctrl-C handler. On the FIRST signal:
+//! - Static-file serving stops accepting new connections IMMEDIATELY.
 //! - Each active proxied WS connection is sent a final
 //!   `ServerMessage::Error { message: "server-restart", fatal: true }`
 //!   (the existing fatal-error path; the protocol does not yet have a
 //!   dedicated `ServerRestart` variant — adding one is a follow-up).
-//! - We give clients up to [`SHUTDOWN_GRACE`] to drain before the
-//!   process exits.
+//! - In-flight work drains; the process exits the instant the last
+//!   connection closes, or after [`SHUTDOWN_DRAIN_CAP`] as a backstop if a
+//!   connection wedges. A SECOND signal force-exits immediately.
 
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -74,9 +75,18 @@ use r2::{Identity, PresignMethod, R2Config, DEFAULT_PRESIGN_TTL};
 // the names the rest of this module already uses to avoid churn.
 pub use crate::version::{BUILD_TIME_EPOCH, GIT_HASH as BUILD_SHA};
 
-/// Maximum time we wait for in-flight WebSocket clients to drain after a
-/// shutdown signal before tearing the process down anyway.
-pub const SHUTDOWN_GRACE: Duration = Duration::from_secs(30);
+/// Backstop ceiling on the post-signal drain — NOT a fixed wait.
+///
+/// On the first SIGTERM/Ctrl-C the server STOPS accepting new connections
+/// immediately and lets in-flight work drain; in the normal case it exits
+/// the instant the last connection closes, well under this cap. This value
+/// is only the hard ceiling after which a watcher force-exits even if a
+/// connection is wedged (e.g. a stuck WebSocket that never closes). It is
+/// sized to flush a "server restarting, reconnect" close frame and let a
+/// short in-flight HTTP request (e.g. a multi-MB WASM download) finish —
+/// it is deliberately NOT long enough to let a game finish. A second
+/// Ctrl-C bypasses the cap entirely and force-exits at once.
+pub const SHUTDOWN_DRAIN_CAP: Duration = Duration::from_secs(4);
 
 /// CLI/library-facing configuration for the unified web server.
 #[derive(Debug, Clone)]
@@ -286,13 +296,48 @@ pub async fn run_web_server(mut config: WebServerConfig) -> Result<()> {
         .with_state(state);
 
     // ---- 4. Install shutdown signal handler. ----
+    //
+    // On the FIRST signal we want the server to STOP accepting new
+    // connections immediately (so `signal_fut` must resolve at once — no
+    // fixed sleep) and to begin draining in-flight work. We bound the drain
+    // two ways:
+    //
+    //   * `signal_fut` resolves the instant the first signal arrives. For
+    //     the plain-HTTP path that hands axum its graceful-shutdown trigger;
+    //     for the TLS path it triggers `handle.graceful_shutdown`.
+    //   * a separate WATCHER task (spawned on the first signal) hard-exits
+    //     the process if EITHER the drain cap elapses OR a SECOND signal
+    //     arrives — whichever comes first. This is the backstop for a wedged
+    //     WebSocket that never closes (axum's `with_graceful_shutdown` waits
+    //     for all connections with no timeout of its own), and the fast path
+    //     for an impatient operator pressing Ctrl-C twice.
     let shutdown_tx_for_signal = shutdown_tx.clone();
     let signal_fut = async move {
         wait_for_shutdown_signal().await;
-        log::warn!("[web-server] shutdown signal received; draining (up to {SHUTDOWN_GRACE:?})");
+        log::warn!(
+            "[web-server] shutting down; draining in-flight connections \
+             (up to {SHUTDOWN_DRAIN_CAP:?}); press Ctrl-C again to force-quit"
+        );
+        // Flip the drain flag so proxied WS tasks flush their
+        // server-restart close frame.
         let _ = shutdown_tx_for_signal.send(true);
-        // Give proxied tasks a chance to flush the server-restart frame.
-        tokio::time::sleep(SHUTDOWN_GRACE).await;
+        // Backstop watcher: force-exit on cap-elapsed OR a second signal.
+        tokio::spawn(async move {
+            tokio::select! {
+                _ = tokio::time::sleep(SHUTDOWN_DRAIN_CAP) => {
+                    log::warn!(
+                        "[web-server] drain cap ({SHUTDOWN_DRAIN_CAP:?}) elapsed; forcing exit"
+                    );
+                }
+                _ = wait_for_shutdown_signal() => {
+                    log::warn!("[web-server] second shutdown signal; forcing immediate exit");
+                }
+            }
+            // 130 = 128 + SIGINT(2), the conventional shell exit code for
+            // "terminated by Ctrl-C".
+            std::process::exit(130);
+        });
+        // Resolve IMMEDIATELY so the server stops accepting at once.
     };
 
     // ---- 5. Serve (TLS if configured, plain HTTP otherwise). ----
@@ -308,14 +353,15 @@ pub async fn run_web_server(mut config: WebServerConfig) -> Result<()> {
             let tls = axum_server::tls_rustls::RustlsConfig::from_pem_file(cert_path, key_path)
                 .await
                 .with_context(|| format!("loading TLS cert/key from {cert_path:?} / {key_path:?}"))?;
-            // axum-server has its own graceful handle; we wire signal_fut
-            // by calling `handle.graceful_shutdown(Some(SHUTDOWN_GRACE))`
-            // when the signal fires.
+            // axum-server has its own graceful handle; on the first signal we
+            // call `handle.graceful_shutdown(Some(SHUTDOWN_DRAIN_CAP))` to
+            // bound the drain. The watcher spawned inside `signal_fut` is the
+            // hard backstop / second-Ctrl-C force-exit.
             let handle = axum_server::Handle::new();
             let handle_for_signal = handle.clone();
             tokio::spawn(async move {
                 signal_fut.await;
-                handle_for_signal.graceful_shutdown(Some(SHUTDOWN_GRACE));
+                handle_for_signal.graceful_shutdown(Some(SHUTDOWN_DRAIN_CAP));
             });
             axum_server::bind_rustls(bind, tls)
                 .handle(handle)
@@ -328,6 +374,10 @@ pub async fn run_web_server(mut config: WebServerConfig) -> Result<()> {
             let listener = tokio::net::TcpListener::bind(bind)
                 .await
                 .with_context(|| format!("binding {bind}"))?;
+            // `with_graceful_shutdown` stops accepting the instant
+            // `signal_fut` resolves and returns once all live connections
+            // close. The watcher inside `signal_fut` force-exits if a
+            // connection wedges past the cap (or on a second Ctrl-C).
             axum::serve(listener, app.into_make_service())
                 .with_graceful_shutdown(signal_fut)
                 .await
