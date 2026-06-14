@@ -49,10 +49,12 @@ me graveyard contains Grizzly Bears
 # ...and both of P1's creatures are in P1's graveyard.
 opponent graveyard contains Savannah Lions
 opponent graveyard contains Black Knight
-# NOTE: we do NOT assert the `creature died` EVENT here. That event is only
-# emitted on LETHAL-DAMAGE deaths (combat or burn); a creature removed by a
-# DestroyAll effect goes to the graveyard without firing CreatureDied. The
-# destruction itself is fully verified by the graveyard-contains assertions
-# above (and the "is destroyed" / NoRegen marker in the golden log). The
-# missing event for destroy-based deaths is tracked as mtg-961, not a
-# Wrath of God card defect.
+# mtg-961 (RESOLVED): the structured `creature died` EVENT now fires for ALL
+# creature deaths, not just lethal-DAMAGE deaths. A DestroyAll effect moves each
+# creature battlefield -> graveyard through the single `move_card` chokepoint,
+# which emits CreatureDied. So we now assert the event directly for every
+# creature the board wipe killed — P0's own Grizzly Bears and both of P1's
+# creatures — alongside the durable graveyard-contains checks above.
+creature died Grizzly Bears
+creature died Savannah Lions
+creature died Black Knight

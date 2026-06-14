@@ -1582,6 +1582,34 @@ impl GameState {
             }
         }
 
+        // Structured CreatureDied event (mtg-961): capture the creature's
+        // identity BEFORE the move + transient-state reset below, so the event
+        // carries the name/controller as they were at the moment of death.
+        // A "death" is a creature moving battlefield → graveyard, regardless of
+        // CAUSE (combat/burn lethal damage, a destroy effect like Wrath of God /
+        // Royal Assassin / Disenchant, sacrifice, 0-toughness or other SBA, the
+        // legend/planeswalker rule, …). Emitting at this single chokepoint
+        // covers every cause uniformly; the per-cause emits in
+        // `check_lethal_damage` (state.rs) and combat resolution (combat.rs)
+        // were removed to avoid double-counting. Cards redirected to exile or
+        // the command zone (the `to` rewrites above / `death_destination_for_card`
+        // at the call site) do NOT reach the graveyard and so are not deaths.
+        // Purely observational: the logger is excluded from every state hash
+        // (see state_hash.rs HASH_EXCLUDE_FIELDS), so this cannot perturb
+        // snapshot/replay, WASM-rewind, or network-shadow determinism.
+        let creature_death: Option<crate::game::log_event::LogEvent> =
+            if from == Zone::Battlefield && to == Zone::Graveyard && self.logger.is_event_log_enabled() {
+                self.cards.try_get(card_id).filter(|c| c.is_creature()).map(|c| {
+                    crate::game::log_event::LogEvent::CreatureDied {
+                        card_id,
+                        card_name: c.name.to_string(),
+                        controller: c.controller,
+                    }
+                })
+            } else {
+                None
+            };
+
         // NETWORK: Auto-reveal cards transitioning from hidden to public zones.
         // This ensures the server logs RevealCard actions for all zone moves,
         // preventing desync when clients don't know the card's identity.
@@ -2143,6 +2171,14 @@ impl GameState {
         if !effects_to_remove.is_empty() {
             log::debug!(target: "persistent_effects", "Cleaning up {} effects on zone change for card {}", effects_to_remove.len(), card_id.as_u32());
             self.persistent_effects.remove_many(&effects_to_remove);
+        }
+
+        // Emit the structured CreatureDied event (mtg-961) now that the move has
+        // actually completed (the early `!removed` returns above guarantee we
+        // only get here on a real move). Captured before the transient-state
+        // reset so name/controller reflect the moment of death.
+        if let Some(event) = creature_death {
+            self.logger.push_event(event);
         }
 
         // Check and fire delayed triggers for this zone change
@@ -3095,7 +3131,6 @@ impl GameState {
         // Destroy all creatures with lethal damage
         for (card_id, owner) in creatures_to_destroy {
             let card_name = self.cards.try_get(card_id).map(|c| c.name.clone());
-            let card_controller = self.cards.try_get(card_id).map(|c| c.controller);
             let dest = self.death_destination_for_card(card_id);
 
             // Check death triggers BEFORE moving to graveyard (MTG Rules 603.6c)
@@ -3110,14 +3145,11 @@ impl GameState {
                 } else {
                     self.logger
                         .gamelog(&format!("{} ({}) dies from lethal damage", name, card_id));
-                    // Structured event: creature died
-                    if let Some(controller) = card_controller {
-                        self.logger.push_event(crate::game::log_event::LogEvent::CreatureDied {
-                            card_id,
-                            card_name: name.to_string(),
-                            controller,
-                        });
-                    }
+                    // NOTE(mtg-961): the structured CreatureDied event is now
+                    // emitted at the single battlefield→graveyard chokepoint in
+                    // `move_card` (called just above), covering ALL death causes
+                    // uniformly. The per-cause emit that used to live here was
+                    // removed to avoid double-counting.
                 }
             }
         }

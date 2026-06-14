@@ -1384,7 +1384,6 @@ impl GameState {
                 .get(creature_id)
                 .map(|c| c.name.clone())
                 .unwrap_or_else(|_| "Unknown".into());
-            let creature_controller = self.cards.get(creature_id).map(|c| c.controller).ok();
 
             // Check death triggers BEFORE moving the card (trigger still has access to card data)
             // This handles cards like Su-Chi which adds mana when it dies
@@ -1405,14 +1404,12 @@ impl GameState {
                 } else {
                     self.logger
                         .gamelog(&format!("{} ({}) dies from combat damage", creature_name, creature_id));
-                    // Structured event: creature died in combat
-                    if let Some(controller) = creature_controller {
-                        self.logger.push_event(crate::game::log_event::LogEvent::CreatureDied {
-                            card_id: creature_id,
-                            card_name: creature_name.to_string(),
-                            controller,
-                        });
-                    }
+                    // NOTE(mtg-961): the structured CreatureDied event is now
+                    // emitted at the single battlefield→graveyard chokepoint in
+                    // `GameState::move_card`, covering ALL death causes uniformly.
+                    // The per-cause emit that used to live here was removed to
+                    // avoid double-counting. The `move_card` call above already
+                    // produced the event for this combat death.
                 }
             }
         }

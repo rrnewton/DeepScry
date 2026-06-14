@@ -47,3 +47,11 @@ spell cast Disenchant
 opponent graveyard contains Mox Jet
 # Disenchant itself resolved into P0's graveyard.
 me graveyard contains Disenchant
+# mtg-961 note: the `creature died` event was widened to fire for ALL creature
+# deaths (destroy/sacrifice/SBA), not just lethal damage — see the Wrath of God
+# and Royal Assassin audit puzzles, which now assert it directly. We do NOT add
+# a `creature died` assertion HERE on purpose: Mox Jet is an ARTIFACT, not a
+# creature, so CreatureDied correctly does not fire for its destruction. The
+# `move_card` chokepoint emits CreatureDied only for objects that `is_creature()`
+# at the moment they leave the battlefield — destroying a non-creature artifact
+# must stay silent on that event. The destruction is verified by graveyard-contains.
