@@ -235,8 +235,19 @@ function log(msg) {
                   `details changed (length ${beforeClick.length} → ${afterClick.length})`);
         }
 
-        // ── mtg-444: the G-key full-graveyard popup ──────────────────────────
+        // ── mtg-444: the Shift+G full-graveyard popup ────────────────────────
+        // Keymap rework (task #6): the graveyard POPUP (a big overlay) now needs
+        // the Shift modifier — unmodified `g` FOCUSES the graveyard pane instead
+        // (modifier-multiplexing: popups require Shift/Ctrl). Verify plain `g`
+        // does NOT open the popup, then Shift+G does.
         await page.keyboard.press('g');
+        await page.waitForTimeout(150);
+        const gyPopupAfterPlainG = await page.evaluate(() =>
+            document.getElementById('graveyard-dialog')?.classList.contains('show'));
+        check('plain g does NOT open the graveyard popup (it focuses the pane)',
+              !gyPopupAfterPlainG, `popupShown=${gyPopupAfterPlainG}`);
+
+        await page.keyboard.press('Shift+G');
         await page.waitForTimeout(250);
         const gyPopup = await page.evaluate(() => {
             const dialog = document.getElementById('graveyard-dialog');
@@ -252,8 +263,8 @@ function log(msg) {
                     : [],
             };
         });
-        log(`G popup: shown=${gyPopup.dialogShown}, sections=${gyPopup.sectionCount}, cards=${gyPopup.cardCount}, titles=${JSON.stringify(gyPopup.titleEntries)}`);
-        check('G key opens the graveyard popup (dialog + overlay shown)',
+        log(`Shift+G popup: shown=${gyPopup.dialogShown}, sections=${gyPopup.sectionCount}, cards=${gyPopup.cardCount}, titles=${JSON.stringify(gyPopup.titleEntries)}`);
+        check('Shift+G opens the graveyard popup (dialog + overlay shown)',
               gyPopup.dialogShown && gyPopup.overlayShown,
               `dialog=${gyPopup.dialogShown}, overlay=${gyPopup.overlayShown}`);
         check('graveyard popup has one section per player',

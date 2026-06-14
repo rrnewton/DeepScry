@@ -205,6 +205,42 @@
             min-height: 0;
         }
 
+        /* ── Pane keyboard focus ───────────────────────────────────────────
+           A pane can be "focused" for keyboard navigation (Tab cycles focus;
+           f=hand, g=graveyard, e=exile jump directly). The focused pane shows
+           a cyan ring + a brighter header so it is unmistakable which pane the
+           arrow keys are driving. This is JS-side UI state (focusedPane) — it
+           is DISTINCT from the active-turn amber glow above (whose turn it is)
+           and from opening the graveyard popup (Shift+G). */
+        .pane.pane-focused {
+            border-color: #4cc9f0;
+            box-shadow: 0 0 0 2px rgba(76, 201, 240, 0.55),
+                        0 0 14px 2px rgba(76, 201, 240, 0.30);
+            z-index: 3;   /* above the active-turn glow so the ring isn't clipped */
+        }
+        .pane.pane-focused .pane-header {
+            background: #103247;
+            color: #9fe6ff;
+        }
+        .pane.pane-focused .zone-tab.active {
+            color: #9fe6ff;
+            border-bottom-color: #4cc9f0;
+        }
+        /* The card the arrow-key cursor currently sits on inside a focused
+           pane (hand text rows + graveyard/exile rows). Distinct from
+           .selected-card (engine selection) — though focus-move also calls
+           tui_select_card so they usually coincide. */
+        .hand-entry.pane-cursor,
+        .graveyard-overlay-card.pane-cursor {
+            outline: 2px solid #4cc9f0;
+            outline-offset: -2px;
+            background: rgba(76, 201, 240, 0.12);
+        }
+        .hand-card-visual.pane-cursor {
+            outline: 3px solid #4cc9f0;
+            outline-offset: 1px;
+        }
+
         /* ── Tabbed pane header (Graveyard | Exile) ────────────────────────
            Two clickable tabs styled to look native to the existing
            uppercase gold pane header. Graveyard sits upper-left, Exile
@@ -1349,7 +1385,7 @@
             </div>
             <div id="pane-hand" class="pane">
                 <div class="pane-header" id="hand-header">Hand
-                    <button class="hand-mode-toggle" id="btn-hand-mode" title="Toggle visual/text hand (H)">&#128247;</button>
+                    <button class="hand-mode-toggle" id="btn-hand-mode" title="Toggle visual/text hand (v)">&#128247;</button>
                 </div>
                 <div class="pane-body" id="hand-body"></div>
             </div>
@@ -1383,7 +1419,7 @@
         <div class="status-bar" id="status-bar">
             <span class="phase">Loading...</span>
             <span class="turn"></span>
-            <span>Space=turn A=auto G=graveyard H=hand-mode ?=help Q=exit</span>
+            <span>Space=turn A=auto Tab=focus pane f/g/e=hand/grave/exile Shift+?=help</span>
         </div>
     </div>
 
@@ -1418,7 +1454,13 @@
             <div style="margin-top: 6px;">
                 <button id="btn-bug-report" style="background:#9c6644;">Report Bug</button>
             </div>
-            <div class="controls-hint">Space=turn A=auto G=graveyard H=hand Q=exit C=toggle ?=help</div>
+            <div style="margin-top: 6px;">
+                <label style="display:flex; align-items:center; gap:6px; color:#bbb; font-size:12px; cursor:pointer;">
+                    <input type="checkbox" id="chk-hand-mode" style="cursor:pointer;">
+                    Visual hand (cards) <span style="color:#666;">— key: v</span>
+                </label>
+            </div>
+            <div class="controls-hint">Space=turn A=auto Tab/f/g/e=focus pane Shift+G=grave popup Q=exit C=toggle Shift+?=help</div>
         </div>
     </div>
 
@@ -1601,8 +1643,16 @@
         // by tui_game.html and native_game.html. The page supplies the help text
         // via a closure over its `tui_get_help_text` WASM import.
         import { installHelpDialog } from './help_dialog.js';
+        // The help popup's body is built from the JS KEYMAP table
+        // (buildHelpText), which is the single source of truth for the native
+        // game's keyboard model (task #6). We deliberately do NOT use the WASM
+        // `tui_get_help_text()` here: that text describes the old/ratzilla TUI
+        // bindings and is baked into the binary, so a web-only keymap change
+        // could not update it. `buildHelpText` is a hoisted function declaration
+        // defined later in this module; the closure only runs at show-time, so
+        // the forward reference is fine.
         const _helpDialog = installHelpDialog({
-            getHelpText: () => (typeof tui_get_help_text === 'function' ? tui_get_help_text() : null),
+            getHelpText: () => buildHelpText(),
         });
 
         // Network client + WASM network exports (optional — only present when built
@@ -3051,6 +3101,10 @@
             window._lastRenderedState = state;
             renderZonePane(ourPlayer, oppPlayer, state.selected_card?.card_id);
             renderStack(state.stack || []);
+            // Re-paint the keyboard-focus ring + in-pane cursor (task #6): the
+            // panes just re-rendered, dropping the previous .pane-focused /
+            // .pane-cursor classes, so reapply them from focusedPane state.
+            refreshPaneFocusUi();
             // slot05/web-ui-fixes: when an AI seat is paused and it's our move
             // to advance, present "Play next move" / "Auto-run" as NORMAL
             // numbered choices (same UI as a human game's "1. Pass / 2. Cast").
@@ -3608,7 +3662,175 @@
                     container._handCardPool = null;
                 }
             }
+            syncHandModeToggleUi();
             updateUI();
+        }
+
+        /// Keep the popup-menu "Visual hand" checkbox (and any future hand-mode
+        /// affordance) in sync with the `handMode` state, so the toggle switch
+        /// in the controls popup and the `v` key / camera button never drift.
+        function syncHandModeToggleUi() {
+            const chk = document.getElementById('chk-hand-mode');
+            if (chk) chk.checked = (handMode === 'visual');
+        }
+
+        // ==================== PANE KEYBOARD FOCUS (mtg-6: task #6) ============
+        //
+        // The TUI lets you focus a pane so the arrow keys scroll/select WITHIN
+        // it; that was missing in the web GUI. `focusedPane` is JS-side UI state
+        // (NOT engine/game state) naming which pane the arrow keys drive:
+        //   null          → no pane focused; arrows fall through to engine
+        //                    choice navigation (tui_prev_choice/tui_next_choice),
+        //                    exactly the pre-existing behaviour.
+        //   'hand'        → arrows move a cursor through the hand cards.
+        //   'graveyard'   → arrows move a cursor through the graveyard pane
+        //                    (shared Graveyard|Exile pane with graveyard tab).
+        //   'exile'       → same shared pane, exile tab.
+        //
+        // Focusing a pane is DISTINCT from opening the graveyard POPUP (Shift+G):
+        // focus drives in-pane navigation; the popup is a big overlay.
+        //
+        // Moving the cursor reuses the existing selection pipeline
+        // (selectCardById → tui_select_card) so the Card Details pane lights up
+        // for the focused card, identical to clicking it.
+        let focusedPane = null;
+        // Per-pane cursor: index of the highlighted card. Hand is a single list;
+        // the graveyard/exile pane has two columns (ours/theirs) so it also
+        // tracks which column the cursor is in.
+        let _handCursor = 0;
+        let _zoneCursorCol = 'our';   // 'our' | 'opp'
+        let _zoneCursorIdx = 0;
+
+        const PANE_ELEMENT_ID = {
+            hand: 'pane-hand',
+            graveyard: 'pane-graveyard',
+            exile: 'pane-graveyard',   // exile shares the graveyard pane (tabbed)
+        };
+
+        /// Cards currently shown in the hand, in DOM order (same source the
+        /// renderer uses). Returns [] when no game / empty hand.
+        function handCardsInOrder() {
+            const st = window._lastRenderedState;
+            if (!st || !Array.isArray(st.players)) return [];
+            const ourIdx = st.our_player_idx ?? 0;
+            return st.players[ourIdx]?.hand || [];
+        }
+
+        /// Cards in one column of the shared zone pane (graveyard or exile),
+        /// in the SAME order the pane renders them (most-recent first).
+        function zoneCardsInOrder(col) {
+            const st = window._lastRenderedState;
+            if (!st || !Array.isArray(st.players)) return [];
+            const ourIdx = st.our_player_idx ?? 0;
+            const oppIdx = st.players.length === 2 ? (ourIdx === 0 ? 1 : 0) : null;
+            const player = col === 'our' ? st.players[ourIdx]
+                : (oppIdx != null ? st.players[oppIdx] : null);
+            const field = activeZonePaneTab === 'exile' ? 'exile' : 'graveyard';
+            return (player?.[field] || []).slice().reverse();
+        }
+
+        /// Apply (or clear) the visual focus ring on whichever pane is focused,
+        /// and paint the in-pane cursor highlight on the current card. Called
+        /// after every focus change AND after every render (cards re-render).
+        function refreshPaneFocusUi() {
+            // Clear all pane rings + cursors first (cheap, DRY).
+            for (const id of ['pane-hand', 'pane-graveyard']) {
+                document.getElementById(id)?.classList.remove('pane-focused');
+            }
+            document.querySelectorAll('.pane-cursor').forEach(el => el.classList.remove('pane-cursor'));
+            if (!focusedPane) return;
+            const paneEl = document.getElementById(PANE_ELEMENT_ID[focusedPane]);
+            if (paneEl) paneEl.classList.add('pane-focused');
+            // Paint the cursor card.
+            const cursorCardId = currentCursorCardId();
+            if (cursorCardId == null) return;
+            const sel = `[data-card-id="${cursorCardId}"]`;
+            const scope = focusedPane === 'hand'
+                ? document.getElementById('hand-body')
+                : document.getElementById('pane-graveyard');
+            scope?.querySelector(sel)?.classList.add('pane-cursor');
+        }
+
+        /// card_id under the cursor in the focused pane, or null.
+        function currentCursorCardId() {
+            if (focusedPane === 'hand') {
+                const cards = handCardsInOrder();
+                return cards[_handCursor]?.card_id ?? null;
+            }
+            if (focusedPane === 'graveyard' || focusedPane === 'exile') {
+                const cards = zoneCardsInOrder(_zoneCursorCol);
+                return cards[_zoneCursorIdx]?.card_id ?? null;
+            }
+            return null;
+        }
+
+        /// Select the card under the cursor (lights the Card Details pane), the
+        /// same path a click takes. Clamps the cursor to the list bounds first.
+        function selectCursorCard() {
+            const id = currentCursorCardId();
+            if (id != null) selectCardById(id, `focus:${focusedPane}`);
+            refreshPaneFocusUi();
+        }
+
+        /// Focus a pane (or null to clear). For 'graveyard'/'exile' we also flip
+        /// the shared pane's active tab so the requested zone is actually shown.
+        function setPaneFocus(pane) {
+            focusedPane = pane;
+            if (pane === 'graveyard' || pane === 'exile') {
+                setActiveZonePaneTab(pane);
+                // Reset the zone cursor to the first non-empty column.
+                _zoneCursorCol = zoneCardsInOrder('our').length > 0 ? 'our' : 'opp';
+                _zoneCursorIdx = 0;
+            } else if (pane === 'hand') {
+                _handCursor = 0;
+            }
+            if (pane) selectCursorCard();
+            else refreshPaneFocusUi();
+        }
+
+        /// Tab cycles focus: hand → graveyard → exile → none → hand …
+        const PANE_FOCUS_CYCLE = ['hand', 'graveyard', 'exile', null];
+        function cyclePaneFocus() {
+            const i = PANE_FOCUS_CYCLE.indexOf(focusedPane);
+            setPaneFocus(PANE_FOCUS_CYCLE[(i + 1) % PANE_FOCUS_CYCLE.length]);
+        }
+
+        /// Up/Down within the focused pane. delta = -1 (up) / +1 (down).
+        function movePaneCursor(delta) {
+            if (focusedPane === 'hand') {
+                const n = handCardsInOrder().length;
+                if (n === 0) return;
+                _handCursor = Math.max(0, Math.min(n - 1, _handCursor + delta));
+            } else if (focusedPane === 'graveyard' || focusedPane === 'exile') {
+                const n = zoneCardsInOrder(_zoneCursorCol).length;
+                if (n === 0) return;
+                _zoneCursorIdx = Math.max(0, Math.min(n - 1, _zoneCursorIdx + delta));
+            } else {
+                return;
+            }
+            selectCursorCard();
+            // Keep the cursor card visible if the pane scrolls.
+            scrollCursorIntoView();
+        }
+
+        /// Left/Right in the zone pane switches the Ours/Theirs column (hand has
+        /// a single column, so left/right is a no-op there for now).
+        function movePaneColumn(delta) {
+            if (focusedPane !== 'graveyard' && focusedPane !== 'exile') return;
+            const next = _zoneCursorCol === 'our' ? 'opp' : 'our';
+            if (zoneCardsInOrder(next).length === 0) return;  // don't jump to empty col
+            _zoneCursorCol = next;
+            _zoneCursorIdx = Math.min(
+                _zoneCursorIdx, zoneCardsInOrder(next).length - 1);
+            selectCursorCard();
+            scrollCursorIntoView();
+        }
+
+        function scrollCursorIntoView() {
+            const el = document.querySelector('.pane-cursor');
+            if (el && typeof el.scrollIntoView === 'function') {
+                el.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+            }
         }
 
         /// Build a battlefield/hand card tile. CSS classes, formatted P/T,
@@ -4089,110 +4311,132 @@
         //
         // See `mtg-engine/src/wasm/fancy_tui.rs` for the WASM side:
         // `tui_tick`, `tui_run_turn`, `tui_select_choice`, etc.
+        //
+        // ── Keymap: ONE source of truth (mtg-6: task #6) ──────────────────────
+        // The keyboard model was reworked to fix colliding bindings and to add
+        // pane-focus navigation. Conventions:
+        //   * UNMODIFIED keys = basic in-page actions (advance turn, auto, focus
+        //     a pane, navigate within a focused pane).
+        //   * A key that opens a POPUP / overlay REQUIRES a Shift modifier
+        //     (Shift+? help, Shift+G graveyard popup). This frees the unmodified
+        //     letter to do the lighter in-page action (g = FOCUS the graveyard
+        //     pane, distinct from Shift+G = open the graveyard POPUP).
+        //   * The hand visual/text TOGGLE moved off `h` (which collided / was a
+        //     natural "focus hand" key) to `v` and the popup-menu switch.
+        //
+        // KEYMAP is the single dispatch table AND the source of truth for the
+        // help popup (buildHelpText() renders it), so the two can never drift.
+        // Each entry: { keys, label, action, popup?, modifier?, run(e) }.
+        //   keys     : the e.key value(s) that trigger it (already case-correct:
+        //              'g' is unshifted, 'G' is Shift+g).
+        //   modifier : 'Shift' if this binding requires Shift (documentation +
+        //              the popup grouping); omitted = unmodified.
+        //   popup    : true if the action opens an overlay (help / graveyard).
+        const KEYMAP = [
+            { keys: [' '], label: 'Space', desc: 'Advance turn (commit choice + run)',
+              run: () => { tui_select_choice(); tui_run_turn(); setTimeout(updateUI, 50); } },
+            { keys: ['a', 'A'], label: 'A', desc: 'Toggle auto-run',
+              run: () => applyAutoRunState(!autoRunning) },
+            { keys: ['Tab'], label: 'Tab', desc: 'Cycle pane focus (hand → graveyard → exile → none)',
+              run: () => cyclePaneFocus() },
+            { keys: ['f', 'F'], label: 'f', desc: 'Focus the Hand pane',
+              run: () => setPaneFocus('hand') },
+            { keys: ['g'], label: 'g', desc: 'Focus the Graveyard pane',
+              run: () => setPaneFocus('graveyard') },
+            { keys: ['e', 'E'], label: 'e', desc: 'Focus the Exile pane',
+              run: () => setPaneFocus('exile') },
+            { keys: ['Escape'], label: 'Esc', desc: 'Clear pane focus / exit game',
+              run: () => { if (focusedPane) setPaneFocus(null); else exitGame(); } },
+            { keys: ['ArrowUp'], label: '↑', desc: 'Focused pane: move cursor up · else: prev choice',
+              run: () => { if (focusedPane) movePaneCursor(-1); else tui_prev_choice(); } },
+            { keys: ['ArrowDown'], label: '↓', desc: 'Focused pane: move cursor down · else: next choice',
+              run: () => { if (focusedPane) movePaneCursor(+1); else tui_next_choice(); } },
+            { keys: ['ArrowLeft'], label: '←', desc: 'Focused zone pane: switch to Ours/Theirs column',
+              run: () => { if (focusedPane) movePaneColumn(-1); } },
+            { keys: ['ArrowRight'], label: '→', desc: 'Focused zone pane: switch to Ours/Theirs column',
+              run: () => { if (focusedPane) movePaneColumn(+1); } },
+            { keys: ['Enter'], label: 'Enter', desc: 'Select highlighted choice',
+              run: () => tui_select_choice() },
+            { keys: ['v', 'V'], label: 'v', desc: 'Toggle hand: visual cards / text list',
+              run: () => toggleHandMode() },
+            { keys: ['c', 'C'], label: 'c', desc: 'Toggle the controls menu',
+              run: () => toggleControls() },
+            { keys: ['q', 'Q'], label: 'q', desc: 'Exit game (back to lobby)',
+              run: () => exitGame() },
+            // ── Popups (require Shift) ──
+            { keys: ['G'], label: 'Shift+G', desc: 'Open the Graveyards popup (both players)',
+              modifier: 'Shift', popup: true, run: () => showGraveyardDialog() },
+            { keys: ['?'], label: 'Shift+?', desc: 'Show this help',
+              modifier: 'Shift', popup: true, run: () => window.showHelpDialog() },
+        ];
+
+        // Build a fast e.key → entry lookup once (DRY: no scattered if-chains).
+        const KEYMAP_BY_KEY = (() => {
+            const m = new Map();
+            for (const entry of KEYMAP) for (const k of entry.keys) m.set(k, entry);
+            return m;
+        })();
+
+        /// Render KEYMAP into the help-popup body text. This is the SOURCE OF
+        /// TRUTH for the in-game help (passed to installHelpDialog), so the help
+        /// popup always matches the live bindings above.
+        function buildHelpText() {
+            const lines = ['Keyboard — DeepScry native game', ''];
+            const basic = KEYMAP.filter(e => !e.popup);
+            const popups = KEYMAP.filter(e => e.popup);
+            const pad = (s) => (s + '          ').slice(0, 10);
+            lines.push('Basic (no modifier):');
+            for (const e of basic) lines.push('  ' + pad(e.label) + e.desc);
+            lines.push('');
+            lines.push('Popups / overlays (need Shift):');
+            for (const e of popups) lines.push('  ' + pad(e.label) + e.desc);
+            lines.push('');
+            lines.push('1–9         Select that numbered choice / action');
+            lines.push('');
+            lines.push('Click a card to inspect it; drag a hand card onto your');
+            lines.push('battlefield to play it. Focus a pane (Tab/f/g/e) then use');
+            lines.push('the arrow keys to move the selection inside that pane.');
+            return lines.join('\n');
+        }
+
         document.addEventListener('keydown', function(e) {
             if (!tuiLaunched) return;
 
             // Don't intercept when typing in inputs
             if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
 
-            switch (e.key) {
-                case ' ':
-                    e.preventDefault();
-                    // decouple-step4: mirror the legacy ratzilla Space
-                    // behaviour (`process_key_event` →
-                    // `select_current_choice` when pending, then
-                    // `run_until_choice`). Without this, Space at a human
-                    // choice point would only call `run_until_choice` —
-                    // which immediately re-blocks on the same prompt — and
-                    // the game would never advance past human turns.
-                    // `tui_select_choice` early-returns if there is no
-                    // pending choice, so this is safe in AI-vs-AI mode too.
-                    debugLog('key: Space (commit + run turn)');
-                    tui_select_choice();
-                    tui_run_turn();
-                    setTimeout(updateUI, 50);
-                    break;
-                case 'a':
-                case 'A':
-                    e.preventDefault();
-                    debugLog('key: A (auto toggle)', !autoRunning ? 'ON' : 'OFF');
-                    // Single source of truth (slot05): applyAutoRunState flips
-                    // the WASM flag, relabels #btn-auto, kicks startAutoRun, and
-                    // refreshes the action-pane affordance.
-                    applyAutoRunState(!autoRunning);
-                    break;
-                case 'ArrowUp':
-                    // decouple-step2: dispatch Up/Down/Enter to ratzilla-free
-                    // WASM exports directly. `tui_prev_choice` fires
-                    // `window.onRenderComplete` via `with_state_mut_notify`
-                    // (decouple-step1), so `updateUI` runs automatically.
-                    e.preventDefault();
-                    e.stopImmediatePropagation();
-                    debugLog('key: ArrowUp (prev choice)');
-                    tui_prev_choice();
-                    break;
-                case 'ArrowDown':
-                    e.preventDefault();
-                    e.stopImmediatePropagation();
-                    debugLog('key: ArrowDown (next choice)');
-                    tui_next_choice();
-                    break;
-                case 'Enter':
-                    // Mirrors the ratzilla `KeyInput::Enter` path
-                    // (`process_key_event`): commit the currently-highlighted
-                    // choice. `select_current_choice` internally calls
-                    // `run_until_choice` (fancy_tui.rs:2755) so the game
-                    // advances to the next choice point — no separate
-                    // `tui_run_turn` needed (that would double-advance, see
-                    // BUG #5 in `web/test_game_gui_bugfixes.js`).
-                    e.preventDefault();
-                    e.stopImmediatePropagation();
-                    debugLog('key: Enter (select choice)');
-                    tui_select_choice();
-                    break;
-                case 'q':
-                case 'Q':
-                case 'Escape':
-                    exitGame();
-                    break;
-                case 'c':
-                case 'C':
-                    toggleControls();
-                    break;
-                case '?':
-                    e.preventDefault();
-                    window.showHelpDialog();
-                    break;
-                case 'g':
-                case 'G':
-                    // mtg-444: full graveyard popup (both players), scrollable.
-                    e.preventDefault();
-                    showGraveyardDialog();
-                    break;
-                case 'h':
-                case 'H':
-                    e.preventDefault();
-                    toggleHandMode();
-                    break;
-                default:
-                    // 1-9 quick select. When synthetic meta-choices are shown
-                    // (AI-watch paused state), the number picks one of them
-                    // (slot05/web-ui-fixes); otherwise it selects an engine
-                    // choice by index, as before.
-                    if (e.key >= '1' && e.key <= '9') {
-                        e.preventDefault();
-                        const idx = parseInt(e.key) - 1;
-                        if (_metaChoices && _metaChoices.length > 0) {
-                            if (idx < _metaChoices.length) {
-                                debugLog('key: number select meta-choice', idx);
-                                selectMetaChoice(_metaChoices[idx].action);
-                            }
-                        } else {
-                            debugLog('key: number select action', idx);
-                            selectAction(idx);
-                        }
+            const entry = KEYMAP_BY_KEY.get(e.key);
+            if (entry) {
+                // Enforce the modifier-multiplexing convention: a binding marked
+                // modifier:'Shift' must be pressed WITH Shift; conversely an
+                // unmodified binding must NOT carry Ctrl/Alt/Meta (so browser
+                // shortcuts like Ctrl+G/Ctrl+F still work). 'G' / '?' only arrive
+                // as e.key WITH Shift held, so the modifier check is naturally
+                // consistent.
+                if (entry.modifier === 'Shift' && !e.shiftKey) return;
+                if (!entry.modifier && (e.ctrlKey || e.metaKey || e.altKey)) return;
+                e.preventDefault();
+                e.stopImmediatePropagation();
+                debugLog(`key: ${entry.label} (${entry.desc})`);
+                entry.run(e);
+                return;
+            }
+
+            // 1-9 quick select. When synthetic meta-choices are shown (AI-watch
+            // paused state), the number picks one of them (slot05/web-ui-fixes);
+            // otherwise it selects an engine choice by index, as before.
+            if (e.key >= '1' && e.key <= '9' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+                e.preventDefault();
+                const idx = parseInt(e.key) - 1;
+                if (_metaChoices && _metaChoices.length > 0) {
+                    if (idx < _metaChoices.length) {
+                        debugLog('key: number select meta-choice', idx);
+                        selectMetaChoice(_metaChoices[idx].action);
                     }
-                    break;
+                } else {
+                    debugLog('key: number select action', idx);
+                    selectAction(idx);
+                }
             }
         });
 
@@ -4418,6 +4662,22 @@
                 e.stopPropagation();
                 toggleHandMode();
             });
+
+            // Hand-mode toggle SWITCH in the controls popup (task #6): same
+            // action as the camera button / `v` key, exposed as a labeled switch.
+            // toggleHandMode flips the mode AND re-syncs this checkbox, so a
+            // simple "flip on any change" keeps all three affordances in step.
+            const chkHandMode = document.getElementById('chk-hand-mode');
+            if (chkHandMode) {
+                chkHandMode.addEventListener('change', (e) => {
+                    e.stopPropagation();
+                    // Only toggle if the checkbox now disagrees with the state
+                    // (guards against a sync-driven programmatic change echoing).
+                    const wantVisual = chkHandMode.checked;
+                    if ((handMode === 'visual') !== wantVisual) toggleHandMode();
+                });
+            }
+            syncHandModeToggleUi();
 
             // Hand clicks — handles both text (.hand-entry) and visual (.hand-card-visual) modes.
             document.getElementById('hand-body').addEventListener('click', (e) => {
