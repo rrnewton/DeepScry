@@ -494,8 +494,82 @@
             justify-content: space-between;
             align-items: center;
         }
-        .status-bar .phase { color: #4cc9f0; }
-        .status-bar .turn { color: #ffd700; }
+        .status-bar .phase { color: #4cc9f0; flex: 0 0 auto; }
+        .status-bar .turn { color: #ffd700; flex: 0 0 auto; }
+        .status-bar .status-keyhint { color: #666; flex: 0 0 auto; }
+
+        /* ===== Phase-timeline "thermometer" (bottom bar) =====
+           A thin horizontal strip of per-step chips for the game's phases.
+           One render fn (renderPhaseTimeline) drives all three states purely
+           with COLOR — past = muted, current = bold accent, future = dim —
+           keeping the strip's vertical height small. The current step is
+           centered horizontally and the row crops with a "…" on overflow.
+           Lives in the flex middle of the status bar so it grows to fill
+           the space freed by trimming the key-hint string. */
+        .phase-timeline {
+            flex: 1 1 auto;
+            min-width: 0;
+            position: relative;        /* positioning context for the track + crop ellipses */
+            overflow: hidden;
+            height: 16px;              /* thin strip — do NOT grow the bar */
+            font-size: 10px;
+            line-height: 1;
+            font-family: 'Consolas', 'Monaco', monospace;
+            white-space: nowrap;
+        }
+        /* The scrollable row; translated by JS so the current chip is centered. */
+        .pt-track {
+            position: absolute;
+            top: 0;
+            left: 50%;                 /* origin at container center; JS adds -50%-of-current-offset */
+            height: 16px;
+            display: flex;
+            align-items: center;
+            gap: 3px;
+        }
+        .pt-chip {
+            flex: 0 0 auto;
+            padding: 1px 4px;
+            border-radius: 3px;
+            letter-spacing: 0.3px;
+        }
+        /* PAST: muted fill */
+        .pt-chip.pt-past    { color: #5a6a82; background: rgba(90,106,130,0.10); }
+        /* CURRENT: bold accent (the "mercury" tip) */
+        .pt-chip.pt-current {
+            color: #0d1b2e;
+            background: #4cc9f0;
+            font-weight: 700;
+            box-shadow: 0 0 0 1px #4cc9f0, 0 0 6px rgba(76,201,240,0.5);
+        }
+        /* FUTURE: dim outline */
+        .pt-chip.pt-future  { color: #3a4356; background: transparent; box-shadow: inset 0 0 0 1px #2a3450; }
+        /* Turn/player boundary label, e.g. "T1:P1" */
+        .pt-turn {
+            flex: 0 0 auto;
+            color: #8a7a3a;
+            font-size: 9px;
+            padding: 0 2px;
+            opacity: 0.9;
+        }
+        .pt-turn.pt-turn-current { color: #ffd700; font-weight: 700; opacity: 1; }
+        /* Crop ellipsis overlays, pinned to each edge, shown only when the
+           track overflows that side. The small gradient fades chips into the
+           ellipsis so the crop reads cleanly. */
+        .pt-ellipsis {
+            position: absolute;
+            top: 0;
+            height: 16px;
+            display: none;
+            align-items: center;
+            color: #4a5468;
+            padding: 0 3px;
+            pointer-events: none;
+            z-index: 1;
+        }
+        .pt-ellipsis.pt-show { display: flex; }
+        .pt-ellipsis.pt-left  { left: 0;  background: linear-gradient(to right, #16213e 55%, rgba(22,33,62,0)); }
+        .pt-ellipsis.pt-right { right: 0; background: linear-gradient(to left,  #16213e 55%, rgba(22,33,62,0)); }
 
         /* Log entries */
         .log-entry {
@@ -1419,7 +1493,11 @@
         <div class="status-bar" id="status-bar">
             <span class="phase">Loading...</span>
             <span class="turn"></span>
-            <span>Space=turn A=auto Tab=focus pane f/g/e=hand/grave/exile Shift+?=help</span>
+            <!-- Phase-timeline "thermometer": a thin horizontal strip of phase
+                 chips for past/current/future steps, with the CURRENT step
+                 centered. Rendered by renderPhaseTimeline(); see that fn. -->
+            <div class="phase-timeline" id="phase-timeline" aria-hidden="true"></div>
+            <span class="status-keyhint">Shift+?=help</span>
         </div>
     </div>
 
@@ -4250,6 +4328,138 @@
             if (mini) {
                 mini.textContent = state.game_over ? 'END' : `T${state.turn_number || 0}`;
             }
+
+            renderPhaseTimeline(state);
+        }
+
+        // ==================== PHASE-TIMELINE "THERMOMETER" ====================
+        //
+        // A thin horizontal strip in the bottom status bar that shows the
+        // game's phases like mercury filling a thermometer: PAST steps muted,
+        // the CURRENT step a bold accent (the mercury tip), FUTURE steps a dim
+        // outline. The current step is positioned at the horizontal CENTER of
+        // the strip; past extends left, future right, and either end CROPS with
+        // a "…" when it overflows the available width.
+        //
+        // One ordered list of MTG steps per turn, abbreviated as requested:
+        //   UN UP DR M1 BC DA DBD EC M2 ET CL
+        // The engine emits 12 Step variants in status_text's "Phase: <name>"
+        // field; DBD groups the engine's DeclareBlockers + CombatDamage into a
+        // single "Declare-Blockers + Damage" element (the only many→one merge).
+        const PT_STEPS = ['UN', 'UP', 'DR', 'M1', 'BC', 'DA', 'DBD', 'EC', 'M2', 'ET', 'CL'];
+        // Engine Step (Debug name, as it appears in status_text) → abbreviation.
+        const PT_ENGINE_TO_ABBR = {
+            Untap: 'UN', Upkeep: 'UP', Draw: 'DR', Main1: 'M1',
+            BeginCombat: 'BC', DeclareAttackers: 'DA',
+            DeclareBlockers: 'DBD', CombatDamage: 'DBD',   // grouped
+            EndCombat: 'EC', Main2: 'M2', End: 'ET', Cleanup: 'CL',
+        };
+
+        /// Parse "Turn N | Phase: <Step> | Active: P?" → { turn, step, active }.
+        /// Falls back gracefully if status_text is missing/short.
+        function parsePhaseStatus(state) {
+            const txt = state.status_text || '';
+            const turn = (txt.match(/Turn\s+(\d+)/) || [])[1];
+            const step = (txt.match(/Phase:\s*([A-Za-z0-9]+)/) || [])[1];
+            const active = (txt.match(/Active:\s*(P\d)/) || [])[1];
+            return {
+                turn: turn != null ? parseInt(turn, 10) : (state.turn_number || 1),
+                stepAbbr: step ? (PT_ENGINE_TO_ABBR[step] || null) : null,
+                active: active || null,
+            };
+        }
+
+        /// Render the phase-timeline thermometer. DRY: this single function
+        /// builds the whole strip from the current {turn, step, active} state,
+        /// is idempotent, and is safe to call on every render tick.
+        function renderPhaseTimeline(state) {
+            const host = document.getElementById('phase-timeline');
+            if (!host) return;
+
+            const cur = parsePhaseStatus(state);
+            // How many turns of context to render on each side of "now". The
+            // strip crops anyway; this just bounds the DOM node count.
+            const SPAN = 4;
+            const curTurn = Math.max(1, cur.turn || 1);
+            const curIdx = cur.stepAbbr ? PT_STEPS.indexOf(cur.stepAbbr) : -1;
+
+            const firstTurn = Math.max(1, curTurn - SPAN);
+            const lastTurn = curTurn + SPAN;
+
+            // Alternate active player per turn for the boundary labels. We know
+            // the CURRENT turn's active player from status_text; earlier/later
+            // turns alternate P1/P2 from there (two-player game).
+            const curActiveNum = cur.active === 'P2' ? 2 : 1;
+            const activeForTurn = (t) => {
+                // same parity as curTurn → same player.
+                const sameParity = ((t - curTurn) % 2 === 0);
+                const n = sameParity ? curActiveNum : (curActiveNum === 1 ? 2 : 1);
+                return 'P' + n;
+            };
+
+            const track = document.createElement('div');
+            track.className = 'pt-track';
+
+            let currentChipEl = null;
+            for (let t = firstTurn; t <= lastTurn; t++) {
+                // Turn/player boundary label.
+                const lbl = document.createElement('span');
+                lbl.className = 'pt-turn' + (t === curTurn ? ' pt-turn-current' : '');
+                lbl.textContent = `T${t}:${activeForTurn(t)}`;
+                track.appendChild(lbl);
+
+                for (let s = 0; s < PT_STEPS.length; s++) {
+                    const chip = document.createElement('span');
+                    let cls = 'pt-future';
+                    if (curIdx >= 0) {
+                        if (t < curTurn || (t === curTurn && s < curIdx)) cls = 'pt-past';
+                        else if (t === curTurn && s === curIdx) cls = 'pt-current';
+                    } else if (t < curTurn) {
+                        cls = 'pt-past';   // step unknown: everything before this turn is past
+                    }
+                    chip.className = 'pt-chip ' + cls;
+                    chip.textContent = PT_STEPS[s];
+                    if (cls === 'pt-current') currentChipEl = chip;
+                    track.appendChild(chip);
+                }
+            }
+
+            // Swap in the freshly-built track + crop ellipses.
+            host.innerHTML = '';
+            const elLeft = document.createElement('span');
+            elLeft.className = 'pt-ellipsis pt-left';
+            elLeft.textContent = '…';
+            const elRight = document.createElement('span');
+            elRight.className = 'pt-ellipsis pt-right';
+            elRight.textContent = '…';
+            host.appendChild(track);
+            host.appendChild(elLeft);
+            host.appendChild(elRight);
+
+            // Center the current chip: translate the track so the current
+            // chip's center sits at the container's horizontal center. The
+            // track's CSS origin is already at left:50%, so we just shift left
+            // by the current chip's center offset within the track.
+            const containerW = host.clientWidth;
+            let centerOffset;
+            if (currentChipEl) {
+                centerOffset = currentChipEl.offsetLeft + currentChipEl.offsetWidth / 2;
+            } else {
+                // No known current step (e.g. game over / loading): center the
+                // whole track.
+                centerOffset = track.scrollWidth / 2;
+            }
+            track.style.transform = `translateX(${-centerOffset}px)`;
+
+            // Decide crop ellipses: the track's visible window is
+            // [centerOffset - containerW/2, centerOffset + containerW/2] within
+            // the track's own coordinate space. Show "…" on a side that has
+            // content beyond the window.
+            const half = containerW / 2;
+            const leftEdge = centerOffset - half;
+            const rightEdge = centerOffset + half;
+            elLeft.classList.toggle('pt-show', leftEdge > 1);
+            elRight.classList.toggle('pt-show', rightEdge < track.scrollWidth - 1);
         }
 
         // ==================== ACTIVE-TURN GLOW ====================
