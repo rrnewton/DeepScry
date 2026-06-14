@@ -175,6 +175,47 @@
             min-height: 0;
         }
 
+        /* ── Tabbed pane header (Graveyard | Exile) ────────────────────────
+           Two clickable tabs styled to look native to the existing
+           uppercase gold pane header. Graveyard sits upper-left, Exile
+           upper-right; the active tab is highlighted, inactive tabs get a
+           hover affordance. Buttons are real <button role=tab> controls so
+           they are keyboard-focusable (Tab + Enter/Space). */
+        .pane-header.zone-tabs {
+            display: flex;
+            justify-content: space-between;
+            align-items: stretch;
+            padding: 0;            /* tab buttons own the padding */
+            gap: 0;
+        }
+        .zone-tab {
+            flex: 0 0 auto;
+            background: transparent;
+            border: none;
+            border-bottom: 2px solid transparent;
+            color: #8a7d3a;        /* dimmed gold for the inactive tab */
+            font: inherit;
+            font-size: 12px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            padding: 6px 10px;
+            cursor: pointer;
+            transition: color 0.12s, background 0.12s, border-color 0.12s;
+        }
+        .zone-tab:hover {
+            color: #ffd700;
+            background: rgba(255, 215, 0, 0.08);
+        }
+        .zone-tab.active {
+            color: #ffd700;
+            border-bottom-color: #ffd700;
+        }
+        .zone-tab:focus-visible {
+            outline: 2px solid #4cc9f0;
+            outline-offset: -2px;
+        }
+
         /* ── Active-turn glow ──────────────────────────────────────────────
            Whose-turn indicator: lights up the battlefield pane + its banner
            with a vivid animated glow so it's unmistakable at a glance.
@@ -1209,7 +1250,17 @@
                 <div class="pane-body" id="hand-body"></div>
             </div>
             <div id="pane-graveyard" class="pane">
-                <div class="pane-header">Graveyard</div>
+                <!-- Tabbed header: Graveyard (upper-left) | Exile (upper-right).
+                     Real keyboard-accessible tab buttons (role=tab). The pane
+                     shares one body that renders whichever zone is active; the
+                     graveyard is the default. Both tabs route through the same
+                     renderer (renderZonePane) parameterized by zone. -->
+                <div class="pane-header zone-tabs" role="tablist" aria-label="Graveyard and Exile zones">
+                    <button type="button" class="zone-tab active" id="zone-tab-graveyard"
+                            role="tab" aria-selected="true" data-zone="graveyard">Graveyard</button>
+                    <button type="button" class="zone-tab" id="zone-tab-exile"
+                            role="tab" aria-selected="false" data-zone="exile">Exile</button>
+                </div>
                 <div class="pane-body">
                     <div class="graveyard-pane-columns">
                         <div class="graveyard-col">
@@ -2695,8 +2746,11 @@
             renderBattlefield(ourPlayer, 'player-field-cards', cardSizes.your);
             renderBattlefield(oppPlayer, 'opp-field-cards',    cardSizes.opp);
             renderHand(ourPlayer);
-            // Both graveyards live in the dedicated #pane-graveyard (mtg-815).
-            renderGraveyardPane(ourPlayer, oppPlayer, state.selected_card?.card_id);
+            // Both players' graveyard/exile live in the shared tabbed
+            // #pane-graveyard (mtg-815). Cache the state so a tab click can
+            // re-render the pane immediately without a fresh state tick.
+            window._lastRenderedState = state;
+            renderZonePane(ourPlayer, oppPlayer, state.selected_card?.card_id);
             renderStack(state.stack || []);
             // slot05/web-ui-fixes: when an AI seat is paused and it's our move
             // to advance, present "Play next move" / "Auto-run" as NORMAL
@@ -2859,26 +2913,51 @@
             }
         }
 
-        /// Render both players' graveyards into the dedicated #pane-graveyard
-        /// (mtg-815). Left column = "Ours", right column = "Theirs". Each
-        /// column scrolls independently and shows the FULL list (most-recent
-        /// first = tail of the zone, matching the G-key dialog). Click a card
-        /// row → tui_select_card → card details pane, same as before.
-        function renderGraveyardPane(ourPlayer, oppPlayer, selectedCardId) {
+        /// Which zone the shared Graveyard|Exile pane currently shows. This is
+        /// UI-only state, kept OUTSIDE the game-state object so it survives
+        /// every state re-render (renderZonePane reads it; clicking a tab
+        /// updates it). Graveyard is the default. Exile is shown only when its
+        /// tab is active — it's an infrequent zone, so it shares the pane.
+        let activeZonePaneTab = 'graveyard';
+
+        // Per-zone display labels (column empty-states + which player array to
+        // read). DRY: both tabs go through the same renderer below; only this
+        // table differs between them.
+        const ZONE_PANE_CONFIG = {
+            graveyard: { field: 'graveyard', emptyText: 'No cards in graveyard' },
+            exile:     { field: 'exile',     emptyText: 'No cards in exile' },
+        };
+
+        /// Render both players' cards for the ACTIVE zone (graveyard or exile)
+        /// into the shared #pane-graveyard (mtg-815 graveyard; exile tab added
+        /// later). Left column = "Ours", right column = "Theirs". Each column
+        /// scrolls independently and shows the FULL list (most-recent first =
+        /// tail of the zone, matching the G-key dialog). Click a card row →
+        /// tui_select_card → card details pane, same as before. Exile cards
+        /// reuse the exact same card-cell markup, so they select/preview
+        /// identically.
+        ///
+        /// Parameterized ONLY by which per-player array to read + the empty
+        /// label (ZONE_PANE_CONFIG) — both tabs share this one function, no
+        /// duplicated rendering code.
+        function renderZonePane(ourPlayer, oppPlayer, selectedCardId) {
             const ourCards   = document.getElementById('graveyard-our-cards');
             const ourHeader  = document.getElementById('graveyard-our-header');
             const oppCards   = document.getElementById('graveyard-opp-cards');
             const oppHeader  = document.getElementById('graveyard-opp-header');
             if (!ourCards || !ourHeader || !oppCards || !oppHeader) return;
 
+            const cfg = ZONE_PANE_CONFIG[activeZonePaneTab] || ZONE_PANE_CONFIG.graveyard;
+
             function renderCol(player, cardsEl, headerEl, label) {
-                const graveyard = (player?.graveyard || []).slice().reverse(); // most-recent first
-                headerEl.textContent = `${label} (${graveyard.length})`;
-                if (graveyard.length === 0) {
-                    cardsEl.innerHTML = '<div style="color:#444; font-size:11px;">(empty)</div>';
+                const cards = (player?.[cfg.field] || []).slice().reverse(); // most-recent first
+                headerEl.textContent = `${label} (${cards.length})`;
+                if (cards.length === 0) {
+                    cardsEl.innerHTML =
+                        `<div style="color:#444; font-size:11px;">${escapeHtml(cfg.emptyText)}</div>`;
                     return;
                 }
-                cardsEl.innerHTML = graveyard.map(card => {
+                cardsEl.innerHTML = cards.map(card => {
                     const cls = 'graveyard-overlay-card' +
                         (card.card_id === selectedCardId ? ' selected-card' : '');
                     return `<div class="${cls}" data-card-id="${card.card_id}" ` +
@@ -2888,6 +2967,29 @@
 
             renderCol(ourPlayer, ourCards, ourHeader, 'Ours');
             renderCol(oppPlayer, oppCards, oppHeader, 'Theirs');
+        }
+
+        /// Switch the shared zone pane to the given tab ('graveyard'|'exile'),
+        /// update the tab button highlight + aria state, and re-render the pane
+        /// from the last game state so the new zone's cards appear immediately
+        /// (without waiting for the next state tick).
+        function setActiveZonePaneTab(zone) {
+            if (!ZONE_PANE_CONFIG[zone]) return;
+            activeZonePaneTab = zone;
+            document.querySelectorAll('.zone-tab').forEach(btn => {
+                const on = btn.dataset.zone === zone;
+                btn.classList.toggle('active', on);
+                btn.setAttribute('aria-selected', on ? 'true' : 'false');
+            });
+            // Re-render immediately from the cached state, if we have one.
+            const st = window._lastRenderedState;
+            if (st && Array.isArray(st.players)) {
+                const ourIdx = st.our_player_idx ?? 0;
+                const oppIdx = st.players.length === 2 ? (ourIdx === 0 ? 1 : 0) : null;
+                const ourPlayer = st.players[ourIdx] || null;
+                const oppPlayer = oppIdx != null ? st.players[oppIdx] : null;
+                renderZonePane(ourPlayer, oppPlayer, st.selected_card?.card_id);
+            }
         }
 
         /// Render the hand as a text list (fallback / text mode). Cards are
@@ -3969,6 +4071,14 @@
             // #pane-graveyard; card rows carry data-card-id and route through
             // the same selection pipeline as hand/battlefield clicks.
             document.getElementById('pane-graveyard').addEventListener('click', (e) => {
+                // Tab click: switch which zone (graveyard|exile) the pane shows.
+                // <button> fires click on Enter/Space too, so this also covers
+                // keyboard activation.
+                const tab = e.target.closest('.zone-tab');
+                if (tab) {
+                    setActiveZonePaneTab(tab.dataset.zone);
+                    return;
+                }
                 const item = e.target.closest('.graveyard-overlay-card');
                 if (!item) return;
                 selectCardById(parseInt(item.dataset.cardId, 10), 'gy:pane');

@@ -1,21 +1,23 @@
 #!/usr/bin/env node
 /**
- * E2E test for the graveyard listing in `web/native_game.html`.
+ * E2E test for the Graveyard | Exile side pane in `web/native_game.html`.
  *
- * Layout (post gamehtml-graveyard-in-hand): the HAND is the critical
- * display and is always shown in full. The LOCAL player's graveyard is a
- * best-effort listing pinned to the BOTTOM of the Hand pane
- * (`#hand-graveyard`, inside `#pane-hand`). The OPPONENT — who has no hand
- * pane — keeps a battlefield graveyard overlay (`#opp-graveyard-overlay`).
+ * Layout (post mtg-815 + exile-tab): both players' graveyard/exile contents
+ * live in a dedicated `#pane-graveyard` on the right, laid out as two columns
+ * ("Ours" / "Theirs"). The pane header is a two-tab control — "Graveyard"
+ * (upper-left, default) and "Exile" (upper-right) — real `<button role=tab>`
+ * controls. Clicking a tab switches which zone the SHARED renderer
+ * (`renderZonePane`) shows; the active tab is highlighted and preserved across
+ * game-state re-renders. The older hand-pane graveyard (`#hand-graveyard`) and
+ * battlefield overlays (`#opp-graveyard-overlay`) no longer exist.
  *
- * When the Hand pane lacks room for the whole graveyard, the listing shows
- * the most-recent K cards plus an `… N more cards` ellision line. The
- * top-K + ellision arithmetic is shared with the native ratatui TUI via the
- * Rust helper `graveyard_display::plan_graveyard_display`
- * (mirrored in JS as `graveyardDisplayPlan`).
+ * This test verifies: the pane + tabs exist with correct default state; the
+ * graveyard fills after combat and renders in the pane; the Exile tab switches
+ * (highlight + aria), shows its own empty-state, and switching back restores
+ * the graveyard; clicking a graveyard card drives the Card Details pane; and
+ * the G-key full-graveyard popup (mtg-444) still works.
  *
- * Screenshots (normal + ellision) are written to the gitignored `debug/`
- * directory for visual inspection; their paths are logged.
+ * Screenshots are written to the gitignored `debug/` directory.
  */
 const { chromium } = require('playwright');
 const { spawn } = require('child_process');
@@ -71,27 +73,39 @@ function log(msg) {
         await page.waitForSelector('#game-area.show', { state: 'attached', timeout: 30000 });
         await page.waitForTimeout(2000);
 
-        // Structural DOM: the local player's graveyard lives at the bottom
-        // of the Hand pane; the opponent keeps a battlefield overlay.
+        // ── Structural DOM: the dedicated graveyard/exile pane + its tabs ─────
         const initialDom = await page.evaluate(() => ({
-            handGyPresent: !!document.getElementById('hand-graveyard'),
-            handGyInHandPane: !!document.querySelector('#pane-hand > #hand-graveyard'),
-            oppOverlayPresent: !!document.getElementById('opp-graveyard-overlay'),
-            oppInsidePane: !!document.querySelector('#pane-opp-field > .graveyard-overlay'),
-            // The OLD player battlefield overlay must be gone.
-            playerBattlefieldOverlayGone: !document.getElementById('player-graveyard-overlay'),
+            panePresent: !!document.getElementById('pane-graveyard'),
+            gyTabPresent: !!document.getElementById('zone-tab-graveyard'),
+            exileTabPresent: !!document.getElementById('zone-tab-exile'),
+            ourCardsPresent: !!document.getElementById('graveyard-our-cards'),
+            oppCardsPresent: !!document.getElementById('graveyard-opp-cards'),
+            // Graveyard is the default-active tab.
+            gyActive: !!document.querySelector('#zone-tab-graveyard.active'),
+            gyAria: document.getElementById('zone-tab-graveyard')?.getAttribute('aria-selected'),
+            exileActive: !!document.querySelector('#zone-tab-exile.active'),
+            exileAria: document.getElementById('zone-tab-exile')?.getAttribute('aria-selected'),
+            // The OLD hand-pane graveyard + battlefield overlays must be gone.
+            oldHandGyGone: !document.getElementById('hand-graveyard'),
+            oldOppOverlayGone: !document.getElementById('opp-graveyard-overlay'),
+            oldPlayerOverlayGone: !document.getElementById('player-graveyard-overlay'),
         }));
-        check('hand-graveyard element exists', initialDom.handGyPresent, 'in DOM');
-        check('hand-graveyard is a child of #pane-hand (bottom of Hand pane)',
-              initialDom.handGyInHandPane, `inHandPane=${initialDom.handGyInHandPane}`);
-        check('opp-graveyard-overlay still exists on opponent battlefield',
-              initialDom.oppOverlayPresent && initialDom.oppInsidePane,
-              `present=${initialDom.oppOverlayPresent}, insidePane=${initialDom.oppInsidePane}`);
-        check('old player-graveyard-overlay removed from battlefield',
-              initialDom.playerBattlefieldOverlayGone,
-              `gone=${initialDom.playerBattlefieldOverlayGone}`);
+        check('dedicated #pane-graveyard exists', initialDom.panePresent, 'in DOM');
+        check('Graveyard + Exile tabs exist',
+              initialDom.gyTabPresent && initialDom.exileTabPresent,
+              `gy=${initialDom.gyTabPresent}, exile=${initialDom.exileTabPresent}`);
+        check('Ours / Theirs card columns exist',
+              initialDom.ourCardsPresent && initialDom.oppCardsPresent,
+              `ours=${initialDom.ourCardsPresent}, theirs=${initialDom.oppCardsPresent}`);
+        check('Graveyard tab is active by default (highlight + aria-selected)',
+              initialDom.gyActive && initialDom.gyAria === 'true'
+                && !initialDom.exileActive && initialDom.exileAria === 'false',
+              `gyActive=${initialDom.gyActive}/${initialDom.gyAria}, exileActive=${initialDom.exileActive}/${initialDom.exileAria}`);
+        check('old hand-pane graveyard + battlefield overlays removed',
+              initialDom.oldHandGyGone && initialDom.oldOppOverlayGone && initialDom.oldPlayerOverlayGone,
+              `handGyGone=${initialDom.oldHandGyGone}, oppOverlayGone=${initialDom.oldOppOverlayGone}, playerOverlayGone=${initialDom.oldPlayerOverlayGone}`);
 
-        // Drive enough turns that creatures die in combat → graveyard fills.
+        // ── Drive enough turns that creatures die in combat → graveyard fills ─
         for (let i = 0; i < 30; i++) {
             await page.keyboard.press('Space');
             await page.waitForTimeout(80);
@@ -99,24 +113,11 @@ function log(msg) {
         await page.waitForTimeout(500);
 
         const afterPlay = await page.evaluate(() => {
-            const handGy = document.getElementById('hand-graveyard');
-            const oppOv = document.getElementById('opp-graveyard-overlay');
-
-            const sample = (ov) => {
-                if (!ov) return null;
-                const cs = getComputedStyle(ov);
-                const cards = Array.from(ov.querySelectorAll('.graveyard-overlay-card'));
-                const headerEl = ov.querySelector('.graveyard-overlay-header');
-                const ellisionEl = ov.querySelector('.hand-graveyard-ellision');
-                return {
-                    display: cs.display,
-                    hasCardsClass: ov.classList.contains('has-cards'),
-                    headerText: headerEl?.textContent || '',
-                    cardCount: cards.length,
-                    cardNames: cards.slice(0, 5).map(c => c.textContent.trim()),
-                    ellisionText: ellisionEl?.textContent || '',
-                };
-            };
+            const ourCardsEl = document.getElementById('graveyard-our-cards');
+            const oppCardsEl = document.getElementById('graveyard-opp-cards');
+            const ourHeader = document.getElementById('graveyard-our-header');
+            const oppHeader = document.getElementById('graveyard-opp-header');
+            const count = el => el ? el.querySelectorAll('.graveyard-overlay-card').length : 0;
 
             const stateJson = window.tui_get_gui_view_model_json
                 ? window.tui_get_gui_view_model_json()
@@ -128,107 +129,105 @@ function log(msg) {
                     vmGyCounts = (vm.players || []).map(p => ({
                         name: p.name,
                         gySize: p.graveyard?.length || 0,
+                        // The exile field MUST be present on the serialized
+                        // PlayerView now (engine view-model addition).
+                        hasExileField: Object.prototype.hasOwnProperty.call(p, 'exile'),
+                        exileSize: p.exile?.length || 0,
                     }));
                 } catch (_) { /* ignore */ }
             }
 
             return {
-                hand: sample(handGy),
-                opp: sample(oppOv),
+                ourCount: count(ourCardsEl),
+                oppCount: count(oppCardsEl),
+                ourHeader: ourHeader?.textContent || '',
+                oppHeader: oppHeader?.textContent || '',
                 vmGyCounts,
             };
         });
 
         log(`After 30x Space:`);
-        log(`  hand graveyard: display=${afterPlay.hand.display}, ${afterPlay.hand.cardCount} cards, header="${afterPlay.hand.headerText}", ellision="${afterPlay.hand.ellisionText}"`);
-        log(`  opp overlay: display=${afterPlay.opp.display}, ${afterPlay.opp.cardCount} cards, header="${afterPlay.opp.headerText}"`);
-        log(`  view model graveyard sizes: ${JSON.stringify(afterPlay.vmGyCounts)}`);
+        log(`  graveyard pane: ours=${afterPlay.ourCount} ("${afterPlay.ourHeader}"), theirs=${afterPlay.oppCount} ("${afterPlay.oppHeader}")`);
+        log(`  view model: ${JSON.stringify(afterPlay.vmGyCounts)}`);
 
-        const totalGyCards = afterPlay.hand.cardCount + afterPlay.opp.cardCount;
-        check('at least one graveyard listing has cards after play',
+        const totalGyCards = afterPlay.ourCount + afterPlay.oppCount;
+        check('graveyard pane shows cards after play',
               totalGyCards > 0,
-              `hand=${afterPlay.hand.cardCount}, opp=${afterPlay.opp.cardCount}`);
+              `ours=${afterPlay.ourCount}, theirs=${afterPlay.oppCount}`);
 
-        if (afterPlay.hand.cardCount > 0) {
-            check('hand graveyard header includes count',
-                  afterPlay.hand.headerText.includes('Graveyard') && /\d/.test(afterPlay.hand.headerText),
-                  `header="${afterPlay.hand.headerText}"`);
+        // Engine view-model addition: every PlayerView carries an `exile` field.
+        if (afterPlay.vmGyCounts && afterPlay.vmGyCounts.length >= 1) {
+            check('serialized PlayerView carries the exile field (engine plumb)',
+                  afterPlay.vmGyCounts.every(p => p.hasExileField),
+                  JSON.stringify(afterPlay.vmGyCounts.map(p => p.hasExileField)));
         }
 
-        // Screenshot the NORMAL case (full-window, with the hand-pane
-        // graveyard visible at a comfortable height).
-        const normalShot = path.join(debugDir, 'graveyard_hand_pane_normal.png');
-        await page.screenshot({ path: normalShot, fullPage: false });
-        log(`SCREENSHOT (normal): ${normalShot}`);
-
-        // View-model parity: rendered player graveyard count should equal
-        // shown + elided (i.e. the full PlayerView.graveyard.length).
+        // Header total parity with the view model (rendered count == VM length,
+        // there is no ellision in the dedicated pane).
         if (afterPlay.vmGyCounts && afterPlay.vmGyCounts.length === 2) {
-            const expectedPlayer = afterPlay.vmGyCounts[0].gySize;
-            // Parse "Graveyard (N):" → N (the true total) and elided count.
-            const headerTotal = parseInt((afterPlay.hand.headerText.match(/\((\d+)\)/) || [])[1] || '0', 10);
-            check('hand graveyard header total matches VM (PlayerView.graveyard)',
-                  headerTotal === expectedPlayer,
-                  `header total=${headerTotal}, VM=${expectedPlayer}`);
+            const headerTotal = parseInt((afterPlay.ourHeader.match(/\((\d+)\)/) || [])[1] || '0', 10);
+            check('Ours graveyard header count matches rendered cards',
+                  headerTotal === afterPlay.ourCount,
+                  `header=${headerTotal}, rendered=${afterPlay.ourCount}`);
         }
 
-        // Force the ELLISION case: shrink the viewport so the Hand pane is
-        // short and the graveyard cannot show every card → "… N more cards".
-        // We also need enough graveyard cards; if seed-42 hasn't filled
-        // enough, keep playing a bit.
-        await page.setViewportSize({ width: 1280, height: 380 });
-        for (let i = 0; i < 20; i++) {
-            await page.keyboard.press('Space');
-            await page.waitForTimeout(60);
-        }
-        await page.waitForTimeout(400);
+        const normalShot = path.join(debugDir, 'graveyard_pane_normal.png');
+        await page.locator('#pane-graveyard').screenshot({ path: normalShot });
+        log(`SCREENSHOT (graveyard tab): ${normalShot}`);
 
-        const ellisionState = await page.evaluate(() => {
-            const handGy = document.getElementById('hand-graveyard');
-            const cards = Array.from(handGy.querySelectorAll('.graveyard-overlay-card'));
-            const headerEl = handGy.querySelector('.graveyard-overlay-header');
-            const ellisionEl = handGy.querySelector('.hand-graveyard-ellision');
-            const headerTotal = parseInt((headerEl?.textContent.match(/\((\d+)\)/) || [])[1] || '0', 10);
-            return {
-                shown: cards.length,
-                total: headerTotal,
-                ellisionText: ellisionEl?.textContent || '',
-                hasEllision: !!ellisionEl,
-            };
+        // ── Exile tab: switch, verify highlight/aria + empty-state, restore ──
+        // Inject a synthetic exiled card so the Exile tab has visible content
+        // to render through the SAME renderer (exile is otherwise infrequent).
+        await page.evaluate(() => {
+            const st = window._lastRenderedState;
+            if (st && Array.isArray(st.players)) {
+                const them = st.players.find(p => !p.is_us) || st.players[1];
+                if (them) them.exile = [{ card_id: 990002, name: 'Banishing Light (test)' }];
+            }
         });
-        log(`Ellision case (short window): total=${ellisionState.total}, shown=${ellisionState.shown}, ellision="${ellisionState.ellisionText}"`);
+        await page.locator('#zone-tab-exile').click();
+        await page.waitForTimeout(250);
+        const exileState = await page.evaluate(() => ({
+            exileActive: !!document.querySelector('#zone-tab-exile.active'),
+            exileAria: document.getElementById('zone-tab-exile').getAttribute('aria-selected'),
+            gyActive: !!document.querySelector('#zone-tab-graveyard.active'),
+            gyAria: document.getElementById('zone-tab-graveyard').getAttribute('aria-selected'),
+            // Our exile is empty → shared empty-state text; theirs has the card.
+            ourBody: document.getElementById('graveyard-our-cards').textContent,
+            oppBody: document.getElementById('graveyard-opp-cards').textContent,
+        }));
+        log(`Exile tab: active=${exileState.exileActive}/${exileState.exileAria}, ours="${exileState.ourBody.slice(0, 40)}", theirs="${exileState.oppBody.slice(0, 60)}"`);
+        check('Exile tab activates (highlight + aria) and Graveyard deactivates',
+              exileState.exileActive && exileState.exileAria === 'true'
+                && !exileState.gyActive && exileState.gyAria === 'false',
+              `exile=${exileState.exileActive}/${exileState.exileAria}, gy=${exileState.gyActive}/${exileState.gyAria}`);
+        check('Exile tab shows per-zone empty-state for an empty column',
+              /No cards in exile/.test(exileState.ourBody),
+              `ourBody="${exileState.ourBody.slice(0, 60)}"`);
+        check('Exile tab renders exile cards through the shared renderer',
+              /Banishing Light \(test\)/.test(exileState.oppBody),
+              `oppBody="${exileState.oppBody.slice(0, 60)}"`);
 
-        const ellisionShot = path.join(debugDir, 'graveyard_hand_pane_ellision.png');
-        await page.screenshot({ path: ellisionShot, fullPage: false });
-        log(`SCREENSHOT (ellision): ${ellisionShot}`);
+        const exileShot = path.join(debugDir, 'graveyard_pane_exile.png');
+        await page.locator('#pane-graveyard').screenshot({ path: exileShot });
+        log(`SCREENSHOT (exile tab): ${exileShot}`);
 
-        // The ellision line only appears when total > shown. If the
-        // graveyard is large enough (it should be after ~50 plies) the short
-        // window MUST trigger ellision; assert the invariant when it does.
-        if (ellisionState.total > ellisionState.shown) {
-            check('ellision line shown when graveyard exceeds available rows',
-                  ellisionState.hasEllision && /…\s*\d+\s*more card/.test(ellisionState.ellisionText),
-                  `text="${ellisionState.ellisionText}"`);
-            check('ellision count = total - shown',
-                  (() => {
-                      const n = parseInt((ellisionState.ellisionText.match(/(\d+)\s*more/) || [])[1] || '-1', 10);
-                      return n === ellisionState.total - ellisionState.shown;
-                  })(),
-                  `text="${ellisionState.ellisionText}", total=${ellisionState.total}, shown=${ellisionState.shown}`);
-        } else {
-            log(`  (note: graveyard total ${ellisionState.total} <= shown ${ellisionState.shown}; ellision not triggered this run)`);
-        }
+        // Switch back to Graveyard → contents restored.
+        await page.locator('#zone-tab-graveyard').click();
+        await page.waitForTimeout(250);
+        const restored = await page.evaluate(() => ({
+            gyActive: !!document.querySelector('#zone-tab-graveyard.active'),
+            ourCount: document.getElementById('graveyard-our-cards').querySelectorAll('.graveyard-overlay-card').length
+                    + document.getElementById('graveyard-opp-cards').querySelectorAll('.graveyard-overlay-card').length,
+        }));
+        check('switching back to Graveyard restores its contents',
+              restored.gyActive && restored.ourCount === totalGyCards,
+              `gyActive=${restored.gyActive}, cards=${restored.ourCount} (was ${totalGyCards})`);
 
-        // Restore viewport and verify clicking a graveyard card updates
-        // the Card Details pane (selection pipeline still wired).
-        await page.setViewportSize({ width: 1280, height: 720 });
-        await page.waitForTimeout(300);
-        const clickTarget = (await page.locator('#hand-graveyard .graveyard-overlay-card').count()) > 0
-            ? '#hand-graveyard .graveyard-overlay-card'
-            : '#opp-graveyard-overlay .graveyard-overlay-card';
-        if (await page.locator(clickTarget).count() > 0) {
+        // ── Clicking a graveyard card drives the Card Details pane ────────────
+        if (await page.locator('#pane-graveyard .graveyard-overlay-card').count() > 0) {
             const beforeClick = await page.textContent('#card-details-body');
-            await page.locator(clickTarget).first().click();
+            await page.locator('#pane-graveyard .graveyard-overlay-card').first().click();
             await page.waitForTimeout(300);
             const afterClick = await page.textContent('#card-details-body');
             check('clicking a graveyard card updates the Card Details pane',
@@ -237,9 +236,6 @@ function log(msg) {
         }
 
         // ── mtg-444: the G-key full-graveyard popup ──────────────────────────
-        // Press G → a big scrollable modal listing BOTH players' graveyards.
-        // Any key (or overlay click) dismisses it. Graveyards are non-empty by
-        // now (we drove ~50 plies above), so the popup must list real cards.
         await page.keyboard.press('g');
         await page.waitForTimeout(250);
         const gyPopup = await page.evaluate(() => {

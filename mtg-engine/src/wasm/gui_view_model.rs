@@ -125,6 +125,11 @@ pub struct PlayerView {
     pub battlefield_sections: Vec<BattlefieldSection>,
     /// Graveyard contents.
     pub graveyard: Vec<CardView>,
+    /// Exile zone contents. Surfaced to the UI so the native game page can show
+    /// exiled cards (shares a tabbed pane with the graveyard). Mirrors the
+    /// graveyard shape exactly so the front-end reuses the same card-cell
+    /// renderer.
+    pub exile: Vec<CardView>,
     /// Command zone contents (Commander format).
     pub command_zone: Vec<CardView>,
 }
@@ -742,6 +747,12 @@ pub fn build_view_model(game: &GameState, inputs: ViewModelInputs<'_>) -> GuiVie
                 .filter_map(|&cid| build_card_view(game, cid, inputs.valid_choices, inputs.selected_card_id, None))
                 .collect();
 
+            let exile: Vec<CardView> = pview
+                .player_exile(pid)
+                .iter()
+                .filter_map(|&cid| build_card_view(game, cid, inputs.valid_choices, inputs.selected_card_id, None))
+                .collect();
+
             let command_zone: Vec<CardView> = pview
                 .player_command_zone(pid)
                 .iter()
@@ -772,6 +783,7 @@ pub fn build_view_model(game: &GameState, inputs: ViewModelInputs<'_>) -> GuiVie
                 hand,
                 battlefield_sections,
                 graveyard,
+                exile,
                 command_zone,
             }
         })
