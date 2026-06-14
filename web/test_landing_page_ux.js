@@ -379,16 +379,26 @@ async function scenarioStickyLocalImageUnlock() {
     await page.waitForLoadState('domcontentloaded');
     await page.waitForTimeout(500);
 
-    // The launcher hrefs must carry the param forward.
-    const nativeHref = await page.getAttribute('#launch-native', 'href');
-    const tuiHref = await page.getAttribute('#launch-tui', 'href');
-    console.log('  launch-native href:', nativeHref);
-    console.log('  launch-tui href:', tuiHref);
-    if (!/allow_local_img_load=true/.test(nativeHref || '')) {
-        record('major', 'sticky unlock', 'native launcher href missing allow_local_img_load=true: ' + nativeHref);
+    // The launcher hrefs must carry the param forward. After the "Local Tools"
+    // lobby restructure (28570dc20) the per-renderer #launch-native / #launch-tui
+    // links are gone — the renderer is chosen inside solo_launcher.html. The
+    // sticky unlock now rides onto the current launch links: #launch-solo
+    // (→ solo_launcher.html), #launch-demo (→ demo.html), and #launch-deck-editor
+    // (→ deck_editor.html). applyLaunchLinks() decorates these at page init.
+    const soloHref = await page.getAttribute('#launch-solo', 'href');
+    const demoHref = await page.getAttribute('#launch-demo', 'href');
+    const editorHref = await page.getAttribute('#launch-deck-editor', 'href');
+    console.log('  launch-solo href:', soloHref);
+    console.log('  launch-demo href:', demoHref);
+    console.log('  launch-deck-editor href:', editorHref);
+    if (!/allow_local_img_load=true/.test(soloHref || '')) {
+        record('major', 'sticky unlock', 'solo launcher href missing allow_local_img_load=true: ' + soloHref);
     }
-    if (!/allow_local_img_load=true/.test(tuiHref || '')) {
-        record('major', 'sticky unlock', 'tui launcher href missing allow_local_img_load=true: ' + tuiHref);
+    if (!/allow_local_img_load=true/.test(demoHref || '')) {
+        record('major', 'sticky unlock', 'demo launcher href missing allow_local_img_load=true: ' + demoHref);
+    }
+    if (!/allow_local_img_load=true/.test(editorHref || '')) {
+        record('major', 'sticky unlock', 'deck-editor launcher href missing allow_local_img_load=true: ' + editorHref);
     }
 
     // The lobby page itself must persist the flag to sessionStorage (NOT
@@ -769,19 +779,44 @@ async function scenarioWaitingRoomAndParamContract() {
 }
 
 // Seed-persistence regression: the RNG-seed field must round-trip across
-// navigation (set -> reload -> value restored) via localStorage. Previously the
-// seed field was wired to NO storage and was empty again every time the user
-// navigated away and back. Covers BOTH launcher.html (#mp-seed, gated behind
-// role=create&advanced_options=true) and solo_launcher.html (#seed). Also
-// verifies the empty/random case: clearing the field removes the stored key so
-// the "(random)"/"(server default)" placeholder semantics are preserved.
+// navigation (set -> reload -> value restored). After the prefs.js DRY rework
+// (28570dc20) persistence moved from per-page raw keys ('mtg.mpSeed' /
+// 'mtg.rngSeed') to ONE shared store: a single JSON object under
+// localStorage['deepscry.prefs'], with the seed under the SHARED field
+// DeepScryPrefs.KEYS.SEED ('seed') — so a seed entered on launcher.html is the
+// default on solo_launcher.html and vice-versa. This scenario verifies that new
+// contract: launcher.html (#mp-seed, gated behind role=create&advanced_options)
+// and solo_launcher.html (#seed) both round-trip through the shared key, the
+// value is SHARED across the two launchers, and clearing the field removes the
+// key so the "(random)"/"(server default)" placeholder semantics are preserved.
+//
+// We read the stored value through the public DeepScryPrefs.get() API (and assert
+// the legacy raw keys are gone) instead of poking a hard-coded localStorage key,
+// so the test tracks the actual persistence contract rather than its old shape.
 async function scenarioSeedPersistence() {
-    console.log('\n=== Scenario: RNG-seed persists across navigation (set -> reload -> restored) ===');
+    console.log('\n=== Scenario: RNG-seed persists + is shared across launchers (prefs.js) ===');
     const browser = await chromium.launch();
     const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
     const page = await ctx.newPage();
     page.setDefaultNavigationTimeout(90000); page.setDefaultTimeout(90000);
     page.on('pageerror', (e) => record('major', 'seed-persist pageerror', e.message));
+
+    // Read the seed pref via the shared store. Returns the value under
+    // KEYS.SEED, or null if absent / DeepScryPrefs unavailable.
+    const storedSeed = () => page.evaluate(() => {
+        try {
+            return (window.DeepScryPrefs && typeof window.DeepScryPrefs.get === 'function')
+                ? (window.DeepScryPrefs.get(window.DeepScryPrefs.KEYS.SEED) ?? null)
+                : null;
+        } catch (e) { return null; }
+    });
+    // The legacy per-page raw keys must NOT be written anymore.
+    const legacyKeysGone = () => page.evaluate(() => {
+        try {
+            return localStorage.getItem('mtg.mpSeed') === null
+                && localStorage.getItem('mtg.rngSeed') === null;
+        } catch (e) { return true; }
+    });
 
     // --- launcher.html: #mp-seed (creator + advanced gate makes it visible) ---
     const launcherUrl = BASE + '/launcher.html?game=seed-test&role=create&advanced_options=true' +
@@ -793,11 +828,12 @@ async function scenarioSeedPersistence() {
     // Field should start empty (no stored value yet).
     const mpInitial = await page.inputValue('#mp-seed').catch(() => null);
     if (mpInitial) record('minor', 'seed-persist launcher', 'expected empty #mp-seed on first load, got ' + mpInitial);
-    // Type a seed (fire input so the change handler writes localStorage).
+    // Type a seed (fire input so the change handler writes the shared store).
     await page.fill('#mp-seed', '12345');
     await page.dispatchEvent('#mp-seed', 'input');
-    const mpStored = await page.evaluate(() => { try { return localStorage.getItem('mtg.mpSeed'); } catch (e) { return null; } });
-    if (mpStored !== '12345') record('major', 'seed-persist launcher', 'mtg.mpSeed not written to localStorage, got ' + JSON.stringify(mpStored));
+    const mpStored = await storedSeed();
+    if (String(mpStored) !== '12345') record('major', 'seed-persist launcher', 'seed not written to shared prefs (KEYS.SEED), got ' + JSON.stringify(mpStored));
+    if (!(await legacyKeysGone())) record('major', 'seed-persist launcher', 'legacy raw key mtg.mpSeed/mtg.rngSeed must NOT be written anymore');
     // Reload — the seed must be restored.
     await page.goto(launcherUrl, NAV);
     await page.waitForLoadState('domcontentloaded');
@@ -805,22 +841,23 @@ async function scenarioSeedPersistence() {
     const mpAfter = await page.inputValue('#mp-seed').catch(() => null);
     console.log('  launcher #mp-seed after reload:', JSON.stringify(mpAfter));
     if (mpAfter !== '12345') record('major', 'seed-persist launcher', 'seed NOT restored after reload: got ' + JSON.stringify(mpAfter));
-    // Empty/random case: clearing the field must remove the stored key.
-    await page.fill('#mp-seed', '');
-    await page.dispatchEvent('#mp-seed', 'input');
-    const mpCleared = await page.evaluate(() => { try { return localStorage.getItem('mtg.mpSeed'); } catch (e) { return 'ERR'; } });
-    if (mpCleared !== null) record('major', 'seed-persist launcher', 'clearing the field must remove mtg.mpSeed (placeholder semantics), got ' + JSON.stringify(mpCleared));
 
-    // --- solo_launcher.html: #seed (always visible) + Random button ---
+    // --- solo_launcher.html: #seed shares the SAME key → inherits 12345 ---
     const soloUrl = BASE + '/solo_launcher.html';
     await page.goto(soloUrl, NAV);
     await page.waitForLoadState('domcontentloaded');
     await page.waitForSelector('#seed', { state: 'attached', timeout: 5000 }).catch(() =>
         record('major', 'seed-persist solo', '#seed field not present'));
+    const soloInherited = await page.inputValue('#seed').catch(() => null);
+    console.log('  solo #seed inherited from launcher:', JSON.stringify(soloInherited));
+    if (soloInherited !== '12345') {
+        record('major', 'seed-persist shared', 'seed is not shared across launchers: solo #seed=' + JSON.stringify(soloInherited) + ' (expected 12345 from launcher)');
+    }
+    // Change it on solo → shared store updates.
     await page.fill('#seed', '67890');
     await page.dispatchEvent('#seed', 'input');
-    const soloStored = await page.evaluate(() => { try { return localStorage.getItem('mtg.rngSeed'); } catch (e) { return null; } });
-    if (soloStored !== '67890') record('major', 'seed-persist solo', 'mtg.rngSeed not written to localStorage, got ' + JSON.stringify(soloStored));
+    const soloStored = await storedSeed();
+    if (String(soloStored) !== '67890') record('major', 'seed-persist solo', 'seed not written to shared prefs (KEYS.SEED), got ' + JSON.stringify(soloStored));
     await page.goto(soloUrl, NAV);
     await page.waitForLoadState('domcontentloaded');
     await page.waitForSelector('#seed', { state: 'attached', timeout: 5000 }).catch(() => {});
@@ -830,17 +867,17 @@ async function scenarioSeedPersistence() {
     // The Random button must also update the stored value.
     await page.click('#btn-random-seed');
     const rolled = await page.inputValue('#seed');
-    const rolledStored = await page.evaluate(() => { try { return localStorage.getItem('mtg.rngSeed'); } catch (e) { return null; } });
-    if (!rolled || rolledStored !== rolled) {
+    const rolledStored = await storedSeed();
+    if (!rolled || String(rolledStored) !== String(rolled)) {
         record('major', 'seed-persist solo', 'Random button did not persist rolled seed: field=' + JSON.stringify(rolled) + ' stored=' + JSON.stringify(rolledStored));
     }
     // Empty case clears the key.
     await page.fill('#seed', '');
     await page.dispatchEvent('#seed', 'input');
-    const soloCleared = await page.evaluate(() => { try { return localStorage.getItem('mtg.rngSeed'); } catch (e) { return 'ERR'; } });
-    if (soloCleared !== null) record('major', 'seed-persist solo', 'clearing the field must remove mtg.rngSeed (placeholder semantics), got ' + JSON.stringify(soloCleared));
+    const soloCleared = await storedSeed();
+    if (soloCleared !== null) record('major', 'seed-persist solo', 'clearing the field must remove the shared seed pref (placeholder semantics), got ' + JSON.stringify(soloCleared));
 
-    console.log('  seed-persistence: launcher + solo round-trip + empty/random cases checked');
+    console.log('  seed-persistence: launcher + solo round-trip, cross-launcher sharing, empty/random cases checked');
     await ctx.close();
     await browser.close();
 }
