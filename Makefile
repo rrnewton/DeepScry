@@ -108,6 +108,21 @@ build-network-dev:
 	@echo "=== Building dev (debug) with network support ==="
 	cargo build --features network
 
+# Card-image index (Scryfall name -> cards.scryfall.io CDN URL). The local web
+# server needs web/data/card-lookup.bin or NO card images resolve (an empty stub
+# reads as "0 entries"). Same build the deploy does (mtg build-card-lookup). Only
+# (re)built when missing/stub so it doesn't slow every launch; delete the file or
+# run `mtg build-card-lookup --refresh` to force a refresh from Scryfall.
+SCRYFALL_BULK ?= target/scryfall/unique_artwork.json
+.PHONY: ensure-card-lookup
+ensure-card-lookup: build-network-dev
+	@if [ ! -s web/data/card-lookup.bin ] || [ "$$(stat -c%s web/data/card-lookup.bin 2>/dev/null || echo 0)" -lt 100000 ]; then \
+		echo "=== Building card-lookup.bin (Scryfall image index) ==="; \
+		./target/debug/mtg build-card-lookup -o web/data/card-lookup.bin --bulk-cache $(SCRYFALL_BULK) $$([ -f "$(SCRYFALL_BULK)" ] && echo "" || echo "--refresh"); \
+	else \
+		echo "=== card-lookup.bin present ($$(stat -c%s web/data/card-lookup.bin) bytes) — skipping ==="; \
+	fi
+
 # Run unit tests (including network tests)
 # Note: human_input_e2e tests for WASM pattern don't require wasm feature
 # mtg-717 build-once: if NEXTEST_ARCHIVE is set (CI `--use-prebuilt` shard), run
@@ -720,7 +735,7 @@ play-web-pvp: build-network wasm-network
 		--pvp
 
 # Build WASM and serve via the real axum server (mtg server-web), not python.
-wasm-serve: build-network wasm-network
+wasm-serve: build-network wasm-network ensure-card-lookup
 	@echo ""
 	@echo "=== Starting mtg server-web on http://127.0.0.1:$(PORT) ==="
 	@echo "Press Ctrl+C to stop"
@@ -739,7 +754,7 @@ wasm-dev: wasm-export ensure-wasm-pack
 # (`mtg server-web`) so the lobby / login / /auth / /health endpoints all work.
 # A plain `python3 -m http.server` only serves static files and 404s on /lobby,
 # which silently breaks the login screen — that footgun is why it's gone.
-play-web-local-dev: build-network-dev wasm-dev
+play-web-local-dev: build-network-dev wasm-dev ensure-card-lookup
 	@echo ""
 	@echo "=== Starting mtg server-web (dev/debug) on http://127.0.0.1:$(PORT) ==="
 	@echo "Lobby + static UI on one port. Solo (no login): http://127.0.0.1:$(PORT)/solo_launcher.html?ui=native"
@@ -778,7 +793,7 @@ serve-web: build-network wasm-network
 		--mem-cap-pct $(SERVER_WEB_MEM_CAP_PCT)
 
 # Network WASM + RELEASE binary, served by the real axum server (mtg server-web).
-play-web-local: build-network wasm-network
+play-web-local: build-network wasm-network ensure-card-lookup
 	@echo ""
 	@echo "=== Starting mtg server-web (release) on http://127.0.0.1:$(PORT) ==="
 	@echo "Lobby + static UI on one port. Solo (no login): http://127.0.0.1:$(PORT)/solo_launcher.html?ui=native"
