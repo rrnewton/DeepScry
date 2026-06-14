@@ -58,4 +58,33 @@ impl PuzzleFile {
     pub fn parse(contents: &str) -> Result<Self> {
         format::parse_puzzle(contents)
     }
+
+    /// Build the [`PlayerController`](crate::game::PlayerController) for one
+    /// player of this puzzle.
+    ///
+    /// This is the single, shared wiring point used by every puzzle runner
+    /// (the bulk runner and the e2e harness) so script handling stays DRY:
+    ///
+    /// * If the puzzle declared a `[p0_script]` / `[p1_script]` section for
+    ///   `player_idx`, the player is driven by a
+    ///   [`RichInputController`](crate::game::RichInputController) replaying the
+    ///   scripted semantic commands (`cast`, `target`, `activate`, `attack`,
+    ///   `PASS_UNTIL`, …). The script is deterministic and information-
+    ///   independent — it uses only the same public commands a human types — so
+    ///   it produces identical decisions on server / client / native / WASM.
+    /// * Otherwise the player keeps the default
+    ///   [`HeuristicController`](crate::game::HeuristicController), exactly as
+    ///   before the action-script capability existed (zero behavioural change
+    ///   for the ~all unscripted puzzles).
+    #[cfg(feature = "native")]
+    pub fn build_controller(
+        &self,
+        player_idx: usize,
+        player_id: crate::core::PlayerId,
+    ) -> Box<dyn crate::game::PlayerController> {
+        match self.script_for(player_idx) {
+            Some(script) => Box::new(crate::game::RichInputController::new(player_id, script.to_vec())),
+            None => Box::new(crate::game::HeuristicController::new(player_id)),
+        }
+    }
 }

@@ -11,7 +11,7 @@
 #![cfg(feature = "puzzle-assert")]
 
 use mtg_engine::{
-    game::{GameLoop, HeuristicController, VerbosityLevel},
+    game::{GameLoop, VerbosityLevel},
     loader::{require_cardsfolder, AsyncCardDatabase as CardDatabase},
     puzzle::{
         assert::{evaluate_assertions, parse_assertions},
@@ -52,11 +52,13 @@ async fn run_puzzle(
     let p0_id = players[0];
     let p1_id = players[1];
 
-    let mut c0 = HeuristicController::new(p0_id);
-    let mut c1 = HeuristicController::new(p1_id);
+    // DRY action-script wiring (task #16): use the puzzle's per-player script
+    // (RichInputController) when present, else the default heuristic AI.
+    let mut c0 = puzzle.build_controller(0, p0_id);
+    let mut c1 = puzzle.build_controller(1, p1_id);
 
     let mut game_loop = GameLoop::new(&mut game).with_verbosity(VerbosityLevel::Silent);
-    let result = game_loop.run_game(&mut c0, &mut c1)?;
+    let result = game_loop.run_game(c0.as_mut(), c1.as_mut())?;
 
     // Move game out of game_loop
     // (game_loop borrows game mutably; we need to return the finished game)

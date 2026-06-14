@@ -49,6 +49,22 @@ pub struct RichInputController {
     current_index: usize,
     /// Whether we're in wildcard mode (waiting for a specific command to match)
     wildcard_mode: bool,
+    /// Target selector requested by an inline `cast <card> targeting <selector>`
+    /// clause, stashed when the cast is chosen and consumed by the next
+    /// `choose_targets` call.
+    ///
+    /// This makes targeted plays robust to whether the engine actually *asks*
+    /// for a target: a single-legal-target spell (e.g. Lightning Bolt vs. the
+    /// only creature) is auto-targeted by the engine without a `choose_targets`
+    /// callback (CR 601.2c forced choice), so a standalone `target` command on
+    /// the next line would strand and error. The inline clause is consumed when
+    /// `choose_targets` IS called and is otherwise a harmless no-op.
+    ///
+    /// Holds the lowercased selector string (a card name or a `pN` player
+    /// sentinel), matched against valid targets the same way a standalone
+    /// `target` command is. Information-independent: only matches against the
+    /// public list of valid targets the engine already offered.
+    pending_target: Option<String>,
 }
 
 impl RichInputController {
@@ -63,6 +79,51 @@ impl RichInputController {
             commands,
             current_index: 0,
             wildcard_mode: false,
+            pending_target: None,
+        }
+    }
+
+    /// Split an inline `cast <card> targeting <selector>` command into its
+    /// spell-command part and an optional target selector.
+    ///
+    /// The split is on the case-insensitive ` targeting ` keyword. The returned
+    /// spell command (e.g. `"cast Lightning Bolt"`) is what the normal verb
+    /// matcher consumes; the selector (e.g. `"grizzly bears"`, lowercased) is
+    /// stashed for the next `choose_targets`. When no ` targeting ` keyword is
+    /// present the whole command is returned with `None`.
+    fn split_targeting_clause(command: &str) -> (String, Option<String>) {
+        // Case-insensitive search for the keyword without allocating a second
+        // lowercased copy for slicing: find on a lowercased scan, slice the
+        // ORIGINAL so card-name casing is preserved for logging.
+        const KW: &str = " targeting ";
+        let lower = command.to_lowercase();
+        if let Some(pos) = lower.find(KW) {
+            let spell_cmd = command[..pos].trim().to_string();
+            let selector = command[pos + KW.len()..].trim().to_lowercase();
+            let selector = if selector.is_empty() { None } else { Some(selector) };
+            (spell_cmd, selector)
+        } else {
+            (command.to_string(), None)
+        }
+    }
+
+    /// Does the valid-target `tid` match the (already-lowercased) `selector`?
+    ///
+    /// Shared by the standalone `target <selector>` command and the inline
+    /// `cast <card> targeting <selector>` clause so both behave identically.
+    /// Player targets match `pN` (0- or 1-based) or the player's name; card
+    /// targets use the same prefix / space- / case-insensitive `card_matches`
+    /// matcher as `cast <card>` (anti-overfitting — survives card renames that
+    /// keep a shared prefix and avoids brittle exact-string coupling).
+    fn target_matches_selector(view: &GameStateView, tid: CardId, selector: &str) -> bool {
+        let name = view.card_name(tid).unwrap_or_default();
+        if let Some(pid) = crate::core::player_target_from_sentinel(tid) {
+            let pid_idx = pid.as_u32();
+            selector == format!("p{}", pid_idx + 1)
+                || selector == format!("p{}", pid_idx)
+                || selector == name.to_lowercase()
+        } else {
+            card_matches(&name, selector)
         }
     }
 
@@ -199,16 +260,22 @@ impl PlayerController for RichInputController {
 
         // Peek at the next command without consuming it
         if let Some(command_str) = self.peek_command() {
-            let command = command_str.to_string();
+            let raw_command = command_str.to_string();
 
             // Check if this is a wildcard separator - if so, consume it and enter wildcard mode
-            if command.trim() == "*" {
+            if raw_command.trim() == "*" {
                 // Consume the wildcard and enter wildcard mode
                 self.current_index += 1;
                 self.wildcard_mode = true;
                 // Now recursively call to process the next actual command
                 return self.choose_spell_ability_to_play(view, available);
             }
+
+            // Split off an optional inline `... targeting <selector>` clause.
+            // `command` is the spell/ability part used for matching; the target
+            // selector (if any) is stashed below ONLY when the action matches,
+            // so it is consumed by the next `choose_targets` call.
+            let (command, inline_target) = Self::split_targeting_clause(&raw_command);
 
             // Try to parse it
             let mut result = None;
@@ -247,6 +314,15 @@ impl PlayerController for RichInputController {
 
             // Check if this is an explicit pass command
             let explicit_pass = is_explicit_pass(&command);
+
+            // If the action matched and carried an inline `targeting <selector>`
+            // clause, stash the selector so the upcoming `choose_targets` (if the
+            // engine asks for a target at all) selects the named target. Only
+            // stash on a real match — a non-matching command must not leave a
+            // stale target queued.
+            if result.is_some() {
+                self.pending_target = inline_target;
+            }
 
             // Check if this is a combat command (attack/block) - these should be deferred
             // to choose_attackers/choose_blockers, so we pass priority here
@@ -308,7 +384,25 @@ impl PlayerController for RichInputController {
         max_targets: usize,
     ) -> ChoiceResult<SmallVec<[CardId; 4]>> {
         if valid_targets.is_empty() {
+            self.pending_target = None;
             return ChoiceResult::Ok(SmallVec::new());
+        }
+
+        // First, honour a stashed inline `targeting <selector>` clause from a
+        // `cast <card> targeting <selector>` command. Matched the same way as a
+        // standalone `target` command, but against the selector captured at
+        // cast time. Consumed whether or not it matches (a one-shot hint).
+        if let Some(selector) = self.pending_target.take() {
+            let matched: SmallVec<[CardId; 4]> = valid_targets
+                .iter()
+                .filter(|&&tid| Self::target_matches_selector(_view, tid, &selector))
+                .copied()
+                .collect();
+            if !matched.is_empty() {
+                return ChoiceResult::Ok(matched);
+            }
+            // Selector did not match any valid target: fall through to the
+            // standalone-command path / deterministic default below.
         }
 
         // Try to match next command if present
@@ -316,17 +410,7 @@ impl PlayerController for RichInputController {
             let cmd_clean = cmd.trim().to_lowercase();
             let matched_targets: SmallVec<[CardId; 4]> = valid_targets
                 .iter()
-                .filter(|&&tid| {
-                    let name = _view.card_name(tid).unwrap_or_default();
-                    if let Some(pid) = crate::core::player_target_from_sentinel(tid) {
-                        let pid_idx = pid.as_u32();
-                        cmd_clean == format!("p{}", pid_idx + 1)
-                            || cmd_clean == format!("p{}", pid_idx)
-                            || cmd_clean == name.to_lowercase()
-                    } else {
-                        name.to_lowercase() == cmd_clean
-                    }
-                })
+                .filter(|&&tid| Self::target_matches_selector(_view, tid, &cmd_clean))
                 .copied()
                 .collect();
             if !matched_targets.is_empty() {
@@ -709,11 +793,12 @@ impl serde::Serialize for RichInputController {
         S: serde::Serializer,
     {
         use serde::ser::SerializeStruct;
-        let mut state = serializer.serialize_struct("RichInputController", 4)?;
+        let mut state = serializer.serialize_struct("RichInputController", 5)?;
         state.serialize_field("player_id", &self.player_id)?;
         state.serialize_field("commands", &self.commands)?;
         state.serialize_field("current_index", &self.current_index)?;
         state.serialize_field("wildcard_mode", &self.wildcard_mode)?;
+        state.serialize_field("pending_target", &self.pending_target)?;
         state.end()
     }
 }
@@ -730,6 +815,8 @@ impl<'de> serde::Deserialize<'de> for RichInputController {
             current_index: usize,
             #[serde(default)]
             wildcard_mode: bool,
+            #[serde(default)]
+            pending_target: Option<String>,
         }
 
         let data = RichInputControllerData::deserialize(deserializer)?;
@@ -738,6 +825,7 @@ impl<'de> serde::Deserialize<'de> for RichInputController {
             commands: data.commands,
             current_index: data.current_index,
             wildcard_mode: data.wildcard_mode,
+            pending_target: data.pending_target,
         })
     }
 }
@@ -755,6 +843,29 @@ mod tests {
         assert_eq!(normalize("Black Knight"), "blackknight");
         assert_eq!(normalize("Serra_Angel"), "serraangel");
         assert_eq!(normalize("Royal  Assassin"), "royalassassin");
+    }
+
+    #[test]
+    fn test_split_targeting_clause() {
+        // No clause: whole command, no target.
+        let (cmd, tgt) = RichInputController::split_targeting_clause("cast Lightning Bolt");
+        assert_eq!(cmd, "cast Lightning Bolt");
+        assert_eq!(tgt, None);
+
+        // Inline clause: spell part + lowercased selector.
+        let (cmd, tgt) = RichInputController::split_targeting_clause("cast Lightning Bolt targeting Grizzly Bears");
+        assert_eq!(cmd, "cast Lightning Bolt");
+        assert_eq!(tgt.as_deref(), Some("grizzly bears"));
+
+        // Case-insensitive keyword; player sentinel selector preserved lowercase.
+        let (cmd, tgt) = RichInputController::split_targeting_clause("cast Shock TARGETING p2");
+        assert_eq!(cmd, "cast Shock");
+        assert_eq!(tgt.as_deref(), Some("p2"));
+
+        // Empty selector after the keyword yields no target (defensive).
+        let (cmd, tgt) = RichInputController::split_targeting_clause("cast Bolt targeting ");
+        assert_eq!(cmd, "cast Bolt");
+        assert_eq!(tgt, None);
     }
 
     #[test]

@@ -18,6 +18,41 @@ pub struct PuzzleFile {
     /// cargo feature is disabled.
     #[cfg(feature = "puzzle-assert")]
     pub assertions: Vec<crate::puzzle::assert::Assertion>,
+    /// Optional per-player ACTION SCRIPT for the `[p0_script]` section.
+    ///
+    /// Each entry is one semantic command in the existing rich-input /
+    /// fixed-input vocabulary (`cast <card>`, `target <selector>`,
+    /// `activate <card>`, `attack <card>`, `pass`, `PASS_UNTIL turn=N,phase=P`,
+    /// `*`). When `Some`, a puzzle runner drives this player with a
+    /// `RichInputController` replaying the script instead of the heuristic AI;
+    /// when `None` the player keeps the default AI (zero behavioural change).
+    ///
+    /// See [`PuzzleFile::script_for`] and `docs/FIXED_INPUT_SYNTAX.md`.
+    pub p0_script: Option<Vec<String>>,
+    /// Optional per-player ACTION SCRIPT for the `[p1_script]` section.
+    /// See [`PuzzleFile::p0_script`].
+    pub p1_script: Option<Vec<String>>,
+}
+
+impl PuzzleFile {
+    /// The scripted action sequence for the given player index (0 or 1), if the
+    /// puzzle declared a `[p0_script]` / `[p1_script]` section for it.
+    ///
+    /// Returns `None` for any unscripted player (the common case), so a runner
+    /// can cheaply branch to the default AI with no allocation.
+    pub fn script_for(&self, player_idx: usize) -> Option<&[String]> {
+        match player_idx {
+            0 => self.p0_script.as_deref(),
+            1 => self.p1_script.as_deref(),
+            _ => None,
+        }
+    }
+
+    /// True when the puzzle declares no action scripts at all — i.e. it should
+    /// run exactly as it did before the action-script capability existed.
+    pub fn has_no_scripts(&self) -> bool {
+        self.p0_script.is_none() && self.p1_script.is_none()
+    }
 }
 
 /// Parse a complete puzzle file from string contents
@@ -51,11 +86,32 @@ pub fn parse_puzzle(contents: &str) -> Result<PuzzleFile> {
         }
     };
 
+    let p0_script = parse_script_section(sections.get("p0_script"));
+    let p1_script = parse_script_section(sections.get("p1_script"));
+
     Ok(PuzzleFile {
         metadata,
         state,
         #[cfg(feature = "puzzle-assert")]
         assertions,
+        p0_script,
+        p1_script,
+    })
+}
+
+/// Parse a `[pN_script]` section into an ordered list of semantic commands.
+///
+/// One command per line. Leading/trailing whitespace is trimmed; blank lines
+/// are already stripped by [`parse_sections`]. Returns `None` when the section
+/// is absent so unscripted players incur no allocation and keep the default AI.
+/// An empty-but-present section yields `Some(vec![])` (a script that passes on
+/// every decision — useful as an explicit "this player does nothing" marker).
+fn parse_script_section(lines: Option<&Vec<String>>) -> Option<Vec<String>> {
+    lines.map(|ls| {
+        ls.iter()
+            .map(|l| l.trim().to_string())
+            .filter(|l| !l.is_empty())
+            .collect()
     })
 }
 
@@ -171,6 +227,65 @@ mod tests {
             success_rate,
             failures.join("\n")
         );
+    }
+
+    #[test]
+    fn test_parse_player_action_scripts() {
+        let contents = r#"
+[metadata]
+Name:Script Test
+Goal:Win
+Turns:1
+Difficulty:Easy
+
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Lightning Bolt
+p1life=20
+
+[p0_script]
+# A comment line (stripped by the section parser).
+cast Lightning Bolt targeting Grizzly Bears
+PASS_UNTIL turn=2,phase=MAIN1
+"#;
+        let puzzle = parse_puzzle(contents).unwrap();
+        let p0 = puzzle.script_for(0).expect("p0_script should be present");
+        assert_eq!(
+            p0,
+            [
+                "cast Lightning Bolt targeting Grizzly Bears",
+                "PASS_UNTIL turn=2,phase=MAIN1"
+            ]
+        );
+        // No [p1_script] section -> None (player keeps default AI).
+        assert!(puzzle.p1_script.is_none());
+        assert_eq!(puzzle.script_for(1), None);
+        assert!(!puzzle.has_no_scripts());
+    }
+
+    #[test]
+    fn test_no_script_sections_means_default_ai() {
+        let contents = r#"
+[metadata]
+Name:No Script
+Goal:Win
+Turns:1
+Difficulty:Easy
+
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p1life=20
+"#;
+        let puzzle = parse_puzzle(contents).unwrap();
+        assert!(puzzle.has_no_scripts());
+        assert_eq!(puzzle.script_for(0), None);
+        assert_eq!(puzzle.script_for(1), None);
     }
 
     #[test]

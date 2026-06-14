@@ -31,7 +31,7 @@
 #![cfg(all(feature = "puzzle-assert", feature = "native"))]
 
 use mtg_engine::{
-    game::{GameLoop, HeuristicController, OutputMode, VerbosityLevel},
+    game::{GameLoop, OutputMode, VerbosityLevel},
     loader::{require_cardsfolder, AsyncCardDatabase as CardDatabase},
     puzzle::{loader::load_puzzle_into_game, PuzzleFile},
 };
@@ -139,11 +139,13 @@ fn capture_log_for_puzzle(path: &Path, card_db: &Arc<CardDatabase>) -> Result<Ve
                 let p0_id = players[0];
                 let p1_id = players[1];
 
-                let mut c0 = HeuristicController::new(p0_id);
-                let mut c1 = HeuristicController::new(p1_id);
+                // DRY action-script wiring (task #16): scripted players use a
+                // RichInputController; unscripted players keep the heuristic AI.
+                let mut c0 = puzzle.build_controller(0, p0_id);
+                let mut c1 = puzzle.build_controller(1, p1_id);
 
                 let mut game_loop = GameLoop::new(&mut game).with_verbosity(VerbosityLevel::Normal);
-                let _game_result = game_loop.run_game(&mut c0, &mut c1)?;
+                let _game_result = game_loop.run_game(c0.as_mut(), c1.as_mut())?;
 
                 // Collect log messages. We take each entry's `message` — the
                 // full server-side text (NOT masked for any perspective).

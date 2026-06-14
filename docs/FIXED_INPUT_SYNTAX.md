@@ -209,6 +209,30 @@ target player1       # Target player
 target "Black Knight"
 ```
 
+#### Inline `targeting` clause (robust to forced targets)
+
+A standalone `target ...` command only works when the engine actually *asks*
+the controller to choose a target. When a spell has exactly one legal target
+(e.g. Lightning Bolt vs. the only creature on board), the engine auto-selects
+it WITHOUT a target prompt (CR 601.2c forced choice), and a following
+`target ...` line would strand and error.
+
+To make targeted plays robust either way, append an inline `targeting <selector>`
+clause to the `cast` / `activate` command:
+
+```bash
+cast Lightning Bolt targeting Grizzly Bears
+cast Shock targeting p2          # p2 = the second player (also accepts p1/p0)
+activate Prodigal Sorcerer targeting Grizzly Bears
+```
+
+The selector after `targeting` is matched against the engine's offered valid
+targets using the same anti-overfitting card matcher (prefix / case- /
+space-insensitive), or a `pN` player sentinel. If the engine prompts for a
+target, the named one is chosen; if the target was forced, the clause is a
+harmless no-op. This is the preferred form for scripted puzzle actions (see
+the `[p0_script]` / `[p1_script]` puzzle sections).
+
 ### Blocking Multiple Attackers
 
 Use semicolon-separated clauses:

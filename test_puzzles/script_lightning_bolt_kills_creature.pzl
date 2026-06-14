@@ -1,0 +1,64 @@
+# Showcase puzzle: per-player ACTION SCRIPT drives an active removal play.
+#
+# This puzzle exists to prove a capability that did NOT exist before
+# task #16 / mtg-947: asserting an ACTIVE-card aspect (casting a targeted
+# burn spell) in the bulk puzzle runner.
+#
+# Background: the bulk runner used to drive BOTH seats with the heuristic AI,
+# which will not reliably cast a spell at a chosen target on cue. So puzzles
+# could only test passive / combat-keyword cards. With an action script, P0 is
+# driven by a RichInputController replaying semantic commands, so it casts
+# Lightning Bolt at the opposing creature on turn 1 — deterministically.
+#
+# Scenario:
+#   - P0: Lightning Bolt in hand, 3 untapped Mountains on the battlefield.
+#   - P1: a Grizzly Bears (2/2) on the battlefield.
+#   - Script: P0 casts Lightning Bolt targeting the Grizzly Bears.
+#   - Bolt deals 3 damage to a 2-toughness creature -> it dies (CR 120.6, 704.5g).
+#
+# The [p0_script] commands use the existing rich-input / fixed-input vocabulary
+# (see docs/FIXED_INPUT_SYNTAX.md): `cast <card>` followed by `target <selector>`.
+# Card-name matching is the same anti-overfitting semantic matcher used by
+# `mtg tui --p1-fixed-inputs` (prefix / case-insensitive / space-insensitive),
+# NOT brittle raw menu indices.
+#
+# Assertions (tracking issue: mtg-935 / mtg-947):
+#   - Lightning Bolt was cast (spell cast Lightning Bolt)
+#   - The Grizzly Bears died (creature died Grizzly Bears)
+#   - It is now in P1's graveyard (opponent graveyard contains Grizzly Bears)
+
+[metadata]
+Name:Action Script - Lightning Bolt Kills a Creature
+Goal:Win
+Turns:1
+Difficulty:Easy
+Description:P0 is driven by an action script that casts Lightning Bolt at P1's Grizzly Bears, killing it. Demonstrates that scripted active-card aspects (targeted burn) are now puzzle-testable in the bulk runner.
+
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Lightning Bolt
+p0battlefield=Mountain;Mountain;Mountain
+p0library=Forest;Forest;Forest;Forest;Forest
+
+p1life=20
+p1battlefield=Grizzly Bears
+p1library=Mountain;Mountain;Mountain;Mountain;Mountain
+
+[p0_script]
+# Cast Lightning Bolt targeting the Grizzly Bears. The inline `targeting`
+# clause names the target semantically (anti-overfitting: by card name, not a
+# raw menu index). When the Grizzly Bears is the only legal target the engine
+# auto-selects it, and the clause is a harmless no-op; when there are several
+# legal targets the controller uses the clause to pick the named one.
+cast Lightning Bolt targeting Grizzly Bears
+
+[assertions]
+# The burn spell was actually cast by the script (active-card aspect).
+spell cast Lightning Bolt
+# 3 damage killed the 2/2 (CR 704.5g lethal damage state-based action).
+creature died Grizzly Bears
+# The dead creature is now in its owner's (P1's) graveyard.
+opponent graveyard contains Grizzly Bears

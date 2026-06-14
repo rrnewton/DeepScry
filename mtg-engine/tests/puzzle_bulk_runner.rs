@@ -27,7 +27,7 @@
 #![cfg(all(feature = "puzzle-assert", feature = "native"))]
 
 use mtg_engine::{
-    game::{GameLoop, HeuristicController, VerbosityLevel},
+    game::{GameLoop, VerbosityLevel},
     loader::{require_cardsfolder, AsyncCardDatabase as CardDatabase},
     puzzle::{assert::evaluate_assertions, loader::load_puzzle_into_game, PuzzleFile},
 };
@@ -194,11 +194,19 @@ fn run_one(path: &Path, card_db: &Arc<CardDatabase>) -> PuzzleOutcome {
                 let p0_id = players[0];
                 let p1_id = players[1];
 
-                let mut c0 = HeuristicController::new(p0_id);
-                let mut c1 = HeuristicController::new(p1_id);
+                // DRY action-script wiring (task #16 / mtg-947): a puzzle may
+                // carry per-player `[p0_script]` / `[p1_script]` sections that
+                // drive a player with a RichInputController replaying scripted
+                // semantic commands (cast/target/activate/attack/PASS_UNTIL)
+                // instead of the heuristic AI. `build_controller` returns the
+                // scripted controller when a section is present and otherwise
+                // falls back to HeuristicController — so the ~all unscripted
+                // puzzles behave EXACTLY as before (zero overhead when absent).
+                let mut c0 = puzzle.build_controller(0, p0_id);
+                let mut c1 = puzzle.build_controller(1, p1_id);
 
                 let mut game_loop = GameLoop::new(&mut game).with_verbosity(VerbosityLevel::Silent);
-                let game_result = game_loop.run_game(&mut c0, &mut c1)?;
+                let game_result = game_loop.run_game(c0.as_mut(), c1.as_mut())?;
 
                 // Borrow the FINAL game state directly — do NOT clone it.
                 // `GameLogger::clone()` deliberately starts the clone with an

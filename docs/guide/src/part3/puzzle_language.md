@@ -134,6 +134,64 @@ Within a zone list, each card may carry pipe-separated modifiers, e.g.
 `mtg-engine/src/puzzle/card_notation.rs`. Unknown modifiers are ignored for
 forward compatibility.
 
+## Action scripts (`[p0_script]` / `[p1_script]`)
+
+By default a puzzle runner drives **both** seats with the heuristic AI. The AI
+plays reasonably but will not, on cue, cast a particular spell at a particular
+target — so puzzles that rely only on the AI can test passive and combat-keyword
+cards but **not** active aspects (targeted burn, removal, pingers, activated
+abilities). An *action script* fixes that: it scripts one player's exact moves.
+
+Add an optional `[p0_script]` (or `[p1_script]`) section. Each non-blank,
+non-comment line is one semantic command in the shared rich-input / fixed-input
+vocabulary (`docs/FIXED_INPUT_SYNTAX.md`):
+
+```text
+[p0_script]
+# Cast a burn spell at a named target, then idle to a later turn.
+cast Lightning Bolt targeting Grizzly Bears
+PASS_UNTIL turn=2,phase=MAIN1
+```
+
+When a player has a script, the runner drives that player with a
+`RichInputController` replaying the commands; an unscripted player keeps the
+default `HeuristicController`. A puzzle with **no** script sections behaves
+exactly as before — there is no behavioural change and no overhead.
+
+Key commands (full grammar in `docs/FIXED_INPUT_SYNTAX.md`):
+
+| Command | Meaning |
+|---|---|
+| `cast <card>` | Cast a spell from hand by (prefix) name |
+| `cast <card> targeting <selector>` | Cast and aim it at a named card or `pN` player |
+| `activate <card>` | Activate an ability (e.g. a pinger or equip) |
+| `attack <card>` | Declare an attacker |
+| `<blocker> blocks <attacker>` | Declare a block |
+| `pass` | Pass priority |
+| `PASS_UNTIL turn=N,phase=PHASE` | Pass until a turn+phase is reached |
+| `*` | Wildcard: pass until the next command becomes available |
+
+Selectors (card names and the `targeting` clause) use the anti-overfitting
+matcher — prefix, case- and space-insensitive — **not** raw menu indices, so a
+script survives unrelated board changes and card renames that keep a shared
+prefix. The `targeting` clause is preferred over a standalone `target` line
+because it is robust to whether the engine actually prompts for a target (a
+single-legal-target spell is auto-targeted with no prompt; the clause is then a
+harmless no-op).
+
+**Determinism.** A script issues only the same public commands a human types and
+matches only against the engine's offered options — it never reads hidden
+information (opponent hand, library order, RNG). So a scripted controller
+produces identical decisions on server, client, native, and WASM, exactly like
+every other controller (see the network-determinism rules in the project
+`CLAUDE.md`).
+
+A worked example lives at
+`test_puzzles/script_lightning_bolt_kills_creature.pzl`: P0 is scripted to bolt
+the opponent's Grizzly Bears, and the `[assertions]` then check `spell cast
+Lightning Bolt`, `creature died Grizzly Bears`, and `opponent graveyard contains
+Grizzly Bears` — an active-card aspect that the AI-only runner could not assert.
+
 ## The assertion DSL
 
 When the engine is built with the `puzzle-assert` Cargo feature, a `[assertions]`
