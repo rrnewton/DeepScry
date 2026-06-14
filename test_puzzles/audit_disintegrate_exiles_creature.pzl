@@ -1,0 +1,63 @@
+# Card-audit (mtg-948 Part B): Disintegrate — X damage + exile-on-death (scripted).
+#
+# Closed issue mtg-499 closed Disintegrate as WORKING but carried NO scripted
+# puzzle with semantic assertions (the pre-existing disintegrate_exiles_creature.pzl
+# is golden-log-only with no [assertions] section, heuristic-driven). This audit
+# puzzle SCRIPTS the cast and asserts the distinctive replacement effect.
+#
+# Disintegrate is {X}{R} sorcery: "deals X damage to any target. If it's a
+# creature, it can't be regenerated this turn, and if it would die this turn,
+# exile it instead." (SP$ DealDamage | NumDmg$ X | ReplaceDyingDefined$
+# ThisTargetedCard.Creature). The replacement (CR 614) sends a lethally-damaged
+# creature to EXILE, not the graveyard.
+#
+# X is funded by mana: P0 has exactly 4 Mountains, paying {X}{R} at X=3, so
+# Disintegrate deals 3 to a 2/2 Grizzly Bears — lethal — and the bears is EXILED
+# (not put in the graveyard).
+#
+# Aspects exercised (issue mtg-499):
+#   1. Parses + castable as a {X}{R} sorcery (spell cast assertion).
+#   2. X-paid damage: 4 Mountains -> X=3 to the chosen creature.
+#   3. ReplaceDyingDefined exile-on-death: the lethally-damaged creature goes to
+#      EXILE, and is NOT in the graveyard (the discriminating assertions).
+#
+# Scenario:
+#   - P0: Disintegrate in hand, 4 Mountains (-> X=3 + {R}).
+#   - P1: a Grizzly Bears (2/2) it controls.
+#   - Script: P0 casts Disintegrate at the Grizzly Bears; 3 damage is lethal;
+#     the bears is exiled, not put in P1's graveyard.
+
+[metadata]
+Name:Card Audit - Disintegrate Exiles a Lethally-Damaged Creature
+Goal:Win
+Turns:1
+Difficulty:Easy
+Description:P0 scripts Disintegrate ({X}{R} sorcery) at P1's 2/2 Grizzly Bears with X=3 (4 Mountains). The 3 damage is lethal, and the ReplaceDyingDefined clause EXILES the creature instead of putting it in the graveyard. Backs issue mtg-499 (DealDamageXPaid + exile-on-death replacement; CR 614).
+
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Disintegrate
+p0battlefield=Mountain;Mountain;Mountain;Mountain
+p0library=Mountain;Mountain;Mountain;Mountain;Mountain
+
+p1life=20
+p1battlefield=Grizzly Bears
+p1library=Forest;Forest;Forest;Forest;Forest
+
+[p0_script]
+# Cast Disintegrate at P1's Grizzly Bears. With 4 Mountains the engine pays
+# {X}{R} at X=3, dealing 3 (lethal to the 2/2).
+cast Disintegrate targeting Grizzly Bears
+
+[assertions]
+# The X-burn sorcery was actually cast.
+spell cast Disintegrate
+# The lethally-damaged creature was EXILED (replacement effect), so it is in
+# P1's exile zone...
+opponent exile contains Grizzly Bears
+# ...and it is NOT in P1's graveyard (this is what distinguishes Disintegrate
+# from ordinary lethal burn — the exile replacement, CR 614).
+NOT opponent graveyard contains Grizzly Bears

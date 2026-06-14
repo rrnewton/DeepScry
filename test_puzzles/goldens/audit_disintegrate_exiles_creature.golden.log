@@ -1,0 +1,52 @@
+  >>> Turn 1 - Player 1 20 (Player 2 20) <<<<
+Player 1 casts Disintegrate (3) (putting on stack)
+  → X = 3
+  → targeting Grizzly Bears (13)
+Tap Mountain for {R}
+Tap Mountain for {R}
+Tap Mountain for {R}
+Tap Mountain for {R}
+Disintegrate (3) resolves
+Grizzly Bears (13) takes 3 damage (total: 3)
+Disintegrate (3) deals 3 damage to Grizzly Bears (13)
+Disintegrate (3): Grizzly Bears (13) will be exiled if it would die this turn
+Grizzly Bears (13) is exiled
+Grizzly Bears (13) exiled instead of dying
+
+  >>> Turn 2 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Forest (18)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (18)
+
+  >>> Turn 3 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Mountain (12)
+
+  >>> Turn 4 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Forest (17)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (17)
+
+  >>> Turn 5 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Mountain (11)
+
+  >>> Turn 6 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Forest (16)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (16)
+
+  >>> Turn 7 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Mountain (10)
+
+  >>> Turn 8 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Forest (15)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (15)
+
+  >>> Turn 9 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Mountain (9)
+
+  >>> Turn 10 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Forest (14)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (14)
+Player 2 has lost the game (decked). Player 1 wins!

@@ -1,0 +1,49 @@
+  >>> Turn 1 - Player 1 20 (Player 2 20) <<<<
+Player 1 casts Drain Life (3) (putting on stack)
+  → X = 2
+  → targeting Player 2
+Tap Swamp for {B}
+Tap Swamp for {B}
+Tap Swamp for {B}
+Tap Swamp for {B}
+Drain Life (3) resolves
+Player 1 gains 2 life (life: 22)
+Drain Life (3) deals 2 damage to Player 2 (life: 18)
+
+  >>> Turn 2 - Player 2 18 (Player 1 22) <<<<
+Player 2 draws Mountain (17)
+<Choice> Player 2 chose 0 - play Mountain
+Player 2 plays Mountain (17)
+
+  >>> Turn 3 - Player 1 22 (Player 2 18) <<<<
+Player 1 draws Swamp (12)
+
+  >>> Turn 4 - Player 2 18 (Player 1 22) <<<<
+Player 2 draws Mountain (16)
+<Choice> Player 2 chose 0 - play Mountain
+Player 2 plays Mountain (16)
+
+  >>> Turn 5 - Player 1 22 (Player 2 18) <<<<
+Player 1 draws Swamp (11)
+
+  >>> Turn 6 - Player 2 18 (Player 1 22) <<<<
+Player 2 draws Mountain (15)
+<Choice> Player 2 chose 0 - play Mountain
+Player 2 plays Mountain (15)
+
+  >>> Turn 7 - Player 1 22 (Player 2 18) <<<<
+Player 1 draws Swamp (10)
+
+  >>> Turn 8 - Player 2 18 (Player 1 22) <<<<
+Player 2 draws Mountain (14)
+<Choice> Player 2 chose 0 - play Mountain
+Player 2 plays Mountain (14)
+
+  >>> Turn 9 - Player 1 22 (Player 2 18) <<<<
+Player 1 draws Swamp (9)
+
+  >>> Turn 10 - Player 2 18 (Player 1 22) <<<<
+Player 2 draws Mountain (13)
+<Choice> Player 2 chose 0 - play Mountain
+Player 2 plays Mountain (13)
+Player 2 has lost the game (decked). Player 1 wins!

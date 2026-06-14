@@ -1,0 +1,55 @@
+# Card-audit (mtg-948 Part B): Sinkhole — destroy target land (scripted).
+#
+# Closed issue mtg-542 closed Sinkhole as WORKING but carried NO scripted puzzle
+# with semantic assertions (the pre-existing sinkhole_destroys_land.pzl is an
+# old golden-log-only puzzle with no [assertions] section and relies on the
+# heuristic AI to pick the target). This audit puzzle SCRIPTS the cast and
+# asserts the outcome.
+#
+# Sinkhole is a {B}{B} sorcery: "Destroy target land." (CR 701.7 destroy -> put
+# into owner's graveyard).
+#
+# Aspects exercised (issue mtg-542):
+#   1. Parses + castable as a {B}{B} sorcery (spell cast assertion).
+#   2. Land-restricted targeting (ValidTgts$ Land) resolves to a land.
+#   3. Destroy effect moves the targeted land battlefield -> owner's graveyard.
+#
+# Scenario:
+#   - P0: Sinkhole in hand, 2 Swamps to pay {B}{B}.
+#   - P1: a single Plains on the battlefield (the only legal land target whose
+#     name is unambiguous — P0's lands are Swamps, so `targeting Plains` picks
+#     P1's land, not P0's).
+#   - Script: P0 casts Sinkhole at the Plains; it is destroyed into P1's graveyard.
+
+[metadata]
+Name:Card Audit - Sinkhole Destroys a Land
+Goal:Win
+Turns:1
+Difficulty:Easy
+Description:P0 scripts Sinkhole ({B}{B} sorcery) at P1's Plains, destroying it. The land moves from P1's battlefield to P1's graveyard. Backs issue mtg-542 (Destroy over ValidTgts$ Land; CR 701.7).
+
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Sinkhole
+p0battlefield=Swamp;Swamp
+p0library=Swamp;Swamp;Swamp;Swamp;Swamp
+
+p1life=20
+p1battlefield=Plains
+p1library=Mountain;Mountain;Mountain;Mountain;Mountain
+
+[p0_script]
+# Destroy P1's only Plains. The name selector is unambiguous: P0 pays with
+# Swamps, so the only Plains on the board belongs to P1.
+cast Sinkhole targeting Plains
+
+[assertions]
+# The land-destruction spell was actually cast by the script.
+spell cast Sinkhole
+# The destroyed Plains is now in its owner's (P1's) graveyard. Assertions are
+# evaluated on the FINAL game state; a destroyed permanent stays in the
+# graveyard, so this is a stable end-state check.
+opponent graveyard contains Plains

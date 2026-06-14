@@ -1,0 +1,43 @@
+  >>> Turn 1 - Player 1 20 (Player 2 20) <<<<
+Player 1 casts Mind Twist (3) (putting on stack)
+  → X = 2
+Tap Swamp for {B}
+Tap Swamp for {B}
+Tap Swamp for {B}
+Mind Twist (3) resolves
+Forest is discarded
+Player 2 discards Forest
+Island is discarded
+Player 2 discards Island
+Mind Twist (3) causes Player 2 to discard 2 card(s)
+
+  >>> Turn 2 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Mountain (19)
+<Choice> PASS_UNTIL waiting (turn=2 step=Main1); target turn=Some(3) step=Some(Main1)
+<Choice> PASS_UNTIL waiting (turn=2 step=Main2); target turn=Some(3) step=Some(Main1)
+
+  >>> Turn 3 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Swamp (11)
+
+  >>> Turn 4 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Mountain (18)
+<Choice> PASS_UNTIL satisfied at turn=4 step=Main1: resuming script
+
+  >>> Turn 5 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Swamp (10)
+
+  >>> Turn 6 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Mountain (17)
+
+  >>> Turn 7 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Swamp (9)
+
+  >>> Turn 8 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Mountain (16)
+
+  >>> Turn 9 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Swamp (8)
+
+  >>> Turn 10 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Mountain (15)
+Player 2 has lost the game (decked). Player 1 wins!

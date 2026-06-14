@@ -1,0 +1,69 @@
+# Card-audit (mtg-948 Part B): Wheel of Fortune — each player discards hand, draws 7 (scripted).
+#
+# Closed issue mtg-395 closed Wheel of Fortune as WORKING but carried NO scripted
+# puzzle with semantic assertions (the pre-existing wheel_of_fortune_each_player.pzl
+# is golden-log-only with no [assertions], heuristic-driven). This audit puzzle
+# SCRIPTS the cast and asserts the symmetric hand-refill.
+#
+# Wheel of Fortune is {2}{R} sorcery: "Each player discards their hand, then
+# draws seven cards." (SP$ Discard Mode$ Hand Defined$ Player -> DB$ Draw
+# Defined$ Player NumCards$ 7). Two chained effects applied to EVERY player.
+#
+# Aspects exercised (issue mtg-395):
+#   1. Parses + castable as a {2}{R} sorcery (spell cast assertion).
+#   2. Defined$ Player (= each player) symmetric discard: both players' starting
+#      hands are emptied to the graveyard.
+#   3. Chained draw-7 for EACH player: both players end with a refilled hand.
+#
+# Scenario:
+#   - P0: Wheel of Fortune + 2 junk cards in hand (Forest;Forest), 3 Mountains to
+#     pay {2}{R}, a deep library to draw 7 from.
+#   - P1: 2 junk cards in hand (Plains;Plains), a deep library.
+#   - Both players are scripted to PASS after the cast so they do not play lands
+#     out of hand (which would shrink the hand count). They still draw on their
+#     own turns (only grows the count), so the `ge 7` lower bounds hold durably.
+#
+# After Wheel resolves: P0 discarded its 2 junk cards (Wheel itself is on the
+# stack / heads to graveyard) and drew 7; P1 discarded its 2 junk cards and drew
+# 7. Both hands end at >= 7.
+
+[metadata]
+Name:Card Audit - Wheel of Fortune Refills Both Hands
+Goal:Win
+Turns:1
+Difficulty:Easy
+Description:P0 scripts Wheel of Fortune ({2}{R} sorcery). Each player discards their hand and draws 7. Both players' starting junk hands go to the graveyard and both refill to 7+ cards; Wheel itself lands in P0's graveyard. Backs issue mtg-395 (Discard Mode$ Hand + chained Draw 7, Defined$ Player = symmetric).
+
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Wheel of Fortune;Forest;Forest
+p0battlefield=Mountain;Mountain;Mountain
+p0library=Island;Island;Island;Island;Island;Island;Island;Island;Island;Island
+
+p1life=20
+p1hand=Plains;Plains
+p1battlefield=
+p1library=Swamp;Swamp;Swamp;Swamp;Swamp;Swamp;Swamp;Swamp;Swamp;Swamp
+
+[p0_script]
+# Cast Wheel of Fortune, then pass for the rest of the game (do not play lands,
+# which would shrink the refilled hand).
+cast Wheel of Fortune
+PASS_UNTIL turn=5,phase=MAIN1
+
+[p1_script]
+# P1 takes no proactive action.
+PASS_UNTIL turn=5,phase=MAIN1
+
+[assertions]
+# The draw-7 sorcery was actually cast.
+spell cast Wheel of Fortune
+# Wheel of Fortune itself is in P0's graveyard after resolving (sorcery -> GY).
+graveyard contains Wheel of Fortune
+# Each player drew seven: both hands refilled to at least 7 (durable lower
+# bound — later draw steps only add cards; neither player plays cards out).
+hand count ge 7
+opponent hand count ge 7

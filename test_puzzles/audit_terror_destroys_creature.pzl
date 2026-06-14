@@ -1,0 +1,58 @@
+# Card-audit (mtg-948 Part B): Terror — destroy nonblack nonartifact creature (scripted).
+#
+# Closed issue mtg-549 closed Terror as WORKING but carried NO scripted puzzle
+# with semantic assertions (the pre-existing terror_destroys_creature.pzl is an
+# old golden-log-only puzzle with no [assertions] section, heuristic-driven).
+# This audit puzzle SCRIPTS the cast and asserts the outcome.
+#
+# Terror is a {1}{B} instant: "Destroy target nonartifact, nonblack creature. It
+# can't be regenerated." (SP$ Destroy | ValidTgts$ Creature.nonArtifact+nonBlack
+# | NoRegen$ True). Destroy -> owner's graveyard (CR 701.7).
+#
+# Aspects exercised (issue mtg-549):
+#   1. Parses + castable as a {1}{B} instant (spell cast assertion).
+#   2. Targeting restriction ValidTgts$ Creature.nonArtifact+nonBlack accepts a
+#      green 2/2 Grizzly Bears (nonblack, nonartifact).
+#   3. Destroy effect moves the targeted creature battlefield -> owner's
+#      graveyard. (Asserted by graveyard membership rather than the `creature
+#      died` event, because the destroy-death event-emission widening is a
+#      sibling in-flight change, mtg-961; graveyard membership is robust either
+#      way.)
+#
+# Scenario:
+#   - P0: Terror in hand, 1 Swamp + 1 Mountain to pay {1}{B}.
+#   - P1: a Grizzly Bears (2/2, green) it controls.
+#   - Script: P0 casts Terror at the Grizzly Bears; it is destroyed into P1's
+#     graveyard.
+
+[metadata]
+Name:Card Audit - Terror Destroys a Nonblack Creature
+Goal:Win
+Turns:1
+Difficulty:Easy
+Description:P0 scripts Terror ({1}{B} instant) at P1's green 2/2 Grizzly Bears, destroying it into P1's graveyard. Backs issue mtg-549 (Destroy over ValidTgts$ Creature.nonArtifact+nonBlack, NoRegen; CR 701.7).
+
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Terror
+p0battlefield=Swamp;Mountain
+p0library=Swamp;Swamp;Swamp;Swamp;Swamp
+
+p1life=20
+p1battlefield=Grizzly Bears
+p1library=Forest;Forest;Forest;Forest;Forest
+
+[p0_script]
+# Destroy P1's Grizzly Bears (the only creature on the board, so the selector is
+# unambiguous).
+cast Terror targeting Grizzly Bears
+
+[assertions]
+# The removal instant was actually cast by the script.
+spell cast Terror
+# The destroyed creature is now in its owner's (P1's) graveyard. Stable
+# end-state check (a destroyed creature stays in the graveyard).
+opponent graveyard contains Grizzly Bears
