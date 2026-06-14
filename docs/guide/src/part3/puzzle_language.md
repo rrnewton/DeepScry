@@ -96,18 +96,27 @@ p1life = 5
 p1battlefield = Llanowar Elves
 ```
 
-Per-player lines use a `p0` / `p1` prefix followed by the field name
-(`life`, `landsplayed`, `landsplayedlastturn`, and the zone names `hand`,
-`battlefield`, `graveyard`, `library`, `exile`). Zone contents are
-semicolon-separated card notations.
+Per-player lines use a `p0` / `p1` prefix followed by the field name. The
+recognised fields are the scalar/counter fields `life`, `landsplayed`,
+`landsplayedlastturn`, `counters`, `manapool`, `persistentmana`, and the zone
+names `hand`, `battlefield`, `graveyard`, `library`, `exile`, `command` (see the
+`match field` arm in `state.rs`). Zone contents are semicolon-separated card
+notations. (`command` is parsed but currently dropped at load time — see the
+note below.)
 
 > **Discrepancy (flagged):** the grammar doc lists `human` / `ai` as valid
-> per-player prefixes *and* lists a `command` zone. In the code, per-player state
-> lines only recognise the **`p0` / `p1`** prefixes (the parser strips a 2-char
-> prefix), and there is **no command zone** in the loaded state. (`human`/`ai`
-> work only for the `activeplayer` line, not for `…life`/`…hand` lines.) A
-> puzzle that writes `humanlife=` or `p0command=` will not load those lines as
-> intended.
+> per-player prefixes. In the code, per-player state lines only recognise the
+> **`p0` / `p1`** prefixes (the parser strips a 2-char prefix). `human` / `ai`
+> work only for the `activeplayer` line, not for `…life` / `…hand` lines — so a
+> puzzle that writes `humanlife=` will not load that line as intended.
+>
+> The `command` zone is a subtler case: the `[state]` parser **does** recognise
+> `p0command=` and parses it into a `command: Vec<CardDefinition>` field (see the
+> `command` arms in `state.rs`). However, the **loader currently drops it**,
+> because the runtime game state (`PlayerZones`) has no command zone yet (the
+> puzzle `README.md` notes "Command zone not yet in PlayerZones (requires
+> architecture change)"). So `p0command=` parses cleanly but has no effect on the
+> loaded board until a command zone is added to the runtime.
 
 > **Discrepancy (flagged):** the bulk runner's own comments cite some load
 > failures as `Unknown phase: DECLAREATK` and `Unknown counter type: TIME`.
@@ -139,24 +148,50 @@ Each non-blank, non-comment line in `[assertions]` is one assertion. The grammar
 ```text
 assertion    ::= 'NOT'? scope? predicate
 scope        ::= 'me' | 'opponent'        (default: me = the puzzle's p0)
+predicate    ::= <keyword> ...            (keyword selects the assertion kind)
 ```
+
+A predicate always starts with one of the leading keywords the parser
+recognises (see the error enumeration at the bottom of `parse_predicate` in
+`parser.rs`):
+
+```text
+life | hand | graveyard | battlefield | exile | library
+   | game | turn | trigger | spell | creature
+```
+
+The `life` keyword leads two different predicates: `life <cmp> <int>` (the
+final life total) and `life gained <cmp> <int>` (a life-gain event count — see
+the event assertions below). The keywords `trigger`, `spell`, and `creature`
+all lead event-backed predicates.
 
 The assertion **kinds** are exactly the variants of `AssertionKind` in
 `mtg-engine/src/puzzle/assert/mod.rs`, evaluated by
 `assert/evaluator.rs`:
 
-| Kind | Syntax | Checks |
-| --- | --- | --- |
-| `Life` | `life <cmp> <int>` | a player's life total |
-| `ZoneCount` | `<zone> count <cmp> <int>` | number of cards in a zone |
-| `ZoneContains` | `<zone> contains <card name>` | a named card is present in a zone (case-insensitive) |
-| `LibraryTopContains` | `library top <N> contains <card name>` | a named card is among the top N of the library |
-| `GameResult` | `game won` / `lost` / `drawn` / `ended` | the game's result |
-| `TurnNumber` | `turn <cmp> <int>` | number of turns played |
+The first six kinds read **final game state** or the **game result**. The last
+four are **event-backed**: they read the structured event log (see
+[Event-backed assertions](#event-backed-assertions) below), and the table marks
+their data source accordingly.
+
+| Kind | Syntax | Checks | Data source |
+| --- | --- | --- | --- |
+| `Life` | `life <cmp> <int>` | a player's life total | final state |
+| `ZoneCount` | `<zone> count <cmp> <int>` | number of cards in a zone | final state |
+| `ZoneContains` | `<zone> contains <card name>` | a named card is present in a zone (case-insensitive) | final state |
+| `LibraryTopContains` | `library top <N> contains <card name>` | a named card is among the top N of the library | final state |
+| `GameResult` | `game won` / `lost` / `drawn` / `ended` | the game's result | game result |
+| `TurnNumber` | `turn <cmp> <int>` | number of turns played | game result |
+| `TriggerFired` | `trigger fired` / `trigger fired from <card name>` | a triggered ability fired (optionally from a named source) | event log |
+| `SpellCast` | `spell cast` / `spell cast <card name>` | a spell was cast (optionally a named one) | event log |
+| `CreatureDied` | `creature died` / `creature died <card name>` | a creature died (optionally a named one) | event log |
+| `LifeGained` | `life gained <cmp> <int>` | total life a player gained over the game | event log |
 
 Where `<zone>` is one of `hand`, `graveyard`, `battlefield`, `exile`, `library`
 (the `AssertZone` enum), and `<cmp>` is one of `eq`, `ne`, `lt`, `le`, `gt`,
-`ge`.
+`ge`. For the event-backed kinds, the trailing `<card name>` is optional: an
+empty name matches **any** trigger / spell / creature death, and matching is
+**case-insensitive**.
 
 ```ini
 [assertions]
@@ -176,34 +211,62 @@ game won
 turn le 2
 # And I did NOT lose
 NOT game lost
+# A Lightning Bolt spell was cast at some point (event-backed)
+spell cast Lightning Bolt
+# Some trigger fired (event-backed, any source)
+trigger fired
+# My opponent gained at least 5 life over the game (event-backed)
+opponent life gained ge 5
 ```
 
-### What backs each assertion — and what does *not* exist yet
+### What backs each assertion
 
-Every assertion above reads **final game state** (life totals, zone contents,
-library order) or the **game result** (winner / turns played). The evaluator
-reads these from `GameState` and `GameResult` directly.
+The first six kinds (`Life`, `ZoneCount`, `ZoneContains`, `LibraryTopContains`,
+`GameResult`, `TurnNumber`) read **final game state** (life totals, zone
+contents, library order) or the **game result** (winner / turns played). The
+evaluator reads these from `GameState` and `GameResult` directly.
 
-> **Discrepancy / status (flagged, important for the v2 review):** the assertion
-> DSL document describes a *future* family of **event-based** assertions —
-> "trigger fired", "creature died", "spell cast", "zone change" — backed by a
-> structured event stream (an `EventLogView` over `LogEvent`s). The current state
-> of the code is:
->
-> - The structured event log **exists and is populated** at real engine call
->   sites: `LogEvent` / `EventLogView` live in `mtg-engine/src/game/log_event.rs`
->   and events are pushed for spell casts, triggers, combat, etc.
-> - **But no assertion kind consumes it.** There is no event-backed assertion
->   keyword, no parser branch, and no evaluator branch for it. A search of
->   `mtg-engine/src/puzzle/` finds **zero** references to `EventLogView`,
->   `LogEvent`, or "trigger fired" / "creature died" / "spell cast". The puzzle
->   runners never even enable the event log.
->
-> So the event-assertion layer is **half-built**: the engine-side event stream
-> has landed, but it is not yet wired into the puzzle assertion DSL. The
-> assertion doc also still names the type `GameEvent`; the real type is
-> `LogEvent`. **None of the six assertion kinds that exist today are
-> event-backed** — they are all final-state / result checks.
+### Event-backed assertions
+
+The remaining four kinds are **event-backed**: instead of inspecting the final
+board, they ask "did this *happen* at any point during the game?" by scanning the
+structured event log. They are **live and wired into the DSL** (this was the
+puzzle "Phase 2" feature):
+
+| Syntax | Matches |
+| --- | --- |
+| `trigger fired` | any triggered ability fired |
+| `trigger fired from <card name>` | a trigger fired from the named source |
+| `spell cast` | any spell was cast |
+| `spell cast <card name>` | the named spell was cast |
+| `creature died` | any creature died |
+| `creature died <card name>` | the named creature died |
+| `life gained <cmp> <int>` | a player's total life gained (scope-aware) compares to `<int>` |
+
+How they behave:
+
+- **Names are case-insensitive**, and an **empty name means "any"**: `spell
+  cast` matches any spell, `spell cast Lightning Bolt` matches only that spell.
+- `life gained` is **scope-aware** like the other player-scoped predicates, so
+  `opponent life gained ge 5` checks the opponent's total life gained. It sums
+  the positive life-change deltas recorded in the event log.
+- These kinds **consume the event log**: the evaluator scans an
+  `EventLogView<'_>` over the engine's `LogEvent` stream (defined in
+  `mtg-engine/src/game/log_event.rs`). The variants matched are
+  `LogEvent::TriggerFired`, `SpellCast`, `CreatureDied`, and (for `life
+  gained`) `LifeChanged`.
+- The puzzle **runners always enable the event log**, so these assertions work
+  out of the box: the e2e runner enables it explicitly, and the bulk runner
+  passes `final_game.logger.events()` into the evaluator. If a run is performed
+  *without* the event log, an event assertion fails with the error message
+  **"event log not enabled for this puzzle run"** rather than silently passing.
+
+> **Historical note:** an earlier draft of this guide (and the assertion-DSL
+> design doc) described these event assertions as a *future* family that "does
+> not exist yet" and named the event type `GameEvent`. That is now stale: the
+> event assertions shipped, and the real event type is **`LogEvent`** (viewed
+> through `EventLogView`). The design doc's `GameEvent` name was never the
+> shipped one.
 
 A couple of smaller behavioural notes the docs omit, confirmed in `evaluator.rs`:
 
@@ -249,8 +312,10 @@ Two test runners exercise puzzles, wired to Make targets in the repository
 > **Status note for the phased plan.** The assertion-DSL doc is organised as
 > phases (final-state assertions → event stream → golden oracle → bulk runner →
 > rewind diff → migrate external assertions) and still labels itself "Phase 1
-> implemented." In reality the **golden oracle** and the **bulk parallel runner**
-> have both landed, and the engine-side **event log** exists (though not yet
-> exposed as assertions). So the doc *understates* progress on those fronts while
-> *overstating* the `[golden_log]`-hash design it never shipped. This guide's
-> chapter reflects the code as it stands.
+> implemented." In reality much more has landed: the **final-state assertions**,
+> the **event-backed assertions** (the four `trigger fired` / `spell cast` /
+> `creature died` / `life gained` kinds documented above — the puzzle "Phase 2"
+> work), the **golden oracle**, and the **bulk parallel runner** are all live. So
+> the doc *understates* progress on those fronts while *overstating* the
+> `[golden_log]`-hash design it never shipped. This guide's chapter reflects the
+> code as it stands.
