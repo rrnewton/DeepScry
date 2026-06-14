@@ -841,7 +841,17 @@
             flex-direction: column;
             flex: 0 1 auto;
             min-width: 90px;
-            max-width: 100%;
+            /* Cap a section at half the battlefield width so a multi-card
+               section (e.g. "Lands (4)") wraps its OWN cards into a compact
+               block instead of stretching across one long row — which would
+               push sibling sections (e.g. "Creatures (1)") onto a new row and
+               defeat the dense horizontal packing. A section still grows up to
+               half the pane; when it's the ONLY section the inner card wrap +
+               justify-content:center keep it visually balanced. Larger card
+               sizes (chosen by the Rust layout engine against the pane-body
+               rect) made the old unconstrained `max-width:100%` overflow the
+               row — see web/test_battlefield_layout.js. */
+            max-width: 50%;
         }
         .bf-section-label {
             font-size: 10px;
