@@ -181,6 +181,14 @@ fn run_one(path: &Path, card_db: &Arc<CardDatabase>) -> PuzzleOutcome {
             rt.borrow().block_on(async move {
                 let mut game = load_puzzle_into_game(&puzzle, &card_db_ref).await?;
                 game.seed_rng(42);
+                // Enable the structured event log BEFORE the game plays so
+                // event-level assertions (trigger fired / spell cast / creature
+                // died / life gained) have a populated log to query. Mirrors
+                // puzzle_assert_e2e.rs. The event log is observability-only and
+                // lives outside the rewind-hashed GameState (logger-side), so
+                // enabling it does not perturb determinism / network-shadow
+                // hashes. See mtg-944 / mtg-947.
+                game.logger.enable_event_log();
 
                 let players: Vec<_> = game.players.iter().map(|p| p.id).collect();
                 let p0_id = players[0];
@@ -192,13 +200,20 @@ fn run_one(path: &Path, card_db: &Arc<CardDatabase>) -> PuzzleOutcome {
                 let mut game_loop = GameLoop::new(&mut game).with_verbosity(VerbosityLevel::Silent);
                 let game_result = game_loop.run_game(&mut c0, &mut c1)?;
 
-                let final_game = game_loop.game.clone();
+                // Borrow the FINAL game state directly — do NOT clone it.
+                // `GameLogger::clone()` deliberately starts the clone with an
+                // EMPTY event_log (it mirrors the string log_buffer in this
+                // regard), so a clone would discard every recorded event and
+                // all event assertions would see an empty log. The e2e path
+                // (puzzle_assert_e2e.rs) reads the live game for the same
+                // reason. mtg-944/947.
+                let final_game: &mtg_engine::game::GameState = game_loop.game;
 
                 // Evaluate assertions if present. Pass the structured event-log
                 // view so event assertions (trigger fired / spell cast /
                 // creature died / life gained) can resolve against it.
                 let events = final_game.logger.events();
-                let report = evaluate_assertions(&puzzle.assertions, &final_game, &game_result, Some(&events));
+                let report = evaluate_assertions(&puzzle.assertions, final_game, &game_result, Some(&events));
 
                 Ok::<_, mtg_engine::MtgError>((puzzle.assertions.len(), report))
             })
@@ -488,7 +503,17 @@ fn bulk_puzzle_check() {
     //   Upper bounds with ~30% headroom. Decrease as fixes land; NEVER increase
     //   without a beads issue justification.
     const MAX_PANICS: usize = 50; // 36 observed; +14 headroom
-    const MAX_ASSERT_FAIL: usize = 10; // 0 observed; small buffer for flakiness
+                                  // 2026-06-13 (mtg-944/947): once the bulk runner enables the structured
+                                  // event log and the engine emits LifeChanged for combat lifelink +
+                                  // TriggerFired for death-watcher triggers, the Fecundity/Nighthawk showcase
+                                  // and spirit_link_aura puzzles now PASS their event assertions. Remaining
+                                  // assert-fail puzzles: 4 — coral_atoll_unless_return + daze_island_return_alt_cost
+                                  // (pre-existing alt-cost gaps, mtg-935) and spirit_link_blocked_creature_damage +
+                                  // spirit_link_noncombat_pinger (Spirit Link's "deals damage -> gain life"
+                                  // trigger does not fire for combat-damage-to-a-creature or non-combat
+                                  // damage — a GAMEPLAY gap, not an observability gap; tracked in mtg-935).
+                                  // Baseline tightened 10 -> 5 (4 observed + 1 buffer).
+    const MAX_ASSERT_FAIL: usize = 5;
     const MAX_LOAD_ERRORS: usize = 30; // 19 observed; +11 headroom
 
     let mut hard_failures = Vec::new();

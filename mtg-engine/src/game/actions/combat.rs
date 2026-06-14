@@ -1136,11 +1136,21 @@ impl GameState {
         // BTreeMap iterates in CardId order -- deterministic for network play.
         for (creature_id, total_damage) in &damage_dealt_by_creature {
             // Uses has_keyword_with_effects to account for granted lifelink
-            if self.has_keyword_with_effects(*creature_id, Keyword::Lifelink) {
+            if self.has_keyword_with_effects(*creature_id, Keyword::Lifelink) && *total_damage > 0 {
                 if let Ok(creature) = self.cards.get(*creature_id) {
                     let controller = creature.controller;
                     if let Ok(player) = self.get_player_mut(controller) {
                         player.gain_life(*total_damage);
+                        let new_total = player.life;
+                        // Observability: record the lifelink life-gain in
+                        // the structured event log so `life gained` puzzle
+                        // assertions fire for combat lifelink (mtg-944/947).
+                        // Event-log only; no gameplay/undo/hash effect.
+                        self.logger.push_event(crate::game::log_event::LogEvent::LifeChanged {
+                            player: controller,
+                            delta: *total_damage,
+                            new_total,
+                        });
                     }
                 }
             }

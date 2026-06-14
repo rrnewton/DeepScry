@@ -8073,6 +8073,15 @@ impl GameState {
             // Log the trigger
             if let Some(equip) = self.cards.try_get(equip_id) {
                 self.logger.gamelog(&format!("Trigger: {} - {}", equip.name, desc));
+                // Structured event: equipment/aura "equipped creature dies"
+                // watcher trigger fired (e.g. Skullclamp). Event-log only;
+                // no gameplay/undo/hash effect (mtg-944/947).
+                self.logger.push_event(crate::game::log_event::LogEvent::TriggerFired {
+                    source_id: equip_id,
+                    source_name: equip.name.to_string(),
+                    controller: equip_controller,
+                    description: desc.clone(),
+                });
             }
 
             let ctx = TriggerContext::new(equip_id, equip_controller);
@@ -8129,6 +8138,15 @@ impl GameState {
             for (source_id, source_controller, effects, desc) in damaged_dies_triggers {
                 if let Some(source) = self.cards.try_get(source_id) {
                     self.logger.gamelog(&format!("Trigger: {} - {}", source.name, desc));
+                    // Structured event: "damaged creature dies" watcher trigger
+                    // fired (e.g. Sengir Vampire). Event-log only; no
+                    // gameplay/undo/hash effect (mtg-944/947).
+                    self.logger.push_event(crate::game::log_event::LogEvent::TriggerFired {
+                        source_id,
+                        source_name: source.name.to_string(),
+                        controller: source_controller,
+                        description: desc.clone(),
+                    });
                 }
                 let ctx = TriggerContext::new(source_id, source_controller);
                 for effect in effects {
@@ -8205,6 +8223,17 @@ impl GameState {
             for (source_id, effects, desc) in creature_dies_triggers {
                 if let Some(source) = self.cards.try_get(source_id) {
                     self.logger.gamelog(&format!("Trigger: {} - {}", source.name, desc));
+                    // Structured event: a death-WATCHER trigger fired (e.g.
+                    // Fecundity, Blood Artist — "whenever a creature dies").
+                    // The SOURCE is the watcher, not the dying creature, so
+                    // `trigger fired from <Watcher>` matches. Event-log only;
+                    // no gameplay/undo/hash effect (mtg-944/947).
+                    self.logger.push_event(crate::game::log_event::LogEvent::TriggerFired {
+                        source_id,
+                        source_name: source.name.to_string(),
+                        controller: source.controller,
+                        description: desc.clone(),
+                    });
                 }
                 // ctx.controller = the DYING creature's controller, so a
                 // placeholder draw lands on them (Defined$ TriggeredCardController).

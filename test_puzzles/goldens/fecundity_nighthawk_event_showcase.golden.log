@@ -1,0 +1,29 @@
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=1)
+Player 1 declares Vampire Nighthawk (7) (2/3) as attacker
+<Choice> chose 1 blockers for 1 attackers
+Player 2 declares Wind Drake (13) as blocker for Vampire Nighthawk (7)
+Vampire Nighthawk (7) deals 2 damage to Wind Drake (13)
+Wind Drake (13) deals 2 damage to Vampire Nighthawk (7)
+Trigger: Fecundity - Whenever a creature dies, that creature's controller may draw a card.
+Player 2 draws Island (16)
+Wind Drake (13) goes to graveyard
+Wind Drake (13) dies from combat damage
+
+  >>> Turn 3 - Player 2 4 (Player 1 17) <<<<
+Player 2 draws Island (15)
+<Choice> Player 2 chose 0 - play Island
+Player 2 plays Island (15)
+
+  >>> Turn 4 - Player 1 17 (Player 2 4) <<<<
+Player 1 draws Swamp (10)
+<Choice> Player 1 chose 0 - play Swamp
+Player 1 plays Swamp (10)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Vampire Nighthawk (7) (2/3) as attacker
+Vampire Nighthawk (7) deals 2 damage to Player 2 (life: 2)
+
+  >>> Turn 5 - Player 2 2 (Player 1 19) <<<<
+Player 2 draws Island (14)
+<Choice> Player 2 chose 0 - play Island
+Player 2 plays Island (14)
+Player 2 has lost the game (decked). Player 1 wins!

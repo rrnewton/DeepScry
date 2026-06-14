@@ -1,0 +1,36 @@
+[metadata]
+Name:Fecundity + Vampire Nighthawk event-assertion showcase
+Goal:Win
+Turns:4
+Difficulty:Easy
+Description:A showcase for the event-backed assertion DSL — one combat that triggers THREE different event kinds at once. P0 controls Fecundity ("Whenever a creature dies, that creature's controller may draw a card") and Vampire Nighthawk (2/3 flying, deathtouch, lifelink). P1, at 4 life, defends with a 2/2 flying Wind Drake. When P0 attacks with Nighthawk, P1 blocks with Wind Drake (it cannot let the flier through at 4 life). Deathtouch makes Nighthawk's 2 combat damage lethal, so Wind Drake dies (CR 702.2 / 510.1c); Fecundity's "a creature dies" trigger (CR 603.6) fires and Wind Drake's controller draws; and Nighthawk's lifelink (CR 702.15) gains P0 2 life from that same combat damage. The [assertions] section names all three new event kinds — a creature died, a trigger fired, and life was gained.
+
+HOW TO RUN / VERIFY: watch it play out interactively with
+  mtg tui --start-state test_puzzles/fecundity_nighthawk_event_showcase.pzl --p1 heuristic --p2 heuristic --seed 42 -v 2 --no-color-logs
+The live log prints "Wind Drake ... dies from combat damage", "Trigger: Fecundity ...", and P0's life climbing from 15 to 17 (lifelink). The bulk `[assertions]` evaluator (make puzzle-bulk-check) reads the *structured* event log; as of mtg-944/947 the bulk runner enables that log and the engine emits LifeChanged for combat lifelink and TriggerFired for death-watcher triggers (Fecundity-style), so all three assertions below now self-check GREEN in the bulk path.
+
+[state]
+turn=2
+activeplayer=p0
+activephase=MAIN1
+p0life=15
+p0hand=
+p0battlefield=Swamp; Swamp; Swamp; Fecundity; Vampire Nighthawk
+p0library=Swamp; Swamp; Swamp
+p0graveyard=
+p0exile=
+
+p1life=4
+p1hand=
+p1battlefield=Island; Island; Wind Drake
+p1library=Island; Island; Island
+p1graveyard=
+p1exile=
+
+[assertions]
+# Deathtouch makes Nighthawk's 2 combat damage lethal: the blocking Wind Drake dies.
+creature died Wind Drake
+# Fecundity sees the death and its "whenever a creature dies" trigger fires.
+trigger fired from Fecundity
+# Nighthawk's lifelink gains P0 life equal to the combat damage it dealt (2).
+life gained ge 2
