@@ -49,9 +49,14 @@ game. The relevant flags:
 - `--seed N` — the master seed for the engine and the controllers. Pass
   `--seed from_entropy` for a non-deterministic game.
 - `--seed-p1 N` / `--seed-p2 N` — override the per-controller seed.
-- `--deck-seed N` — use a *separate* seed for the initial shuffle only, so you
-  can sample different draws while keeping the same starting hands, or vice
-  versa.
+- `--deck-seed N` — seed used *only* for the initial library shuffle. After the
+  shuffle, the RNG is re-seeded to `--seed` for the rest of the game. Because the
+  whole library order is fixed by that one shuffle, **both** the opening hand
+  **and** the entire draw sequence come from `--deck-seed`; you cannot vary the
+  draws independently of the opening hand. Use this to hold the shuffle fixed
+  (same opening hand *and* same draws) while varying every *other* source of
+  randomness — random choices, coin flips, AI tie-breaks, random discard/target
+  picks — via `--seed`, or vice versa.
 - `--p1-draw "Mountain;Lightning Bolt;Mountain"` / `--p2-draw "..."` — pin the
   opening hand (1–7 cards, semicolon-separated).
 
