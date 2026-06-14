@@ -999,6 +999,61 @@ impl<'de> Deserialize<'de> for PlayerName {
     }
 }
 
+/// Deck name (the human-readable label of a loaded deck, distinct from other
+/// string types). Sourced from a `.dck` file's `Name=` metadata, or the file
+/// stem when no `Name=` is present. Used purely for display (e.g. the game-log
+/// deck header emitted before Turn 1); it is public information identical on
+/// every server/client/native/WASM path that loads the same deck.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct DeckName(std::sync::Arc<str>);
+
+impl DeckName {
+    pub fn new(s: impl Into<String>) -> Self {
+        DeckName(s.into().into())
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for DeckName {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl From<String> for DeckName {
+    fn from(s: String) -> Self {
+        DeckName(s.into())
+    }
+}
+
+impl From<&str> for DeckName {
+    fn from(s: &str) -> Self {
+        DeckName(s.into())
+    }
+}
+
+impl Serialize for DeckName {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(&self.0)
+    }
+}
+
+impl<'de> Deserialize<'de> for DeckName {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        Ok(DeckName(s.into()))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

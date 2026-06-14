@@ -411,6 +411,7 @@ impl DeckBuilderState {
         main_deck.sort_by(|a, b| a.card_name.cmp(&b.card_name));
 
         DeckList {
+            name: self.deck_name.as_ref().map(|n| crate::core::DeckName::new(n.clone())),
             main_deck,
             sideboard: Vec::new(),
             commanders: Vec::new(),

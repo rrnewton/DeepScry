@@ -1455,6 +1455,10 @@ impl DeckListInfo {
         use crate::loader::DeckEntry;
 
         crate::loader::DeckList {
+            // Network deck submissions carry no deck-name metadata; left None so
+            // server and client (which both rebuild from the same submission)
+            // agree on the absence of a deck header (network-gamelog identity).
+            name: None,
             main_deck: self
                 .main_deck
                 .iter()

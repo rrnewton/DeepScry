@@ -186,6 +186,9 @@ impl<'a> GameInitializer<'a> {
             game.is_commander_game = true;
         }
 
+        // Record deck display names (public info) for the Turn-1 gamelog header.
+        game.deck_names = [player1_deck.name.clone(), player2_deck.name.clone()];
+
         // Pre-load all unique cards to ensure cache is populated
         let mut unique_cards = std::collections::HashSet::new();
         for entry in player1_deck.main_deck.iter().chain(player1_deck.commanders.iter()) {
@@ -367,6 +370,9 @@ impl<'a> GameInitializer<'a> {
             game.is_commander_game = true;
         }
 
+        // Record deck display names (public info) for the Turn-1 gamelog header.
+        game.deck_names = [player1_deck.name.clone(), player2_deck.name.clone()];
+
         // Get player IDs
         let player1_id = game.players[0].id;
         let player2_id = game.players[1].id;
@@ -546,6 +552,7 @@ mod tests {
 
         let db = CardDatabase::new(PathBuf::from("cardsfolder")); // Empty database (no eager load)
         let deck = DeckList {
+            name: None,
             main_deck: vec![DeckEntry {
                 card_name: "Nonexistent Card".to_string(),
                 count: 1,

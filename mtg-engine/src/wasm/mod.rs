@@ -403,6 +403,7 @@ impl WasmCardDatabase {
         }
 
         let deck = DeckList {
+            name: Some(crate::core::DeckName::new(deck_name.to_string())),
             main_deck,
             sideboard,
             commanders: Vec::new(),

@@ -1,5 +1,6 @@
 //! Deck file loader (.dck format)
 
+use crate::core::DeckName;
 use crate::{MtgError, Result};
 #[cfg(feature = "native")]
 use std::fs;
@@ -83,7 +84,15 @@ impl DeckLoader {
     #[cfg(feature = "native")]
     pub fn load_from_file(path: &Path) -> Result<DeckList> {
         let content = fs::read_to_string(path).map_err(MtgError::IoError)?;
-        Self::parse(&content)
+        let mut deck = Self::parse(&content)?;
+        // Fall back to the file stem when the .dck has no `Name=` metadata, so a
+        // loaded-from-disk deck always carries a display name.
+        if deck.name.is_none() {
+            if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                deck.name = Some(DeckName::new(stem));
+            }
+        }
+        Ok(deck)
     }
 
     /// Load a deck from file with problem tracking
@@ -120,6 +129,7 @@ impl DeckLoader {
         let mut sideboard = Vec::new();
         let mut commanders = Vec::new();
         let mut problems = Vec::new();
+        let mut name: Option<DeckName> = None;
         let mut current_section = DeckSection::Main;
 
         for line in content.lines() {
@@ -143,8 +153,17 @@ impl DeckLoader {
                 continue;
             }
 
-            // Skip metadata lines (e.g., "Name=Deck Name")
+            // Metadata lines (e.g., "Name=Deck Name"). Capture the deck name for
+            // display; skip all other metadata key/value lines.
             if line.contains('=') && !line.starts_with(|c: char| c.is_ascii_digit()) {
+                if let Some((key, value)) = line.split_once('=') {
+                    if key.trim().eq_ignore_ascii_case("Name") {
+                        let trimmed = value.trim();
+                        if !trimmed.is_empty() {
+                            name = Some(DeckName::new(trimmed));
+                        }
+                    }
+                }
                 continue;
             }
 
@@ -191,6 +210,7 @@ impl DeckLoader {
 
         DeckParseResult {
             deck_list: DeckList {
+                name,
                 main_deck,
                 sideboard,
                 commanders,
@@ -233,6 +253,11 @@ pub struct DeckEntry {
 /// Represents a complete deck list
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct DeckList {
+    /// Human-readable deck name from the `Name=` metadata line, if present.
+    /// `None` when the `.dck` file has no `Name=` line (callers may then fall
+    /// back to the file stem — see `DeckLoader::load_named_from_file`).
+    #[serde(default)]
+    pub name: Option<DeckName>,
     pub main_deck: Vec<DeckEntry>,
     pub sideboard: Vec<DeckEntry>,
     /// Commander card(s) - populated from [Commander] section in .dck files.
@@ -275,9 +300,14 @@ impl DeckList {
     pub fn to_dck_format(&self, name: Option<&str>) -> String {
         let mut content = String::new();
 
-        // Metadata section
+        // Metadata section. Explicit `name` arg overrides; otherwise fall back
+        // to the deck's own stored name, then a generic default.
         content.push_str("[metadata]\n");
-        content.push_str(&format!("Name={}\n", name.unwrap_or("Deck")));
+        let resolved_name = name
+            .map(str::to_string)
+            .or_else(|| self.name.as_ref().map(|n| n.as_str().to_string()))
+            .unwrap_or_else(|| "Deck".to_string());
+        content.push_str(&format!("Name={}\n", resolved_name));
 
         // Commander section (if any)
         if !self.commanders.is_empty() {
@@ -379,6 +409,7 @@ Name=Foil Test
     fn test_to_dck_format_roundtrip() {
         // Create a deck
         let deck = DeckList {
+            name: None,
             main_deck: vec![
                 DeckEntry {
                     card_name: "Lightning Bolt".to_string(),
@@ -446,6 +477,7 @@ abc def ghi
         use std::collections::HashSet;
 
         let deck = DeckList {
+            name: None,
             main_deck: vec![
                 DeckEntry {
                     card_name: "Lightning Bolt".to_string(),
@@ -487,6 +519,29 @@ abc def ghi
         let card_missing = ImportProblem::card_missing("Fake Card", "4 Fake Card");
         assert!(card_missing.label().contains("[CARD_MISSING]"));
         assert!(card_missing.label().contains("4 Fake Card"));
+    }
+
+    #[test]
+    fn test_parse_captures_deck_name() {
+        let content = r#"
+[metadata]
+Name=Mono Red Burn
+
+[Main]
+20 Mountain
+"#;
+        let deck = DeckLoader::parse(content).unwrap();
+        assert_eq!(deck.name.as_ref().map(|n| n.as_str()), Some("Mono Red Burn"));
+    }
+
+    #[test]
+    fn test_parse_no_name_metadata_leaves_name_none() {
+        let content = r#"
+[Main]
+20 Mountain
+"#;
+        let deck = DeckLoader::parse(content).unwrap();
+        assert!(deck.name.is_none());
     }
 
     #[test]

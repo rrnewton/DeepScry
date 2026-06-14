@@ -3084,6 +3084,7 @@ mod tests {
     #[test]
     fn test_deck_to_submission() {
         let deck = DeckList {
+            name: None,
             main_deck: vec![
                 DeckEntry {
                     card_name: "Lightning Bolt".to_string(),

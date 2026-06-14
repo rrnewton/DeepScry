@@ -284,6 +284,19 @@ pub struct GameState {
     #[serde(default)]
     pub is_commander_game: bool,
 
+    /// Display names of the two players' decks, indexed by seat (0 = P1, 1 = P2).
+    ///
+    /// Public information sourced from the loaded `.dck` files (their `Name=`
+    /// metadata or file stem). Populated at game-init for deck-loaded games and
+    /// left `[None, None]` for puzzles / `--start-state` games (which load no
+    /// decks). Used purely for display — the game-log deck header emitted before
+    /// Turn 1. Serialized (`#[serde(default)]`) so snapshot/resume, the network
+    /// shadow, and WASM rewind/replay all reconstruct it identically; both sides
+    /// of a network game derive identical values (or identical `None`), so the
+    /// network-gamelog-identity invariant holds.
+    #[serde(default)]
+    pub deck_names: [Option<crate::core::DeckName>; 2],
+
     // ╔══════════════════════════════════════════════════════════════════════╗
     // ║  TRANSIENT SUB-ACTION SCRATCH STATE — NOT durable game state.          ║
     // ║                                                                        ║
@@ -556,6 +569,7 @@ impl GameState {
             extra_combat_phases: 0,
             is_shadow_game: false, // Default: not a shadow game
             is_commander_game: false,
+            deck_names: [None, None], // Populated at deck-load init; None for puzzles.
             // Transient sub-action scratch/continuation state (see SubActionScratch).
             sub_action_scratch: SubActionScratch::default(),
         }
@@ -5409,6 +5423,7 @@ impl Clone for GameState {
             extra_combat_phases: self.extra_combat_phases,
             is_shadow_game: self.is_shadow_game,
             is_commander_game: self.is_commander_game,
+            deck_names: self.deck_names.clone(),
             // Transient sub-action scratch/continuation state (pending_*, spell_targets,
             // pending_library_reorders) is NOT cloned — clones are used for
             // snapshots/replays and must reset to empty (and must not re-emit network

@@ -1905,6 +1905,9 @@ async fn run_joiner_waiting_room(
 /// Convert DeckSubmission to DeckList
 fn submission_to_decklist(submission: &DeckSubmission) -> DeckList {
     DeckList {
+        // Network deck submissions carry no deck-name metadata; None on both
+        // server and client keeps the network gamelog identical (no deck header).
+        name: None,
         main_deck: submission
             .main_deck
             .iter()

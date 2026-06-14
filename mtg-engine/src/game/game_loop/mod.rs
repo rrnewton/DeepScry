@@ -1276,6 +1276,16 @@ impl<'a> GameLoop<'a> {
         if self.turn_one_header_emitted {
             return;
         }
+
+        // Before the very first turn header, name each player's deck so the log
+        // immediately shows which decks are playing, e.g.:
+        //   P1: Mono Red Burn deck
+        //   P2: Llanowar Elves deck
+        // Only emitted when deck names are present (deck-loaded games). Puzzle /
+        // --start-state games load no decks, so `deck_names` is [None, None] and
+        // NO lines are emitted — keeping their golden logs byte-identical.
+        self.emit_deck_name_headers();
+
         let active_player = self.game.turn.active_player;
         let active_player_name = self
             .game
@@ -1302,6 +1312,25 @@ impl<'a> GameLoop<'a> {
         );
         self.game.logger.turn_separator(&turn_msg);
         self.turn_one_header_emitted = true;
+    }
+
+    /// Emit the per-player deck-name header lines that precede the Turn 1 header.
+    ///
+    /// One `"<seat>: <deck name> deck"` line per player whose deck name is known,
+    /// in seat order (P1 then P2). Deterministic and public-information-only, so
+    /// it is identical across native/WASM and local/network paths (network games
+    /// carry no deck names, so this is a no-op there). Emits nothing for
+    /// puzzle / `--start-state` games (which have no loaded decks), leaving their
+    /// golden logs unchanged.
+    fn emit_deck_name_headers(&mut self) {
+        // One line per seat, in seat order (P1 then P2), e.g. "  P1: Burn deck".
+        for seat in 0..self.game.deck_names.len() {
+            let Some(deck_name) = self.game.deck_names[seat].as_ref() else {
+                continue;
+            };
+            let line = format!("  P{}: {} deck", seat + 1, deck_name);
+            self.game.logger.turn_separator(&line);
+        }
     }
 
     /// Notify both controllers that the game has ended
@@ -1912,6 +1941,102 @@ mod tests {
             "Expected exactly one Turn 1 header in gamelog (no duplicates), found {}",
             turn_one_headers.len()
         );
+    }
+
+    /// Helper: seed a two-player game with tiny libraries so the first turn runs.
+    #[cfg(test)]
+    fn seed_two_player_game(p1: &str, p2: &str) -> (GameState, PlayerId, PlayerId) {
+        let mut game = GameState::new_two_player(p1.to_string(), p2.to_string(), 20);
+        let (alice, bob) = {
+            let mut players_iter = game.players.iter().map(|p| p.id);
+            (
+                players_iter.next().expect("Should have player 1"),
+                players_iter.next().expect("Should have player 2"),
+            )
+        };
+        for &pid in &[alice, bob] {
+            for _ in 0..10 {
+                let card_id = game.next_card_id();
+                let card = crate::core::Card::new(card_id, "Forest".to_string(), pid);
+                game.cards.insert(card_id, card);
+                if let Some(zones) = game.get_player_zones_mut(pid) {
+                    zones.library.add(card_id);
+                }
+            }
+        }
+        (game, alice, bob)
+    }
+
+    /// When both decks have names (a normally-loaded deck game), the gamelog must
+    /// emit one `"P<n>: <deck> deck"` line per player, in seat order, IMMEDIATELY
+    /// BEFORE the `>>> Turn 1` header. This is what makes the log self-identifying
+    /// (which decks are playing) without re-reading the CLI.
+    #[test]
+    fn test_deck_name_headers_precede_turn_one() {
+        use crate::core::DeckName;
+        use crate::game::ZeroController;
+
+        let (mut game, alice, bob) = seed_two_player_game("Alice", "Bob");
+        game.deck_names = [
+            Some(DeckName::new("Red Burn Fuzz")),
+            Some(DeckName::new("Blue Control Fuzz")),
+        ];
+
+        {
+            let mut game_loop = GameLoop::new(&mut game).with_max_turns(2).skip_opening_hands();
+            let mut c1 = ZeroController::new(alice);
+            let mut c2 = ZeroController::new(bob);
+            let _ = game_loop.run_game(&mut c1, &mut c2);
+        }
+
+        let logs: Vec<String> = game.logger.logs().iter().map(|l| l.message.clone()).collect();
+
+        let p1_idx = logs.iter().position(|m| m.contains("P1: Red Burn Fuzz deck"));
+        let p2_idx = logs.iter().position(|m| m.contains("P2: Blue Control Fuzz deck"));
+        let turn1_idx = logs.iter().position(|m| m.contains(">>> Turn 1"));
+
+        let p1_idx = p1_idx.unwrap_or_else(|| panic!("missing P1 deck header. Log: {:?}", logs));
+        let p2_idx = p2_idx.unwrap_or_else(|| panic!("missing P2 deck header. Log: {:?}", logs));
+        let turn1_idx = turn1_idx.expect("missing Turn 1 header");
+
+        // Order: P1 line, then P2 line, then the Turn 1 header.
+        assert!(p1_idx < p2_idx, "P1 deck line must precede P2 deck line");
+        assert!(p2_idx < turn1_idx, "deck headers must precede the Turn 1 header");
+        // Exactly one of each (no duplicate emission across entry paths).
+        assert_eq!(logs.iter().filter(|m| m.contains(": Red Burn Fuzz deck")).count(), 1);
+        assert_eq!(
+            logs.iter().filter(|m| m.contains(": Blue Control Fuzz deck")).count(),
+            1
+        );
+    }
+
+    /// Determinism / golden-parity guard: a game with NO deck names (the puzzle /
+    /// `--start-state` case, which loads no decks) must emit ZERO deck-name lines,
+    /// so puzzle golden logs stay byte-identical and need no re-blessing.
+    #[test]
+    fn test_no_deck_name_headers_when_decks_absent() {
+        use crate::game::ZeroController;
+
+        let (mut game, alice, bob) = seed_two_player_game("Alice", "Bob");
+        // deck_names defaults to [None, None] — mirrors the puzzle path.
+        assert_eq!(game.deck_names, [None, None]);
+
+        {
+            let mut game_loop = GameLoop::new(&mut game).with_max_turns(2).skip_opening_hands();
+            let mut c1 = ZeroController::new(alice);
+            let mut c2 = ZeroController::new(bob);
+            let _ = game_loop.run_game(&mut c1, &mut c2);
+        }
+
+        let logs: Vec<String> = game.logger.logs().iter().map(|l| l.message.clone()).collect();
+        let deck_lines: Vec<&String> = logs.iter().filter(|m| m.trim_start().contains(" deck")).collect();
+        assert!(
+            deck_lines.is_empty(),
+            "Expected NO deck-name header lines when decks are absent (puzzle parity), found: {:?}",
+            deck_lines
+        );
+        // The Turn 1 header itself must still appear.
+        assert!(logs.iter().any(|m| m.contains(">>> Turn 1")));
     }
 
     // ══════════════════════════════════════════════════════════════════════════
