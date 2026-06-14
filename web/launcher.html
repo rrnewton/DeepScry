@@ -39,6 +39,8 @@
          hydrate, shared with the deck editor. Used to offer a "Custom Decks
          (Cloud)" group in the picker and make cloud decks playable. -->
     <script src="deck_storage.js"></script>
+    <!-- Shared form-value-remembering helper (window.DeepScryPrefs). -->
+    <script src="prefs.js"></script>
     <style>
         :root {
             --bg: #0a0a14; --surface: #16213e; --surface-2: #0f3460;
@@ -354,10 +356,10 @@ import { buildRedirectQuery, IMAGE_SOURCE_IDS, forwardStickyParamsOnAnchor, forw
     window.__launcherParams = params;
 
     // ==================== CARD-IMAGE + DEBUG SETTINGS ====================
-    // Re-homed from the OLD built-in game-page launcher (mtg-695). Persisted
-    // in localStorage (the launcher is the durable home for these prefs now) and
-    // forwarded to the game page as &images/&img_src/&debug.
-    const SETTINGS_KEY = 'mtg-forge-launcher-settings';
+    // Re-homed from the OLD built-in game-page launcher (mtg-695). Persisted via
+    // the shared prefs helper (window.DeepScryPrefs, prefs.js) — the launcher is
+    // the durable home for these prefs — and forwarded to the game page as
+    // &images/&img_src/&debug. (See the SETTINGS PERSISTENCE block below.)
 
     // ?advanced_options=true (mtg-2csf2) is the single gate for the testing-only
     // controls: (a) the "Load from DeepScry server" local-image source, and
@@ -632,7 +634,10 @@ import { buildRedirectQuery, IMAGE_SOURCE_IDS, forwardStickyParamsOnAnchor, forw
         updateDeckDropdown();
         deckSelect.value = deckName;
         refreshPlayEnabled();
-        saveSettings();
+        // Programmatic .value assignment fires no 'change', so persist the new
+        // collection/deck pick explicitly through the shared prefs store.
+        DeepScryPrefs.set(DeepScryPrefs.KEYS.MP_COLLECTION, collectionSelect.value);
+        DeepScryPrefs.set(DeepScryPrefs.KEYS.MP_DECK, deckSelect.value);
         const cardCount = deck.main_deck.reduce((s, p) => s + p[1], 0);
         setStatus('Loaded "' + deckName + '" (' + cardCount + ' cards) into Custom Decks.', true);
     }
@@ -816,10 +821,13 @@ import { buildRedirectQuery, IMAGE_SOURCE_IDS, forwardStickyParamsOnAnchor, forw
     deckSelect.addEventListener('change', refreshPlayEnabled);
     deckSelect.addEventListener('change', mirrorSelectedCloudDeck);
     // mtg-nf6p6: persist the deck/collection picks so they survive a Back round
-    // trip. (updateDeckDropdown runs first on a collection change and may reset
-    // deckSelect.value, so save AFTER it via a second listener.)
-    collectionSelect.addEventListener('change', saveSettings);
-    deckSelect.addEventListener('change', saveSettings);
+    // trip. Routed through the shared prefs helper (one save-on-change listener
+    // per select). The collection/deck are populated ASYNCHRONOUSLY, so the
+    // SAVED values are re-applied later in populateDecks(); here we only need
+    // the change→save half. (updateDeckDropdown runs first on a collection
+    // change and may reset deckSelect.value, so save AFTER it.)
+    DeepScryPrefs.rememberSelect(collectionSelect, DeepScryPrefs.KEYS.MP_COLLECTION);
+    DeepScryPrefs.rememberSelect(deckSelect, DeepScryPrefs.KEYS.MP_DECK);
 
     // Custom Deck URL: load on button click or Enter in the input (mtg-742).
     const deckUrlInput = document.getElementById('deck-url');
@@ -878,7 +886,7 @@ import { buildRedirectQuery, IMAGE_SOURCE_IDS, forwardStickyParamsOnAnchor, forw
         // preselected.
         // A ?deck= (Back-to-Launcher round trip) wins; else a one-shot localStorage
         // preselect from deck_editor's legacy "Use in Lobby" path; else the
-        // last-used deck/collection saved in SETTINGS_KEY (mtg-nf6p6) so returning
+        // last-used deck/collection saved in shared prefs (mtg-nf6p6) so returning
         // to the launcher restores the user's pick instead of the built-in default.
         let wantDeck = qs.get('deck');
         let wantCollection = qs.get('collection');
@@ -893,14 +901,13 @@ import { buildRedirectQuery, IMAGE_SOURCE_IDS, forwardStickyParamsOnAnchor, forw
             } catch (e) { /* ignore */ }
         }
         if (!wantDeck && !wantCollection) {
-            try {
-                const raw = localStorage.getItem(SETTINGS_KEY);
-                if (raw) {
-                    const s = JSON.parse(raw);
-                    if (s && s.collection) wantCollection = s.collection;
-                    if (s && s.deck) wantDeck = s.deck;
-                }
-            } catch (e) { /* ignore */ }
+            // Last-used deck/collection (mtg-nf6p6) from the shared prefs store,
+            // so returning to the launcher restores the user's pick instead of
+            // the built-in default.
+            const savedCollection = DeepScryPrefs.get(DeepScryPrefs.KEYS.MP_COLLECTION);
+            const savedDeck = DeepScryPrefs.get(DeepScryPrefs.KEYS.MP_DECK);
+            if (savedCollection) wantCollection = savedCollection;
+            if (savedDeck) wantDeck = savedDeck;
         }
         if (wantCollection && DECK_COLLECTIONS[wantCollection]) {
             collectionSelect.value = wantCollection;
@@ -1011,62 +1018,39 @@ import { buildRedirectQuery, IMAGE_SOURCE_IDS, forwardStickyParamsOnAnchor, forw
     }
 
     // ==================== SETTINGS PERSISTENCE ====================
-    function saveSettings() {
-        try {
-            localStorage.setItem(SETTINGS_KEY, JSON.stringify({
-                renderer: selectedRenderer(),
-                controller: selectedController(),
-                // mtg-nf6p6: remember the last deck/collection so returning to the
-                // launcher (e.g. via "Back" from a game) restores the user's
-                // selection instead of snapping back to the built-in default.
-                collection: collectionSelect.value,
-                deck: deckSelect.value,
-                showImages: showImagesCb.checked,
-                imgSrcLocal: !!(imgSrcLocalCb && imgSrcLocalCb.checked),
-                imgSrcScryfall: imgSrcScryfallCb.checked,
-                imgSrcGatherer: imgSrcGathererCb.checked,
-                debug: debugCb.checked,
-            }));
-        } catch (e) { /* ignore */ }
-    }
+    // All remembered fields route through the shared prefs helpers
+    // (window.DeepScryPrefs, prefs.js) — one helper per field TYPE, no bespoke
+    // per-page get/set localStorage code. Each helper applies the saved value
+    // on call and registers its own write-on-change listener.
+    const P = DeepScryPrefs;
 
-    function restoreSettings() {
-        let s;
-        try {
-            const raw = localStorage.getItem(SETTINGS_KEY);
-            if (!raw) return;
-            s = JSON.parse(raw);
-        } catch (e) { return; }
-        if (s.renderer === 'tui') { radioTui.checked = true; refreshRendererUI(); }
-        // Only restore an ENABLED controller (heuristic/zero are disabled per
-        // mtg-254 and must never be re-selected from a stale localStorage value).
-        if (s.controller === 'random' && radioCtrlRandom) { radioCtrlRandom.checked = true; refreshControllerUI(); }
-        if (s.showImages !== undefined) showImagesCb.checked = s.showImages;
-        // The gate may have removed the Local checkbox; ignore a stale stored
-        // "local on" in that case (applyLocalImageGate ran first).
-        if (s.imgSrcLocal !== undefined && imgSrcLocalCb && allowLocalImgLoad) {
-            imgSrcLocalCb.checked = s.imgSrcLocal;
-        }
-        if (s.imgSrcScryfall !== undefined) imgSrcScryfallCb.checked = s.imgSrcScryfall;
-        if (s.imgSrcGatherer !== undefined) imgSrcGathererCb.checked = s.imgSrcGatherer;
-        if (s.debug !== undefined) debugCb.checked = s.debug;
-    }
-
-    // Gate FIRST (may remove the Local checkbox), then restore prefs, then UI.
+    // Gate FIRST (may remove the Local checkbox / force it off) so the saved
+    // value isn't applied to a field the gate has overridden.
     applyLocalImageGate();
-    restoreSettings();
+
+    // Renderer + controller radio groups. rememberRadioGroup skips DISABLED
+    // radios when restoring, so a stale 'heuristic'/'zero' controller (disabled
+    // per mtg-254) can never be re-selected.
+    P.rememberRadioGroup('renderer', P.KEYS.MP_RENDERER);
+    refreshRendererUI();
+    P.rememberRadioGroup('controller', P.KEYS.MP_CONTROLLER);
+    refreshControllerUI();
+
+    // Checkboxes. The Local-image checkbox is only remembered when local images
+    // are actually allowed (the gate above owns it otherwise).
+    P.rememberCheckbox(showImagesCb, P.KEYS.MP_SHOW_IMAGES);
+    if (imgSrcLocalCb && allowLocalImgLoad) P.rememberCheckbox(imgSrcLocalCb, P.KEYS.MP_IMG_SRC_LOCAL);
+    P.rememberCheckbox(imgSrcScryfallCb, P.KEYS.MP_IMG_SRC_SCRYFALL);
+    P.rememberCheckbox(imgSrcGathererCb, P.KEYS.MP_IMG_SRC_GATHERER);
+    P.rememberCheckbox(debugCb, P.KEYS.MP_DEBUG);
+
     // A ?renderer= from the deck-editor Back-to-Launcher round trip overrides the
-    // localStorage default so the user returns to the renderer they had picked.
+    // remembered default so the user returns to the renderer they had picked.
     const wantRenderer = qs.get('renderer');
     if (wantRenderer === 'tui') { radioTui.checked = true; refreshRendererUI(); }
     else if (wantRenderer === 'native') { radioNative.checked = true; refreshRendererUI(); }
     refreshImageSourceUI();
 
-    for (const el of [showImagesCb, imgSrcScryfallCb, imgSrcGathererCb, debugCb, radioNative, radioTui,
-                      radioCtrlHuman, radioCtrlRandom]) {
-        if (el) el.addEventListener('change', saveSettings);
-    }
-    if (imgSrcLocalCb) imgSrcLocalCb.addEventListener('change', saveSettings);
     showImagesCb.addEventListener('change', refreshImageSourceUI);
 
     // mtg-682 fix B: EVERY pre-game config change must reset "ready" so "ready"
@@ -1163,29 +1147,15 @@ import { buildRedirectQuery, IMAGE_SOURCE_IDS, forwardStickyParamsOnAnchor, forw
     if (advancedSeedField && isCreator && advancedOptions) {
         advancedSeedField.style.display = '';
     }
-    // Persist the RNG-seed value across navigation. A seed the creator
-    // deliberately typed is a durable preference (like the deck/renderer prefs
-    // above), so it lives in localStorage under a clear namespaced key —
-    // survives a tab close, unlike the session-scoped advanced-options gate.
-    // Empty/blank clears the key so the "(server default)" placeholder behavior
-    // is preserved. localStorage can throw in private mode, so guard every
-    // access (matching the SETTINGS_KEY / sessionStorage helpers above).
-    const MP_SEED_KEY = 'mtg.mpSeed';
+    // Persist the RNG-seed value across navigation via the shared prefs helper.
+    // The seed uses the SHARED key (DeepScryPrefs.KEYS.SEED) — the SAME key the
+    // solo launcher uses — so a seed entered on one launcher is the default on
+    // the other. rememberTextInput applies any saved seed on load and clears
+    // the key when the field is blanked (preserving the "(server default)"
+    // placeholder). It survives a tab close, unlike the session-scoped
+    // advanced-options gate.
     const mpSeedInput = document.getElementById('mp-seed');
-    if (mpSeedInput) {
-        function saveMpSeed() {
-            const v = mpSeedInput.value.trim();
-            try {
-                if (v) localStorage.setItem(MP_SEED_KEY, v);
-                else localStorage.removeItem(MP_SEED_KEY);
-            } catch (e) { /* ignore */ }
-        }
-        let storedSeed = null;
-        try { storedSeed = localStorage.getItem(MP_SEED_KEY); } catch (e) { /* ignore */ }
-        if (storedSeed) mpSeedInput.value = storedSeed;
-        mpSeedInput.addEventListener('input', saveMpSeed);
-        mpSeedInput.addEventListener('change', saveMpSeed);
-    }
+    DeepScryPrefs.rememberTextInput(mpSeedInput, DeepScryPrefs.KEYS.SEED);
     const gameName = qs.get('game') || '';
     const playerName = qs.get('name') || '';
     const lobbyWsUrl = qs.get('ws') || window.MTG_WS_URL;

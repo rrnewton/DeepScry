@@ -10,6 +10,8 @@
     <link rel="manifest" href="site.webmanifest">
     <!-- Server URL configuration (overridable). Self-detects ws/wss + path /lobby. -->
     <script src="server-config.js"></script>
+    <!-- Shared form-value-remembering helper (window.DeepScryPrefs). -->
+    <script src="prefs.js"></script>
     <style>
         :root {
             --bg: #0a0a14;
@@ -346,10 +348,10 @@
             </p>
         </div>
 
-        <form id="name-form" class="row" autocomplete="off">
+        <form id="name-form" class="row">
             <div style="flex: 2 1 220px;">
                 <label for="username">Username</label>
-                <input type="text" id="username" name="username" required maxlength="32" placeholder="e.g. planeswalker42">
+                <input type="text" id="username" name="username" autocomplete="username" required maxlength="32" placeholder="e.g. planeswalker42">
             </div>
             <div>
                 <button type="submit" id="btn-name">Continue as ephemeral</button>
@@ -491,9 +493,8 @@
 
 <footer>
     <img class="footer-emblem" src="emblem-64.webp" alt="" aria-hidden="true" width="18" height="18">
-    DeepScry &middot; a high-performance MTG engine in safe Rust + WebAssembly &middot; card data from
+    DeepScry &middot; <a href="guide/index.html">Guide</a> &middot; card data from
     <a href="https://github.com/Card-Forge/forge" target="_blank" rel="noopener">Forge</a>
-    &middot; <a href="guide/index.html">Guide</a>
     <span class="footer-attribution" style="display:block; margin-top:6px; opacity:0.7;">
         Card images via <a href="https://scryfall.com" target="_blank" rel="noopener">Scryfall</a>.
         Magic: The Gathering is &copy; Wizards of the Coast. DeepScry is unaffiliated with and unendorsed by Wizards of the Coast or Scryfall.
@@ -1636,20 +1637,28 @@
     // -------------------------------------------------------------------------
     // Initialization
     // -------------------------------------------------------------------------
-    // Re-hydrate username from sessionStorage (survives same-tab navigation and
-    // normal page refreshes). If sessionStorage has no name, fall back to the
-    // localStorage display name as a pre-fill convenience for returning guests —
-    // they still have to click "Continue" (no auto-connect for ephemeral users),
-    // but at least the field is pre-populated with their last-used name.
+    // Username remembering. The username field routes through the SHARED prefs
+    // helper (window.DeepScryPrefs, prefs.js) like every other remembered field
+    // across the frontend: rememberTextInput pre-fills the last-used name and
+    // writes it back on every keystroke. (Native browser autocomplete also
+    // applies now — the input carries autocomplete="username".)
+    var usernameEl = document.getElementById('username');
+    DeepScryPrefs.rememberTextInput(usernameEl, DeepScryPrefs.KEYS.USERNAME);
+    // Priority overrides on top of the remembered pre-fill:
+    //  - currentUsername (sessionStorage) wins — it survives same-tab nav and
+    //    refreshes within the current session.
+    //  - else the OAuth display name, if any, is a one-time legacy pre-fill for
+    //    returning guests whose name predates the shared prefs store.
+    // Either way ephemeral users still click "Continue" (no auto-connect).
     if (currentUsername) {
-        document.getElementById('username').value = currentUsername;
+        usernameEl.value = currentUsername;
     } else {
-        var savedDisplayName = null;
-        try { savedDisplayName = localStorage.getItem('deepscry_display_name'); } catch (_) {}
-        if (savedDisplayName) {
-            document.getElementById('username').value = savedDisplayName;
+        if (!usernameEl.value) {
+            var savedDisplayName = null;
+            try { savedDisplayName = localStorage.getItem('deepscry_display_name'); } catch (_) {}
+            if (savedDisplayName) usernameEl.value = savedDisplayName;
         }
-        document.getElementById('username').focus();
+        usernameEl.focus();
     }
     applyLaunchLinks();
     connect();

@@ -44,6 +44,8 @@
     <link rel="icon" href="favicon.ico" sizes="any">
     <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png">
     <link rel="apple-touch-icon" href="apple-touch-icon.png">
+    <!-- Shared form-value-remembering helper (window.DeepScryPrefs). -->
+    <script src="prefs.js"></script>
     <style>
         :root {
             --bg: #0a0a14; --surface: #16213e; --surface-2: #0f3460;
@@ -394,8 +396,22 @@ import { IMAGE_SOURCE_IDS, forwardStickyParams, forwardStickyParamsOnAnchor } fr
     const seedInput = document.getElementById('seed');
     const playBtn = document.getElementById('btn-play');
 
+    // Remember both controller dropdowns (static options → apply immediately).
+    DeepScryPrefs.rememberSelect(p1Controller, DeepScryPrefs.KEYS.SOLO_P1_CONTROLLER);
+    DeepScryPrefs.rememberSelect(p2Controller, DeepScryPrefs.KEYS.SOLO_P2_CONTROLLER);
+
     fillCollectionSelect(p1Collection);
     fillCollectionSelect(p2Collection);
+
+    // Remember the deck/collection picks. The collection <option>s exist now
+    // (fillCollectionSelect above), but the deck <option>s are populated
+    // ASYNCHRONOUSLY by loadDeckNames(); these helpers register the change
+    // listeners up-front, and their .restore() handles are replayed inside
+    // loadDeckNames() once the (collection-dependent) deck options exist.
+    const p1CollectionPref = DeepScryPrefs.rememberSelect(p1Collection, DeepScryPrefs.KEYS.SOLO_P1_COLLECTION);
+    const p2CollectionPref = DeepScryPrefs.rememberSelect(p2Collection, DeepScryPrefs.KEYS.SOLO_P2_COLLECTION);
+    const p1DeckPref = DeepScryPrefs.rememberSelect(p1Deck, DeepScryPrefs.KEYS.SOLO_P1_DECK);
+    const p2DeckPref = DeepScryPrefs.rememberSelect(p2Deck, DeepScryPrefs.KEYS.SOLO_P2_DECK);
 
     // Pick the first collection that actually has built-in decks (so a deck is
     // preselected on load) — same heuristic as launcher.html.
@@ -432,8 +448,15 @@ import { IMAGE_SOURCE_IDS, forwardStickyParams, forwardStickyParamsOnAnchor } fr
         const start = firstPopulatedCollection();
         p1Collection.value = start;
         p2Collection.value = start;
+        // Re-apply any remembered collection over the computed default, then
+        // fill the deck options for whatever collection is now selected, then
+        // re-apply the remembered deck (its options only exist after the fill).
+        p1CollectionPref.restore();
+        p2CollectionPref.restore();
         fillDeckSelect(p1Deck, p1Collection.value);
         fillDeckSelect(p2Deck, p2Collection.value);
+        p1DeckPref.restore();
+        p2DeckPref.restore();
         refreshPlayEnabled();
     }
 
@@ -450,7 +473,10 @@ import { IMAGE_SOURCE_IDS, forwardStickyParams, forwardStickyParamsOnAnchor } fr
     }
     radioNative.addEventListener('change', refreshRendererUI);
     radioTui.addEventListener('change', refreshRendererUI);
-    // Pre-select the renderer from ?ui= (index.html's Solo Launcher links pass it).
+    // Remember the renderer choice across visits (shared prefs helper). This
+    // applies any saved value first; a ?ui= from index.html's Solo Launcher
+    // links then OVERRIDES it for this load (an explicit per-link intent).
+    DeepScryPrefs.rememberRadioGroup('renderer', DeepScryPrefs.KEYS.SOLO_RENDERER);
     if (qs.get('ui') === 'tui') { radioTui.checked = true; }
     else if (qs.get('ui') === 'native') { radioNative.checked = true; }
     refreshRendererUI();
@@ -499,30 +525,19 @@ import { IMAGE_SOURCE_IDS, forwardStickyParams, forwardStickyParamsOnAnchor } fr
     showImagesCb.addEventListener('change', refreshImageSourceUI);
 
     // ==================== SEED ====================
-    // Persist the RNG-seed value across navigation. A seed the user deliberately
-    // typed (or rolled via Random) is a durable preference, so it lives in
-    // localStorage under a clear namespaced key — survives a tab close. An
-    // empty/blank field clears the key so the "(random)" placeholder behavior is
-    // preserved. localStorage can throw in private mode, so guard every access
-    // (matching the sessionStorage / custom-decks helpers above).
-    const SEED_KEY = 'mtg.rngSeed';
-    function saveSeed() {
-        const v = seedInput.value.trim();
-        try {
-            if (v) localStorage.setItem(SEED_KEY, v);
-            else localStorage.removeItem(SEED_KEY);
-        } catch (e) { /* ignore */ }
-    }
-    let storedSeed = null;
-    try { storedSeed = localStorage.getItem(SEED_KEY); } catch (e) { /* ignore */ }
-    if (storedSeed) seedInput.value = storedSeed;
-    seedInput.addEventListener('input', saveSeed);
-    seedInput.addEventListener('change', saveSeed);
+    // Persist the RNG-seed value across navigation via the shared prefs helper.
+    // The seed uses the SHARED key (DeepScryPrefs.KEYS.SEED) so a seed entered
+    // here is the default on the multiplayer launcher too, and vice-versa.
+    // rememberTextInput applies any saved seed on load and clears the key when
+    // the field is blanked, preserving the "(random)" placeholder behavior.
+    DeepScryPrefs.rememberTextInput(seedInput, DeepScryPrefs.KEYS.SEED);
 
     document.getElementById('btn-random-seed').addEventListener('click', () => {
         // A reasonable u32-ish seed; the engine accepts any u64.
         seedInput.value = String(Math.floor(Math.random() * 0xFFFFFFFF));
-        saveSeed();
+        // No native 'input' event fires on programmatic .value assignment, so
+        // persist the rolled seed explicitly through the shared store.
+        DeepScryPrefs.set(DeepScryPrefs.KEYS.SEED, seedInput.value.trim());
     });
 
     // ==================== GAME-PAGE NAVIGATION ====================
