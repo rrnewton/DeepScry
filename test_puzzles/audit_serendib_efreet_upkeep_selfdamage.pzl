@@ -51,7 +51,7 @@ p1exile=
 # `trigger fired from Serendib Efreet` event, because the event log only emits
 # LogEvent::TriggerFired for death/leaves-battlefield watcher triggers today,
 # NOT for Phase/upkeep triggers — see the trigger-event instrumentation gap
-# bug mtg-5tvge.)
+# bug mtg-955.)
 me life lt 20
 # The 3/4 flier P1 cannot block carries the game.
 game won

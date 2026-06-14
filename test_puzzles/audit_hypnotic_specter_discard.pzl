@@ -50,5 +50,5 @@ opponent life lt 12
 # Hypnotic Specter` event, because the event log only emits
 # LogEvent::TriggerFired for death/leaves-battlefield watcher triggers today,
 # NOT for DamageDone triggers — see the trigger-event instrumentation gap
-# bug mtg-5tvge.)
+# bug mtg-955.)
 opponent graveyard count ge 1
