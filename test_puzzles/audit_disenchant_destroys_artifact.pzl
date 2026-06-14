@@ -1,0 +1,49 @@
+# Card-audit (mtg-948 Part B): Disenchant — scripted targeted artifact destroy.
+#
+# Closed issue mtg-498 closed Disenchant as WORKING:
+#   A:SP$ Destroy | ValidTgts$ Artifact,Enchantment
+#   "{1}{W} Instant — Destroy target artifact or enchantment." (CR 701.7 Destroy).
+#
+# Wave 1 left it skeleton/heuristic-only. This puzzle scripts P0 casting
+# Disenchant at P1's Mox Jet (a vanilla artifact: mana ability only, no ETB or
+# trigger), proving the Artifact target restriction is honored and the artifact
+# is destroyed into its owner's graveyard.
+#
+# Scenario:
+#   - P0: Disenchant in hand, 1 Plains + 1 generic land (Forest) to pay {1}{W}.
+#   - P1: a Mox Jet on the battlefield (the artifact target).
+#   - Script: P0 casts Disenchant targeting the Mox Jet -> it is destroyed.
+
+[metadata]
+Name:Card Audit - Disenchant Destroys an Artifact
+Goal:Win
+Turns:1
+Difficulty:Easy
+Description:P0 scripts Disenchant ({1}{W}) onto P1's Mox Jet, destroying the artifact into P1's graveyard. Backs the targeted-destroy aspect of issue mtg-498 (SP$ Destroy, ValidTgts$ Artifact,Enchantment; CR 701.7).
+
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Disenchant
+p0battlefield=Plains;Forest
+p0library=Forest;Forest;Forest;Forest;Forest
+
+p1life=20
+p1battlefield=Mox Jet
+p1library=Mountain;Mountain;Mountain;Mountain;Mountain
+
+[p0_script]
+# Destroy P1's Mox Jet. The `targeting` clause names the artifact semantically.
+cast Disenchant targeting Mox Jet
+
+[assertions]
+# Disenchant was actually cast.
+spell cast Disenchant
+# The Mox Jet was destroyed into P1's graveyard (CR 701.7). This is durable:
+# it holds at game end even though the heuristic plays lands onto P1's
+# battlefield in later turns.
+opponent graveyard contains Mox Jet
+# Disenchant itself resolved into P0's graveyard.
+me graveyard contains Disenchant

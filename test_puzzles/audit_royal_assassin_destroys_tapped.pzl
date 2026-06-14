@@ -1,0 +1,52 @@
+# Card-audit (mtg-948 Part B): Royal Assassin — scripted ACTIVATED ability.
+#
+# Closed issue mtg-537 closed Royal Assassin as WORKING:
+#   A:AB$ Destroy | Cost$ T | ValidTgts$ Creature.tapped
+#   "{T}: Destroy target tapped creature." (CR 602 activated abilities, CR 701.7
+#   Destroy). The Creature.tapped restriction means it can ONLY target a tapped
+#   creature.
+#
+# This backs the ACTIVATED-ability aspect via a [p0_script] `activate` command —
+# distinct from the existing royal_assassin_destroys_tapped.pzl which relies on a
+# CLI fixed-input string. Here the bulk runner drives the activation itself.
+#
+# Scenario:
+#   - P0: a Royal Assassin already on the battlefield, untapped, 0 summoning
+#         sickness (puzzle state places it as if it has been in play).
+#   - P1: a TAPPED Serra Angel (the legal target).
+#   - Script: P0 activates Royal Assassin, tapping it to destroy the tapped
+#     Serra Angel, which goes to P1's graveyard.
+
+[metadata]
+Name:Card Audit - Royal Assassin Destroys a Tapped Creature
+Goal:Win
+Turns:1
+Difficulty:Easy
+Description:P0 scripts Royal Assassin's {T}: Destroy target tapped creature ability against P1's tapped Serra Angel. Backs the activated-ability aspect of issue mtg-537 (AB$ Destroy, Cost$ T, ValidTgts$ Creature.tapped; CR 602/701.7).
+
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0battlefield=Royal Assassin
+p0library=Forest;Forest;Forest;Forest;Forest
+
+p1life=20
+p1battlefield=Serra Angel|Tapped
+p1library=Mountain;Mountain;Mountain;Mountain;Mountain
+
+[p0_script]
+# Tap Royal Assassin to destroy the tapped Serra Angel. The `targeting` clause
+# names the only legal (tapped) target semantically.
+activate Royal Assassin targeting Serra Angel
+
+[assertions]
+# The tapped Serra Angel was destroyed into P1's graveyard (durable final-state).
+# (We do NOT assert the `creature died` EVENT: a creature removed by a Destroy
+# activated ability does not fire CreatureDied, which is only emitted on
+# lethal-DAMAGE deaths. The destruction is fully verified by graveyard-contains;
+# the event gap is tracked as mtg-ngf7s, not a Royal Assassin defect.)
+opponent graveyard contains Serra Angel
+# Royal Assassin survives (it only tapped, it was not sacrificed).
+me battlefield contains Royal Assassin

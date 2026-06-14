@@ -1,0 +1,59 @@
+# Card-audit (mtg-948 Part B): Counterspell — scripted counter-in-response.
+#
+# Closed issue mtg-495 closed Counterspell as WORKING:
+#   A:SP$ Counter | TargetType$ Spell | ValidTgts$ Card
+#   "{U}{U} Counter target spell." (CR 701.5 Counter; CR 405 the stack).
+#
+# Wave 1 could only show this via the heuristic AI happening to counter a spell.
+# This puzzle drives a deterministic interaction with TWO scripts:
+#   - P0 (active) casts Lightning Bolt at P1, then PASSES priority.
+#   - P1, holding priority in response with the Bolt on the stack, casts
+#     Counterspell targeting the Lightning Bolt.
+#   - Counterspell resolves first (LIFO stack, CR 405.5), countering the Bolt.
+#   - The countered Lightning Bolt goes to P0's graveyard WITHOUT dealing damage
+#     (CR 701.5c) — so P1's life stays at 20.
+#
+# This exercises: a non-active player acting in a RESPONSE window via script,
+# spell-on-stack targeting (`targeting Lightning Bolt`), and the counter +
+# move-to-graveyard-without-effect path.
+
+[metadata]
+Name:Card Audit - Counterspell Counters a Spell
+Goal:Win
+Turns:1
+Difficulty:Easy
+Description:P0 scripts Lightning Bolt at P1, then passes; P1 scripts Counterspell targeting the Bolt on the stack. The Bolt is countered (no damage), so P1 stays at 20 life and the Bolt is in P0's graveyard. Backs issue mtg-495 (SP$ Counter, TargetType$ Spell; CR 701.5 / 405.5).
+
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Lightning Bolt
+p0battlefield=Mountain;Mountain;Mountain
+p0library=Forest;Forest;Forest;Forest;Forest
+
+p1life=20
+p1hand=Counterspell
+p1battlefield=Island;Island;Island
+p1library=Plains;Plains;Plains;Plains;Plains
+
+[p0_script]
+# Cast Lightning Bolt at the opponent, then pass priority so P1 can respond.
+cast Lightning Bolt targeting p1
+pass
+
+[p1_script]
+# Holding priority in response, counter the Lightning Bolt on the stack.
+cast Counterspell targeting Lightning Bolt
+
+[assertions]
+# Both spells were actually cast.
+spell cast Lightning Bolt
+spell cast Counterspell
+# The Bolt was countered, so P1 took NO damage and stays at 20.
+opponent life eq 20
+# The countered Lightning Bolt is in its owner's (P0's) graveyard.
+me graveyard contains Lightning Bolt
+# Counterspell also went to P1's graveyard after resolving.
+opponent graveyard contains Counterspell

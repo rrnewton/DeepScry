@@ -1,0 +1,57 @@
+# Card-audit (mtg-948 Part B): Swords to Plowshares — exile + controller-gains-life.
+#
+# Closed issue mtg-547 closed Swords to Plowshares as WORKING. Its two aspects:
+#   1. SP$ ChangeZone Battlefield->Exile exiles the target creature.
+#   2. Chained DB$ GainLife: the EXILED CREATURE'S CONTROLLER gains life equal
+#      to the creature's power (Defined$ TargetedController, captured via
+#      last-known-information before the exile — CR 608.2h).
+# The Swords CASTER gains nothing.
+#
+# Wave 1 could not back this with the heuristic AI (it would not reliably cast
+# Swords at a chosen target). With a script, P0 casts it at P1's own 2/2 so we
+# can assert P1 (the controller of the exiled creature) gains exactly 2 life,
+# the creature lands in exile, and P0's life is unchanged.
+#
+# Scenario:
+#   - P0: Swords to Plowshares in hand, 1 Plains on the battlefield.
+#   - P1: a Grizzly Bears (2/2) it controls, life 20.
+#   - Script: P0 casts Swords to Plowshares targeting the Grizzly Bears.
+#   - Bears is exiled; its controller (P1) gains 2 (its power) -> P1 = 22.
+#   - P0 (caster) gains nothing -> P0 = 20.
+
+[metadata]
+Name:Card Audit - Swords to Plowshares Exiles and Gains Life
+Goal:Win
+Turns:1
+Difficulty:Easy
+Description:P0 scripts Swords to Plowshares onto P1's 2/2 Grizzly Bears. The creature is exiled and ITS controller (P1) gains 2 life (= its power); the caster gains nothing. Backs both aspects of issue mtg-547 (ChangeZone exile + TargetedController GainLife, CR 608.2h).
+
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Swords to Plowshares
+p0battlefield=Plains
+p0library=Forest;Forest;Forest;Forest;Forest
+
+p1life=20
+p1battlefield=Grizzly Bears
+p1library=Mountain;Mountain;Mountain;Mountain;Mountain
+
+[p0_script]
+# Exile P1's own Grizzly Bears. Its controller (P1) gains life equal to its
+# power (2). The `targeting` clause names the creature semantically.
+cast Swords to Plowshares targeting Grizzly Bears
+
+[assertions]
+# Swords was actually cast.
+spell cast Swords to Plowshares
+# The exiled creature's CONTROLLER (P1) gained 2 life: 20 -> 22.
+opponent life eq 22
+# The caster (P0) gained nothing.
+life eq 20
+# The Grizzly Bears is in P1's exile zone (it left the battlefield to exile).
+# This is durable: once exiled it never returns, so it holds at game end even
+# though the heuristic plays lands onto P1's battlefield afterward.
+opponent exile contains Grizzly Bears

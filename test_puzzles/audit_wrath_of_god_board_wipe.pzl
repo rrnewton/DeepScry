@@ -1,0 +1,58 @@
+# Card-audit (mtg-948 Part B): Wrath of God — scripted board wipe (DestroyAll + NoRegen).
+#
+# Closed issue mtg-558 closed Wrath of God as WORKING. Aspects:
+#   - SP$ DestroyAll | ValidCards$ Creature | NoRegen$ True
+#   - Destroys ALL creatures regardless of controller; each goes to its owner's
+#     graveyard (CR 701.7 Destroy).
+#   - NoRegen$ True: the destroyed creatures cannot be regenerated.
+#
+# Wave 1 had to drive Wrath with a hand-written `--p1-fixed-inputs` CLI string
+# (see the mtg-558 reproducer). This puzzle backs it inside the bulk runner via
+# a [p0_script], asserting that creatures BOTH players control die.
+#
+# Scenario:
+#   - P0: Wrath of God in hand, 2 Plains + 2 generic-capable lands (Mountains).
+#         Also controls a Grizzly Bears (so we prove it kills OWN creatures too).
+#   - P1: controls a Savannah Lions (1/1) and a Black Knight.
+#   - Script: P0 casts Wrath of God. All three creatures are destroyed.
+
+[metadata]
+Name:Card Audit - Wrath of God Board Wipe
+Goal:Win
+Turns:1
+Difficulty:Easy
+Description:P0 scripts Wrath of God, destroying ALL creatures regardless of controller — including P0's own Grizzly Bears and P1's Savannah Lions + Black Knight. Backs issue mtg-558 (SP$ DestroyAll ValidCards$ Creature NoRegen$ True, CR 701.7).
+
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Wrath of God
+p0battlefield=Plains;Plains;Mountain;Mountain;Grizzly Bears
+p0library=Forest;Forest;Forest;Forest;Forest
+
+p1life=20
+p1battlefield=Savannah Lions;Black Knight
+p1library=Mountain;Mountain;Mountain;Mountain;Mountain
+
+[p0_script]
+# Cast the board wipe. DestroyAll has no target, so a bare `cast` suffices.
+cast Wrath of God
+
+[assertions]
+# The sorcery was actually cast.
+spell cast Wrath of God
+# The destroyed creatures went to their owners' graveyards (durable final-state).
+# Wrath is symmetric: P0's OWN Grizzly Bears is in P0's graveyard...
+me graveyard contains Grizzly Bears
+# ...and both of P1's creatures are in P1's graveyard.
+opponent graveyard contains Savannah Lions
+opponent graveyard contains Black Knight
+# NOTE: we do NOT assert the `creature died` EVENT here. That event is only
+# emitted on LETHAL-DAMAGE deaths (combat or burn); a creature removed by a
+# DestroyAll effect goes to the graveyard without firing CreatureDied. The
+# destruction itself is fully verified by the graveyard-contains assertions
+# above (and the "is destroyed" / NoRegen marker in the golden log). The
+# missing event for destroy-based deaths is tracked as mtg-ngf7s, not a
+# Wrath of God card defect.

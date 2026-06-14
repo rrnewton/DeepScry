@@ -1,0 +1,52 @@
+  >>> Turn 1 - Player 1 20 (Player 2 20) <<<<
+Player 1 casts Wrath of God (3) (putting on stack)
+Tap Plains for {W}
+Tap Plains for {W}
+Tap Mountain for {R}
+Tap Mountain for {R}
+Wrath of God (3) resolves
+Grizzly Bears (8) goes to graveyard
+Grizzly Bears (8) is destroyed
+Savannah Lions (14) goes to graveyard
+Savannah Lions (14) is destroyed
+Black Knight (15) goes to graveyard
+Black Knight (15) is destroyed
+Wrath of God (3) destroys all matching permanents (can't be regenerated)
+
+  >>> Turn 2 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Mountain (20)
+<Choice> Player 2 chose 0 - play Mountain
+Player 2 plays Mountain (20)
+
+  >>> Turn 3 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Forest (13)
+
+  >>> Turn 4 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Mountain (19)
+<Choice> Player 2 chose 0 - play Mountain
+Player 2 plays Mountain (19)
+
+  >>> Turn 5 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Forest (12)
+
+  >>> Turn 6 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Mountain (18)
+<Choice> Player 2 chose 0 - play Mountain
+Player 2 plays Mountain (18)
+
+  >>> Turn 7 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Forest (11)
+
+  >>> Turn 8 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Mountain (17)
+<Choice> Player 2 chose 0 - play Mountain
+Player 2 plays Mountain (17)
+
+  >>> Turn 9 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Forest (10)
+
+  >>> Turn 10 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Mountain (16)
+<Choice> Player 2 chose 0 - play Mountain
+Player 2 plays Mountain (16)
+Player 2 has lost the game (decked). Player 1 wins!

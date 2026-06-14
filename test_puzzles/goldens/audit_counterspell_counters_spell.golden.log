@@ -1,0 +1,38 @@
+  >>> Turn 1 - Player 1 20 (Player 2 20) <<<<
+Player 1 casts Lightning Bolt (3) (putting on stack)
+  → targeting Player 2, Player 1
+Tap Mountain for {R}
+Player 2 casts Counterspell (12) (putting on stack)
+  → targeting Lightning Bolt (3)
+Tap Island for {U}
+Tap Island for {U}
+Counterspell (12) resolves
+Counterspell (12) counters Lightning Bolt (3)
+
+  >>> Turn 2 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Plains (20)
+
+  >>> Turn 3 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Forest (11)
+
+  >>> Turn 4 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Plains (19)
+
+  >>> Turn 5 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Forest (10)
+
+  >>> Turn 6 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Plains (18)
+
+  >>> Turn 7 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Forest (9)
+
+  >>> Turn 8 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Plains (17)
+
+  >>> Turn 9 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Forest (8)
+
+  >>> Turn 10 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Plains (16)
+Player 2 has lost the game (decked). Player 1 wins!

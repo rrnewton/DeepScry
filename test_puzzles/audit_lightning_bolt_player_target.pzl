@@ -1,0 +1,55 @@
+# Card-audit (mtg-948 Part B): Lightning Bolt — PLAYER target aspect.
+#
+# Closed issue mtg-565 closed Lightning Bolt as WORKING after fixing the
+# player-targeting bug (a burn spell with `ValidTgts$ Any` must be able to hit
+# a PLAYER, not just creatures — CR 115.4 "any target" includes players). The
+# sibling showcase puzzle (script_lightning_bolt_kills_creature.pzl) already
+# covers the CREATURE-target aspect; this puzzle backs the distinct
+# PLAYER-target aspect that was the actual subject of the mtg-565 fix.
+#
+# Scenario:
+#   - P0: Lightning Bolt in hand, 3 untapped Mountains on the battlefield.
+#   - P1: no creatures (so the only legal target is the opponent player).
+#   - Script: P0 casts Lightning Bolt targeting p1 (the opponent player).
+#   - Bolt deals 3 damage to P1 -> P1 drops from 20 to 17 (CR 119.3).
+#
+# This exercises the PLAYER_TARGET sentinel path documented in mtg-565:
+# entity.rs player_as_target_sentinel() encodes a PlayerId as a CardId in the
+# valid-targets list, decoded at resolution. Card-name/player matching uses the
+# anti-overfitting `pN` selector, NOT a brittle menu index.
+
+[metadata]
+Name:Card Audit - Lightning Bolt Burns a Player
+Goal:Win
+Turns:1
+Difficulty:Easy
+Description:P0 is driven by an action script that casts Lightning Bolt at the opponent PLAYER (no creatures present), dealing 3 damage. Backs the player-target aspect that issue mtg-565 fixed (ValidTgts$ Any must include players, CR 115.4).
+
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Lightning Bolt
+p0battlefield=Mountain;Mountain;Mountain
+p0library=Forest;Forest;Forest;Forest;Forest
+
+p1life=20
+p1library=Mountain;Mountain;Mountain;Mountain;Mountain
+
+[p0_script]
+# Cast Lightning Bolt targeting the opponent PLAYER. The `p1` selector resolves
+# to the second player (the sentinel CardId path), proving "any target" offers a
+# player and the burn lands on them. With no creatures on board the player is
+# the only legal target, but the explicit selector documents intent.
+cast Lightning Bolt targeting p1
+
+[assertions]
+# The burn spell was actually cast by the script.
+spell cast Lightning Bolt
+# The opponent player took 3 damage: 20 -> 17 (player-as-target path, mtg-565).
+opponent life eq 17
+# We took none.
+life eq 20
+# Lightning Bolt is in our graveyard after resolving.
+me graveyard contains Lightning Bolt
