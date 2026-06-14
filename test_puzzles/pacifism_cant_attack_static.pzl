@@ -1,0 +1,60 @@
+# Card-compatibility puzzle: Pacifism (LEA-class Aura — "can't attack or block").
+#
+# Aspects exercised:
+#   * Enchantment Aura that is attached to a creature (here pre-attached via the
+#     `AttachedTo:` puzzle notation, modelling a resolved Pacifism).
+#   * Static ability S:Mode$ CantAttack,CantBlock | ValidCard$ Creature.EnchantedBy —
+#     a continuous restriction (CR 509.1a) on the enchanted creature.
+#   * The "can't attack" half: the enchanted Hill Giant is never declared as an
+#     attacker by the AI, so P0 takes no combat damage from it.
+#
+# The same single static line also grants "can't block"; that half is the
+# identical restriction mechanism and is enumerated in the tracking issue. This
+# puzzle asserts the attack-restriction half because the heuristic reliably
+# *wants* to attack with a 3/3 yet is prevented from doing so — a clean,
+# deterministic signal that the static is in force.
+#
+# Scenario: the opponent (P1) is the active player with a 3/3 Hill Giant
+# enchanted by Pacifism. Without Pacifism the AI attacks for 3 every turn
+# (verified by removing the Aura). With Pacifism attached, P0's life never
+# moves off 20. Verified live (seed 42): the Hill Giant is shown with Pacifism
+# attached and is never declared as an attacker; "Life: 20" holds every turn.
+#
+# Reproduce:
+#   mtg tui --start-state test_puzzles/pacifism_cant_attack_static.pzl \
+#       --p1 heuristic --p2 heuristic --seed 42 -v 2 --no-color-logs
+
+[metadata]
+Name:Pacifism — enchanted creature can't attack
+Goal:Survive
+Turns:4
+Difficulty:Easy
+Description:The opponent's 3/3 Hill Giant is enchanted by Pacifism (pre-attached). Pacifism's CantAttack static stops it from ever attacking, so P0 takes no damage and stays at 20 life. Exercises Aura attachment and the continuous can't-attack restriction.
+
+[state]
+turn=2
+activeplayer=p1
+activephase=MAIN1
+p0life=20
+p0hand=
+p0library=Plains;Plains;Plains;Plains;Plains
+p0graveyard=
+p0battlefield=Plains;Plains
+p0exile=
+
+p1life=20
+p1hand=
+p1library=Forest;Forest;Forest;Forest;Forest
+p1graveyard=
+p1battlefield=Forest;Forest;Hill Giant|Id:30;Pacifism|Id:31|AttachedTo:30
+p1exile=
+
+[assertions]
+# Pacifism's can't-attack static holds: the enchanted Hill Giant never connects,
+# so P0 takes no combat damage.
+life eq 20
+# Symmetrically, the opponent is never attacked here either (P0 has no creature),
+# so they also remain at 20 — guards against a state-load mishap.
+opponent life eq 20
+# Pacifism is still on the battlefield, attached, doing its job (not destroyed).
+opponent battlefield contains Pacifism

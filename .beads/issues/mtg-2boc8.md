@@ -1,0 +1,43 @@
+---
+title: 'Card Compatibility: Pacifism'
+status: closed
+priority: 3
+issue_type: task
+labels:
+- puzzle-tested
+created_at: 2026-06-14T06:58:41.829174440+00:00
+updated_at: 2026-06-14T07:00:48.487858163+00:00
+closed_at: 2026-06-14T07:00:48.487858069+00:00
+---
+
+# Description
+
+Test all behavioral aspects of Pacifism in MTG Forge-rs.
+
+Set: LEA
+Card script: cardsfolder/p/pacifism.txt
+Oracle: Enchant creature. Enchanted creature can't attack or block.
+PUZZLE_FILE: test_puzzles/pacifism_cant_attack_static.pzl
+
+Aspects (one per ability/keyword/cost):
+
+1. [x] Card loads as an Enchantment Aura with K:Enchant:Creature.
+2. [x] Aura can be attached to a creature (pre-attached via AttachedTo: in the puzzle; the engine keeps it attached across turns).
+3. [x] Static ability S:Mode$ CantAttack,CantBlock | ValidCard$ Creature.EnchantedBy applies as a continuous restriction (CR 509.1a) to the enchanted creature.
+4. [x] CantAttack half: the enchanted creature is never declared as an attacker; controller takes no combat damage from it. PUZZLE-ASSERTED.
+5. [WORKING-by-rule] CantBlock half: same single static line (CantAttack,CantBlock) governs both; the can't-block restriction is the identical mechanism. Not separately puzzle-asserted because the heuristic AI would not reliably set up the blocking scenario, but the static is confirmed loaded and in force.
+
+Findings (2026-06-13_#3428(8fc3a787e)) — CARD IS WORKING.
+
+Live evidence (mtg tui, seed 42): with Pacifism attached to a 3/3 Hill Giant, the AI never declares it as an attacker and P0 holds at "Life: 20" every turn:
+    Hill Giant (12) - 3/3
+    Pacifism (13)
+  Life: 20   (held across all turns)
+Control case (Pacifism removed): the same Hill Giant attacks for 3 each turn, dropping P0 to 17, 14, 11 — confirming the Aura is what stops it.
+
+Reproducer:
+  mtg tui --start-state test_puzzles/pacifism_cant_attack_static.pzl --p1 heuristic --p2 heuristic --seed 42 -v 2 --no-color-logs
+
+Puzzle assertions (make puzzle-bulk-check): life eq 20; opponent life eq 20; opponent battlefield contains Pacifism — all PASS.
+
+CARD STATUS: WORKING (puzzle-backed for the can't-attack static; can't-block is the same static line, verified-by-rule).

@@ -1,8 +1,31 @@
+# Card-compatibility puzzle: Prodigal Sorcerer ("Tim", LEA-class 1/1 pinger).
+#
+# Aspects exercised:
+#   * Activated ability with a tap cost (AB$ DealDamage | Cost$ T) — CR 602.1.
+#   * The ability taps the Sorcerer as its cost.
+#   * "any target" targeting (ValidTgts$ Any), NumDmg$ 1: deals exactly 1 damage.
+#   * 1 damage is lethal to a 1/1 (Mons's Goblin Raiders), which dies to the
+#     lethal-damage state-based action (CR 704.5g).
+#   * No summoning sickness: the Sorcerer was already in play at puzzle start,
+#     so it may activate a {T} ability the turn the puzzle begins.
+#
+# Scenario: P0 controls Prodigal Sorcerer + two Islands; the opponent has a 1/1
+# Mons's Goblin Raiders. The heuristic AI taps the Sorcerer to ping the Raiders,
+# killing it; later the Sorcerer (now an unblocked 1/1) attacks for 1.
+# Verified live (seed 42):
+#   "Prodigal Sorcerer activates ability ... deals 1 damage to any target"
+#   "Mons's Goblin Raiders takes 1 damage ... dies from lethal damage"
+#
+# Reproduce:
+#   mtg tui --start-state test_puzzles/prodigal_sorcerer_ping.pzl \
+#       --p1 heuristic --p2 heuristic --seed 42 -v 2 --no-color-logs
+
 [metadata]
-Name:Prodigal Sorcerer Pinging Test
+Name:Prodigal Sorcerer — {T}: 1 damage pings a 1/1 dead
 Goal:Win
+Turns:3
 Difficulty:Easy
-Description:Test that Prodigal Sorcerer uses its tap ability to ping opponent
+Description:P0's Prodigal Sorcerer uses its {T} ability to deal 1 damage to the opponent's 1/1 Mons's Goblin Raiders, which is lethal and the creature dies. Exercises the tap-cost activated ability, any-target NumDmg$ 1, and the lethal-damage state-based action.
 
 [state]
 turn=3
@@ -10,7 +33,22 @@ activeplayer=p0
 activephase=MAIN1
 p0life=20
 p0hand=
+p0library=Island;Island;Island;Island;Island
+p0graveyard=
 p0battlefield=Island;Island;Prodigal Sorcerer
+p0exile=
+
 p1life=20
 p1hand=
-p1battlefield=
+p1library=Forest;Forest;Forest;Forest;Forest
+p1graveyard=
+p1battlefield=Mons's Goblin Raiders
+p1exile=
+
+[assertions]
+# The {T}-cost ability resolved and its 1 damage was lethal to the 1/1.
+creature died Mons's Goblin Raiders
+# The pinged creature ended up in the opponent's graveyard.
+opponent graveyard contains Mons's Goblin Raiders
+# P0 took no damage doing this.
+life eq 20
