@@ -1,1 +1,80 @@
-Player 1 has lost the game (decked). Player 2 wins!
+<Choice> Player 1 chose 0 - activate Prodigal Sorcerer
+Prodigal Sorcerer activates ability: Prodigal Sorcerer deals 1 damage to any target.
+  -> targeting Mons's Goblin Raiders (11)
+Mons's Goblin Raiders (11) takes 1 damage (total: 1)
+Mons's Goblin Raiders (11) goes to graveyard
+Mons's Goblin Raiders (11) dies from lethal damage
+
+  >>> Turn 4 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Forest (16)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (16)
+
+  >>> Turn 5 - Player 1 20 (Player 2 20) <<<<
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+Player 1 draws Island (10)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 1 - play Island
+Player 1 plays Island (10)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Prodigal Sorcerer (5) (1/1) as attacker
+Prodigal Sorcerer (5) deals 1 damage to Player 2 (life: 19)
+
+  >>> Turn 6 - Player 2 19 (Player 1 20) <<<<
+Player 2 draws Forest (15)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (15)
+
+  >>> Turn 7 - Player 1 20 (Player 2 19) <<<<
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+Player 1 draws Island (9)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 1 - play Island
+Player 1 plays Island (9)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Prodigal Sorcerer (5) (1/1) as attacker
+Prodigal Sorcerer (5) deals 1 damage to Player 2 (life: 18)
+
+  >>> Turn 8 - Player 2 18 (Player 1 20) <<<<
+Player 2 draws Forest (14)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (14)
+
+  >>> Turn 9 - Player 1 20 (Player 2 18) <<<<
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+Player 1 draws Island (8)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 1 - play Island
+Player 1 plays Island (8)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Prodigal Sorcerer (5) (1/1) as attacker
+Prodigal Sorcerer (5) deals 1 damage to Player 2 (life: 17)
+
+  >>> Turn 10 - Player 2 17 (Player 1 20) <<<<
+Player 2 draws Forest (13)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (13)
+
+  >>> Turn 11 - Player 1 20 (Player 2 17) <<<<
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+Player 1 draws Island (7)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 1 - play Island
+Player 1 plays Island (7)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> Player 1 chose 'p' (pass priority from 1 available actions)
+<Choice> chose 1 attackers from 1 available creatures (aggression=3, opponent blockers=0)
+Player 1 declares Prodigal Sorcerer (5) (1/1) as attacker
+Prodigal Sorcerer (5) deals 1 damage to Player 2 (life: 16)
+
+  >>> Turn 12 - Player 2 16 (Player 1 20) <<<<
+Player 2 draws Forest (12)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (12)
+Player 2 has lost the game (decked). Player 1 wins!

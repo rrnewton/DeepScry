@@ -1,0 +1,53 @@
+# Card-compatibility puzzle: Shock (LEA-class burn instant).
+#
+# Aspects exercised:
+#   * Instant spell cast from hand paying {R} (SP$ DealDamage).
+#   * "any target" targeting (ValidTgts$ Any) — here a creature.
+#   * NumDmg$ 2: deals exactly 2 damage.
+#   * State-based action: a 2/2 (Grizzly Bears) with 2 marked damage has
+#     lethal damage and is destroyed (CR 704.5g / 120.6 lethal damage).
+#
+# Scenario: P0 (on the play, MAIN1) holds Shock and a Mountain in play; the
+# opponent has a 2/2 Grizzly Bears. The heuristic AI casts Shock at the Bears,
+# which dies. Verified live (seed 42):
+#   "Player 1 casts Shock ... targeting Grizzly Bears"
+#   "Grizzly Bears takes 2 damage ... dies from lethal damage"
+#
+# Reproduce:
+#   mtg tui --start-state test_puzzles/shock_any_target_two_damage.pzl \
+#       --p1 heuristic --p2 heuristic --seed 42 -v 2 --no-color-logs
+
+[metadata]
+Name:Shock — 2 damage to any target kills a 2/2
+Goal:Win
+Turns:4
+Difficulty:Easy
+Description:P0 casts Shock at the opponent's Grizzly Bears; 2 damage is lethal to the 2/2 and it dies. Exercises instant cast, "any target" targeting, NumDmg$ 2, and the lethal-damage state-based action.
+
+[state]
+turn=2
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Shock
+p0library=Mountain;Mountain;Mountain;Mountain;Mountain
+p0graveyard=
+p0battlefield=Mountain
+p0exile=
+
+p1life=20
+p1hand=
+p1library=Forest;Forest;Forest;Forest;Forest
+p1graveyard=
+p1battlefield=Grizzly Bears
+p1exile=
+
+[assertions]
+# Shock was cast.
+spell cast Shock
+# The 2/2 took 2 lethal damage and died.
+creature died Grizzly Bears
+# Shock is an instant; after resolving it goes to P0's graveyard.
+me graveyard contains Shock
+# The Bears ended up in the opponent's graveyard.
+opponent graveyard contains Grizzly Bears

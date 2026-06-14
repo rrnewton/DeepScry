@@ -1,0 +1,55 @@
+<Choice> Player 1 chose 0 - cast Shock
+Player 1 casts Shock (3) (putting on stack)
+  → targeting Grizzly Bears (10)
+Tap Mountain for {R}
+Shock (3) resolves
+Grizzly Bears (10) takes 2 damage (total: 2)
+Shock (3) deals 2 damage to Grizzly Bears (10)
+Grizzly Bears (10) goes to graveyard
+Grizzly Bears (10) dies from lethal damage
+
+  >>> Turn 3 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Forest (15)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (15)
+
+  >>> Turn 4 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Mountain (9)
+<Choice> Player 1 chose 0 - play Mountain
+Player 1 plays Mountain (9)
+
+  >>> Turn 5 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Forest (14)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (14)
+
+  >>> Turn 6 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Mountain (8)
+<Choice> Player 1 chose 0 - play Mountain
+Player 1 plays Mountain (8)
+
+  >>> Turn 7 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Forest (13)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (13)
+
+  >>> Turn 8 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Mountain (7)
+<Choice> Player 1 chose 0 - play Mountain
+Player 1 plays Mountain (7)
+
+  >>> Turn 9 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Forest (12)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (12)
+
+  >>> Turn 10 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Mountain (6)
+<Choice> Player 1 chose 0 - play Mountain
+Player 1 plays Mountain (6)
+
+  >>> Turn 11 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Forest (11)
+<Choice> Player 2 chose 0 - play Forest
+Player 2 plays Forest (11)
+Player 2 has lost the game (decked). Player 1 wins!
