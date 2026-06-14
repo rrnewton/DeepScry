@@ -104,6 +104,28 @@ fn discover_puzzles(root: &Path) -> Vec<PathBuf> {
     out
 }
 
+fn workspace_root_for_puzzles() -> PathBuf {
+    let has_puzzle_dirs = |root: &Path| {
+        root.join("test_puzzles").is_dir()
+            || root.join("puzzles").is_dir()
+            || root.join("forge-java/forge-gui/res/puzzle").is_dir()
+    };
+
+    if let Ok(cwd) = std::env::current_dir() {
+        let runtime_root = if cwd.file_name().and_then(|name| name.to_str()) == Some("mtg-engine") {
+            cwd.parent().map(Path::to_path_buf).unwrap_or(cwd)
+        } else {
+            cwd
+        };
+        if has_puzzle_dirs(&runtime_root) {
+            return runtime_root;
+        }
+    }
+
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    manifest_dir.parent().expect("workspace root").to_path_buf()
+}
+
 // ─── Single-puzzle runner ─────────────────────────────────────────────────────
 
 /// Run one puzzle and return the outcome.  This function is called from a rayon
@@ -271,10 +293,9 @@ fn xml_escape(s: &str) -> String {
 #[test]
 fn bulk_puzzle_check() {
     // ── Discover puzzles ───────────────────────────────────────────────────────
-    // Integration tests run from `mtg-engine/` directory; our puzzle roots are
-    // siblings of the workspace root.
-    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let workspace_root = manifest_dir.parent().expect("workspace root");
+    // Archive replay keeps the original compile-time manifest path, so prefer
+    // the runtime checkout when it contains the puzzle corpora.
+    let workspace_root = workspace_root_for_puzzles();
 
     let mut all_paths = Vec::new();
     for subdir in &[

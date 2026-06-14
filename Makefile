@@ -97,7 +97,8 @@ build-network:
 # build-nextest-arch job) instead of recompiling — --workspace-remap . points
 # the archive's source-relative paths at this checkout (the archive omits
 # source; submodules must be checked out). The archive was built with the SAME
-# `--release --features network` so features can't drift.
+# `--release --features network` so features can't drift. Archive replay accepts
+# nextest filters, but not Cargo build/target flags.
 test:
 	@echo "=== Running unit tests ==="
 	@if [ -n "$(NEXTEST_ARCHIVE)" ]; then \
@@ -119,7 +120,7 @@ puzzle-bulk-check:
 	@if [ -n "$(NEXTEST_ARCHIVE)" ]; then \
 		echo "=== Reusing prebuilt nextest archive: $(NEXTEST_ARCHIVE) ==="; \
 		cargo nextest run --archive-file "$(NEXTEST_ARCHIVE)" --workspace-remap . \
-			--test puzzle_bulk_runner --test-threads 1; \
+			--test-threads 1 bulk_puzzle_check; \
 	else \
 		cargo nextest run --features network \
 			--test puzzle_bulk_runner --test-threads 1; \
