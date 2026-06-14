@@ -1,7 +1,7 @@
 # MTG Forge Rust - Development Makefile
 #
 # Quick reference for common development tasks
-.PHONY: help build build-release build-profiling test puzzle-bulk-check puzzle-golden-check puzzle-bless validate validate-desync-canary fuzz-determinism fuzz-equivalence fuzz-network fuzz-native-wasm fuzz-snapshot fuzz-expedition clean run check fmt fmt-check clippy clippy-wasm doc docs examples full-benchmark bench-snapshot bench-logging coverage coverage-full validate-coverage-step profile callgrindprofile perfprofile heapprofile dhatprofile count setup-claude claude-github claude-beads happy code-dups beads-check bench wasm wasm-export wasm-serve wasm-dev play-web-local-dev wasm-test wasm-test-fancy wasm-test-fancy-dev wasm-test-human wasm-test-game-gui-rebuild wasm-test-game-gui-playtest wasm-e2e wasm-e2e-dev wasm-e2e-network wasm-e2e-network-human play-web play-web-pvp play-web-local build-network
+.PHONY: help build build-release build-profiling test puzzle-bulk-check puzzle-golden-check puzzle-bless validate validate-desync-canary fuzz-determinism fuzz-equivalence fuzz-network fuzz-native-wasm fuzz-snapshot fuzz-expedition clean run check fmt fmt-check clippy clippy-wasm doc docs examples full-benchmark bench-snapshot bench-logging coverage coverage-full validate-coverage-step profile callgrindprofile perfprofile heapprofile dhatprofile count setup-claude claude-github claude-beads happy code-dups beads-check bench wasm wasm-export wasm-serve wasm-dev play-web-local-dev wasm-test wasm-test-fancy wasm-test-fancy-dev wasm-test-human wasm-test-game-gui-rebuild wasm-test-game-gui-playtest wasm-e2e wasm-e2e-dev wasm-e2e-network wasm-e2e-network-human play-web play-web-pvp play-web-local serve-web build-network
 
 # Configuration variables
 # NODE: Node.js binary (Playwright requires Node 18+)
@@ -18,6 +18,15 @@ PORT ?= 8080
 SERVER_PORT ?= 17771
 # CONTROLLER: AI controller for play-web (random, heuristic, zero)
 CONTROLLER ?= heuristic
+
+# SERVER_WEB_MEM_CAP_PCT: cap the unified `mtg server-web` to this % of total
+# system RAM via a self-relaunch into a `systemd-run --user --scope` cgroup
+# (see mtg-engine/src/web_server/mem_cgroup.rs). A memory leak then OOM-kills
+# only the server's cgroup instead of the whole box, and Ctrl-C tears down the
+# whole scope (server + embedded lobby + children). Set to 0 to disable.
+# Defined ONCE here and referenced by every target that launches `mtg
+# server-web` (DRY).
+SERVER_WEB_MEM_CAP_PCT ?= 70
 
 # WASM_TARGET_DIR: dedicated cargo target root for ALL wasm32 builds (mtg-717).
 # cargo's build lock is per-target-ROOT, and wasm32 artifacts otherwise live
@@ -67,6 +76,8 @@ help:
 	@echo "  make play-web-local - Build WASM (network) and start local web server (no AI)"
 	@echo "  make play-web-local-dev - Same as play-web-local but with dev build (fast)"
 	@echo "  make wasm-serve     - Build WASM (non-network) and start local web server"
+	@echo "  make serve-web      - Launch unified native server (mtg server-web), mem-capped cgroup"
+	@echo "                        Override: SERVER_WEB_MEM_CAP_PCT=50 (0 disables) PORT=8080"
 	@echo "  make wasm-test-fancy - Run Playwright e2e test with screenshots"
 	@echo ""
 
@@ -733,6 +744,24 @@ wasm-network: wasm-export ensure-wasm-pack
 	@cp -r mtg-engine/pkg web/pkg
 	@echo ""
 	@echo "=== WASM network build complete! ==="
+
+# Launch the UNIFIED native web server (`mtg server-web`): static files +
+# lobby WS proxy in one process, memory-capped via a self-relaunch cgroup.
+# This is the same binary/path the production systemd unit runs; use it for
+# local full-server dev (as opposed to the python-http.server `play-web-local`
+# targets, which only serve the static WASM build with no native lobby).
+# Override the cap with: make serve-web SERVER_WEB_MEM_CAP_PCT=50  (0 disables)
+serve-web: build-network wasm-network
+	@echo ""
+	@echo "=== Starting unified web server (mtg server-web) on port $(PORT) ==="
+	@echo "Memory cap: $(SERVER_WEB_MEM_CAP_PCT)% of system RAM (systemd-run --user --scope cgroup)"
+	@echo "Open http://localhost:$(PORT) in your browser"
+	@echo "Press Ctrl+C to stop (brings down the whole cgroup; second Ctrl-C force-quits)"
+	@echo ""
+	@./target/release/mtg server-web \
+		--bind 0.0.0.0:$(PORT) \
+		--static-dir ./web \
+		--mem-cap-pct $(SERVER_WEB_MEM_CAP_PCT)
 
 # Build WASM with network feature and start web server (no AI opponent)
 play-web-local: wasm-network

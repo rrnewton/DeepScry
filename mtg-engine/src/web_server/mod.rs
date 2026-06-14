@@ -65,6 +65,7 @@ use tower_http::services::ServeDir;
 use crate::network::lobby::SharedLobby;
 use crate::network::{GameServer, ServerConfig};
 
+pub mod mem_cgroup;
 pub mod oauth;
 pub mod r2;
 use oauth::{OAuthConfig, OAuthState, Provider, SESSION_COOKIE, STATE_COOKIE};
