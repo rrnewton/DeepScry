@@ -46,9 +46,10 @@ opponent life lt 12
 # The discard-on-combat-damage trigger fires: each connection forces P1 to
 # discard a card at random, which lands in P1's graveyard. P1 began with no
 # graveyard, so a non-empty graveyard is the OBSERVABLE proof the discard
-# trigger fired. (We assert the discard's effect, not a `trigger fired from
-# Hypnotic Specter` event, because the event log only emits
-# LogEvent::TriggerFired for death/leaves-battlefield watcher triggers today,
-# NOT for DamageDone triggers — see the trigger-event instrumentation gap
-# bug mtg-955.)
+# trigger fired.
 opponent graveyard count ge 1
+# The structured TriggerFired event now ALSO fires for DamageDone triggers
+# (mtg-955 fixed): the engine emits LogEvent::TriggerFired at the shared
+# `check_triggers_inner` chokepoint for every event-based trigger, so this
+# event-level assertion now passes alongside the observable graveyard effect.
+trigger fired from Hypnotic Specter

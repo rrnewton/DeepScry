@@ -47,12 +47,13 @@ p1exile=
 [assertions]
 # The upkeep self-damage trigger fires: P0 takes at least 1 point of damage
 # from its own Serendib Efreet (life < 20). This is the OBSERVABLE effect of
-# the BeginningOfUpkeep DealDamage trigger. (We assert the life change, not a
-# `trigger fired from Serendib Efreet` event, because the event log only emits
-# LogEvent::TriggerFired for death/leaves-battlefield watcher triggers today,
-# NOT for Phase/upkeep triggers — see the trigger-event instrumentation gap
-# bug mtg-955.)
+# the BeginningOfUpkeep DealDamage trigger.
 me life lt 20
+# The structured TriggerFired event now ALSO fires for Phase/upkeep triggers
+# (mtg-955 fixed): the engine emits LogEvent::TriggerFired at the shared
+# `check_triggers_for_controller` chokepoint, so this event-level assertion now
+# passes alongside the observable life-loss effect above.
+trigger fired from Serendib Efreet
 # The 3/4 flier P1 cannot block carries the game.
 game won
 # P1 takes lethal flying damage.

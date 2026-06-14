@@ -6145,6 +6145,9 @@ impl GameState {
             sacrificed_power: u8,             // Power of sacrifice target (for Firebend effects)
             /// Per-trigger damage amount observed (after recipient-class gating).
             damage_amount: Option<i32>,
+            /// Human-readable description of the trigger (for the structured
+            /// `TriggerFired` event — observability only, mtg-955).
+            description: String,
         }
 
         // Pre-compute source card info for trigger filtering (landfall check, etc.)
@@ -6318,12 +6321,14 @@ impl GameState {
                             );
                         }
                     }
+                    let description = info.trigger.description.clone();
                     Some(TriggerToExecute {
                         source_card_id: info.card_id,
                         effects: info.trigger.effects,
                         sacrifice_target,
                         sacrificed_power,
                         damage_amount: info.damage_amount,
+                        description,
                     })
                 } else {
                     None
@@ -6335,6 +6340,26 @@ impl GameState {
         for trigger_to_exec in triggered_effects {
             let trigger_source = trigger_to_exec.source_card_id;
             let sacrificed_power = trigger_to_exec.sacrificed_power;
+
+            // Structured event: a triggered ability fired and is being put on
+            // the stack / resolved. This is the SHARED chokepoint for every
+            // event-based trigger routed through `check_triggers_inner`
+            // (DamageDone, DealsCombatDamage, EntersBattlefield, Sacrificed,
+            // landfall, etc.) — so `trigger fired from <card>` now matches them
+            // uniformly instead of only the death/leaves-battlefield watchers
+            // (mtg-955). Event-log only: `push_event` is a no-op when the event
+            // log is disabled and the `event_log` Vec is excluded from the
+            // logger's serialized form, so emitting it cannot perturb game
+            // state, the undo log, or any snapshot / network-shadow / WASM
+            // rewind hash.
+            if let Some(card) = self.cards.try_get(trigger_source) {
+                self.logger.push_event(crate::game::log_event::LogEvent::TriggerFired {
+                    source_id: trigger_source,
+                    source_name: card.name.to_string(),
+                    controller: card.controller,
+                    description: trigger_to_exec.description.clone(),
+                });
+            }
 
             // Execute sacrifice cost first (if any)
             if let Some(sac_target) = trigger_to_exec.sacrifice_target {
@@ -7241,65 +7266,112 @@ impl GameState {
         card_id: CardId,
         active_player: PlayerId,
     ) -> Result<()> {
+        // Phase/upkeep trigger-match predicate. Shared by the event-emission
+        // pass and the effect-collection pass below so the two never drift
+        // (mtg-955). Free fn (not a closure capturing `self`) so it can be
+        // called while a `&Card` borrow is live.
+        fn phase_trigger_matches(
+            trigger: &crate::core::Trigger,
+            event: TriggerEvent,
+            card: &crate::core::Card,
+            active_player: PlayerId,
+            cards: &crate::core::EntityStore<crate::core::Card>,
+        ) -> bool {
+            if trigger.event != event {
+                return false;
+            }
+            // Controller-only triggers should only fire on the controller's turn
+            // OPTIMIZATION: Use pre-parsed boolean flag instead of runtime string check
+            if trigger.controller_turn_only {
+                return card.controller == active_player;
+            }
+            // ValidPlayer$ Player.Chosen (Black Vise): fire only on the
+            // chosen player's turn (and only once a player was chosen).
+            if trigger.chosen_player_turn_only {
+                return card.chosen_player == Some(active_player);
+            }
+            // ValidPlayer$ Player.EnchantedController (Paralyze): fire only
+            // on the upkeep of the ENCHANTED permanent's controller. The
+            // host's controller (not the Aura's) must be the active player.
+            if trigger.enchanted_controller_turn_only {
+                return card
+                    .attached_to
+                    .and_then(|host| cards.try_get(host))
+                    .is_some_and(|host| host.controller == active_player);
+            }
+            // Intervening-if condition (CR 603.4): the source must satisfy
+            // its self-state condition right now, or the trigger does not
+            // fire. Howling Mine: "if CARDNAME is untapped, that player
+            // draws an additional card" — a tapped Howling Mine grants no
+            // extra draw.
+            if let Some(cond) = &trigger.present_self_condition {
+                use crate::core::PresentSelfCondition;
+                let satisfied = match cond {
+                    PresentSelfCondition::Counter(c) => c.evaluate(card.get_counter(c.counter_type)),
+                    PresentSelfCondition::Untapped => !card.tapped,
+                    PresentSelfCondition::Tapped => card.tapped,
+                };
+                if !satisfied {
+                    return false;
+                }
+            }
+            // Mode gate (Palace Siege): only fire if the source card's
+            // chosen_mode matches the gate string.
+            if let Some(gate) = &trigger.mode_gate {
+                if card.chosen_mode.as_deref() != Some(gate.as_str()) {
+                    return false;
+                }
+            }
+            true
+        }
+
         // Get the card's triggers
-        let effects_to_execute: Vec<Effect> = {
+        let (effects_to_execute, fired_descriptions, fired_source_name, fired_controller): (
+            Vec<Effect>,
+            smallvec::SmallVec<[String; 2]>,
+            String,
+            PlayerId,
+        ) = {
             let card = self.cards.get(card_id)?;
 
             // Only process triggers where the controller matches the active player
-            // OR the trigger doesn't have the [controller_only] flag
-            card.triggers
+            // OR the trigger doesn't have the [controller_only] flag.
+            let effects: Vec<Effect> = card
+                .triggers
                 .iter()
-                .filter(|trigger| {
-                    if trigger.event != event {
-                        return false;
-                    }
-                    // Controller-only triggers should only fire on the controller's turn
-                    // OPTIMIZATION: Use pre-parsed boolean flag instead of runtime string check
-                    if trigger.controller_turn_only {
-                        return card.controller == active_player;
-                    }
-                    // ValidPlayer$ Player.Chosen (Black Vise): fire only on the
-                    // chosen player's turn (and only once a player was chosen).
-                    if trigger.chosen_player_turn_only {
-                        return card.chosen_player == Some(active_player);
-                    }
-                    // ValidPlayer$ Player.EnchantedController (Paralyze): fire only
-                    // on the upkeep of the ENCHANTED permanent's controller. The
-                    // host's controller (not the Aura's) must be the active player.
-                    if trigger.enchanted_controller_turn_only {
-                        return card
-                            .attached_to
-                            .and_then(|host| self.cards.try_get(host))
-                            .is_some_and(|host| host.controller == active_player);
-                    }
-                    // Intervening-if condition (CR 603.4): the source must satisfy
-                    // its self-state condition right now, or the trigger does not
-                    // fire. Howling Mine: "if CARDNAME is untapped, that player
-                    // draws an additional card" — a tapped Howling Mine grants no
-                    // extra draw.
-                    if let Some(cond) = &trigger.present_self_condition {
-                        use crate::core::PresentSelfCondition;
-                        let satisfied = match cond {
-                            PresentSelfCondition::Counter(c) => c.evaluate(card.get_counter(c.counter_type)),
-                            PresentSelfCondition::Untapped => !card.tapped,
-                            PresentSelfCondition::Tapped => card.tapped,
-                        };
-                        if !satisfied {
-                            return false;
-                        }
-                    }
-                    // Mode gate (Palace Siege): only fire if the source card's
-                    // chosen_mode matches the gate string.
-                    if let Some(gate) = &trigger.mode_gate {
-                        if card.chosen_mode.as_deref() != Some(gate.as_str()) {
-                            return false;
-                        }
-                    }
-                    true
-                })
+                .filter(|trigger| phase_trigger_matches(trigger, event, card, active_player, &self.cards))
                 .flat_map(|trigger| trigger.effects.clone())
-                .collect()
+                .collect();
+
+            // One structured `TriggerFired` event per matched trigger (see below).
+            let descriptions: smallvec::SmallVec<[String; 2]> = card
+                .triggers
+                .iter()
+                .filter(|trigger| phase_trigger_matches(trigger, event, card, active_player, &self.cards))
+                .map(|trigger| trigger.description.clone())
+                .collect();
+
+            (effects, descriptions, card.name.to_string(), card.controller)
         };
+
+        // Structured event: one `TriggerFired` per matched phase/upkeep trigger
+        // on this source. This is the SHARED chokepoint where
+        // `check_triggers_for_controller` decides a phase trigger fires — so
+        // `trigger fired from <card>` now matches beginning-of-upkeep and other
+        // phase triggers (e.g. Serendib Efreet) uniformly, not just
+        // death/leaves-battlefield watchers (mtg-955). Event-log only:
+        // `push_event` is a no-op when the event log is disabled and the
+        // `event_log` Vec is excluded from the logger's serialized form, so
+        // emitting it cannot perturb game state, the undo log, or any snapshot /
+        // network-shadow / WASM rewind hash.
+        for description in fired_descriptions {
+            self.logger.push_event(crate::game::log_event::LogEvent::TriggerFired {
+                source_id: card_id,
+                source_name: fired_source_name.clone(),
+                controller: fired_controller,
+                description,
+            });
+        }
 
         // Build trigger context for placeholder resolution
         let controller = self.cards.get(card_id)?.controller;
