@@ -1,7 +1,7 @@
 # MTG Forge Rust - Development Makefile
 #
 # Quick reference for common development tasks
-.PHONY: help build build-release build-profiling test puzzle-bulk-check puzzle-golden-check puzzle-bless validate validate-desync-canary fuzz-determinism fuzz-equivalence fuzz-network fuzz-native-wasm fuzz-snapshot fuzz-expedition clean run check fmt fmt-check clippy clippy-wasm doc docs examples full-benchmark bench-snapshot bench-logging coverage coverage-full validate-coverage-step profile callgrindprofile perfprofile heapprofile dhatprofile count setup-claude claude-github claude-beads happy code-dups beads-check bench wasm wasm-export wasm-serve wasm-dev play-web-local-dev wasm-test wasm-test-fancy wasm-test-fancy-dev wasm-test-human wasm-test-game-gui-rebuild wasm-test-game-gui-playtest wasm-e2e wasm-e2e-dev wasm-e2e-network wasm-e2e-network-human play-web play-web-pvp play-web-local build-network
+.PHONY: help build build-release build-profiling test puzzle-bulk-check puzzle-golden-check puzzle-bless docs-guide validate validate-desync-canary fuzz-determinism fuzz-equivalence fuzz-network fuzz-native-wasm fuzz-snapshot fuzz-expedition clean run check fmt fmt-check clippy clippy-wasm doc docs examples full-benchmark bench-snapshot bench-logging coverage coverage-full validate-coverage-step profile callgrindprofile perfprofile heapprofile dhatprofile count setup-claude claude-github claude-beads happy code-dups beads-check bench wasm wasm-export wasm-serve wasm-dev play-web-local-dev wasm-test wasm-test-fancy wasm-test-fancy-dev wasm-test-human wasm-test-game-gui-rebuild wasm-test-game-gui-playtest wasm-e2e wasm-e2e-dev wasm-e2e-network wasm-e2e-network-human play-web play-web-pvp play-web-local build-network
 
 # Configuration variables
 # NODE: Node.js binary (Playwright requires Node 18+)
@@ -163,6 +163,15 @@ puzzle-bless:
 			--test puzzle_golden_check --test-threads 1; \
 	fi
 	@echo "=== Golden files updated. Review with: git diff test_puzzles/goldens/ puzzles/goldens/ ==="
+
+# Build the DeepScry GUIDE book (mdbook) into web/guide/.
+# Standalone target — intentionally NOT wired into `make validate` so CI does
+# not gain a new toolchain dependency on mdbook.  Install mdbook once with
+# `cargo install mdbook`.  Output (web/guide/) is gitignored; only the Markdown
+# source under docs/guide/src/ is tracked.
+docs-guide:
+	@echo "=== Building the DeepScry guide (mdbook -> web/guide/) ==="
+	mdbook build docs/guide
 
 # Fast compilation check (no codegen)
 check:

@@ -1,0 +1,1 @@
+../../../../ai_docs/reference/CONTROLLER_DESIGN.md
