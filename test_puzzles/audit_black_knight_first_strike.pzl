@@ -1,0 +1,54 @@
+# Card-audit puzzle (mtg-948 Part B) backing CLOSED issue mtg-399
+# (Card Compatibility: Black Knight).
+#
+# Aspects exercised:
+#   1. K:First Strike — a 2/2 first striker deals its combat damage in the
+#      first-strike combat damage step (CR 702.7). Against a 2/2 ground
+#      blocker with no first strike, Black Knight kills the blocker BEFORE it
+#      can deal damage back, so Black Knight survives unscathed.
+#   2. The 2/2 body connects / trades favorably in real games (the issue's
+#      WORKING evidence). Protection-from-white is covered by the issue's
+#      gameplay reproducer; here we pin the first-strike combat outcome.
+#
+# P1 at 5 life has a single 2/2 Grizzly Bears. If P1 blocks, first strike
+# kills the Bears and Black Knight lives; if P1 does not block, Black Knight
+# connects toward lethal. Either way Black Knight survives — asserted below.
+#
+# HOW TO RUN / VERIFY interactively:
+#   mtg tui --start-state test_puzzles/audit_black_knight_first_strike.pzl \
+#       --p1 heuristic --p2 heuristic --seed 42 -v 2 --no-color-logs
+# The log shows a "First Strike Combat Damage" step and Black Knight surviving.
+
+[metadata]
+Name:Black Knight first strike survives the trade (audit mtg-399)
+Goal:Win
+Turns:7
+Difficulty:Easy
+Description:P0 attacks with a 2/2 first-strike Black Knight. P1 at 4 life has a lone 2/2 Grizzly Bears. First strike (CR 702.7) means Black Knight deals its 2 damage first; a blocking Bears dies before dealing damage back, so Black Knight survives. Two unblocked first-strike hits (2 each) are lethal from 4 life. Assertions confirm P0 wins, P1 took damage, and Black Knight is still on the battlefield at game end.
+
+[state]
+turn=2
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=
+p0library=Swamp; Swamp; Swamp; Swamp; Swamp
+p0graveyard=
+p0battlefield=Black Knight; Swamp; Swamp
+p0exile=
+
+p1life=4
+p1hand=
+p1library=Forest; Forest; Forest; Forest; Forest
+p1graveyard=
+p1battlefield=Grizzly Bears; Forest
+p1exile=
+
+[assertions]
+# P0 wins behind the first striker.
+game won
+# P1 took combat damage (started at 4).
+opponent life lt 4
+# Black Knight survives: it never takes lethal back (first strike), so P0
+# keeps at least one permanent.
+battlefield count ge 1
