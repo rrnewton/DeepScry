@@ -101,6 +101,18 @@ package-lock.json
 *.gif
 *.webp
 *.ico
+
+# Logo/favicon SYMLINKS into the `assets/` submodule (deepscry-assets). These
+# are tracked SYMLINKS (tiny pointers), NOT committed image binaries — the real
+# images live in the assets submodule. The submodule is `update = none`, so run
+# `git submodule update --init assets` for the targets to exist (and for the
+# web server to serve them / a deploy to follow them).
+!web/deepscry_logo.webp
+!web/emblem-64.webp
+!web/favicon-32.png
+!web/favicon.ico
+!web/apple-touch-icon.png
+
 # QA / Playwright screenshot captures are NEVER committed (see CLAUDE.md
 # "NEVER commit images"). Belt-and-suspenders dir ignore on top of *.png.
 web/screenshots/
