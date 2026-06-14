@@ -125,6 +125,41 @@ The `debug/` directory is gitignored, so you can freely create files there witho
 
 If you create a temporary script in the root directory or elsewhere by mistake, move it to `debug/` immediately.
 
+UI Development: mandatory visual review
+========================================
+
+A user-facing UI change (anything under `web/`) is **NOT done until it has been
+LOOKED AT.** The code compiling, the change "being in the file", and even a green
+`make validate` do **not** catch the things that actually go wrong in UI work:
+broken/404 assets, inverted visual hierarchy, overflow/clipping, and awkward
+leftover layouts after deleting or merging elements (e.g. a grid that stretches
+the one remaining cell). These are invisible to non-visual checks.
+
+So for **every** UI change:
+
+1. **Screenshot it.** Capture at least one screenshot of the changed widget/page
+   in a real headless browser (Playwright/Chromium). Use the reusable harness
+   `web/ui_review.js` — parameterize it per change (`--url`, `--signin <name>` to
+   get past the lobby gate, `--selector` to crop to the widget, `--out`).
+   Screenshots go to the **gitignored `debug/`** (never commit screenshots).
+2. **Look at it with a design eye** — a dedicated reviewer (a design-oriented
+   subagent, or yourself viewing the image). Check specifically for: broken /
+   missing images or other 404'd assets; broken visual hierarchy (e.g. a utility
+   button rendered bigger/more prominent than the primary action); overflow /
+   clipping / misalignment; and awkward leftover layouts after removing/merging
+   elements. Surface the screenshot to the user.
+3. **Check the browser console.** `web/ui_review.js` collects console errors AND
+   failed requests (404s on images/assets) and exits non-zero if any occurred —
+   a UI change must not introduce new console errors or missing assets. (This is
+   exactly what catches the "a referenced logo/asset silently 404s" class of bug.)
+
+`web/ui_review.js` is the reusable starting point; the **specific** checks are
+per-change (what to screenshot, and what "looks wrong" means for that widget).
+
+This complements — does not replace — the web E2E tests (`web/test_*.js`), which
+should likewise fail on console errors / failed asset requests so these
+regressions are also caught in CI.
+
 Workflow: Task tracking
 ========================================
 
