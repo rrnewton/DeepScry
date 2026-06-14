@@ -1,0 +1,63 @@
+---
+title: 'Card Compatibility BUG: Hurkyl''s Recall ignores TargetedPlayerOwn (bounces ALL artifacts)'
+status: open
+priority: 2
+issue_type: bug
+labels:
+- human-found-via-audit
+created_at: 2026-06-14T11:01:59.673034894+00:00
+updated_at: 2026-06-14T11:01:59.673034894+00:00
+---
+
+# Description
+
+Hurkyl's Recall ({1}{U} instant) is BROKEN: it returns ALL artifacts on the battlefield to hand, ignoring the `ChangeType$ Artifact.TargetedPlayerOwn` ownership filter. Found during card-audit wave 3 (mtg-948 Part B) while authoring a scripted audit puzzle.
+
+Card: cardsfolder/h/hurkyls_recall.txt
+  A:SP$ ChangeZoneAll | ValidTgts$ Player | ChangeType$ Artifact.TargetedPlayerOwn | UseAllOriginZones$ True | Origin$ Battlefield | Destination$ Hand
+Oracle: 'Return all artifacts target player owns to their hand.'
+
+Tracking issue mtg-509 closed this as WORKING, but it is not: the targeted-player scope is silently dropped.
+
+== Reproduction ==
+Setup: P0 owns a Mox Emerald; P1 owns a Mox Sapphire + a Sol Ring. P0 casts
+Hurkyl's Recall targeting P1 (p2). Expected: only P1's two artifacts return to
+P1's hand; P0's Mox Emerald stays on P0's battlefield. Actual: ALL THREE
+artifacts (including the caster's own Mox Emerald) are bounced.
+
+  ./target/release/mtg tui --start-state test_puzzles/audit_hurkyls_recall_bounces_artifacts.pzl \
+    --p1 fixed --p1-fixed-inputs="cast Hurkyl's Recall targeting p2" --p2 zero --seed 42 --verbosity 2
+
+Game log (BROKEN):
+  Player 1 casts Hurkyl's Recall (3) (putting on stack)
+  Hurkyl's Recall (3) resolves
+  Mox Emerald (6) is returned to hand        <-- WRONG: P0's own artifact, P1 was targeted
+  Mox Sapphire (12) is returned to hand
+  Sol Ring (13) is returned to hand
+  Hurkyl's Recall (3) moves all artifacts from Battlefield to Hand
+
+Targeting P1 (p2) vs targeting P0 (p1) gives the IDENTICAL result (all three
+bounced) -> the target-player scope is not consulted at all.
+
+== Root cause ==
+mtg-engine/src/loader/effect_converter.rs, ApiType::ChangeZoneAll (~line 2000).
+The `target_player` scoping field is only populated for the Cranial
+Extraction / Memoricide named-card pattern:
+
+  let target_player = if restriction.requires_named_card && params.get("ValidTgts") == Some("Player") {
+      Some(PlayerId::target_opponent())
+  } else { None };
+
+For Hurkyl's Recall the ChangeType is `Artifact.TargetedPlayerOwn` (NOT a
+named-card pattern), so requires_named_card is false and target_player stays
+None -> the executor applies the artifact filter across BOTH players' battlefields.
+
+The fix must honor the `TargetedPlayerOwn` (and the dual `TargetedPlayerCtrl`)
+qualifier in the TargetRestriction so the ChangeZoneAll is scoped to the
+targeted player's owned/controlled permanents. This generalizes beyond Hurkyl's
+Recall to any `ChangeType$ X.TargetedPlayerOwn` / mass-bounce-one-player card.
+Requires an MTG rules review (bug-fix gate). CR 701.16 (return).
+
+NOT marking mtg-509 puzzle-tested; the scripted audit puzzle that exposed this
+(audit_hurkyls_recall_bounces_artifacts.pzl) was REMOVED rather than committed
+failing. Re-author it once this bug is fixed.

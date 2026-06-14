@@ -1,0 +1,60 @@
+  >>> Turn 1 - Player 1 20 (Player 2 20) <<<<
+Player 1 casts Wheel of Fortune (3) (putting on stack)
+Tap Mountain for {R}
+Tap Mountain for {R}
+Tap Mountain for {R}
+Wheel of Fortune (3) resolves
+Forest is discarded
+Player 1 discards Forest
+Forest is discarded
+Player 1 discards Forest
+Plains is discarded
+Player 2 discards Plains
+Plains is discarded
+Player 2 discards Plains
+Player 1 draws Island (18)
+Player 1 draws Island (17)
+Player 1 draws Island (16)
+Player 1 draws Island (15)
+Player 1 draws Island (14)
+Player 1 draws Island (13)
+Player 1 draws Island (12)
+Player 2 draws Swamp (30)
+Player 2 draws Swamp (29)
+Player 2 draws Swamp (28)
+Player 2 draws Swamp (27)
+Player 2 draws Swamp (26)
+Player 2 draws Swamp (25)
+Player 2 draws Swamp (24)
+Wheel of Fortune (3) causes each player to discard their hand
+Wheel of Fortune (3) causes each player to draw 7 card(s)
+<Choice> PASS_UNTIL waiting (turn=1 step=Main1); target turn=Some(5) step=Some(Main1)
+<Choice> PASS_UNTIL waiting (turn=1 step=Main2); target turn=Some(5) step=Some(Main1)
+
+  >>> Turn 2 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Swamp (23)
+<Choice> PASS_UNTIL waiting (turn=2 step=Main1); target turn=Some(5) step=Some(Main1)
+<Choice> PASS_UNTIL waiting (turn=2 step=Main2); target turn=Some(5) step=Some(Main1)
+Swamp is discarded
+
+  >>> Turn 3 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Island (11)
+<Choice> PASS_UNTIL waiting (turn=3 step=Main1); target turn=Some(5) step=Some(Main1)
+<Choice> PASS_UNTIL waiting (turn=3 step=Main2); target turn=Some(5) step=Some(Main1)
+Island is discarded
+
+  >>> Turn 4 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Swamp (22)
+<Choice> PASS_UNTIL waiting (turn=4 step=Main1); target turn=Some(5) step=Some(Main1)
+<Choice> PASS_UNTIL waiting (turn=4 step=Main2); target turn=Some(5) step=Some(Main1)
+Swamp is discarded
+
+  >>> Turn 5 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Island (10)
+<Choice> PASS_UNTIL satisfied at turn=5 step=Main1: resuming script
+Island is discarded
+
+  >>> Turn 6 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Swamp (21)
+<Choice> PASS_UNTIL satisfied at turn=6 step=Main1: resuming script
+Player 2 has lost the game (decked). Player 1 wins!

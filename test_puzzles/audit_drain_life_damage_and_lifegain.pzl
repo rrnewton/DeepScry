@@ -1,0 +1,62 @@
+# Card-audit (mtg-948 Part B): Drain Life — X damage + capped lifegain (scripted).
+#
+# Closed issue mtg-501 closed Drain Life as WORKING but carried NO scripted
+# puzzle with semantic assertions (the pre-existing drain_life_cap.pzl /
+# drain_life_creature_cap.pzl are golden-log-only with no [assertions],
+# heuristic-driven). This audit puzzle SCRIPTS the cast and asserts BOTH the
+# damage AND the (uncapped, here) life gain via semantic assertions.
+#
+# Drain Life is {X}{1}{B} sorcery: "deals X damage to any target. You gain life
+# equal to the damage dealt, but not more than the [target's pre-damage
+# characteristic]." Here X is funded by mana: P0 has 4 Swamps, paying {X}{1}{B}
+# at X=2, so Drain Life deals 2 to P1 (a 20-life PLAYER), and P0 gains 2 (no cap
+# triggers, since the player's pre-damage life 20 >= 2 damage). This exercises
+# the common, uncapped path: damage AND equal life gain.
+#
+# Aspects exercised (issue mtg-501):
+#   1. Parses + castable as a {X}{1}{B} sorcery (spell cast assertion).
+#   2. X-paid damage to "any target" (here the opponent PLAYER): P1 20 -> 18.
+#   3. Life gain equal to damage dealt (uncapped: 2 damage at a 20-life player
+#      -> P0 gains exactly 2, 20 -> 22). The `life gained` event assertion checks
+#      the gain explicitly.
+#
+# Scenario:
+#   - P0: Drain Life in hand, 4 Swamps (-> X=2 + {1}{B}).
+#   - P1: 20 life, no creatures.
+#   - Script: P0 casts Drain Life at P1; deals 2 (P1 20->18); P0 gains 2 (20->22).
+
+[metadata]
+Name:Card Audit - Drain Life Deals X and Gains Equal Life
+Goal:Win
+Turns:1
+Difficulty:Easy
+Description:P0 scripts Drain Life ({X}{1}{B} sorcery) at the 20-life P1 with X=2 (4 Swamps). It deals 2 damage (P1 20->18) and P0 gains 2 life (20->22), uncapped since the player's pre-damage life exceeds the damage. Backs issue mtg-501 (DealDamageXPaid + GainLife equal to damage dealt).
+
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Drain Life
+p0battlefield=Swamp;Swamp;Swamp;Swamp
+p0library=Swamp;Swamp;Swamp;Swamp;Swamp
+
+p1life=20
+p1battlefield=
+p1library=Mountain;Mountain;Mountain;Mountain;Mountain
+
+[p0_script]
+# Cast Drain Life at the opponent (P1). With 4 Swamps the engine pays {X}{1}{B}
+# at X=2, dealing 2 damage and gaining 2 life.
+cast Drain Life targeting p2
+
+[assertions]
+# The drain sorcery was actually cast.
+spell cast Drain Life
+# It dealt 2 damage to the 20-life opponent: P1 20 -> 18.
+opponent life eq 18
+# The caster (P0) gained exactly 2 life (equal to the damage dealt, uncapped):
+# 20 -> 22.
+life eq 22
+# Explicit life-gain event: P0 gained at least 2 (the lifegain watcher fired).
+life gained ge 2
