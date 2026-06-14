@@ -1,0 +1,57 @@
+# New-card compat (wave 3): Llanowar Elves — scripted ACTIVATED mana ability.
+#
+# Llanowar Elves is a {G} 1/1 with "{T}: Add {G}."
+#   A:AB$ Mana | Cost$ T | Produced$ G
+# (CR 605 mana abilities, CR 602 activated abilities.)
+#
+# Tracking issue: Card Compatibility: Llanowar Elves.
+#
+# Aspects exercised:
+#   1. The body/keywords parse and the creature enters the battlefield (1/1).
+#   2. The {T}: Add {G} mana ability produces green mana that is actually
+#      USABLE to pay a cost — proven by spending it on a {1}{G} spell.
+#
+# Scenario:
+#   - P0: a Llanowar Elves already in play (no summoning sickness, so it can tap),
+#     ONE Forest, and a Grizzly Bears ({1}{G}) in hand.
+#   - To cast Grizzly Bears P0 needs {1}{G} = 2 mana. One Forest only makes {G};
+#     the SECOND mana MUST come from the Elves (Forest pays {G}, Elves pays the
+#     {1} generic). So a successful cast proves the Elves produced usable mana.
+#   - Script: P0 casts Grizzly Bears (engine auto-taps Forest + Elves for mana).
+#
+# HOW TO RUN / VERIFY interactively:
+#   mtg tui --start-state test_puzzles/newcard_llanowar_elves_mana.pzl \
+#       --p1 heuristic --p2 heuristic --seed 42 -v 2 --no-color-logs
+
+[metadata]
+Name:New Card - Llanowar Elves Mana Casts a Creature
+Goal:Win
+Turns:1
+Difficulty:Easy
+Description:P0 has a Llanowar Elves and a single Forest; it casts a {1}{G} Grizzly Bears. With only one land, the Elves' {T}: Add {G} ability MUST supply the second mana, so a successful cast proves the mana ability works. Backs Card Compatibility: Llanowar Elves (AB$ Mana, Cost$ T, Produced$ G; CR 605).
+
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Grizzly Bears
+p0battlefield=Llanowar Elves;Forest
+p0library=Forest;Forest;Forest;Forest;Forest
+
+p1life=20
+p1battlefield=
+p1library=Mountain;Mountain;Mountain;Mountain;Mountain
+
+[p0_script]
+# Cast the {1}{G} Grizzly Bears. The engine pays {G} from the Forest and the
+# {1} generic from the Llanowar Elves' tap-for-mana ability.
+cast Grizzly Bears
+
+[assertions]
+# The {1}{G} creature was successfully cast — only possible if the Elves
+# contributed mana (one Forest alone cannot pay {1}{G}).
+spell cast Grizzly Bears
+# Grizzly Bears resolved onto P0's battlefield (alongside the Elves).
+me battlefield contains Grizzly Bears
+me battlefield contains Llanowar Elves

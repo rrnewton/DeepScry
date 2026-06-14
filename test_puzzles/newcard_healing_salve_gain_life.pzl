@@ -1,0 +1,58 @@
+# New-card compat (wave 3): Healing Salve — scripted ACTIVE instant (Charm).
+#
+# Healing Salve is a {W} instant "Choose one —":
+#   A:SP$ Charm | Choices$ DBGainLife,DBPreventDmg
+#     DBGainLife : DB$ GainLife | ValidTgts$ Player | LifeAmount$ 3
+#     DBPreventDmg: DB$ PreventDamage | ValidTgts$ Any | Amount$ 3
+# (CR 601 casting, CR 700.2 modal "choose one", CR 119 life gain.)
+#
+# Tracking issue: Card Compatibility: Healing Salve.
+#
+# Aspects exercised:
+#   1. Parses + castable as a {W} instant (spell cast assertion).
+#   2. Modal Charm: the engine offers the two modes and the gain-life mode is
+#      chosen (P0 is below starting life and there is no incoming damage to
+#      prevent, so gain-life is the live, deterministic pick).
+#   3. The gain-life mode adds exactly 3 life to the targeted player (CR 119.3).
+#
+# Scenario:
+#   - P0 at 15 life with Healing Salve in hand and a Plains to pay {W}.
+#   - Script: P0 casts Healing Salve targeting itself; gains 3 life -> 18.
+#
+# HOW TO RUN / VERIFY interactively:
+#   mtg tui --start-state test_puzzles/newcard_healing_salve_gain_life.pzl \
+#       --p1 heuristic --p2 heuristic --seed 42 -v 2 --no-color-logs
+# The log shows "chooses mode: Target player gains 3 life." and P0 15 -> 18.
+
+[metadata]
+Name:New Card - Healing Salve Gains 3 Life
+Goal:Win
+Turns:1
+Difficulty:Easy
+Description:P0 at 15 life casts Healing Salve ({W} modal instant), choosing the gain-life mode targeting itself, ending at 18. Backs Card Compatibility: Healing Salve (SP$ Charm with DBGainLife / DBPreventDmg; CR 700.2 modal, CR 119 life gain).
+
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+p0life=15
+p0hand=Healing Salve
+p0battlefield=Plains
+p0library=Plains;Plains;Plains;Plains;Plains
+
+p1life=20
+p1battlefield=
+p1library=Mountain;Mountain;Mountain;Mountain;Mountain
+
+[p0_script]
+# Cast Healing Salve at self; the engine takes the gain-life mode (the only
+# live mode here — there is no incoming damage to prevent).
+cast Healing Salve targeting p0
+
+[assertions]
+# The modal instant was actually cast by the script.
+spell cast Healing Salve
+# P0 gained at least 3 life via the gain-life mode (event-log delta).
+life gained ge 3
+# Final life is exactly 15 + 3 = 18 (deterministic single-turn puzzle).
+life eq 18

@@ -1,0 +1,66 @@
+# New-card compat (wave 3): Elvish Archers — PASSIVE First Strike keyword.
+#
+# Elvish Archers is a {1}{G} 2/1 with First Strike.
+#   K:First Strike
+# (CR 702.7 First Strike — deals combat damage in the first-strike step, before
+# creatures without first strike.)
+#
+# Tracking issue: Card Compatibility: Elvish Archers.
+#
+# Aspects exercised:
+#   1. The 2/1 body parses and enters the battlefield.
+#   2. First Strike combat ordering: a 2/1 first striker blocked by a 2/2
+#      Grizzly Bears deals its 2 damage FIRST, killing the 2/2 blocker before
+#      that blocker can deal any damage back. The Archers (toughness 1) takes
+#      ZERO damage and survives — which it would NOT if both struck
+#      simultaneously (a 2/2 would kill a 2/1). The survival is the proof.
+#
+# Scenario:
+#   - P0: an Elvish Archers in play (no summoning sickness) ready to attack.
+#   - P1: a 2/2 Grizzly Bears that blocks.
+#   - Script: P0 attacks with the Archers; P1 blocks with its Bears.
+#
+# HOW TO RUN / VERIFY interactively:
+#   mtg tui --start-state test_puzzles/newcard_elvish_archers_first_strike.pzl \
+#       --p1 heuristic --p2 heuristic --seed 42 -v 2 --no-color-logs
+# The log shows a first-strike combat damage step where the Bears dies before
+# dealing damage; Elvish Archers survives.
+
+[metadata]
+Name:New Card - Elvish Archers First Strike Survives
+Goal:Win
+Turns:1
+Difficulty:Easy
+Description:P0 attacks with a 2/1 first-strike Elvish Archers; P1 blocks with a 2/2 Grizzly Bears. First strike (CR 702.7) lets the Archers deal 2 first, killing the Bears before it can hit back, so the 1-toughness Archers survives unscathed. Backs Card Compatibility: Elvish Archers (K:First Strike).
+
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=
+p0battlefield=Elvish Archers;Forest
+p0library=Forest;Forest;Forest;Forest;Forest
+
+p1life=20
+p1battlefield=Grizzly Bears
+p1library=Mountain;Mountain;Mountain;Mountain;Mountain
+
+[p0_script]
+# Move to combat and attack with the first-striker.
+PASS_UNTIL phase=declareAttackers
+attack Elvish Archers
+
+[p1_script]
+# P1 blocks the Archers with its Grizzly Bears.
+Grizzly Bears blocks Elvish Archers
+
+[assertions]
+# The blocking Grizzly Bears died in the first-strike damage step.
+opponent graveyard contains Grizzly Bears
+creature died Grizzly Bears
+# Elvish Archers survived (took 0 damage thanks to first strike) — still in play.
+me battlefield contains Elvish Archers
+# The blocker never connected, so the Archers' controller's permanents stand;
+# P0 took no damage either (the Bears was blocking, not attacking).
+life eq 20

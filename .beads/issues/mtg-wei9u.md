@@ -1,0 +1,35 @@
+---
+title: 'Card Compatibility: Wind Drake'
+status: closed
+priority: 3
+issue_type: task
+labels:
+- puzzle-tested
+created_at: 2026-06-14T12:31:01.472481811+00:00
+updated_at: 2026-06-14T12:31:43.950503828+00:00
+closed_at: 2026-06-14T12:31:43.950503754+00:00
+---
+
+# Description
+
+Test all behavioral aspects of Wind Drake in MTG Forge-rs.
+
+Set: POR
+Card script: cardsfolder/w/wind_drake.txt
+Oracle: Flying
+PUZZLE_FILE: test_puzzles/newcard_wind_drake_flying_evasion.pzl
+
+Aspects (one per ability/keyword/cost):
+
+1. [x] Card loads as a 2/2 Drake creature from cardsfolder.
+2. [x] K:Flying parses and is applied.
+3. [x] Flying evasion (CR 702.9 / 509.1b): an attacking Wind Drake CANNOT be blocked by a ground 2/2 Grizzly Bears - the engine offers P1 no block action against the flyer (its only menu option is play a land), so the Drake is unblocked and connects.
+
+Findings (2026-06-14_#3469(2d7639fd1)) - CARD IS WORKING. All 3 aspects verified.
+
+PASSIVE keyword tested with a [p0_script] attack. P1 has a ground Grizzly Bears and NO block is offered (the proof of evasion is the unavailable block). Note: an early draft scripted P1 to block and the bulk runner correctly ERRORED ('Grizzly Bears blocks Wind Drake did not match any available action') - confirming the engine never offers the illegal block. Final puzzle relies on that: P1 passes, Drake connects.
+
+Live evidence (mtg tui, scripted, seed 42):
+  Player 1 declares Wind Drake (3) (2/2) as attacker
+  Wind Drake (3) deals 2 damage to Player 2 (life: 18)
+(assertions: opponent life lt 20 / me battlefield contains Wind Drake pass over the full game; the ground Bears can never block, so the Drake survives.)

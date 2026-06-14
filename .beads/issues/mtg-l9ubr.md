@@ -1,0 +1,36 @@
+---
+title: 'Wild Growth: TapsForMana extra {G} not available to pay casting costs'
+status: open
+priority: 2
+issue_type: bug
+created_at: 2026-06-14T12:31:35.269135742+00:00
+updated_at: 2026-06-14T12:31:35.269135742+00:00
+---
+
+# Description
+
+BUG found during new-card compat wave 3 (2026-06-14_#3469(2d7639fd1)).
+
+Card: Wild Growth (cardsfolder/w/wild_growth.txt), {G} Aura - Enchant land.
+  T:Mode$ TapsForMana | ValidCard$ Card.AttachedBy | Execute$ TrigMana | Static$ True
+  TrigMana: DB$ Mana | Produced$ G | Amount$ 1 | Defined$ TriggeredCardController
+  'Whenever enchanted land is tapped for mana, its controller adds an additional {G}.'
+
+SYMPTOM: the additional {G} from Wild Growth is NOT available when the enchanted land is tapped to pay a casting cost. A player with ONE Forest enchanted by Wild Growth cannot cast a {G}{G} spell, even though Forest ({G}) + Wild Growth (extra {G}) should equal {G}{G}.
+
+DECISIVE REPRODUCER (control vs test, both seed 42, --p1 fixed):
+  CONTROL (2 plain Forests, cast {G}{G} Barkhide Troll):
+    Player 1 casts Barkhide Troll (3)
+    Tap Forest for {G}
+    Tap Forest for {G}
+    Barkhide Troll (3) resolves   <- WORKS
+  TEST (1 Forest enchanted by Wild Growth, cast {G}{G} Barkhide Troll):
+    <no cast happens - 'cast Barkhide Troll' is not an available action; game ends at turn limit with the Troll still in hand>
+
+A 1-mana {G} spell off the enchanted Forest casts fine (base Forest {G} alone covers it), so the land/aura is wired - it is specifically the EXTRA {G} that never reaches the mana pool during cost payment. The heuristic AI likewise never casts the {G}{G} spell.
+
+ENGINE NOTES: TriggerEvent::TapsForMana IS defined (core/effects/triggers.rs:132) and check_taps_for_mana_triggers() is invoked from mana_payment/payment_execution.rs:281. So the trigger machinery exists; the extra mana is apparently not being added to the pool in time for (or counted toward) the affordability/auto-pay decision. Likely an ordering issue between when castability/auto-tap is computed and when the TapsForMana trigger's mana is produced.
+
+IMPACT: any 'taps for mana' mana-doubler/booster aura or static (Wild Growth, Utopia Sprawl-like, Overgrowth, etc.) under-reports available mana. Classification for Card Compatibility: Wild Growth = PARTIAL/BROKEN (loads + parses, base land taps, but the additional {G} is unusable). Reproducible without new code via the two .pzl states above.
+
+This is a BUG fix candidate - requires MTG rules review before any fix merges (CR 605 mana abilities, CR 603 triggered abilities resolving / mana from triggers during cost payment).

@@ -1,0 +1,46 @@
+  >>> Turn 1 - Player 1 20 (Player 2 20) <<<<
+<Choice> PASS_UNTIL waiting (turn=1 step=Main1); target turn=None step=Some(DeclareAttackers)
+<Choice> PASS_UNTIL waiting (turn=1 step=BeginCombat); target turn=None step=Some(DeclareAttackers)
+<Choice> PASS_UNTIL satisfied at turn=1 step=DeclareAttackers: resuming script
+Player 1 declares Grizzly Bears (4) (2/2) as attacker
+<Choice> PASS_UNTIL waiting (turn=1 step=DeclareAttackers); target turn=None step=Some(DeclareBlockers)
+Player 2 declares Grizzly Bears (11) as blocker for Grizzly Bears (4)
+<Choice> PASS_UNTIL satisfied at turn=1 step=DeclareBlockers: resuming script
+Player 1 casts Giant Growth (3) (putting on stack)
+  → targeting Grizzly Bears (4), Grizzly Bears (11)
+Tap Forest for {G}
+Giant Growth (3) resolves
+Grizzly Bears gets +3/+3 until end of turn
+Giant Growth (3) gives Grizzly Bears (4) +3/+3 until end of turn
+Grizzly Bears (4) deals 5 damage to Grizzly Bears (11)
+Grizzly Bears (11) deals 2 damage to Grizzly Bears (4)
+Grizzly Bears (11) goes to graveyard
+Grizzly Bears (11) dies from combat damage
+
+  >>> Turn 2 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Mountain (16)
+
+  >>> Turn 3 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Forest (10)
+
+  >>> Turn 4 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Mountain (15)
+
+  >>> Turn 5 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Forest (9)
+
+  >>> Turn 6 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Mountain (14)
+
+  >>> Turn 7 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Forest (8)
+
+  >>> Turn 8 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Mountain (13)
+
+  >>> Turn 9 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Forest (7)
+
+  >>> Turn 10 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Mountain (12)
+Player 2 has lost the game (decked). Player 1 wins!

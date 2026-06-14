@@ -1,0 +1,37 @@
+  >>> Turn 1 - Player 1 20 (Player 2 20) <<<<
+<Choice> PASS_UNTIL satisfied at turn=1 step=DeclareAttackers: resuming script
+Player 1 declares Elvish Archers (3) (2/1) as attacker
+Player 2 declares Grizzly Bears (10) as blocker for Elvish Archers (3)
+--- First Strike Combat Damage ---
+Elvish Archers (3) deals 2 damage to Grizzly Bears (10)
+Grizzly Bears (10) goes to graveyard
+Grizzly Bears (10) dies from combat damage
+--- Normal Combat Damage ---
+
+  >>> Turn 2 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Mountain (15)
+
+  >>> Turn 3 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Forest (9)
+
+  >>> Turn 4 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Mountain (14)
+
+  >>> Turn 5 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Forest (8)
+
+  >>> Turn 6 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Mountain (13)
+
+  >>> Turn 7 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Forest (7)
+
+  >>> Turn 8 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Mountain (12)
+
+  >>> Turn 9 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Forest (6)
+
+  >>> Turn 10 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Mountain (11)
+Player 2 has lost the game (decked). Player 1 wins!

@@ -1,0 +1,22 @@
+---
+title: 'Cosmetic: GainLife ''causes ... to gain N life'' log line prints wrong range'
+status: open
+priority: 4
+issue_type: bug
+created_at: 2026-06-14T12:31:35.274003133+00:00
+updated_at: 2026-06-14T12:31:35.274003133+00:00
+---
+
+# Description
+
+MINOR DISPLAY BUG found during new-card compat wave 3 (2026-06-14_#3469(2d7639fd1)).
+
+When a player gains life, the secondary log line 'X causes Player P to gain N life - life: A => B' prints an inconsistent A => B range.
+
+Observed with Healing Salve (test_puzzles/newcard_healing_salve_gain_life.pzl), P0 at 15 gaining 3:
+  Player 1 gains 3 life (life: 18)                                  <- authoritative, CORRECT
+  Healing Salve (3) causes Player 1 to gain 3 life - life: 18 => 21 <- WRONG range (should be 15 => 18)
+
+The final life total IS correct (18) everywhere it matters; only the 'A => B' display on the 'causes' line is off (it appears to show post-value => post-value+amount instead of pre => post). Display-only, non-blocking. The Unsummon issue (mtg-960) noted a similar cosmetic GainLife/return display quirk.
+
+Likely in the GainLife effect's log-formatting (the 'causes ... to gain' message), passing the wrong before/after life snapshot. Pure logging fix; no gameplay impact.

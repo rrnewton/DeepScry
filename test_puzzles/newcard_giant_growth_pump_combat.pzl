@@ -1,0 +1,67 @@
+# New-card compat (wave 3): Giant Growth — scripted ACTIVE instant pump in combat.
+#
+# Giant Growth is a {G} instant: "Target creature gets +3/+3 until end of turn."
+#   A:SP$ Pump | ValidTgts$ Creature | NumAtt$ +3 | NumDef$ +3
+# (CR 601 casting a spell, CR 701 one-shot effects, continuous P/T modification
+# until end of turn.)
+#
+# Tracking issue: Card Compatibility: Giant Growth.
+#
+# Aspects exercised:
+#   1. Parses + castable as a {G} instant (spell cast assertion).
+#   2. Creature-restricted targeting (ValidTgts$ Creature) resolves.
+#   3. The +3/+3 pump is a COMBAT-RELEVANT continuous effect: a pumped 2/2
+#      Grizzly Bears becomes 5/5, so it survives a 2/2 blocker AND kills it.
+#
+# Scenario (deterministic combat):
+#   - P0: a Grizzly Bears already in play (no summoning sickness), Giant Growth
+#     in hand, a Forest to pay {G}.
+#   - P1: a Grizzly Bears that will block.
+#   - Script: P0 attacks with its Bears; once blocks are declared, P0 casts
+#     Giant Growth on its own attacker. The attacker (now 5/5) deals 5 to the
+#     2/2 blocker (dies) and only takes 2 back (survives, 5 toughness).
+#
+# HOW TO RUN / VERIFY interactively:
+#   mtg tui --start-state test_puzzles/newcard_giant_growth_pump_combat.pzl \
+#       --p1 heuristic --p2 heuristic --seed 42 -v 2 --no-color-logs
+
+[metadata]
+Name:New Card - Giant Growth Pump Wins Combat
+Goal:Win
+Turns:1
+Difficulty:Easy
+Description:P0 scripts an attack with a 2/2 Grizzly Bears, then casts Giant Growth ({G} instant, +3/+3) on the attacker after P1 blocks with its own 2/2. The pumped 5/5 kills the blocker and survives. Backs Card Compatibility: Giant Growth (SP$ Pump, ValidTgts$ Creature; CR 601).
+
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Giant Growth
+p0battlefield=Grizzly Bears;Forest
+p0library=Forest;Forest;Forest;Forest;Forest
+
+p1life=20
+p1battlefield=Grizzly Bears
+p1library=Mountain;Mountain;Mountain;Mountain;Mountain
+
+[p0_script]
+# Move to combat and attack with the Bears, then wait for the declare-blockers
+# window and pump the attacker. PASS_UNTIL is timing-robust (CR 508/509).
+PASS_UNTIL phase=declareAttackers
+attack Grizzly Bears
+PASS_UNTIL phase=declareBlockers
+cast Giant Growth targeting Grizzly Bears
+
+[p1_script]
+# P1 blocks the lone attacker with its own Grizzly Bears.
+Grizzly Bears blocks Grizzly Bears
+
+[assertions]
+# The pump spell was actually cast by the script (active-card aspect).
+spell cast Giant Growth
+# P1's blocking Grizzly Bears died to the pumped attacker (5 power vs 2 tough).
+opponent graveyard contains Grizzly Bears
+creature died Grizzly Bears
+# P0's attacker SURVIVED (5 toughness vs the blocker's 2 power) — still in play.
+me battlefield contains Grizzly Bears

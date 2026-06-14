@@ -1,0 +1,44 @@
+  >>> Turn 1 - Player 1 20 (Player 2 20) <<<<
+Player 1 casts Grizzly Bears (3) (putting on stack)
+Tap Forest for {G}
+Tap Llanowar Elves for mana
+Grizzly Bears (3) resolves
+Grizzly Bears (3) enters the battlefield as a 2/2 creature
+
+  >>> Turn 2 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Mountain (15)
+<Choice> Player 2 chose 0 - play Mountain
+Player 2 plays Mountain (15)
+
+  >>> Turn 3 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Forest (10)
+
+  >>> Turn 4 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Mountain (14)
+<Choice> Player 2 chose 0 - play Mountain
+Player 2 plays Mountain (14)
+
+  >>> Turn 5 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Forest (9)
+
+  >>> Turn 6 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Mountain (13)
+<Choice> Player 2 chose 0 - play Mountain
+Player 2 plays Mountain (13)
+
+  >>> Turn 7 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Forest (8)
+
+  >>> Turn 8 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Mountain (12)
+<Choice> Player 2 chose 0 - play Mountain
+Player 2 plays Mountain (12)
+
+  >>> Turn 9 - Player 1 20 (Player 2 20) <<<<
+Player 1 draws Forest (7)
+
+  >>> Turn 10 - Player 2 20 (Player 1 20) <<<<
+Player 2 draws Mountain (11)
+<Choice> Player 2 chose 0 - play Mountain
+Player 2 plays Mountain (11)
+Player 2 has lost the game (decked). Player 1 wins!

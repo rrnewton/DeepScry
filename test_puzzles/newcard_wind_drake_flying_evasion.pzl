@@ -1,0 +1,67 @@
+# New-card compat (wave 3): Wind Drake — PASSIVE Flying evasion keyword.
+#
+# Wind Drake is a {2}{U} 2/2 with Flying.
+#   K:Flying
+# (CR 702.9 Flying — can only be blocked by creatures with flying or reach.)
+#
+# Tracking issue: Card Compatibility: Wind Drake.
+#
+# Aspects exercised:
+#   1. The 2/2 body parses and enters the battlefield.
+#   2. Flying evasion: an attacking Wind Drake CANNOT be blocked by a ground
+#      creature (a 2/2 Grizzly Bears with neither flying nor reach). The illegal
+#      block is rejected and the Drake connects for 2 — proving the evasion is
+#      enforced, not merely cosmetic.
+#
+# Scenario:
+#   - P0: a Wind Drake in play (no summoning sickness) ready to attack.
+#   - P1: a 2/2 Grizzly Bears (ground, no flying/reach). Because a ground
+#     creature has NO legal block against a flyer, the engine never even OFFERS
+#     P1 a block action (CR 509.1b) — the proof of evasion is precisely that the
+#     block is unavailable. P1 therefore has no script (it can only pass), and
+#     the Drake connects for 2.
+#
+# HOW TO RUN / VERIFY interactively:
+#   mtg tui --start-state test_puzzles/newcard_wind_drake_flying_evasion.pzl \
+#       --p1 heuristic --p2 heuristic --seed 42 -v 2 --no-color-logs
+# The log shows the ground Bears unable to block; Wind Drake deals 2 to P1.
+
+[metadata]
+Name:New Card - Wind Drake Flying Evades Ground Blocker
+Goal:Win
+Turns:1
+Difficulty:Easy
+Description:P0 attacks with a 2/2 flying Wind Drake; P1's only creature is a 2/2 ground Grizzly Bears that cannot block a flyer (CR 702.9 / 509.1b). The block is rejected and the Drake deals 2, dropping P1 to 18. Backs Card Compatibility: Wind Drake (K:Flying).
+
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=
+p0battlefield=Wind Drake;Island
+p0library=Island;Island;Island;Island;Island
+
+p1life=20
+p1battlefield=Grizzly Bears
+p1library=Mountain;Mountain;Mountain;Mountain;Mountain
+
+[p0_script]
+# Move to combat and attack with the flyer.
+PASS_UNTIL phase=declareAttackers
+attack Wind Drake
+
+# NOTE: P1 has NO [p1_script]. Its only creature is a ground Grizzly Bears, and
+# the engine offers P1 no block action against a flyer (its menu is just
+# "play Mountain") — exactly the evasion being tested. P1 passes by default and
+# the Drake is unblocked.
+
+[assertions]
+# The flyer connected at least once: a ground creature could NEVER block it, so
+# P1's life dropped below its starting 20. (The bulk harness runs the full game
+# with a heuristic P1, so we assert the monotonic `lt 20` rather than a brittle
+# exact total — P1 has no lifegain here, only the unblockable flyer chipping it.)
+opponent life lt 20
+# Wind Drake is never blockable by P1's ground Bears, so it survives — still in
+# play at game end.
+me battlefield contains Wind Drake
