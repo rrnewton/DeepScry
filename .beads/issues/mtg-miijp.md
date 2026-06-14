@@ -1,0 +1,46 @@
+---
+title: 'Card Compatibility: Lava Spike'
+status: closed
+priority: 3
+issue_type: task
+labels:
+- puzzle-tested
+created_at: 2026-06-14T10:09:50.441529620+00:00
+updated_at: 2026-06-14T10:10:19.132842696+00:00
+closed_at: 2026-06-14T10:10:19.132842622+00:00
+---
+
+# Description
+
+Test all behavioral aspects of Lava Spike in MTG Forge-rs.
+
+Set: CHK
+Card script: cardsfolder/l/lava_spike.txt
+Oracle: Lava Spike deals 3 damage to target player or planeswalker.
+PUZZLE_FILE: test_puzzles/script_lava_spike_burns_opponent.pzl
+
+Aspects (one per ability/keyword/cost):
+
+1. [x] Card loads as a Sorcery (Arcane) from cardsfolder (Types: Sorcery Arcane).
+2. [x] Castable from hand paying {R} (SP$ DealDamage spell on the stack).
+3. [x] RESTRICTED targeting (ValidTgts$ Player,Planeswalker): targets a player, NOT a creature.
+4. [x] NumDmg$ 3: deals exactly 3 damage to the targeted player.
+5. [x] Opponent life total drops 20 -> 17 (CR 119.3 life loss from damage).
+
+Findings (2026-06-14_#3463(2a27999fe)) - CARD IS WORKING. All 5 aspects verified.
+
+ACTIVE card tested with a puzzle ACTION SCRIPT ([p0_script]) forcing P0 to cast it at the opponent (pN player selector). Player-only targeting exercises a distinct path from creature-target burn (cf. Volcanic Hammer).
+
+Live evidence (mtg tui, scripted, seed 42):
+  Player 1 casts Lava Spike (3) (putting on stack)
+    -> targeting Player 2, Player 1
+  Lava Spike (3) resolves
+  Lava Spike (3) deals 3 damage to Player 2 (life: 17)
+  Player 2: 17 life
+
+Reproducer:
+  mtg tui --start-state test_puzzles/script_lava_spike_burns_opponent.pzl --p1 fixed --p1-fixed-inputs "cast Lava Spike targeting p1" --p2 heuristic --seed 42 -v 2 --no-color-logs
+
+Puzzle assertions (make puzzle-bulk-check): spell cast Lava Spike; opponent life eq 17 - all PASS.
+
+CARD STATUS: WORKING (puzzle-backed).

@@ -1,0 +1,49 @@
+# Scripted active-card puzzle: Volcanic Hammer (burn, "any target").
+#
+# Volcanic Hammer is a 1R sorcery that deals 3 damage to any target. Here the
+# script forces P0 to cast it at P1's Grizzly Bears (a 2/2). 3 damage to a
+# 2-toughness creature is lethal (CR 120.6, 704.5g state-based action) so the
+# Bears dies and goes to its owner's graveyard.
+#
+# Because Volcanic Hammer can target any of {P0, P1, the creature}, the engine
+# DOES prompt for a target (it is not forced), so the inline `targeting` clause
+# is what selects the Grizzly Bears.
+#
+# Aspects exercised (tracking issue: Card Compatibility: Volcanic Hammer):
+#   - parses + castable as a 1R sorcery (spell cast)
+#   - "any target" targeting resolves to a chosen creature
+#   - 3 damage marked, lethal -> creature dies (creature died)
+#   - dead creature lands in its owner's graveyard
+
+[metadata]
+Name:Action Script - Volcanic Hammer Kills a Creature
+Goal:Win
+Turns:1
+Difficulty:Easy
+Description:P0 is driven by an action script that casts Volcanic Hammer (3 damage, any target) at P1's Grizzly Bears, killing it. Demonstrates scripted active burn against a creature target.
+
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Volcanic Hammer
+p0battlefield=Mountain;Mountain
+p0library=Forest;Forest;Forest;Forest;Forest
+
+p1life=20
+p1battlefield=Grizzly Bears
+p1library=Mountain;Mountain;Mountain;Mountain;Mountain
+
+[p0_script]
+# Cast Volcanic Hammer at the Grizzly Bears. The inline `targeting` clause names
+# the creature semantically (anti-overfitting: by card name, not a menu index).
+cast Volcanic Hammer targeting Grizzly Bears
+
+[assertions]
+# The burn spell was actually cast by the script (active-card aspect).
+spell cast Volcanic Hammer
+# 3 damage killed the 2/2 (CR 704.5g lethal damage state-based action).
+creature died Grizzly Bears
+# The dead creature is now in its owner's (P1's) graveyard.
+opponent graveyard contains Grizzly Bears

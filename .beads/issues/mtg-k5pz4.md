@@ -1,0 +1,44 @@
+---
+title: 'Card Compatibility: Naturalize'
+status: closed
+priority: 3
+issue_type: task
+labels:
+- puzzle-tested
+created_at: 2026-06-14T10:10:10.012774785+00:00
+updated_at: 2026-06-14T10:10:19.137622965+00:00
+closed_at: 2026-06-14T10:10:19.137622901+00:00
+---
+
+# Description
+
+Test all behavioral aspects of Naturalize in MTG Forge-rs.
+
+Set: ONS
+Card script: cardsfolder/n/naturalize.txt
+Oracle: Destroy target artifact or enchantment.
+PUZZLE_FILE: test_puzzles/script_naturalize_destroys_artifact.pzl
+
+Aspects (one per ability/keyword/cost):
+
+1. [x] Card loads as an Instant from cardsfolder (Types: Instant).
+2. [x] Castable from hand paying {1}{G} (SP$ Destroy spell on the stack).
+3. [x] Restricted targeting (ValidTgts$ Artifact,Enchantment) resolves to an artifact.
+4. [x] Destroy effect moves the targeted artifact battlefield -> owner graveyard (CR 701.7 / 704).
+
+Findings (2026-06-14_#3463(2a27999fe)) - CARD IS WORKING. All 4 aspects verified.
+
+ACTIVE card tested with a puzzle ACTION SCRIPT ([p0_script]) forcing P0 to cast it at P1's Howling Mine (an artifact). Howling Mine's draw-step trigger does not fire during P0's turn-1 main, so Naturalize's targeted destruction is the only effect under test.
+
+Live evidence (mtg tui, scripted, seed 42):
+  Player 1 casts Naturalize (3) (putting on stack)
+    -> targeting Howling Mine (11)
+  Naturalize (3) resolves
+  Naturalize (3) destroys Howling Mine (11)
+
+Reproducer:
+  mtg tui --start-state test_puzzles/script_naturalize_destroys_artifact.pzl --p1 fixed --p1-fixed-inputs "cast Naturalize targeting Howling Mine" --p2 heuristic --seed 42 -v 2 --no-color-logs
+
+Puzzle assertions (make puzzle-bulk-check): spell cast Naturalize; opponent graveyard contains Howling Mine - all PASS.
+
+CARD STATUS: WORKING (puzzle-backed).

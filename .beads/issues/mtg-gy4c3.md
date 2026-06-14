@@ -1,0 +1,47 @@
+---
+title: 'Card Compatibility: Unsummon'
+status: closed
+priority: 3
+issue_type: task
+labels:
+- puzzle-tested
+created_at: 2026-06-14T10:10:10.016177167+00:00
+updated_at: 2026-06-14T10:10:19.139960581+00:00
+closed_at: 2026-06-14T10:10:19.139960528+00:00
+---
+
+# Description
+
+Test all behavioral aspects of Unsummon in MTG Forge-rs.
+
+Set: LEA
+Card script: cardsfolder/u/unsummon.txt
+Oracle: Return target creature to its owner's hand.
+PUZZLE_FILE: test_puzzles/script_unsummon_bounces_creature.pzl
+
+Aspects (one per ability/keyword/cost):
+
+1. [x] Card loads as an Instant from cardsfolder (Types: Instant).
+2. [x] Castable from hand paying {U} (SP$ ChangeZone spell on the stack).
+3. [x] Creature-restricted targeting (ValidTgts$ Creature) resolves.
+4. [x] ChangeZone (Origin Battlefield, Destination Hand) returns the creature to its OWNER's hand (CR 701.x bounce).
+5. [x] Bounce is NOT destruction: the creature is never put into a graveyard.
+
+Findings (2026-06-14_#3463(2a27999fe)) - CARD IS WORKING. All 5 aspects verified.
+
+ACTIVE card tested with a puzzle ACTION SCRIPT ([p0_script]) forcing P0 to cast it at P1's Grizzly Bears. P1's library is all Mountains (red) while Grizzly Bears costs {1}{G} (green), so P1 can never recast it - the Bears stays in P1's hand through to game end (P2 decks out turn 10), making the final-state hand assertion stable.
+
+Note: a cosmetic log line "Unsummon returns Unknown (0) to hand" prints alongside the correct "Grizzly Bears is returned to hand"; functional behavior is correct. Minor display polish only (not filed as a blocking bug).
+
+Live evidence (mtg tui, scripted, seed 42):
+  Player 1 casts Unsummon (3) (putting on stack)
+    -> targeting Grizzly Bears (10)
+  Unsummon (3) resolves
+  Grizzly Bears (10) is returned to hand
+
+Reproducer:
+  mtg tui --start-state test_puzzles/script_unsummon_bounces_creature.pzl --p1 fixed --p1-fixed-inputs "cast Unsummon targeting Grizzly Bears" --p2 heuristic --seed 42 -v 2 --no-color-logs
+
+Puzzle assertions (make puzzle-bulk-check): spell cast Unsummon; opponent hand contains Grizzly Bears; NOT opponent graveyard contains Grizzly Bears - all PASS.
+
+CARD STATUS: WORKING (puzzle-backed).

@@ -1,0 +1,44 @@
+  >>> Turn 1 - Player 1 20 (Player 2 20) <<<<
+Player 1 casts Lava Spike (3) (putting on stack)
+  → targeting Player 2, Player 1
+Tap Mountain for {R}
+Lava Spike (3) resolves
+Lava Spike (3) deals 3 damage to Player 2 (life: 17)
+
+  >>> Turn 2 - Player 2 17 (Player 1 20) <<<<
+Player 2 draws Mountain (14)
+<Choice> Player 2 chose 0 - play Mountain
+Player 2 plays Mountain (14)
+
+  >>> Turn 3 - Player 1 20 (Player 2 17) <<<<
+Player 1 draws Forest (9)
+
+  >>> Turn 4 - Player 2 17 (Player 1 20) <<<<
+Player 2 draws Mountain (13)
+<Choice> Player 2 chose 0 - play Mountain
+Player 2 plays Mountain (13)
+
+  >>> Turn 5 - Player 1 20 (Player 2 17) <<<<
+Player 1 draws Forest (8)
+
+  >>> Turn 6 - Player 2 17 (Player 1 20) <<<<
+Player 2 draws Mountain (12)
+<Choice> Player 2 chose 0 - play Mountain
+Player 2 plays Mountain (12)
+
+  >>> Turn 7 - Player 1 20 (Player 2 17) <<<<
+Player 1 draws Forest (7)
+
+  >>> Turn 8 - Player 2 17 (Player 1 20) <<<<
+Player 2 draws Mountain (11)
+<Choice> Player 2 chose 0 - play Mountain
+Player 2 plays Mountain (11)
+
+  >>> Turn 9 - Player 1 20 (Player 2 17) <<<<
+Player 1 draws Forest (6)
+
+  >>> Turn 10 - Player 2 17 (Player 1 20) <<<<
+Player 2 draws Mountain (10)
+<Choice> Player 2 chose 0 - play Mountain
+Player 2 plays Mountain (10)
+Player 2 has lost the game (decked). Player 1 wins!

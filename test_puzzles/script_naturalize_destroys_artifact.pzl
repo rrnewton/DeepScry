@@ -1,0 +1,47 @@
+# Scripted active-card puzzle: Naturalize (artifact/enchantment removal).
+#
+# Naturalize is a 1G instant that destroys target artifact or enchantment. The
+# script forces P0 to cast it at P1's Howling Mine (an artifact). After
+# resolution the Howling Mine leaves P1's battlefield and enters P1's graveyard
+# (CR 701.7).
+#
+# Howling Mine's draw-step trigger does not fire on P0's turn-1 main phase, so
+# the only effect under test is Naturalize's targeted destruction.
+#
+# Aspects exercised (tracking issue: Card Compatibility: Naturalize):
+#   - parses + castable as a 1G instant (spell cast)
+#   - Artifact,Enchantment-restricted targeting resolves to the artifact
+#   - Destroy effect moves the artifact battlefield -> graveyard
+
+[metadata]
+Name:Action Script - Naturalize Destroys an Artifact
+Goal:Win
+Turns:1
+Difficulty:Easy
+Description:P0 is driven by an action script that casts Naturalize at P1's Howling Mine, destroying it. The artifact moves from P1's battlefield to P1's graveyard. Demonstrates scripted active artifact/enchantment removal.
+
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Naturalize
+p0battlefield=Forest;Forest
+p0library=Forest;Forest;Forest;Forest;Forest
+
+p1life=20
+p1battlefield=Howling Mine
+p1library=Forest;Forest;Forest;Forest;Forest
+
+[p0_script]
+# Cast Naturalize at the opponent's Howling Mine.
+cast Naturalize targeting Howling Mine
+
+[assertions]
+# The removal spell was actually cast by the script (active-card aspect).
+spell cast Naturalize
+# The destroyed Howling Mine is now in its owner's (P1's) graveyard. (Assertions
+# are evaluated on the FINAL game state; a destroyed permanent stays in the
+# graveyard, so this is a stable end-state check. No battlefield-count check is
+# used because the opponent keeps playing permanents on its own turns.)
+opponent graveyard contains Howling Mine

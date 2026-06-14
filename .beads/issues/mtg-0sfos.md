@@ -1,0 +1,48 @@
+---
+title: 'Card Compatibility: Volcanic Hammer'
+status: closed
+priority: 3
+issue_type: task
+labels:
+- puzzle-tested
+created_at: 2026-06-14T10:09:28.130241895+00:00
+updated_at: 2026-06-14T10:10:19.130233081+00:00
+closed_at: 2026-06-14T10:10:19.130233028+00:00
+---
+
+# Description
+
+Test all behavioral aspects of Volcanic Hammer in MTG Forge-rs.
+
+Set: POR
+Card script: cardsfolder/v/volcanic_hammer.txt
+Oracle: Volcanic Hammer deals 3 damage to any target.
+PUZZLE_FILE: test_puzzles/script_volcanic_hammer_kills_creature.pzl
+
+Aspects (one per ability/keyword/cost):
+
+1. [x] Card loads as a Sorcery from cardsfolder (Types: Sorcery).
+2. [x] Castable from hand paying {1}{R} (SP$ DealDamage spell on the stack).
+3. [x] "any target" targeting (ValidTgts$ Any) resolves to a chosen creature.
+4. [x] NumDmg$ 3: deals exactly 3 damage to the target.
+5. [x] Lethal-damage state-based action: a 2/2 (Grizzly Bears) with 3 marked damage dies (CR 120.6 / 704.5g).
+6. [x] After resolving, the dead creature is in its owner's graveyard (CR 704.5g / 612).
+
+Findings (2026-06-14_#3463(2a27999fe)) - CARD IS WORKING. All 6 aspects verified.
+
+This card is ACTIVE (a burn spell the heuristic AI will not reliably aim), so it is tested with a puzzle ACTION SCRIPT ([p0_script]) that forces P0 to cast it at the chosen target. This is only testable since the action-script capability (task #16 / mtg-947) landed.
+
+Live evidence (mtg tui, scripted, seed 42):
+  Player 1 casts Volcanic Hammer (3) (putting on stack)
+    -> targeting Grizzly Bears (11)
+  Volcanic Hammer (3) resolves
+  Grizzly Bears (11) takes 3 damage (total: 3)
+  Volcanic Hammer (3) deals 3 damage to Grizzly Bears (11)
+  Grizzly Bears (11) dies from lethal damage
+
+Reproducer:
+  mtg tui --start-state test_puzzles/script_volcanic_hammer_kills_creature.pzl --p1 fixed --p1-fixed-inputs "cast Volcanic Hammer targeting Grizzly Bears" --p2 heuristic --seed 42 -v 2 --no-color-logs
+
+Puzzle assertions (make puzzle-bulk-check): spell cast Volcanic Hammer; creature died Grizzly Bears; opponent graveyard contains Grizzly Bears - all PASS.
+
+CARD STATUS: WORKING (puzzle-backed).

@@ -1,0 +1,48 @@
+# Scripted active-card puzzle: Unsummon (bounce to owner's hand).
+#
+# Unsummon is a U instant that returns target creature to its owner's hand
+# (ChangeZone Battlefield -> Hand). The script forces P0 to cast it at P1's
+# Grizzly Bears. After resolution the Bears leaves P1's battlefield and enters
+# P1's HAND — not the graveyard — which distinguishes bounce from destruction.
+#
+# Aspects exercised (tracking issue: Card Compatibility: Unsummon):
+#   - parses + castable as a U instant (spell cast)
+#   - Creature-restricted targeting resolves
+#   - ChangeZone moves the creature battlefield -> owner's hand
+#   - the creature is NOT destroyed (no graveyard entry)
+
+[metadata]
+Name:Action Script - Unsummon Bounces a Creature
+Goal:Win
+Turns:1
+Difficulty:Easy
+Description:P0 is driven by an action script that casts Unsummon at P1's Grizzly Bears, returning it to P1's hand (not the graveyard). Demonstrates scripted active bounce.
+
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Unsummon
+p0battlefield=Island
+p0library=Forest;Forest;Forest;Forest;Forest
+
+p1life=20
+p1battlefield=Grizzly Bears
+p1library=Mountain;Mountain;Mountain;Mountain;Mountain
+
+[p0_script]
+# Cast Unsummon at the opponent's Grizzly Bears.
+cast Unsummon targeting Grizzly Bears
+
+[assertions]
+# The bounce spell was actually cast by the script (active-card aspect).
+spell cast Unsummon
+# The Grizzly Bears returned to its owner's (P1's) hand and STAYS there: P1's
+# library is all Mountains (red), and Grizzly Bears costs {1}{G} (green), so P1
+# can never pay to recast it. Assertions evaluate on the FINAL game state, so
+# the Bears is still in P1's hand at game end.
+opponent hand contains Grizzly Bears
+# Bounce is not destruction: the creature did NOT go to the graveyard at any
+# point (it was returned to hand, never put into the graveyard).
+NOT opponent graveyard contains Grizzly Bears

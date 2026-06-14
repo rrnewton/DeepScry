@@ -1,0 +1,43 @@
+# Scripted active-card puzzle: Lava Spike (burn to the face).
+#
+# Lava Spike is an R sorcery (Arcane) that deals 3 damage to target PLAYER or
+# planeswalker — notably it CANNOT target creatures. The script forces P0 to
+# cast it at the opponent (p1), dropping P1 from 20 to 17 life.
+#
+# This exercises the player-target path (distinct from Volcanic Hammer's
+# any-target creature kill) and the restricted ValidTgts$ Player,Planeswalker.
+#
+# Aspects exercised (tracking issue: Card Compatibility: Lava Spike):
+#   - parses + castable as an R sorcery (spell cast)
+#   - player-only targeting (pN selector) resolves
+#   - 3 damage applied to opponent's life total (opponent life eq 17)
+
+[metadata]
+Name:Action Script - Lava Spike Burns the Opponent
+Goal:Win
+Turns:1
+Difficulty:Easy
+Description:P0 is driven by an action script that casts Lava Spike (3 damage to target player) at P1, taking P1 from 20 to 17. Demonstrates scripted active burn at a player target.
+
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Lava Spike
+p0battlefield=Mountain
+p0library=Forest;Forest;Forest;Forest;Forest
+
+p1life=20
+p1library=Mountain;Mountain;Mountain;Mountain;Mountain
+
+[p0_script]
+# Cast Lava Spike at the opponent. `targeting p1` is the player sentinel for the
+# second player (p0/p1/p2 all accepted; p1 = the opponent here).
+cast Lava Spike targeting p1
+
+[assertions]
+# The burn spell was actually cast by the script (active-card aspect).
+spell cast Lava Spike
+# 3 damage took the opponent from 20 to 17.
+opponent life eq 17

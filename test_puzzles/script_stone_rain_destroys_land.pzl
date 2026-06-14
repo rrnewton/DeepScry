@@ -1,0 +1,53 @@
+# Scripted active-card puzzle: Stone Rain (land destruction).
+#
+# Stone Rain is a 2R sorcery that destroys target land. The script forces P0 to
+# cast it at P1's Forest. After resolution the destroyed Forest leaves P1's
+# battlefield and enters P1's graveyard (CR 701.7 destroy -> put into graveyard).
+#
+# NOTE on the setup: P0 pays {2}{R} with three Mountains; P1's land is a FOREST
+# so the `targeting Forest` selector is unambiguous by name (there is exactly
+# one Forest on the board, and it belongs to P1). If P1's land were also a
+# Mountain the name matcher could not tell it apart from P0's own Mountains.
+#
+# A land is not a creature, so this is asserted purely with zone predicates,
+# not the `creature died` event.
+#
+# Aspects exercised (tracking issue: Card Compatibility: Stone Rain):
+#   - parses + castable as a 2R sorcery (spell cast)
+#   - Land-restricted targeting (ValidTgts$ Land) resolves
+#   - Destroy effect moves the land battlefield -> graveyard
+
+[metadata]
+Name:Action Script - Stone Rain Destroys a Land
+Goal:Win
+Turns:1
+Difficulty:Easy
+Description:P0 is driven by an action script that casts Stone Rain at one of P1's Mountains, destroying it. The Mountain moves from P1's battlefield to P1's graveyard. Demonstrates scripted active land destruction.
+
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Stone Rain
+p0battlefield=Mountain;Mountain;Mountain
+p0library=Forest;Forest;Forest;Forest;Forest
+
+p1life=20
+p1battlefield=Forest
+p1library=Mountain;Mountain;Mountain;Mountain;Mountain
+
+[p0_script]
+# Cast Stone Rain at the opponent's Forest (the only Forest on the board, so the
+# name selector is unambiguous and picks P1's land, not P0's Mountains).
+cast Stone Rain targeting Forest
+
+[assertions]
+# The land-destruction spell was actually cast by the script (active-card aspect).
+spell cast Stone Rain
+# The destroyed Forest is now in its owner's (P1's) graveyard. (Assertions are
+# evaluated on the FINAL game state after the game plays out; a destroyed
+# permanent stays in the graveyard, so this is a stable end-state check. A
+# battlefield-count check is NOT used here because the opponent keeps playing
+# lands on its own turns, so its battlefield is not empty at game end.)
+opponent graveyard contains Forest
